@@ -16,3 +16,10 @@ __pycache__/
 .keys.env
 *.swp
 *.swo
+
+# Test binaries (remove from tracking: git rm --cached)
+tests/tui/*_test
+tests/tui/*_demo
+tests/tui/pipe_demo
+tests/sandbox/run.sh
+tests/scenario-runner
