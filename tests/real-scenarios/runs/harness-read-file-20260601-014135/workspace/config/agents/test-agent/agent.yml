@@ -1,0 +1,62 @@
+kind: Agent
+name: test-agent
+version: "3.0"
+summary: "Bloated test agent — exercises all tools, agents, relics, and protocol features"
+
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-v4-pro
+    parameters:
+      temperature: 0.7
+      max_tokens: 8192
+
+persona:
+  agent: "../../../tests/prompt-tests/harness-prompts/full-stack.md"
+
+import:
+  # ── All internal tools ──
+  tools:
+    - exec
+    - list
+    - grep
+    - fs_read
+    - fs_write
+    - json
+    - web_fetch
+    - context_pin
+    - context_peek
+    - context_unpin
+
+  # ── All manifest tools ──
+    - web_search
+    - html_extract
+    - build_run
+    - test_run
+    - diff_analyze
+    - scaffold
+    - polyglot_check
+
+  # ── All sub-agents ──
+  agents:
+    - architect
+    - artificer
+    - assistant
+    - builder
+    - orchestrator
+    - researcher
+    - reviewer
+    - tester
+
+  # ── All relics ──
+  relics:
+    - build_cache
+    - event_bus
+    - artifact_store
+    - secret_store
+    - process_manager
+    - file_watcher
+
+  # ── All workflows ──
+  workflows:
+    - workflow_spec

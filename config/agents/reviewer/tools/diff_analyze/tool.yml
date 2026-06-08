@@ -1,0 +1,44 @@
+kind: Tool
+name: diff_analyze
+version: "1.0"
+summary: "Analyze a git diff for code review"
+description: |
+  Runs git diff and produces structured review data: changed files,
+  line counts, added/removed breakdown, and optionally checks for
+  common red flags (TODO markers, large functions, missing error handling).
+category: development
+tags: [diff, review, git, analyze, code-review]
+input_schema:
+  type: object
+  properties:
+    path:
+      type: string
+      description: "Repository path"
+      default: "."
+    target:
+      type: string
+      description: "Diff target (e.g. HEAD~1, main, staged)"
+      default: "HEAD"
+    flags:
+      type: string
+      description: "Extra git diff flags"
+      default: ""
+output_schema:
+  type: object
+  properties:
+    files_changed:
+      type: integer
+    insertions:
+      type: integer
+    deletions:
+      type: integer
+    files:
+      type: array
+      items:
+        type: object
+    diff:
+      type: string
+implementation:
+  type: script
+  runtime: python3
+  entrypoint: diff_analyze.py

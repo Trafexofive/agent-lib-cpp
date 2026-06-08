@@ -1,0 +1,73 @@
+TEST: test_08 -  Variable Resolution
+RESULT: PASS
+ITERATIONS: 2
+EVENTS: 10
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(fs_read)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] ACTION_START
+  [7] ACTION(grep)
+  [8] ACTION_RESULT
+  [9] ACTION_RESULT
+  [10] RESPONSE
+ACTIONS EXECUTED: 2
+  - fs_read
+  - grep
+
+=== INPUT XML ===
+<thought>
+I'll read the file then search within it.
+</thought>
+<action type="tool" name="fs_read" id="step_001" mode="sync">
+{"path": "README.md"}
+</action>
+<action type="tool" name="grep" id="step_002" mode="sync">
+{"pattern": "install", "path": "README.md"}
+</action>
+<response final="true">
+Found installation instructions in the README.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(fs_read)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(grep)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

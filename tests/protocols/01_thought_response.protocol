@@ -1,0 +1,11 @@
+# Test 01: Basic Thought + Response
+<thought>
+The user asked a simple question. I should respond directly.
+</thought>
+<response final="true">
+The answer is 42.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, RESPONSE
+output_contains: "42"
+complete: true

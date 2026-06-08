@@ -1,0 +1,17 @@
+# Harness suite: tool-mastery
+# Tests: tool parameter passing, chaining, result reading, async
+name: tool-mastery
+prompt_file: tests/prompt-tests/harness-prompts/tool-mastery.md
+model: deepseek-v4-pro
+provider: deepseek
+inputs:
+  - id: read_file
+    prompt: "Read the file at config/agents/assistant/agent.yml and tell me what agent name it contains."
+  - id: grep_then_read
+    prompt: "Search for all files containing 'TODO' in the src/ directory, then read the first one found."
+  - id: write_then_read
+    prompt: "Write 'hello from mk3' to /tmp/mk3-test.txt, then read it back to confirm."
+  - id: json_validate
+    prompt: "Validate this JSON: {\"name\": \"test\", \"version\": 1}"
+  - id: parallel_exec
+    prompt: "Run 'date' and 'hostname' in parallel and report both results."

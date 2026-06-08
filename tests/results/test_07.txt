@@ -1,0 +1,73 @@
+TEST: test_07 -  Tool Error and Recovery
+RESULT: PASS
+ITERATIONS: 3
+EVENTS: 9
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(fs_read)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] ACTION_START
+  [7] ACTION_RESULT
+  [8] ACTION_RESULT
+  [9] RESPONSE
+ACTIONS EXECUTED: 2
+  - fs_read
+  - fs_read
+
+=== INPUT XML ===
+<thought>
+Let me read the config file.
+</thought>
+<action type="tool" name="fs_read" id="step_001" mode="sync">
+{"path": "/nonexistent/file.txt"}
+</action>
+<thought>
+The file wasn't found. Let me try a different path.
+</thought>
+<action type="tool" name="fs_read" id="step_002" mode="sync">
+{"path": "config/defaults.txt"}
+</action>
+<response final="true">
+Found the defaults config file after the initial path failed.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(fs_read)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

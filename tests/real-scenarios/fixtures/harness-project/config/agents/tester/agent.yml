@@ -1,0 +1,26 @@
+kind: Agent
+name: tester
+version: '2.0'
+summary: Test execution and validation specialist
+cognitive_engine:
+  primary:
+    provider: zen
+    model: zai-org/GLM-5.1-FP8
+    parameters:
+      temperature: 0.3
+      max_tokens: 4096
+persona:
+  agent: ./system-prompts/tester.md
+import:
+  tools:
+  - exec
+  - fs_read
+  - fs_write
+  - grep
+  - list
+  - json
+  - web_fetch
+  - context_pin
+  - context_peek
+  - context_unpin
+  - ./tools/test_run/tool.yml

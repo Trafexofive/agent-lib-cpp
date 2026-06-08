@@ -1,0 +1,25 @@
+# Preset 06: Streaming — tokens arrive incrementally
+# Simulates LLM streaming: tokens fed one at a time to setText()
+
+<stream>
+<token>The</token>
+<token> quick</token>
+<token> **brown</token>
+<token>** fox</token>
+<token> jumps</token>
+<token> over</token>
+<token> the</token>
+<token> `lazy</token>
+<token> dog`</token>
+<token>.</token>
+</stream>
+
+<full>
+The quick **brown** fox jumps over the `lazy dog`.
+</full>
+
+---EXPECT---
+# The final render of incremental setText() should match full-text render
+stream_matches_full: true
+contains: brown
+contains: lazy dog

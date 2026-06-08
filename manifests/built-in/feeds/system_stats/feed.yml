@@ -1,0 +1,29 @@
+kind: Feed
+name: system_stats
+version: "1.0"
+summary: "System resource statistics"
+description: |
+  Provides hostname, platform, architecture, kernel, CPU count,
+  memory total/available, and PID. Always available — compiled into
+  the binary as a built-in feed.
+category: core
+tags: [system, stats, resources, platform]
+output_schema:
+  type: object
+  properties:
+    hostname:
+      type: string
+    platform:
+      type: string
+    arch:
+      type: string
+    kernel:
+      type: string
+    cpu_count:
+      type: integer
+    memory_total_mb:
+      type: integer
+    memory_available_mb:
+      type: integer
+    pid:
+      type: integer

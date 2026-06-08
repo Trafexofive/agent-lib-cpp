@@ -1,0 +1,19 @@
+The current directory contains:
+- **build/** — build artifacts
+- **config/** — configuration files
+- **cortex-mk3** — main binary (15.9 MB)
+- **cortex-mk3-server** — server binary (18.6 MB)
+- **examples/** — example files
+- **include/** — header files
+- **libagent-mk3.a** — static library (22.2 MB)
+- **libagent-mk3.so** — shared library (15.4 MB)
+- **main.cpp** — main source file
+- **Makefile** — build rules
+- **manifests/** — manifest files
+- **parser-debug** — debug parser binary
+- **parser-test** — parser test binary
+- **protocol-test** — protocol test binary
+- **server_main.cpp** — server main source
+- **src/** — source code
+- **tests/** — test files
+- **vendor/** — vendor dependencies

@@ -1,0 +1,14 @@
+inputs:
+- id: easy_list
+  prompt: List the files in the current directory.
+- id: medium_grep_read
+  prompt: Find all TODO comments in the src/ directory, then read the first file that
+    contains one.
+- id: hard_analyze
+  prompt: 'Analyze this project: first list the source structure, then search for
+    all TODO/FIXME/HACK markers, then read the file with the most markers, then write
+    a summary to /tmp/mk3-analysis.txt.'
+model: deepseek-v4-pro
+name: assistant
+prompt_file: config/agents/assistant/system-prompts/assistant.md
+provider: deepseek

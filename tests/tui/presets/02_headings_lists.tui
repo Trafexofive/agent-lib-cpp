@@ -1,0 +1,22 @@
+# Preset 02: Headings and lists
+<stream>
+# Heading 1
+## Heading 2
+### Heading 3
+
+- Item one
+- Item two
+- Item three
+
+1. First
+2. Second
+</stream>
+
+---EXPECT---
+contains: Heading 1
+contains: Heading 2
+contains: Heading 3
+contains: Item one
+contains: Item two
+contains: First
+contains: Second

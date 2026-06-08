@@ -1,0 +1,12 @@
+# Preset 01: Basic markdown elements
+# Stream these tokens to the Markdown component, verify rendered output
+
+<stream>
+**bold text** and *italic text* and `inline code`
+</stream>
+
+---EXPECT---
+contains: \033[1mbold text\033[0m
+contains: \033[3mitalic text\033[0m
+contains: inline code
+total_lines: 1

@@ -1,0 +1,32 @@
+# Preset 10: Multi-turn with markdown — grep + exec + formatted response
+<stream>
+<thought>Let me find the TODOs and try to build.</thought>
+<action type="tool" name="grep" id="g1" mode="sync">{"pattern":"TODO|FIXME","path":"src/"}</action>
+<result id="g1" status="ok">{"count":4,"results":"TODO: agent.cpp:45 retry logic\nFIXME: main.cpp:12 parse config\nTODO: server.cpp:88 timeout\nTODO: parser.cpp:156 error msg"}</result>
+<action type="tool" name="exec" id="e1" mode="sync">{"command":"make -j4"}</action>
+<result id="e1" status="error">g++: error: server.cpp:88: undefined reference to 'handleTimeout'</result>
+<response final="true">
+## Build Failed — 4 Issues Found
+
+| File | Line | Severity |
+|------|------|----------|
+| `agent.cpp` | 45 | TODO |
+| `main.cpp` | 12 | FIXME |
+| `server.cpp` | 88 | **ERROR** |
+| `parser.cpp` | 156 | TODO |
+
+The server has an undefined reference — check `handleTimeout`.
+Run `make clean && make` to retry.
+</response>
+</stream>
+
+---EXPECT---
+contains: Build Failed (h2)
+contains: table with File/Line/Severity
+contains: bold ERROR
+contains: inline code in table
+contains: handleTimeout
+renders_action: grep
+renders_action: exec
+result_ok: grep ✓
+result_error: exec ✗

@@ -1,0 +1,13 @@
+The current directory contains the following files and directories:
+
+- **agent-lib-MK3.code-workspace**
+- **package.json**
+- **pnpm-lock.yaml**
+- **tsconfig.json**
+- **src/** (directory)
+- **node_modules/** (directory)
+
+Would you like me to explore any of these further?
+
+[STDERR]
+*** stack smashing detected ***: terminated

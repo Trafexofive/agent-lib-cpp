@@ -1,0 +1,57 @@
+TEST: test_15 -  Event Bus Pub/Sub
+RESULT: PASS
+ITERATIONS: 2
+EVENTS: 6
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(event_bus)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] RESPONSE
+ACTIONS EXECUTED: 1
+  - event_bus
+
+=== INPUT XML ===
+<thought>
+I need to publish a build completion event.
+</thought>
+<action type="relic" name="event_bus" id="pub_001" mode="sync">
+{"endpoint": "publish", "namespace": "build_system", "channel": "build_events", "message": {"event": "build_complete", "artifact": "cortex-runner", "status": "success"}}
+</action>
+<response final="true">
+Build completion event published.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(event_bus)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

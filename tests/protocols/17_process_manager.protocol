@@ -1,0 +1,22 @@
+# Test 17: Process Manager
+<thought>
+I need to spawn and track a build process.
+</thought>
+<action type="relic" name="process_manager" id="pm_001" mode="sync">
+{"endpoint": "spawn", "namespace": "builder", "command": "make -j4", "label": "full_build"}
+</action>
+<thought>
+Build spawned. Checking status.
+</thought>
+<action type="relic" name="process_manager" id="pm_002" mode="sync">
+{"endpoint": "status", "namespace": "builder"}
+</action>
+<response final="true">
+Build is running under process manager.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, THOUGHT, ACTION, RESPONSE
+actions:
+  - name: process_manager
+  - name: process_manager
+complete: true

@@ -1,0 +1,22 @@
+# Test 23: Multi-Iteration Cycle
+<thought>
+I need to gather information in steps. Starting with the project structure.
+</thought>
+<action type="tool" name="list" id="step_001" mode="sync">
+{"path": ".", "recursive": true}
+</action>
+<thought>
+Now I have the structure. I need to read the main source.
+</thought>
+<action type="tool" name="fs_read" id="step_002" mode="sync">
+{"path": "src/main.cpp"}
+</action>
+<thought>
+I have enough information now.
+</thought>
+<response final="true">
+The project has 15 source files across 4 modules.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, THOUGHT, ACTION, THOUGHT, RESPONSE
+complete: true

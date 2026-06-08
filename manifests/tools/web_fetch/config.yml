@@ -1,0 +1,14 @@
+# Module configuration
+runtime:
+  timeout: 30
+  max_retries: 2
+  retry_delay_ms: 2000
+logging:
+  level: info
+limits:
+  max_output_size: 1048576
+  max_redirects: 5
+fetch:
+  user_agent: Cortex-Prime/0.2.0
+  follow_redirects: true
+  verify_ssl: true

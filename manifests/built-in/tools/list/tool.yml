@@ -1,0 +1,52 @@
+kind: Tool
+name: list
+version: "2.0"
+summary: "List files and directories"
+description: |
+  Lists files and directories at a given path. Supports recursive listing,
+  pattern filtering, and detail level (names only vs full stat).
+category: filesystem
+tags: [list, ls, files, directory]
+input_schema:
+  type: object
+  properties:
+    path:
+      type: string
+      description: "Directory path to list"
+      default: "."
+    recursive:
+      type: boolean
+      description: "Recurse into subdirectories"
+      default: false
+    pattern:
+      type: string
+      description: "Glob pattern filter (e.g. '*.py')"
+    detail:
+      type: string
+      enum: [names, compact, full]
+      description: "Level of detail"
+      default: compact
+
+output_schema:
+  type: object
+  properties:
+    entries:
+      type: array
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+          type:
+            type: string
+          size:
+            type: integer
+examples:
+  - description: "List current directory"
+    params:
+      path: "."
+  - description: "Find all Python files recursively"
+    params:
+      path: "/src"
+      recursive: true
+      pattern: "*.py"

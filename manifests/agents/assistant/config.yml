@@ -1,0 +1,10 @@
+# Module configuration
+runtime:
+  max_iterations: 3
+  history_cap: 40
+logging:
+  level: info
+agent:
+  default_model: minimax-3
+  default_provider: openrouter-free
+  temperature: 0.7

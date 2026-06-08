@@ -1,0 +1,28 @@
+kind: Agent
+name: decoupler
+version: "1.0"
+summary: "Problem decomposition specialist — breaks complex tasks into sub-tasks, delegates to sub-agents"
+
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-chat
+    parameters:
+      temperature: 0.5
+      max_tokens: 4096
+
+persona:
+  agent: ./system-prompts/decoupler.md
+
+runtime:
+  max_iterations: 4
+
+import:
+  tools:
+    - exec
+    - list
+    - ./tools/scaffold/tool.yml
+  feeds:
+    - ./feeds/plan-progress/feed.yml
+  agents:
+    - reviewer

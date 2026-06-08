@@ -1,0 +1,60 @@
+TEST: test_02 -  Single Sync Tool Call
+RESULT: PASS
+ITERATIONS: 3
+EVENTS: 6
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(list)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] RESPONSE
+ACTIONS EXECUTED: 1
+  - list
+
+=== INPUT XML ===
+<thought>
+I need to list the current directory.
+</thought>
+<action type="tool" name="list" id="step_001" mode="sync">
+{"path": "."}
+</action>
+<thought>
+Got the directory listing. Let me present the results.
+</thought>
+<response final="true">
+The directory contains the following files: [results from list tool].
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(list)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

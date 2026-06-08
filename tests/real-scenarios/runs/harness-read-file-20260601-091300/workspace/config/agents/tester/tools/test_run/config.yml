@@ -1,0 +1,7 @@
+# Module configuration
+runtime:
+  timeout: 120
+test:
+  detect_framework: true
+  max_output_lines: 200
+  parse_results: true

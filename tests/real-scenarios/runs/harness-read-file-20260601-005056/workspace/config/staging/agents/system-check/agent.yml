@@ -1,0 +1,19 @@
+kind: Agent
+name: system-check
+version: "2.0"
+summary: "System environment verification agent — checks tools, paths, dependencies"
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-chat
+    parameters:
+      temperature: 0.3
+      max_tokens: 2048
+persona:
+  agent: ./system-prompts/system-check.md
+import:
+  tools:
+  - exec
+  - list
+  - fs_read
+  - grep

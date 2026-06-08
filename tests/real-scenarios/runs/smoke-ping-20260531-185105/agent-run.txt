@@ -1,0 +1,9 @@
+$ /home/mlamkadm/repos/Cortex-Prime-MK1/services/agent-lib-MK3/cortex-mk3 --raw --provider groq --model meta-llama/llama-4-scout-17b-16e-instruct --manifest-dir /home/mlamkadm/repos/Cortex-Prime-MK1/services/agent-lib-MK3/manifests --manifest /home/mlamkadm/repos/Cortex-Prime-MK1/services/agent-lib-MK3/tests/real-scenarios/agent.yml --harness /home/mlamkadm/repos/Cortex-Prime-MK1/services/agent-lib-MK3/config/harness/default.md run -p Respond with hello using the protocol.
+# exit=0 elapsed=0.57s
+
+## STDOUT
+<response final="true">hello</response>
+
+
+## STDERR
+

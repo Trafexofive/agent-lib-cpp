@@ -1,0 +1,16 @@
+$ bash -lc python3 -m unittest discover -s tests -v
+# exit=0 elapsed=0.08s
+
+## STDOUT
+
+
+## STDERR
+test_cli_slug_mode_outputs_slug (test_main.TextUtilTests.test_cli_slug_mode_outputs_slug) ... ok
+test_slugify_normalizes_spaces_punctuation_and_underscores (test_main.TextUtilTests.test_slugify_normalizes_spaces_punctuation_and_underscores) ... ok
+test_titlecase_keeps_cli_existing_behavior (test_main.TextUtilTests.test_titlecase_keeps_cli_existing_behavior) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.029s
+
+OK
+

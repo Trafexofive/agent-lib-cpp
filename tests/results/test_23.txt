@@ -1,0 +1,79 @@
+TEST: test_23 -  Multi-Iteration Cycle
+RESULT: PASS
+ITERATIONS: 4
+EVENTS: 10
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(list)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] ACTION_START
+  [7] ACTION(fs_read)
+  [8] ACTION_RESULT
+  [9] ACTION_RESULT
+  [10] RESPONSE
+ACTIONS EXECUTED: 2
+  - list
+  - fs_read
+
+=== INPUT XML ===
+<thought>
+I need to gather information in steps. Starting with the project structure.
+</thought>
+<action type="tool" name="list" id="step_001" mode="sync">
+{"path": ".", "recursive": true}
+</action>
+<thought>
+Now I have the structure. I need to read the main source.
+</thought>
+<action type="tool" name="fs_read" id="step_002" mode="sync">
+{"path": "src/main.cpp"}
+</action>
+<thought>
+I have enough information now.
+</thought>
+<response final="true">
+The project has 15 source files across 4 modules.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(list)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(fs_read)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

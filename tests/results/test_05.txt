@@ -1,0 +1,60 @@
+TEST: test_05 -  Agent Delegation
+RESULT: PASS
+ITERATIONS: 3
+EVENTS: 6
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(builder)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] RESPONSE
+ACTIONS EXECUTED: 1
+  - builder
+
+=== INPUT XML ===
+<thought>
+This is a code implementation task. I should delegate to the builder.
+</thought>
+<action type="agent" name="builder" id="build_001" mode="sync">
+{"instruction": "Implement a CSV parser module with header validation"}
+</action>
+<thought>
+The builder completed the implementation.
+</thought>
+<response final="true">
+The CSV parser module has been implemented with header validation.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(builder)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

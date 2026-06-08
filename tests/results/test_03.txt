@@ -1,0 +1,76 @@
+TEST: test_03 -  Sequential Tool Chain
+RESULT: PASS
+ITERATIONS: 3
+EVENTS: 10
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(fs_read)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] ACTION_START
+  [7] ACTION(grep)
+  [8] ACTION_RESULT
+  [9] ACTION_RESULT
+  [10] RESPONSE
+ACTIONS EXECUTED: 2
+  - fs_read
+  - grep
+
+=== INPUT XML ===
+<thought>
+I need to read a file and then search it for a pattern.
+</thought>
+<action type="tool" name="fs_read" id="step_001" mode="sync">
+{"path": "src/main.cpp"}
+</action>
+<thought>
+File loaded. Now searching for the pattern.
+</thought>
+<action type="tool" name="grep" id="step_002" mode="sync">
+{"pattern": "TODO", "path": "src/main.cpp"}
+</action>
+<response final="true">
+Found 3 TODO items in main.cpp.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(fs_read)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(grep)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

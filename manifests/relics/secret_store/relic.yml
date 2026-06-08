@@ -1,0 +1,105 @@
+# ==============================================================================
+# RELIC MANIFEST — Secret Store
+# ==============================================================================
+# Encrypted key-value storage for API keys, tokens, credentials.
+# Secrets NEVER appear in tool output, history, or logs.
+#
+# mode: managed  — runtime spins up Docker stack, connects to localhost:8011
+#       remote   — just plug into an existing Vault/secret service
+
+kind: Relic
+version: "1.0"
+name: "secret_store"
+summary: "Encrypted secret storage for API keys, tokens, and credentials"
+author: "CORTEX_STD_LIB"
+state: "stable"
+
+mode: managed
+
+description: |
+  AES-256-GCM encrypted storage for sensitive data.
+  - All values encrypted at rest
+  - Namespace isolation — agents only see their own secrets
+  - Write-only audit log — tracks who set/accessed what, never values
+  - Access grants for cross-namespace sharing (explicit, revocable)
+
+service_type: "security"
+
+interface:
+  type: "rest_api"
+  base_url: "${SECRET_STORE_URL:-http://localhost:8011}"
+
+endpoints:
+  - name: "set"
+    method: "POST"
+    path: "/secrets/{namespace}/{key}"
+    description: "Store an encrypted secret"
+    parameters:
+      namespace: { type: "string", required: true }
+      key: { type: "string", required: true }
+      value: { type: "string", required: true }
+      description: { type: "string", required: false }
+
+  - name: "get"
+    method: "GET"
+    path: "/secrets/{namespace}/{key}"
+    description: "Retrieve a decrypted secret value"
+    parameters:
+      namespace: { type: "string", required: true }
+      key: { type: "string", required: true }
+
+  - name: "list"
+    method: "GET"
+    path: "/secrets/{namespace}"
+    description: "List secret keys (NOT values) in a namespace"
+    parameters:
+      namespace: { type: "string", required: true }
+
+  - name: "delete"
+    method: "DELETE"
+    path: "/secrets/{namespace}/{key}"
+    description: "Delete a secret"
+    parameters:
+      namespace: { type: "string", required: true }
+      key: { type: "string", required: true }
+
+  - name: "grant"
+    method: "POST"
+    path: "/secrets/{namespace}/{key}/grant"
+    description: "Grant another namespace access to a secret"
+    parameters:
+      namespace: { type: "string", required: true }
+      key: { type: "string", required: true }
+      target_namespace: { type: "string", required: true }
+      expires_seconds: { type: "integer", required: false }
+
+  - name: "audit"
+    method: "GET"
+    path: "/audit/{namespace}"
+    description: "View access audit log (write-only, never contains values)"
+    parameters:
+      namespace: { type: "string", required: true }
+      limit: { type: "integer", required: false }
+
+health_check:
+  type: "api_request"
+  endpoint: "/health"
+  method: "GET"
+  expected_status: 200
+  interval_seconds: 30
+
+deployment:
+  type: "docker"
+  docker_compose_file: "./docker-compose.yml"
+
+environment:
+  variables:
+    SQLITE_DB_PATH: "/data/secrets.db"
+    MASTER_KEY_PATH: "/run/secrets/master_key"
+    LOG_LEVEL: "WARNING"
+
+tags:
+  - security
+  - encryption
+  - secrets
+  - std

@@ -1,0 +1,14 @@
+inputs:
+- id: easy_list
+  prompt: List the files in the current directory.
+- id: medium_grep_read
+  prompt: Search for '#include' in src/core/agent.hpp, then read that file and tell
+    me what methods the Agent class has.
+- id: hard_analyze
+  prompt: First list the src/ directory structure, then find how many times 'agent'
+    appears in src/ files, then read src/core/agent.hpp and write a 2-line summary
+    to /tmp/mk3-summary.txt.
+model: deepseek-chat
+name: assistant
+prompt_file: config/agents/assistant/system-prompts/assistant.md
+provider: deepseek

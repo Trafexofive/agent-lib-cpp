@@ -1,0 +1,15 @@
+# Harness suite: multi-agent
+# Tests: agent delegation, relic calls, sub-agent orchestration
+name: multi-agent
+prompt_file: tests/prompt-tests/harness-prompts/multi-agent.md
+model: deepseek-v4-pro
+provider: deepseek
+inputs:
+  - id: delegate_build
+    prompt: "Delegate to the builder agent to build the project."
+  - id: delegate_review
+    prompt: "Ask the reviewer agent to analyze the git diff from the last commit."
+  - id: artifact_store
+    prompt: "Store 'build output v2' in the artifact store under key 'latest-build'."
+  - id: mixed_actions
+    prompt: "Read src/main.cpp, then delegate to the reviewer to check it, then store the review in the artifact store."

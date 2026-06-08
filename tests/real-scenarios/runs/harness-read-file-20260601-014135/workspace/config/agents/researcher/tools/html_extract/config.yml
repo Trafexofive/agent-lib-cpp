@@ -1,0 +1,7 @@
+# Module configuration
+runtime:
+  timeout: 15
+extract:
+  max_content_length: 50000
+  strip_html: true
+  extract_links: false

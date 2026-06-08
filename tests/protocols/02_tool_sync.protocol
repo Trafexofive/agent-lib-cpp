@@ -1,0 +1,18 @@
+# Test 02: Single Sync Tool Call
+<thought>
+I need to list the current directory.
+</thought>
+<action type="tool" name="list" id="step_001" mode="sync">
+{"path": "."}
+</action>
+<thought>
+Got the directory listing. Let me present the results.
+</thought>
+<response final="true">
+The directory contains the following files: [results from list tool].
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, THOUGHT, RESPONSE
+actions:
+  - name: list
+complete: true

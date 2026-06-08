@@ -1,0 +1,23 @@
+kind: Feed
+name: system_clock
+version: "1.0"
+summary: "Current system time"
+description: |
+  Provides the current system time in ISO8601, human-readable, unix,
+  date-only, and time-only formats. Always available — compiled into
+  the binary as a built-in feed.
+category: core
+tags: [time, clock, datetime]
+output_schema:
+  type: object
+  properties:
+    iso8601:
+      type: string
+    human:
+      type: string
+    unix:
+      type: integer
+    date:
+      type: string
+    time:
+      type: string

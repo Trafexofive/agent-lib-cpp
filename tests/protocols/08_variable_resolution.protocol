@@ -1,0 +1,19 @@
+# Test 08: Variable Resolution
+<thought>
+I'll read the file then search within it.
+</thought>
+<action type="tool" name="fs_read" id="step_001" mode="sync">
+{"path": "README.md"}
+</action>
+<action type="tool" name="grep" id="step_002" mode="sync">
+{"pattern": "install", "path": "README.md"}
+</action>
+<response final="true">
+Found installation instructions in the README.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, ACTION, RESPONSE
+actions:
+  - name: fs_read
+  - name: grep
+complete: true

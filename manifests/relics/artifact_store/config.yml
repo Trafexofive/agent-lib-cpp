@@ -1,0 +1,13 @@
+# Module configuration
+runtime:
+  timeout: 30
+  max_retries: 1
+logging:
+  level: info
+limits:
+  max_artifact_size: 52428800
+  max_versions: 10
+storage:
+  db_path: /data/artifacts.db
+  file_path: /data/files
+  default_ttl: 0

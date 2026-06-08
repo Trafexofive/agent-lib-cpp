@@ -1,0 +1,12 @@
+# Module configuration
+runtime:
+  timeout: 10
+  max_retries: 1
+logging:
+  level: warning
+limits:
+  max_state_size: 5242880
+checkpoint:
+  dir: ${HOME}/.cortex/checkpoints
+  max_per_agent: 5
+  prune_age_days: 7

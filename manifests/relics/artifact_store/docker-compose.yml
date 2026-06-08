@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  artifact_store:
+    build: .
+    container_name: relic_artifact_store
+    ports:
+      - "8010:8010"
+    volumes:
+      - artifact_data:/data
+    environment:
+      - SQLITE_DB_PATH=/data/artifacts.db
+      - STORAGE_PATH=/data/files
+      - MAX_ARTIFACT_SIZE=52428800
+      - MAX_VERSIONS=10
+      - LOG_LEVEL=INFO
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  artifact_data:

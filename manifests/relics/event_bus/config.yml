@@ -1,0 +1,12 @@
+# Module configuration
+runtime:
+  timeout: 30
+  max_retries: 0
+logging:
+  level: info
+limits:
+  max_message_size: 65536
+  max_history: 1000
+bus:
+  poll_timeout_seconds: 30
+  default_channel_ttl: 0

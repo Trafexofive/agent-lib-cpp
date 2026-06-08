@@ -1,0 +1,13 @@
+# Test 10: Implicit Final Response
+# Validates: Plain text without <response> tag emits TEXT events
+# The parser emits TEXT for untagged content — cycle completion is the Agent loop's job.
+
+<thought>
+Simple question, simple answer.
+</thought>
+
+The answer is 42. There is no more to say.
+
+---EXPECTATIONS---
+events: THOUGHT, TEXT
+output_contains: "42"

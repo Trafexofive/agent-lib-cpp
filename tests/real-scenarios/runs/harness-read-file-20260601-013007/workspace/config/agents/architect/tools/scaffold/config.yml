@@ -1,0 +1,6 @@
+# Module configuration
+runtime:
+  timeout: 30
+scaffold:
+  templates_dir: templates
+  overwrite_existing: false

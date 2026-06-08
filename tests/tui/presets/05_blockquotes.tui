@@ -1,0 +1,21 @@
+# Preset 05: Blockquotes and horizontal rules
+<stream>
+> This is a blockquote
+> spanning multiple lines
+> with **bold** inside
+
+---
+
+After the horizontal rule.
+
+> Nested
+>> double quote
+</stream>
+
+---EXPECT---
+contains: This is a blockquote
+contains: spanning multiple lines
+contains: bold
+contains: After the horizontal rule
+contains: Nested
+contains: double quote

@@ -1,0 +1,7 @@
+# Module configuration
+runtime:
+  timeout: 30
+cache:
+  max_artifact_size: 104857600
+  hash_algorithm: sha256
+  prune_age_days: 7

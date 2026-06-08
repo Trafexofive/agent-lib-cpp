@@ -1,0 +1,36 @@
+kind: Tool
+name: fs_write
+version: "2.0"
+summary: "Write content to a file"
+description: |
+  Writes content to a file path. Creates parent directories if needed.
+  Supports overwrite and append modes.
+category: filesystem
+tags: [fs, write, file, io, create]
+input_schema:
+  type: object
+  required: [path, content]
+  properties:
+    path:
+      type: string
+      description: "File path to write"
+    content:
+      type: string
+      description: "Content to write"
+    append:
+      type: boolean
+      description: "Append instead of overwrite"
+      default: false
+output_schema:
+  type: object
+  properties:
+    success:
+      type: boolean
+    path:
+      type: string
+    bytes_written:
+      type: integer
+implementation:
+  type: script
+  runtime: python3
+  entrypoint: fs_write.py

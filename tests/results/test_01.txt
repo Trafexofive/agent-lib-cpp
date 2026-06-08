@@ -1,0 +1,41 @@
+TEST: test_01 -  Basic Thought + Response
+RESULT: PASS
+ITERATIONS: 2
+EVENTS: 2
+  [1] THOUGHT
+  [2] RESPONSE
+ACTIONS EXECUTED: 0
+
+=== INPUT XML ===
+<thought>
+The user asked a simple question. I should respond directly.
+</thought>
+<response final="true">
+The answer is 42.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

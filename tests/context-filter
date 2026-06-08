@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""
+context-filter — strip prompt-injection blocks from iterations.md.
+
+Usage:
+  context-filter iterations.md                     → strip wszystko, keep history+turns
+  context-filter iterations.md --only-agent         → show only <turn role="agent"> content
+  context-filter iterations.md --stats              → block size breakdown
+  context-filter iterations.md -o clean.md          → write to file
+
+iterations.md structure:
+  <harness><protocol>...</protocol></harness>          ← 12KB protocol injection
+  <system><persona>...</persona></system>              ← 11KB persona injection  
+  <system><tools>...</tools></system>                  ← tool list
+  <history>                                            ← actual conversation
+    <turn role="user">...</turn>                       ← user prompt
+    <turn role="agent">...</turn>                      ← RAW LLM output (may have bare text!)
+    <turn role="system"><result>...</result></turn>    ← tool results
+  </history>
+
+Key insight: <turn role="agent"> shows what the LLM ACTUALLY emitted (bare text possible).
+              raw.md shows what the PARSER produced (may wrap bare text in <response>).
+"""
+import sys, re, argparse
+
+
+def strip_block(text, tag):
+    """Remove <tag>...</tag> blocks."""
+    return re.sub(rf'<{tag}>.*?</{tag}>', '', text, flags=re.DOTALL)
+
+
+def strip_ascii_art(text):
+    """Collapse ASCII-art box-drawing blocks to a marker."""
+    lines = text.split('\n')
+    out = []
+    in_art = False
+    for line in lines:
+        art = sum(1 for c in line if c in '╔╗╚╝║═╠╣╦╩╬┌┐└┘├┤─│')
+        if art > 3 and '<' not in line:
+            if not in_art:
+                out.append('[art block stripped]')
+                in_art = True
+            continue
+        in_art = False
+        out.append(line)
+    return '\n'.join(out)
+
+
+def collapse_empty(text, max_blank=2):
+    """Collapse excessive blank lines."""
+    return re.sub(r'\n{' + str(max_blank+2) + r',}', '\n' * (max_blank+1), text)
+
+
+def extract_agent_turns(text):
+    """Extract only <turn role="agent"> content, with turn markers."""
+    blocks = re.findall(
+        r'(<turn role="agent">.*?</turn>)',
+        text, re.DOTALL
+    )
+    if not blocks:
+        return ''
+    result = []
+    for i, block in enumerate(blocks):
+        # Strip the wrapper tags, keep content
+        content = re.sub(r'</?turn[^>]*>', '', block).strip()
+        # Add turn marker
+        result.append(f'── Agent turn {i+1} ──')
+        result.append(content)
+        result.append('')
+    return '\n'.join(result)
+
+
+def extract_history(text):
+    """Extract <history> blocks, stripping everything else."""
+    blocks = re.findall(r'(<history>.*?</history>)', text, re.DOTALL)
+    if not blocks:
+        return text  # fallback: return everything stripped
+    return '\n\n'.join(blocks)
+
+
+def format_turns(text):
+    """Format <turn> blocks with clear role headers."""
+    text = re.sub(
+        r'<turn role="user">',
+        '\n── USER ──\n',
+        text
+    )
+    text = re.sub(
+        r'<turn role="agent">',
+        '\n── AGENT (raw LLM output) ──\n',
+        text
+    )
+    text = re.sub(
+        r'<turn role="system">',
+        '\n── SYSTEM (results) ──\n',
+        text
+    )
+    text = re.sub(r'</turn>', '\n', text)
+    text = re.sub(r'</?history>', '', text)
+    return text
+
+
+def show_stats(text):
+    """Show injection overhead."""
+    total = len(text)
+    harness = sum(len(m) for m in re.findall(r'<harness>.*?</harness>', text, re.DOTALL))
+    system = sum(len(m) for m in re.findall(r'<system>.*?</system>', text, re.DOTALL))
+    history = sum(len(m) for m in re.findall(r'<history>.*?</history>', text, re.DOTALL))
+    agent = sum(len(m) for m in re.findall(r'<turn role="agent">.*?</turn>', text, re.DOTALL))
+    
+    print(f"total:      {total:>8} chars")
+    print(f"harness:    {harness:>8} chars ({harness*100//max(total,1)}%)")
+    print(f"system:     {system:>8} chars ({system*100//max(total,1)}%)")
+    print(f"history:    {history:>8} chars ({history*100//max(total,1)}%)")
+    print(f"  agent:    {agent:>8} chars ({agent*100//max(total,1)}%)")
+    print(f"overhead:   {harness+system:>8} chars ({(harness+system)*100//max(total,1)}%)")
+    print(f"conversation: {total-harness-system:>8} chars ({(total-harness-system)*100//max(total,1)}%)")
+    
+    # Check for bare text in agent turns
+    agent_blocks = re.findall(r'<turn role="agent">(.*?)</turn>', text, re.DOTALL)
+    bare_count = 0
+    tagged_count = 0
+    for block in agent_blocks:
+        content = block.strip()
+        if content and not content.startswith('<'):
+            bare_count += 1
+        elif content.startswith('<'):
+            tagged_count += 1
+    print(f"\nagent turns: {len(agent_blocks)}")
+    print(f"  start tagged: {tagged_count}")
+    print(f"  start bare:   {bare_count}")
+
+
+def filter_file(path, only_agent=False, stats=False):
+    with open(path) as f:
+        text = f.read()
+    
+    if stats:
+        show_stats(text)
+        return ''
+    
+    # Strip injection blocks
+    text = strip_block(text, 'harness')
+    text = strip_block(text, 'persona')
+    text = strip_block(text, 'tools')
+    text = strip_block(text, 'config')
+    
+    # Strip system blocks (contains persona/tools/config wrappers)
+    # But only if they don't contain history or turn data
+    text = re.sub(
+        r'<system>(?:(?!<turn|<history).)*?</system>',
+        '',
+        text,
+        flags=re.DOTALL
+    )
+    
+    # Strip ASCII art
+    text = strip_ascii_art(text)
+    
+    if only_agent:
+        text = extract_agent_turns(text)
+    else:
+        # Extract history blocks and format turns
+        history = extract_history(text)
+        if history.strip():
+            text = format_turns(history)
+        else:
+            # Fallback: format turns inline
+            text = format_turns(text)
+    
+    # Clean up
+    text = re.sub(r'\[system\].*?\n', '', text)
+    text = collapse_empty(text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip() + '\n'
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Strip prompt injection from iterations.md/raw.md'
+    )
+    parser.add_argument('file', help='Path to iterations.md or raw.md')
+    parser.add_argument('--only-agent', action='store_true', 
+                        help='Show only <turn role="agent"> content')
+    parser.add_argument('--stats', action='store_true', 
+                        help='Show injection overhead statistics')
+    parser.add_argument('-o', '--output', help='Write to file')
+    args = parser.parse_args()
+    
+    result = filter_file(args.file, args.only_agent, args.stats)
+    
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(result)
+        print(f"Wrote {len(result)} chars to {args.output}", file=sys.stderr)
+    elif result:
+        print(result)
+
+
+if __name__ == '__main__':
+    main()

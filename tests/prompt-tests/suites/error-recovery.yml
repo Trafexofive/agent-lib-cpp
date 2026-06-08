@@ -1,0 +1,17 @@
+# Harness suite: error-recovery
+# Tests: tool errors, retry, fallback, edge cases
+name: error-recovery
+prompt_file: tests/prompt-tests/harness-prompts/error-recovery.md
+model: deepseek-v4-pro
+provider: deepseek
+inputs:
+  - id: file_not_found
+    prompt: "Read the file at /nonexistent/path/ghost.txt and handle the error gracefully."
+  - id: bad_command
+    prompt: "Run the command 'invalid_command_xyz --flag' and report what happened."
+  - id: retry_pattern
+    prompt: "Try to read /etc/shadow. If it fails, try /etc/hostname instead. Report whichever works."
+  - id: empty_params
+    prompt: "Call the 'list' tool with no parameters."
+  - id: timeout
+    prompt: "Run 'sleep 10' with a 2-second timeout and report the result."

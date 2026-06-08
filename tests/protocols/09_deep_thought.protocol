@@ -1,0 +1,21 @@
+# Test 09: Deep Multi-Step Thought
+<thought>
+The user wants to optimize the build system. Let me think about what's needed.
+</thought>
+<thought>
+First, I should check the current build configuration.
+Then I should analyze the build times.
+Finally, I should propose optimizations.
+</thought>
+<action type="tool" name="fs_read" id="step_001" mode="sync">
+{"path": "Makefile"}
+</action>
+<thought>
+The Makefile uses single-threaded compilation. This is the main bottleneck.
+</thought>
+<response final="true">
+The Makefile should use -j$(nproc) for parallel compilation.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, THOUGHT, ACTION, THOUGHT, RESPONSE
+complete: true

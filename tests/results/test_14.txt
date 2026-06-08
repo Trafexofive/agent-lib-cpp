@@ -1,0 +1,76 @@
+TEST: test_14 -  Secret Store Relic
+RESULT: PASS
+ITERATIONS: 3
+EVENTS: 10
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(secret_store)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] ACTION_START
+  [7] ACTION(web_fetch)
+  [8] ACTION_RESULT
+  [9] ACTION_RESULT
+  [10] RESPONSE
+ACTIONS EXECUTED: 2
+  - secret_store
+  - web_fetch
+
+=== INPUT XML ===
+<thought>
+I need to retrieve the API key for the external service.
+</thought>
+<action type="relic" name="secret_store" id="sec_001" mode="sync">
+{"endpoint": "get", "namespace": "production", "key": "external_api_key"}
+</action>
+<thought>
+Got the API key. I will use it but NOT echo it.
+</thought>
+<action type="tool" name="web_fetch" id="fetch_001" mode="sync">
+{"url": "https://api.example.com/status", "method": "GET"}
+</action>
+<response final="true">
+The external API is responding normally.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(secret_store)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(web_fetch)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

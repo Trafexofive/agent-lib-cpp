@@ -1,0 +1,50 @@
+kind: Tool
+name: test_run
+version: "2.0"
+summary: "Run tests and capture structured results"
+description: |
+  Detects and runs the project's test suite. Supports Makefile, CMake,
+  cargo test, go test, npm test, pytest, and generic command runners.
+  Returns structured pass/fail information with failure details.
+category: testing
+tags: [test, run, execute, validate, suite]
+input_schema:
+  type: object
+  properties:
+    command:
+      type: string
+      description: "Custom test command (auto-detected if omitted)"
+    filter:
+      type: string
+      description: "Test name filter (e.g., 'test_parser' or 'TestMain.*')"
+    verbose:
+      type: boolean
+      description: "Enable verbose output"
+      default: true
+    working_dir:
+      type: string
+      description: "Working directory for test execution"
+output_schema:
+  type: object
+  properties:
+    framework: { type: string }
+    total: { type: integer }
+    passed: { type: integer }
+    failed: { type: integer }
+    output: { type: string }
+    failures: { type: array }
+examples:
+  - description: "Run all tests (auto-detect)"
+    params:
+      verbose: true
+  - description: "Run specific test with filter"
+    params:
+      filter: "test_parser"
+      command: "./runtime-test"
+
+implementation:
+  type: script
+  entrypoint: test_run.py
+  runtime: python3
+
+timeout: 120

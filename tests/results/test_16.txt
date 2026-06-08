@@ -1,0 +1,76 @@
+TEST: test_16 -  Context Pin and Peek
+RESULT: PASS
+ITERATIONS: 3
+EVENTS: 10
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(context_pin)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] ACTION_START
+  [7] ACTION(context_peek)
+  [8] ACTION_RESULT
+  [9] ACTION_RESULT
+  [10] RESPONSE
+ACTIONS EXECUTED: 2
+  - context_pin
+  - context_peek
+
+=== INPUT XML ===
+<thought>
+I'll pin the project config and peek at the build output.
+</thought>
+<action type="tool" name="context_pin" id="pin_001" mode="sync">
+{"path": "config/agents/assistant/agent.yml"}
+</action>
+<action type="tool" name="context_peek" id="peek_001" mode="sync">
+{"path": "build/output.log", "cycles": 1}
+</action>
+<thought>
+Configuration pinned, build output peeked.
+</thought>
+<response final="true">
+Pinned the assistant config and peeked at the build output.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(context_pin)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(context_peek)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

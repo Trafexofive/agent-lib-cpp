@@ -1,0 +1,28 @@
+kind: Tool
+name: diff_analyze
+version: "1.0"
+summary: "Compare two plan versions — detect added, removed, modified, and reordered sub-tasks"
+
+runtime: python3
+entrypoint: ./src/main.py
+
+input_schema:
+  type: object
+  required: [plan_a, plan_b]
+  properties:
+    plan_a:
+      type: array
+      description: "First plan version"
+    plan_b:
+      type: array
+      description: "Second plan version"
+
+output_schema:
+  type: object
+  properties:
+    success: { type: boolean }
+    added: { type: array }
+    removed: { type: array }
+    modified: { type: array }
+    reordered: { type: boolean }
+    summary: { type: string }

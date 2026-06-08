@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  secret_store:
+    build: .
+    container_name: relic_secret_store
+    ports:
+      - "8011:8011"
+    volumes:
+      - secret_data:/data
+    environment:
+      - SQLITE_DB_PATH=/data/secrets.db
+      - LOG_LEVEL=WARNING
+    secrets:
+      - master_key
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8011/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  secret_data:
+
+secrets:
+  master_key:
+    file: ./master_key

@@ -1,0 +1,41 @@
+kind: Tool
+name: build_run
+version: "1.0"
+summary: "Build a project and run its tests"
+description: |
+  Detects the project type (Makefile, cargo, go, npm) and runs the
+  appropriate build + test commands. Returns build output, test results,
+  and exit codes in structured JSON. Knows to clean first if requested.
+category: development
+tags: [build, compile, test, make, cargo, npm]
+input_schema:
+  type: object
+  properties:
+    path:
+      type: string
+      description: "Project directory"
+      default: "."
+    clean:
+      type: boolean
+      description: "Clean before building (rm -rf build, cargo clean, etc.)"
+      default: false
+    target:
+      type: string
+      description: "Specific make target or test filter"
+output_schema:
+  type: object
+  properties:
+    project_type:
+      type: string
+    build_exit_code:
+      type: integer
+    build_output:
+      type: string
+    test_exit_code:
+      type: integer
+    test_output:
+      type: string
+implementation:
+  type: script
+  runtime: python3
+  entrypoint: build_run.py

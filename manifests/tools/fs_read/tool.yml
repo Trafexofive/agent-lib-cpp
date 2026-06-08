@@ -1,0 +1,61 @@
+kind: Tool
+name: fs_read
+version: "2.0"
+summary: "Read file contents"
+description: |
+  Read a file's content from the filesystem. Returns the full file text.
+  
+  **Rules:**
+  - Returns file content as a string. Large files are truncated at ~32KB.
+  - Binary files return a hex preview, not raw bytes.
+  - Missing files return an error — check the result before proceeding.
+  - Paths are relative to the agent's working directory unless absolute.
+
+  **DO:**
+  - Use to read source code, config files, READMEs, logs
+  - Chain: `list` to find a file, then `fs_read` to read it
+  - Check for errors: if the result has `error`, the file wasn't found
+
+  **DON'T:**
+  - Use for directory listing (use `list` instead)
+  - Use for searching file contents (use `grep` instead)
+  - Read very large files (>100KB) — they'll be truncated
+category: filesystem
+tags: [read, file, cat]
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "File path to read (relative or absolute)"
+    offset:
+      type: integer
+      description: "Line number to start reading from (1-indexed)"
+    limit:
+      type: integer
+      description: "Maximum lines to return"
+output_schema:
+  type: object
+  properties:
+    content:
+      type: string
+      description: "File contents as string"
+    size:
+      type: integer
+      description: "File size in bytes"
+    truncated:
+      type: boolean
+      description: "True if content was truncated"
+examples:
+  - description: "Read README"
+    params:
+      path: "README.md"
+  - description: "Read Makefile starting from line 10"
+    params:
+      path: "Makefile"
+      offset: 10
+  - description: "Read first 50 lines of a log"
+    params:
+      path: "/var/log/syslog"
+      limit: 50

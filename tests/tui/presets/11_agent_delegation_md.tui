@@ -1,0 +1,27 @@
+# Preset 11: Agent delegation with markdown
+<stream>
+<action type="agent" name="code-reviewer" id="cr1" mode="sync">{"file":"src/core/agent.cpp"}</action>
+<result id="cr1" status="ok">{"issues":3,"summary":"found 3 issues: use after free at line 156, missing null check at line 203, race condition at line 340"}</result>
+<response final="true">
+## Code Review — `agent.cpp`
+
+The reviewer found **3 issues**:
+
+1. ~~Use-after-free~~ **Fixed** — line 156
+2. *Missing null check* — line 203
+3. `race condition` — line 340
+
+> Priority: fix #2 and #3 before deploying.
+
+Pull request: https://github.com/user/repo/pull/42
+</response>
+</stream>
+
+---EXPECT---
+contains: Code Review (h2)
+contains: agent.cpp (inline)
+contains: strikethrough + bold (Fixed)
+contains: italic (Missing null check)
+contains: blockquote
+contains: link URL
+renders_action: → code-reviewer (agent icon)

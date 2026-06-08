@@ -1,0 +1,19 @@
+# Preset 03: Code blocks with language
+<stream>
+Here's some Python:
+
+```python
+def hello():
+    print("hello world")
+    return 42
+```
+
+And some inline `os.path.join()` usage.
+</stream>
+
+---EXPECT---
+contains: def hello()
+contains: print("hello world")
+contains: return 42
+contains: python
+contains: os.path.join()

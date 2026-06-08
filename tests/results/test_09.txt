@@ -1,0 +1,65 @@
+TEST: test_09 -  Deep Multi-Step Thought
+RESULT: PASS
+ITERATIONS: 4
+EVENTS: 6
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(fs_read)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] RESPONSE
+ACTIONS EXECUTED: 1
+  - fs_read
+
+=== INPUT XML ===
+<thought>
+The user wants to optimize the build system. Let me think about what's needed.
+</thought>
+<thought>
+First, I should check the current build configuration.
+Then I should analyze the build times.
+Finally, I should propose optimizations.
+</thought>
+<action type="tool" name="fs_read" id="step_001" mode="sync">
+{"path": "Makefile"}
+</action>
+<thought>
+The Makefile uses single-threaded compilation. This is the main bottleneck.
+</thought>
+<response final="true">
+The Makefile should use -j$(nproc) for parallel compilation.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(fs_read)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

@@ -1,0 +1,57 @@
+TEST: test_18 -  File Watcher
+RESULT: PASS
+ITERATIONS: 2
+EVENTS: 6
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(file_watcher)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] RESPONSE
+ACTIONS EXECUTED: 1
+  - file_watcher
+
+=== INPUT XML ===
+<thought>
+I need to watch the source directory for changes.
+</thought>
+<action type="relic" name="file_watcher" id="fw_001" mode="sync">
+{"endpoint": "watch", "namespace": "dev", "path": "src/", "recursive": true, "events": ["modify", "create"], "exclude": "*.o"}
+</action>
+<response final="true">
+File watcher set up on src/ directory.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(file_watcher)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

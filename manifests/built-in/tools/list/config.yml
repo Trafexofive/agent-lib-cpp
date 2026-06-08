@@ -1,0 +1,12 @@
+# Module configuration
+runtime:
+  timeout: 15
+  max_retries: 0
+logging:
+  level: info
+limits:
+  max_output_size: 8192
+listing:
+  default_recursive: false
+  max_depth: 5
+  max_results: 200

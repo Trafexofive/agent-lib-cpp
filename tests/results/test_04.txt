@@ -1,0 +1,76 @@
+TEST: test_04 -  Nested Action Inside Thought
+RESULT: PASS
+ITERATIONS: 3
+EVENTS: 10
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION_START
+  [4] ACTION(system_clock)
+  [5] ACTION_RESULT
+  [6] ACTION_RESULT
+  [7] ACTION(list)
+  [8] ACTION_RESULT
+  [9] ACTION_RESULT
+  [10] RESPONSE
+ACTIONS EXECUTED: 2
+  - system_clock
+  - list
+
+=== INPUT XML ===
+<thought>
+I need to check the system time and current directory.
+<action type="tool" name="system_clock" id="s1" mode="async">
+{}
+</action>
+<action type="tool" name="list" id="s2" mode="async">
+{"path": "."}
+</action>
+</thought>
+<thought>
+Both results are back. Current time and directory contents received.
+</thought>
+<response final="true">
+It is currently [time] and the directory contains [files].
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(system_clock)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION(list)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

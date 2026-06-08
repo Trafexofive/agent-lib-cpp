@@ -1,0 +1,6 @@
+# Module configuration
+runtime:
+  timeout: 30
+diff:
+  max_diff_lines: 500
+  context_lines: 3

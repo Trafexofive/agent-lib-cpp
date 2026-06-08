@@ -1,0 +1,48 @@
+# Preset 12: Full markdown — every element
+<stream>
+<response final="true">
+# Project Status
+
+## Summary
+
+Everything is **working** but there are *caveats*.
+
+### File Tree
+
+- `src/core/` — ~~broken~~ **fixed** in v2.1
+- `src/tools/` — needs `make clean`
+- `README.md` — up to date
+
+### Key Metrics
+
+| Metric | Value | Status |
+|--------|-------|--------|
+| Builds | 42 | ✅ |
+| Tests | 156 | ✅ |
+| Coverage | 87% | ⚠ |
+| TODOs | 3 | 🔴 |
+
+### Notes
+
+> Important: run `make test` before committing.
+> This catches 90% of regressions.
+
+Build command: `make -j8 cortex-mk3` then `./cortex-mk3 --version`.
+
+Links: [docs](https://example.com/docs) | [issues](https://example.com/issues)
+
+**bold** *italic* `code` ~~strikethrough~~ __also bold__ _also italic_
+</response>
+</stream>
+
+---EXPECT---
+contains: Project Status (h1)
+contains: Summary (h2)
+contains: File Tree (h3)
+contains: bold working
+contains: italic caveats
+contains: strikethrough broken
+contains: inline code
+contains: table with Metric/Value/Status
+contains: blockquote
+contains: link text

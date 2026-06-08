@@ -1,0 +1,35 @@
+# Cortex MK3 — Harness Test Sandbox (Podman)
+# Build:  podman build -t cortex-mk3-harness -f tests/sandbox/Containerfile .
+# Run:    podman run --rm --network none cortex-mk3-harness
+
+# ── Stage 1: Build ──
+FROM docker.io/ubuntu:24.04 AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    g++ make libcurl4-openssl-dev libjsoncpp-dev libreadline-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY . .
+RUN make clean 2>/dev/null; make cortex-mk3 -j$(nproc)
+
+# ── Stage 2: Runtime + Tests ──
+FROM docker.io/ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcurl4 libjsoncpp25 libreadline8 ca-certificates grep coreutils findutils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -ms /bin/bash agent && mkdir -p /workspace /opt/cortex/harness && chown -R agent:agent /workspace /opt/cortex
+
+COPY --from=builder /build/cortex-mk3 /usr/local/bin/cortex-mk3
+COPY config/harness/default.md /opt/cortex/harness/default.md
+COPY tests/sandbox/entrypoint.sh /usr/local/bin/run-harness-tests
+COPY manifests/ /opt/cortex/manifests/
+
+RUN chmod +x /usr/local/bin/run-harness-tests
+
+USER agent
+WORKDIR /workspace
+
+ENTRYPOINT ["/usr/local/bin/run-harness-tests"]

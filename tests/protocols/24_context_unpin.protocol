@@ -1,0 +1,15 @@
+# Test 24: Context Unpin
+<thought>
+I no longer need the pinned config file. Let me unpin it.
+</thought>
+<action type="tool" name="context_unpin" id="unpin_001" mode="sync">
+{"path": "config/agents/assistant/agent.yml"}
+</action>
+<response final="true">
+Config file unpinned from context. It will no longer appear in future iterations.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, RESPONSE
+actions:
+  - name: context_unpin
+complete: true

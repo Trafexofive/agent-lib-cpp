@@ -1,0 +1,16 @@
+# Preset 04: Tables
+<stream>
+| Col A | Col B | Col C |
+|-------|-------|-------|
+| a1    | b1    | c1    |
+| a2    | b2    | c2    |
+| long  | content here | short |
+</stream>
+
+---EXPECT---
+contains: Col A
+contains: Col B
+contains: Col C
+contains: a1
+contains: b2
+contains: content here

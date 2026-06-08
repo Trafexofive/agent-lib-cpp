@@ -1,0 +1,30 @@
+kind: Tool
+name: context_unpin
+version: "1.0"
+summary: "Remove a pinned file from agent context"
+category: context
+tags: [context, unpin, release, memory]
+
+description: |
+  Removes a previously pinned file from the agent's persistent context.
+  The file content will no longer appear in future iterations.
+
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "File path to unpin"
+
+output_schema:
+  type: object
+  properties:
+    success: { type: boolean }
+    path: { type: string }
+    message: { type: string }
+
+examples:
+  - description: "Unpin a config file no longer needed"
+    params:
+      path: "config/agents/assistant/agent.yml"

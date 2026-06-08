@@ -1,0 +1,22 @@
+# Test 07: Tool Error and Recovery
+<thought>
+Let me read the config file.
+</thought>
+<action type="tool" name="fs_read" id="step_001" mode="sync">
+{"path": "/nonexistent/file.txt"}
+</action>
+<thought>
+The file wasn't found. Let me try a different path.
+</thought>
+<action type="tool" name="fs_read" id="step_002" mode="sync">
+{"path": "config/defaults.txt"}
+</action>
+<response final="true">
+Found the defaults config file after the initial path failed.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, THOUGHT, ACTION, RESPONSE
+actions:
+  - name: fs_read
+  - name: fs_read
+complete: true

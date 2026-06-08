@@ -1,0 +1,9 @@
+# Test 11: Empty Thought Block
+<thought>
+</thought>
+<response final="true">
+I don't need to think about this. The answer is obvious.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, RESPONSE
+complete: true

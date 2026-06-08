@@ -1,0 +1,19 @@
+# Test 05: Agent Delegation
+<thought>
+This is a code implementation task. I should delegate to the builder.
+</thought>
+<action type="agent" name="builder" id="build_001" mode="sync">
+{"instruction": "Implement a CSV parser module with header validation"}
+</action>
+<thought>
+The builder completed the implementation.
+</thought>
+<response final="true">
+The CSV parser module has been implemented with header validation.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, THOUGHT, RESPONSE
+actions:
+  - name: builder
+    type: agent
+complete: true

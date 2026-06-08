@@ -1,0 +1,102 @@
+# ==============================================================================
+# RELIC MANIFEST — Artifact Store
+# ==============================================================================
+kind: Relic
+version: "1.0"
+name: "artifact_store"
+summary: "Persistent artifact storage with versioning, metadata, and search"
+author: "CORTEX_STD_LIB"
+state: "stable"
+mode: managed
+
+description: |
+  Stores files and data artifacts produced by agents.
+  - Versioned storage (each key can have multiple versions)
+  - Metadata tagging and search
+  - Namespace isolation
+  - Content type detection
+  - Automatic version pruning
+
+service_type: "storage"
+
+interface:
+  type: "rest_api"
+  base_url: "${ARTIFACT_STORE_URL:-http://localhost:8010}"
+
+endpoints:
+  - name: "put"
+    method: "POST"
+    path: "/artifacts/{namespace}/{key}"
+    description: "Store an artifact (creates new version if key exists)"
+    parameters:
+      namespace: { type: "string", required: true }
+      key: { type: "string", required: true }
+      content: { type: "object", required: true }
+      content_type: { type: "string", required: false }
+      tags: { type: "array", required: false }
+
+  - name: "get"
+    method: "GET"
+    path: "/artifacts/{namespace}/{key}"
+    description: "Retrieve artifact by key (latest or specific version)"
+    parameters:
+      namespace: { type: "string", required: true }
+      key: { type: "string", required: true }
+      version: { type: "integer", required: false }
+
+  - name: "list"
+    method: "GET"
+    path: "/artifacts/{namespace}"
+    description: "List artifacts in a namespace"
+    parameters:
+      namespace: { type: "string", required: true }
+      prefix: { type: "string", required: false }
+      tag: { type: "string", required: false }
+      limit: { type: "integer", required: false }
+
+  - name: "delete"
+    method: "DELETE"
+    path: "/artifacts/{namespace}/{key}"
+    description: "Delete artifact(s)"
+    parameters:
+      namespace: { type: "string", required: true }
+      key: { type: "string", required: true }
+      version: { type: "integer", required: false }
+
+  - name: "search"
+    method: "POST"
+    path: "/search"
+    description: "Search artifacts by content, tags, or metadata"
+    parameters:
+      query: { type: "string", required: true }
+      namespace: { type: "string", required: false }
+      content_type: { type: "string", required: false }
+      tags: { type: "array", required: false }
+
+  - name: "stats"
+    method: "GET"
+    path: "/stats"
+    description: "Storage statistics"
+    parameters: {}
+
+health_check:
+  type: "api_request"
+  endpoint: "/health"
+  method: "GET"
+  expected_status: 200
+
+deployment:
+  type: "docker"
+  docker_compose_file: "./docker-compose.yml"
+
+environment:
+  variables:
+    SQLITE_DB_PATH: "/data/artifacts.db"
+    STORAGE_PATH: "/data/files"
+    MAX_ARTIFACT_SIZE: "52428800"
+    MAX_VERSIONS: "10"
+
+tags:
+  - storage
+  - artifacts
+  - std

@@ -1,0 +1,12 @@
+# Module configuration
+runtime:
+  timeout: 10
+  max_retries: 1
+logging:
+  level: warning
+limits:
+  max_record_size: 65536
+journal:
+  db_path: ${HOME}/.cortex/sessions/journal.db
+  max_records_per_session: 1000
+  prune_age_days: 30

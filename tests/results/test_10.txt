@@ -1,0 +1,37 @@
+TEST: test_10 -  Implicit Final Response
+RESULT: PASS
+ITERATIONS: 1
+EVENTS: 1
+  [1] THOUGHT
+ACTIONS EXECUTED: 0
+
+=== INPUT XML ===
+<thought>
+Simple question, simple answer.
+</thought>
+The answer is 42. There is no more to say.
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+</history>
+
+<user_input>
+Continue test
+</user_input>

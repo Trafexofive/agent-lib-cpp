@@ -1,0 +1,15 @@
+# Test 12: Complex JSON Parameters
+<thought>
+I need to write a complex configuration file.
+</thought>
+<action type="tool" name="fs_write" id="step_001" mode="sync">
+{"path": "config/app.json", "content": {"database": {"host": "localhost", "port": 5432, "pools": [10, 20, 30]}, "features": {"auth": true, "cache": false}}, "append": false}
+</action>
+<response final="true">
+Configuration file written with nested database and feature settings.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, RESPONSE
+actions:
+  - name: fs_write
+complete: true

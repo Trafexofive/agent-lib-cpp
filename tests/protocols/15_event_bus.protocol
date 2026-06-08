@@ -1,0 +1,15 @@
+# Test 15: Event Bus Pub/Sub
+<thought>
+I need to publish a build completion event.
+</thought>
+<action type="relic" name="event_bus" id="pub_001" mode="sync">
+{"endpoint": "publish", "namespace": "build_system", "channel": "build_events", "message": {"event": "build_complete", "artifact": "cortex-runner", "status": "success"}}
+</action>
+<response final="true">
+Build completion event published.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, RESPONSE
+actions:
+  - name: event_bus
+complete: true

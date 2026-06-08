@@ -1,0 +1,31 @@
+kind: Agent
+name: sandbox-assistant
+version: '1.0'
+summary: "Sandboxed assistant — runs in Docker, isolated from host"
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-chat
+    parameters:
+      temperature: 0.7
+      max_tokens: 4096
+persona:
+  agent: ./system-prompts/assistant.md
+import:
+  tools:
+    - exec
+    - list
+    - grep
+    - fs_read
+    - fs_write
+    - json
+    - web_fetch
+    - context_pin
+    - context_peek
+    - context_unpin
+  files:
+    - README.md
+sandbox:
+  mode: process
+  runtime: docker
+  image: "ubuntu:24.04"

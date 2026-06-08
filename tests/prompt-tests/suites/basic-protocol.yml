@@ -1,0 +1,13 @@
+# Harness suite: basic-protocol
+# Tests: core XML protocol compliance — think → act → respond
+name: basic-protocol
+prompt_file: tests/prompt-tests/harness-prompts/basic-protocol.md
+model: deepseek-v4-pro
+provider: deepseek
+inputs:
+  - id: identity
+    prompt: "Who are you and what protocol do you speak?"
+  - id: simple_act
+    prompt: "List the files in the current directory."
+  - id: think_then_respond
+    prompt: "What is 2+2? Think about it first, then answer."

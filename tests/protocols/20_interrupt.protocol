@@ -1,0 +1,13 @@
+# Test 20: Interrupt Mid-Stream
+<thought>
+I'm going to run a long operation.
+</thought>
+<action type="tool" name="exec" id="step_001" mode="sync">
+{"command": "sleep 60", "timeout": 5}
+</action>
+<response final="true">
+The operation timed out. Trying a different approach.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, RESPONSE
+complete: true

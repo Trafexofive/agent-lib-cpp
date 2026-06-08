@@ -1,0 +1,16 @@
+# Test 06: Relic Call
+<thought>
+I need to store this artifact for later use.
+</thought>
+<action type="relic" name="artifact_store" id="store_001" mode="sync">
+{"endpoint": "put", "namespace": "session_1", "key": "output.log", "content": "Build succeeded"}
+</action>
+<response final="true">
+Artifact stored successfully.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, RESPONSE
+actions:
+  - name: artifact_store
+    type: relic
+complete: true

@@ -1,0 +1,22 @@
+# Test 03: Sequential Tool Chain
+<thought>
+I need to read a file and then search it for a pattern.
+</thought>
+<action type="tool" name="fs_read" id="step_001" mode="sync">
+{"path": "src/main.cpp"}
+</action>
+<thought>
+File loaded. Now searching for the pattern.
+</thought>
+<action type="tool" name="grep" id="step_002" mode="sync">
+{"pattern": "TODO", "path": "src/main.cpp"}
+</action>
+<response final="true">
+Found 3 TODO items in main.cpp.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, THOUGHT, ACTION, RESPONSE
+actions:
+  - name: fs_read
+  - name: grep
+complete: true

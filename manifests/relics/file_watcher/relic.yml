@@ -1,0 +1,94 @@
+# ==============================================================================
+# RELIC MANIFEST — File Watcher
+# ==============================================================================
+kind: Relic
+version: "1.0"
+name: "file_watcher"
+summary: "Monitor file changes and emit events to subscribed agents"
+author: "CORTEX_STD_LIB"
+state: "stable"
+mode: managed
+
+description: |
+  Watches filesystem paths for changes and notifies subscribers.
+  - Watch directories or specific files
+  - Event types: create, modify, delete, move
+  - Glob patterns for inclusion/exclusion
+  - Namespace-scoped watches
+  - Debounce/throttle for rapid changes (e.g. build outputs)
+  - Event history for late-joining subscribers
+
+service_type: "monitoring"
+
+interface:
+  type: "rest_api"
+  base_url: "${FILE_WATCHER_URL:-http://localhost:8014}"
+
+endpoints:
+  - name: "watch"
+    method: "POST"
+    path: "/watches/{namespace}"
+    description: "Register a file/directory watch"
+    parameters:
+      namespace: { type: "string", required: true }
+      path: { type: "string", required: true, description: "Path to watch" }
+      recursive: { type: "boolean", required: false, description: "Watch subdirectories (default true)" }
+      events: { type: "array", required: false, description: "Event types to watch: create, modify, delete, move" }
+      include: { type: "string", required: false, description: "Glob pattern to include" }
+      exclude: { type: "string", required: false, description: "Glob pattern to exclude" }
+      debounce_ms: { type: "integer", required: false, description: "Debounce window (default 500ms)" }
+
+  - name: "unwatch"
+    method: "DELETE"
+    path: "/watches/{namespace}/{watch_id}"
+    description: "Remove a watch"
+    parameters:
+      namespace: { type: "string", required: true }
+      watch_id: { type: "string", required: true }
+
+  - name: "list_watches"
+    method: "GET"
+    path: "/watches/{namespace}"
+    description: "List active watches in a namespace"
+    parameters:
+      namespace: { type: "string", required: true }
+
+  - name: "poll"
+    method: "GET"
+    path: "/events/{namespace}"
+    description: "Poll for file change events since last poll"
+    parameters:
+      namespace: { type: "string", required: true }
+      after: { type: "integer", required: false, description: "Event sequence ID to resume from" }
+      limit: { type: "integer", required: false }
+
+  - name: "history"
+    method: "GET"
+    path: "/events/{namespace}/history"
+    description: "Get event history for a namespace"
+    parameters:
+      namespace: { type: "string", required: true }
+      limit: { type: "integer", required: false }
+      watch_id: { type: "string", required: false }
+
+health_check:
+  type: "api_request"
+  endpoint: "/health"
+  method: "GET"
+  expected_status: 200
+
+deployment:
+  type: "docker"
+  docker_compose_file: "./docker-compose.yml"
+
+environment:
+  variables:
+    SQLITE_DB_PATH: "/data/watcher.db"
+    MAX_EVENTS: "5000"
+    DEFAULT_DEBOUNCE_MS: "500"
+    LOG_LEVEL: "INFO"
+
+tags:
+  - monitoring
+  - filesystem
+  - std

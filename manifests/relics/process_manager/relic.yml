@@ -1,0 +1,104 @@
+# ==============================================================================
+# RELIC MANIFEST — Process Manager
+# ==============================================================================
+kind: Relic
+version: "1.0"
+name: "process_manager"
+summary: "Track and manage long-running subprocesses across agents"
+author: "CORTEX_STD_LIB"
+state: "stable"
+mode: managed
+
+description: |
+  Tracks long-running subprocesses spawned by agents.
+  - Register processes with metadata (who spawned it, why, working dir)
+  - Stream stdout/stderr logs
+  - Status polling (running, exited, killed)
+  - Kill/restart by ID
+  - Namespace isolation — agents only control their own processes
+
+service_type: "runtime"
+
+interface:
+  type: "rest_api"
+  base_url: "${PROCESS_MANAGER_URL:-http://localhost:8013}"
+
+endpoints:
+  - name: "register"
+    method: "POST"
+    path: "/processes/{namespace}"
+    description: "Register a running process (PID) for tracking"
+    parameters:
+      namespace: { type: "string", required: true }
+      pid: { type: "integer", required: true }
+      label: { type: "string", required: false, description: "Human-readable label" }
+      working_dir: { type: "string", required: false }
+      metadata: { type: "object", required: false }
+
+  - name: "spawn"
+    method: "POST"
+    path: "/processes/{namespace}/spawn"
+    description: "Spawn a new process and track it"
+    parameters:
+      namespace: { type: "string", required: true }
+      command: { type: "string", required: true }
+      working_dir: { type: "string", required: false }
+      env: { type: "object", required: false }
+      label: { type: "string", required: false }
+
+  - name: "list"
+    method: "GET"
+    path: "/processes/{namespace}"
+    description: "List tracked processes in a namespace"
+    parameters:
+      namespace: { type: "string", required: true }
+      status: { type: "string", required: false, description: "Filter: running, exited, killed" }
+
+  - name: "status"
+    method: "GET"
+    path: "/processes/{namespace}/{process_id}"
+    description: "Get process status, exit code, resource usage"
+    parameters:
+      namespace: { type: "string", required: true }
+      process_id: { type: "string", required: true }
+
+  - name: "logs"
+    method: "GET"
+    path: "/processes/{namespace}/{process_id}/logs"
+    description: "Get stdout/stderr logs for a process"
+    parameters:
+      namespace: { type: "string", required: true }
+      process_id: { type: "string", required: true }
+      stream: { type: "string", required: false, description: "stdout, stderr, or both" }
+      tail: { type: "integer", required: false, description: "Last N lines" }
+
+  - name: "kill"
+    method: "DELETE"
+    path: "/processes/{namespace}/{process_id}"
+    description: "Kill a tracked process"
+    parameters:
+      namespace: { type: "string", required: true }
+      process_id: { type: "string", required: true }
+      signal: { type: "string", required: false, description: "SIGTERM (default) or SIGKILL" }
+
+health_check:
+  type: "api_request"
+  endpoint: "/health"
+  method: "GET"
+  expected_status: 200
+
+deployment:
+  type: "docker"
+  docker_compose_file: "./docker-compose.yml"
+
+environment:
+  variables:
+    SQLITE_DB_PATH: "/data/processes.db"
+    LOG_DIR: "/data/logs"
+    MAX_LOG_SIZE: "10485760"
+    LOG_LEVEL: "INFO"
+
+tags:
+  - runtime
+  - processes
+  - std

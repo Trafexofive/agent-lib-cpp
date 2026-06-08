@@ -1,0 +1,23 @@
+# Preset 09: Markdown in response — bold, italic, code, lists
+<stream>
+<action type="tool" name="list" id="ls1" mode="sync">{"path":"src/"}</action>
+<result id="ls1" status="ok">src/agent.cpp\nsrc/main.cpp\nsrc/core/</result>
+<response final="true">
+# Source Directory
+
+Found **3 files** in `src/`:
+
+- `agent.cpp` — core agent loop
+- `main.cpp` — CLI entry point
+- `core/` — subdirectory
+
+The build uses `make cortex-mk3`.
+</response>
+</stream>
+
+---EXPECT---
+contains: Source Directory (heading)
+contains: bold rendering
+contains: agent.cpp (inline code)
+contains: list bullets (3 items)
+contains: make cortex-mk3 (inline code)

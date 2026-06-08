@@ -1,0 +1,12 @@
+# Module configuration
+runtime:
+  timeout: 30
+  max_retries: 0
+logging:
+  level: info
+limits:
+  max_output_size: 8192
+search:
+  default_context_lines: 0
+  max_context_lines: 10
+  max_results: 100

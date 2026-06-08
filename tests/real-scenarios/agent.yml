@@ -1,0 +1,28 @@
+kind: Agent
+name: real-scenario-runner
+version: "1.0"
+summary: Real scenario runner for MK3 code-task evaluation
+
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-v4-pro
+    parameters:
+      temperature: 0.4
+      max_tokens: 4096
+
+runtime:
+  max_iterations: 7
+  history_cap: 80
+
+import:
+  tools:
+    - exec
+    - fs_read
+    - fs_write
+    - grep
+    - list
+    - json
+  feeds: []
+  relics: []
+  agents: []

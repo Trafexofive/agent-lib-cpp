@@ -1,0 +1,26 @@
+# Test 13: Async Batch Actions
+<thought>
+I need to check multiple things in parallel.
+</thought>
+<action type="tool" name="exec" id="a1" mode="async">
+{"command": "date"}
+</action>
+<action type="tool" name="exec" id="a2" mode="async">
+{"command": "hostname"}
+</action>
+<action type="tool" name="exec" id="a3" mode="async">
+{"command": "uname -a"}
+</action>
+<thought>
+All three commands completed.
+</thought>
+<response final="true">
+System info gathered successfully.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, ACTION, ACTION, THOUGHT, RESPONSE
+actions:
+  - name: exec
+  - name: exec
+  - name: exec
+complete: true

@@ -1,0 +1,13 @@
+# Module configuration
+runtime:
+  timeout: 10
+  max_retries: 1
+logging:
+  level: info
+limits:
+  max_events: 5000
+  max_watches: 100
+watcher:
+  default_debounce_ms: 500
+  use_inotify: true
+  poll_fallback_interval_ms: 1000

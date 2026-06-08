@@ -1,0 +1,22 @@
+# Test 16: Context Pin and Peek
+<thought>
+I'll pin the project config and peek at the build output.
+</thought>
+<action type="tool" name="context_pin" id="pin_001" mode="sync">
+{"path": "config/agents/assistant/agent.yml"}
+</action>
+<action type="tool" name="context_peek" id="peek_001" mode="sync">
+{"path": "build/output.log", "cycles": 1}
+</action>
+<thought>
+Configuration pinned, build output peeked.
+</thought>
+<response final="true">
+Pinned the assistant config and peeked at the build output.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, ACTION, THOUGHT, RESPONSE
+actions:
+  - name: context_pin
+  - name: context_peek
+complete: true

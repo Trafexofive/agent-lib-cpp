@@ -1,0 +1,15 @@
+# Harness suite: full-stack
+# Tests: everything combined — tools, agents, relics, context, async
+name: full-stack
+prompt_file: tests/prompt-tests/harness-prompts/full-stack.md
+model: deepseek-v4-pro
+provider: deepseek
+inputs:
+  - id: analyze_project
+    prompt: "Analyze this project: list the src/ structure, find all TODO comments, pin the README to context, and report a summary."
+  - id: build_and_test
+    prompt: "Build the project, run the tests, and report pass/fail counts."
+  - id: context_lifecycle
+    prompt: "Pin src/main.cpp to context, peek at config/agents/assistant/agent.yml for 3 cycles, then unpin main.cpp."
+  - id: full_workflow
+    prompt: "Search for 'TODO' in src/, read the first file with TODOs, write a summary to /tmp/mk3-summary.txt, run the parser tests, and store the results in the artifact store."

@@ -1,0 +1,32 @@
+kind: Agent
+name: orchestrator
+version: '2.0'
+summary: "Task orchestration \u2014 delegates to specialized sub-agents"
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-v4-pro
+    parameters:
+      temperature: 0.5
+      max_tokens: 4096
+
+persona:
+  agent: ./system-prompts/orchestrator.md
+
+import:
+  tools:
+  - exec
+  - fs_read
+  - fs_write
+  - grep
+  - list
+  - json
+  - web_fetch
+  - context_pin
+  - context_peek
+  - context_unpin
+  agents:
+  - builder
+  - reviewer
+  - researcher
+  - assistant

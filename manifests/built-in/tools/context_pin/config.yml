@@ -1,0 +1,11 @@
+# Module configuration
+runtime:
+  timeout: 5
+  max_retries: 0
+logging:
+  level: info
+limits:
+  max_file_size: 1048576
+pin:
+  max_pinned_files: 10
+  auto_unpin_on_session_end: true

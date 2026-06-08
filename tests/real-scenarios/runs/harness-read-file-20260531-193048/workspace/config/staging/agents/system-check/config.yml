@@ -1,0 +1,4 @@
+# Module configuration
+runtime:
+  max_iterations: 3
+  history_cap: 20

@@ -1,0 +1,23 @@
+version: "3.8"
+services:
+  process_manager:
+    build: .
+    container_name: relic_process_manager
+    ports:
+      - "8013:8013"
+    volumes:
+      - process_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp:/host_tmp
+    environment:
+      - SQLITE_DB_PATH=/data/processes.db
+      - LOG_DIR=/data/logs
+    pid: host
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8013/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+volumes:
+  process_data:

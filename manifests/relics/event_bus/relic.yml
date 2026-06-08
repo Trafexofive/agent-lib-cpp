@@ -1,0 +1,105 @@
+# ==============================================================================
+# RELIC MANIFEST — Event Bus
+# ==============================================================================
+kind: Relic
+version: "1.0"
+name: "event_bus"
+summary: "Pub/sub messaging for async agent-to-agent communication"
+author: "CORTEX_STD_LIB"
+state: "stable"
+mode: managed
+
+description: |
+  Decouples agents via publish/subscribe channels.
+  - Named channels with topic wildcards
+  - Message history with configurable retention
+  - Namespace-scoped channels (agents publish to their namespace by default)
+  - Cross-namespace subscriptions require explicit grant
+  - WebSocket support for real-time streaming
+
+service_type: "messaging"
+
+interface:
+  type: "rest_api"
+  base_url: "${EVENT_BUS_URL:-http://localhost:8012}"
+
+endpoints:
+  - name: "publish"
+    method: "POST"
+    path: "/channels/{namespace}/{channel}"
+    description: "Publish a message to a channel"
+    parameters:
+      namespace: { type: "string", required: true }
+      channel: { type: "string", required: true }
+      message: { type: "object", required: true }
+      topic: { type: "string", required: false }
+
+  - name: "subscribe"
+    method: "POST"
+    path: "/channels/{namespace}/{channel}/subscribe"
+    description: "Subscribe to a channel (returns message history)"
+    parameters:
+      namespace: { type: "string", required: true }
+      channel: { type: "string", required: true }
+      subscriber: { type: "string", required: true, description: "Agent name subscribing" }
+      topic_filter: { type: "string", required: false }
+      from_sequence: { type: "integer", required: false, description: "Resume from sequence ID" }
+
+  - name: "poll"
+    method: "GET"
+    path: "/channels/{namespace}/{channel}/poll"
+    description: "Long-poll for new messages since last sequence"
+    parameters:
+      namespace: { type: "string", required: true }
+      channel: { type: "string", required: true }
+      subscriber: { type: "string", required: true }
+      timeout: { type: "integer", required: false, description: "Long-poll timeout seconds" }
+
+  - name: "history"
+    method: "GET"
+    path: "/channels/{namespace}/{channel}/history"
+    description: "Get message history for a channel"
+    parameters:
+      namespace: { type: "string", required: true }
+      channel: { type: "string", required: true }
+      limit: { type: "integer", required: false }
+      from_sequence: { type: "integer", required: false }
+
+  - name: "list_channels"
+    method: "GET"
+    path: "/channels/{namespace}"
+    description: "List channels in a namespace"
+    parameters:
+      namespace: { type: "string", required: true }
+
+  - name: "unsubscribe"
+    method: "DELETE"
+    path: "/channels/{namespace}/{channel}/subscribe"
+    description: "Unsubscribe from a channel"
+    parameters:
+      namespace: { type: "string", required: true }
+      channel: { type: "string", required: true }
+      subscriber: { type: "string", required: true }
+
+health_check:
+  type: "api_request"
+  endpoint: "/health"
+  method: "GET"
+  expected_status: 200
+
+deployment:
+  type: "docker"
+  docker_compose_file: "./docker-compose.yml"
+
+environment:
+  variables:
+    SQLITE_DB_PATH: "/data/eventbus.db"
+    MAX_HISTORY: "1000"
+    DEFAULT_POLL_TIMEOUT: "30"
+    LOG_LEVEL: "INFO"
+
+tags:
+  - messaging
+  - pubsub
+  - events
+  - std

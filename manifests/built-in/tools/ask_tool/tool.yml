@@ -1,0 +1,167 @@
+kind: Tool
+name: ask_tool
+version: "1.0"
+summary: >
+  Ask the user one or more structured questions. The call blocks until the user
+  answers or cancels (empty input or EOF). Returns a map of card IDs to user
+  responses under "results". Use this when you lack information needed to
+  complete the user's request — for example, when a request is ambiguous, when
+  you need confirmation before a destructive action, or when the user explicitly
+  asks you to gather structured input. Do NOT use ask_tool for small talk or to
+  ask questions you could answer without user input. If you can respond directly
+  without asking, do that instead. After receiving results, process them and
+  continue — do NOT re-ask the same question. Each card collects one piece of
+  information. Cards are presented to the user one at a time in order. The user
+  types their answer and presses Enter. Empty answers stop the card chain and
+  the remaining cards are skipped with empty values. The "success" field is true
+  if at least the first card was answered, false if the user cancelled
+  immediately. Multiple cards can be chained — for example, first ask a
+  clarification, then ask for confirmation based on that answer.
+
+runtime: builtin
+
+input_schema:
+  type: object
+  required: [title]
+  properties:
+    title:
+      type: string
+      description: >
+        The main question or dialog title shown at the top. Make this specific
+        and actionable. The user should understand what you need from them just
+        from this title. Good: "Confirm production deployment". Bad: "Question".
+    message:
+      type: string
+      description: >
+        Body text that explains WHY you are asking. Give the user context so
+        they can give you a good answer. For destructive actions, explain the
+        consequences clearly. For clarifications, explain what you understood
+        and what you're unsure about. For data gathering, explain what you'll
+        do with the answer. This field is optional but strongly recommended —
+        users make better decisions with context.
+    cards:
+      type: array
+      description: >
+        An ordered list of cards, each asking one question. Cards are shown to
+        the user sequentially. If the user submits an empty answer, the chain
+        stops immediately and remaining cards receive empty string values.
+        Each card has an id (used as the key in the results map), a type
+        (text for free-form, confirm for yes/no, choice for pick-one, number
+        for numeric), a title (the question text), an optional message (body
+        text), and an optional defaultValue (pre-filled answer).
+      items:
+        type: object
+        properties:
+          id:
+            type: string
+            description: >
+              Unique key for this card's answer in the results map. Use short
+              descriptive snake_case names: "user_name", "target_branch",
+              "delete_confirm". These become the keys in the returned "results"
+              object. Example: if id is "env", then results.env contains the
+              user's answer.
+          type:
+            type: string
+            enum: [text, confirm, choice, number]
+            default: text
+            description: >
+              The type of input expected. "text" is free-form text input (most
+              common). "confirm" expects yes/no. "choice" presents options to
+              pick from. "number" validates as numeric. For most use cases,
+              "text" is sufficient — the user can type anything and you can
+              parse it from the response string.
+          title:
+            type: string
+            description: >
+              The question displayed to the user. Keep it under one line.
+              Be direct: "Your name" not "Please enter your name". The
+              prompt character ">" is appended automatically.
+          message:
+            type: string
+            description: >
+              Optional additional context shown below the title. Use this for
+              instructions, examples, or warnings specific to this question.
+          defaultValue:
+            type: string
+            description: >
+              A value pre-filled for the user. They can press Enter to accept
+              it or type something different. Use this when you have a
+              reasonable default: the current branch name, "staging" for
+              environment, the detected project name.
+
+output_schema:
+  type: object
+  properties:
+    success:
+      type: boolean
+      description: >
+        true if the user answered at least the first card. false if the user
+        cancelled immediately (empty input on first card). If success is false,
+        do NOT retry — the user chose not to answer. Respect their choice and
+        either proceed with what you know or tell them you cannot continue
+        without their input.
+    results:
+      type: object
+      description: >
+        A flat object mapping each card's "id" to the user's raw string
+        response. Empty strings mean the user either submitted empty input or
+        skipped that card (the chain stopped before reaching it). Example:
+        {"confirm_deploy": "DEPLOY", "target_env": "staging"}. Process these
+        values to determine the next action. Do NOT call ask_tool again for
+        the same information — the user has already answered.
+
+examples:
+  - description: >
+      Confirm a destructive action before proceeding. The user must type the
+      word DEPLOY to confirm. This is the primary use case for ask_tool —
+      safety gates before irreversible operations.
+    params:
+      title: "Confirm production deployment"
+      message: >
+        You are about to deploy to the live production environment at
+        api.example.com. This will replace the currently running version.
+        All active user sessions will be terminated. Database migrations
+        will run automatically. There is no automatic rollback.
+      cards:
+        - id: "confirm_deploy"
+          type: text
+          title: "Type 'DEPLOY' to proceed with production deployment"
+          message: "Any other input will cancel the deployment."
+
+  - description: >
+      Gather structured project configuration. The agent needs a project name
+      and language to scaffold correctly. Defaults are provided based on what
+      the agent detected in the workspace.
+    params:
+      title: "New project configuration"
+      message: >
+        I'll scaffold a new service module. I've detected some defaults
+        based on your workspace — you can accept them or change them.
+      cards:
+        - id: "name"
+          type: text
+          title: "Service name"
+          defaultValue: "my-service"
+        - id: "language"
+          type: text
+          title: "Primary language"
+          defaultValue: "python"
+
+  - description: >
+      Clarify an ambiguous user request. The user said something that could
+      be interpreted multiple ways. Rather than guessing, the agent asks for
+      clarification with a single card.
+    params:
+      title: "Clarify your request"
+      message: >
+        Your request could mean a few different things and I want to make sure
+        I do the right one. Be as specific as possible — instead of "fix auth",
+        try "add JWT token refresh to the /auth endpoint in auth_service.py".
+      cards:
+        - id: "clarification"
+          type: text
+          title: "What specifically should I do?"
+          message: "A specific description helps me get it right the first time."
+
+on_error: skip
+timeout: 120

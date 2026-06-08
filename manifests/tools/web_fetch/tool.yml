@@ -1,0 +1,45 @@
+kind: Tool
+name: web_fetch
+version: "2.0"
+summary: "Fetch content from a URL"
+description: |
+  Fetches content from a URL using HTTP/HTTPS. Supports GET and POST
+  with optional JSON body. Returns status, headers, and body.
+category: network
+tags: [web, http, fetch, curl, api]
+
+input_schema:
+  type: object
+  required: [url]
+  properties:
+    url:
+      type: string
+      description: "URL to fetch"
+    method:
+      type: string
+      enum: [GET, POST]
+      default: GET
+    headers:
+      type: object
+      description: "Additional HTTP headers"
+    body:
+      type: string
+      description: "Request body (for POST)"
+    timeout:
+      type: integer
+      description: "Timeout in seconds"
+      default: 30
+
+output_schema:
+  type: object
+  properties:
+    status:
+      type: integer
+    headers:
+      type: object
+    body:
+      type: string
+implementation:
+  type: script
+  runtime: python3
+  entrypoint: web_fetch.py

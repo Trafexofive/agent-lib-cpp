@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Prompt tuning harness for cortex-mk3.
+
+Usage:
+  ./tune suites/assistant.yml           # run suite, save outputs
+  ./tune suites/assistant.yml --diff    # diff latest vs previous run
+  ./tune suites/assistant.yml --cat     # print latest run outputs
+  ./tune suites/assistant.yml -n 3 -m deepseek-chat  # override model + repeat N times
+"""
+import sys, os, subprocess, shutil, time, difflib, argparse, yaml
+from datetime import datetime
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(os.path.dirname(BASE_DIR))  # agent-lib-MK3 root
+
+def run_input(binary, prompt_file, model, provider, user_prompt, run_dir, input_id):
+    """Run a single input through cortex-mk3, return raw output."""
+    cmd = [
+        os.path.join(REPO_DIR, binary),
+        "--raw",
+        "--harness-prompt", os.path.join(REPO_DIR, prompt_file),
+        "--model", model,
+        "--provider", provider,
+        "--prompt", user_prompt,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                            cwd=REPO_DIR)
+    output = result.stdout
+    if result.returncode != 0:
+        output += f"\n[STDERR]\n{result.stderr}"
+    out_file = os.path.join(run_dir, f"{input_id}.txt")
+    with open(out_file, 'w') as f:
+        f.write(output)
+    return output
+
+def run_suite(suite_path, model=None, provider=None, repeat=1):
+    """Run all inputs in a suite, save to timestamped directory."""
+    with open(suite_path) as f:
+        suite = yaml.safe_load(f)
+
+    name = suite['name']
+    prompt_file = suite['prompt_file']
+    model = model or suite.get('model', 'deepseek-v4-pro')
+    provider = provider or suite.get('provider', 'deepseek')
+    inputs = suite['inputs']
+
+    ts = datetime.now().strftime('%Y%m%d-%H%M%S')
+    runs_dir = os.path.join(BASE_DIR, 'runs', name)
+    run_dir = os.path.join(runs_dir, ts)
+    os.makedirs(run_dir, exist_ok=True)
+
+    print(f"═══ Suite: {name} ({len(inputs)} inputs) ═══")
+    print(f"  model: {model}  |  provider: {provider}")
+    print(f"  prompt: {prompt_file}")
+    print(f"  run:    {ts}\n")
+
+    for r in range(repeat):
+        if repeat > 1:
+            run_dir = os.path.join(runs_dir, f"{ts}-r{r+1}")
+            os.makedirs(run_dir, exist_ok=True)
+        for inp in inputs:
+            tag = inp['id']
+            prompt = inp['prompt']
+            print(f"  [{tag}] {prompt[:60]}{'...' if len(prompt) > 60 else ''}")
+            output = run_input("cortex-mk3", prompt_file, model, provider, prompt,
+                               run_dir, tag)
+            # Print first 3 lines
+            lines = output.strip().split('\n')
+            preview = '\n'.join(lines[:3])
+            if len(lines) > 3:
+                preview += f"\n  ... ({len(lines)} lines total)"
+            print(f"    → {preview}\n")
+
+    # Save suite snapshot
+    with open(os.path.join(run_dir, 'suite.yml'), 'w') as f:
+        yaml.dump(suite, f)
+
+    print(f"═══ Done. Saved to {run_dir}")
+    return run_dir
+
+def get_runs(suite_name):
+    """List run directories, sorted oldest first."""
+    runs_dir = os.path.join(BASE_DIR, 'runs', suite_name)
+    if not os.path.isdir(runs_dir):
+        return []
+    dirs = [d for d in os.listdir(runs_dir)
+            if os.path.isdir(os.path.join(runs_dir, d))]
+    dirs.sort()
+    return dirs
+
+def diff_latest(suite_name):
+    """Diff the latest two runs."""
+    runs = get_runs(suite_name)
+    if len(runs) < 2:
+        print("Need at least 2 runs to diff.")
+        return
+
+    runs_dir = os.path.join(BASE_DIR, 'runs', suite_name)
+    prev_dir = os.path.join(runs_dir, runs[-2])
+    latest_dir = os.path.join(runs_dir, runs[-1])
+
+    # Find all .txt files
+    files = set()
+    for d in [prev_dir, latest_dir]:
+        for f in os.listdir(d):
+            if f.endswith('.txt'):
+                files.add(f)
+
+    print(f"═══ Diff: {runs[-2]} → {runs[-1]} ═══\n")
+    for fname in sorted(files):
+        prev_file = os.path.join(prev_dir, fname)
+        latest_file = os.path.join(latest_dir, fname)
+        prev_lines = open(prev_file).readlines() if os.path.exists(prev_file) else []
+        latest_lines = open(latest_file).readlines() if os.path.exists(latest_file) else []
+
+        if prev_lines == latest_lines:
+            print(f"  [{fname}] — no change")
+        else:
+            print(f"── {fname} ──")
+            diff = difflib.unified_diff(
+                prev_lines, latest_lines,
+                fromfile=f'prev/{fname}', tofile=f'latest/{fname}',
+                lineterm=''
+            )
+            for line in diff:
+                print(f"  {line}")
+            print()
+
+def cat_latest(suite_name):
+    """Print latest run outputs."""
+    runs = get_runs(suite_name)
+    if not runs:
+        print("No runs found.")
+        return
+    runs_dir = os.path.join(BASE_DIR, 'runs', suite_name)
+    latest_dir = os.path.join(runs_dir, runs[-1])
+    print(f"═══ Latest run: {runs[-1]} ═══\n")
+    for f in sorted(os.listdir(latest_dir)):
+        if f.endswith('.txt'):
+            print(f"── {f} ──")
+            with open(os.path.join(latest_dir, f)) as fh:
+                print(fh.read())
+            print()
+
+def main():
+    parser = argparse.ArgumentParser(description='cortex-mk3 prompt tuning harness')
+    parser.add_argument('suite', help='Path to suite YAML file')
+    parser.add_argument('--diff', action='store_true', help='Diff latest two runs')
+    parser.add_argument('--cat', action='store_true', help='Print latest run outputs')
+    parser.add_argument('-m', '--model', help='Override model')
+    parser.add_argument('-p', '--provider', help='Override provider')
+    parser.add_argument('-n', '--repeat', type=int, default=1, help='Repeat N times')
+    args = parser.parse_args()
+
+    with open(args.suite) as f:
+        suite = yaml.safe_load(f)
+    name = suite['name']
+
+    if args.diff:
+        diff_latest(name)
+    elif args.cat:
+        cat_latest(name)
+    else:
+        run_suite(args.suite, model=args.model, provider=args.provider,
+                  repeat=args.repeat)
+
+if __name__ == '__main__':
+    main()

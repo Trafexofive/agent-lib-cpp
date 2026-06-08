@@ -1,0 +1,52 @@
+kind: Tool
+name: grep
+version: "2.0"
+summary: "Search files with regex"
+description: |
+  Searches for regex patterns in files. Supports context lines,
+  file glob filtering, and line-number output. Returns matches
+  grouped by file with line numbers and surrounding context.
+category: search
+tags: [grep, search, regex, find, pattern]
+input_schema:
+  type: object
+  required: [pattern]
+  properties:
+    pattern:
+      type: string
+      description: "Regex pattern to search for"
+    path:
+      type: string
+      description: "File or directory to search"
+      default: "."
+    glob:
+      type: string
+      description: "File glob filter (e.g. '*.py')"
+    context:
+      type: integer
+      description: "Context lines before/after match"
+      default: 0
+output_schema:
+  type: object
+  properties:
+    matches:
+      type: array
+      items:
+        type: object
+        properties:
+          file:
+            type: string
+          line:
+            type: integer
+          text:
+            type: string
+examples:
+  - description: "Find TODO comments"
+    params:
+      pattern: "TODO|FIXME"
+      path: "/src"
+  - description: "Search Python files with context"
+    params:
+      pattern: "def main"
+      glob: "*.py"
+      context: 2

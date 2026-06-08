@@ -1,0 +1,29 @@
+# ==============================================================================
+# Module Configuration — config.yml
+# ==============================================================================
+# Each manifest module can have its own config.yml for runtime behavior tuning.
+# Values here override defaults from the manifest (tool.yml, relic.yml, agent.yml).
+# Environment variables can be referenced with ${VAR} syntax.
+
+# ── Runtime settings ──
+runtime:
+  timeout: 30                    # Default timeout in seconds
+  max_retries: 0                 # Retry count on failure
+  retry_delay_ms: 1000           # Delay between retries
+
+# ── Logging ──
+logging:
+  level: info                    # debug, info, warn, error
+  verbose: false                 # Extra diagnostic output
+
+# ── Resource limits ──
+limits:
+  max_output_size: 8192          # Max output in bytes before truncation
+  max_input_size: 0              # Max input size (0 = unlimited)
+
+# ── Module-specific overrides ──
+# Add any keys relevant to this specific module.
+# Examples:
+#   for relic: port, health_interval, max_connections
+#   for tool: cache_results, cache_ttl_seconds
+#   for agent: max_iterations, history_cap

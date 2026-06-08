@@ -1,0 +1,16 @@
+# Test 22: Direct LLM Call
+<thought>
+I need to classify this text using a direct LLM call.
+</thought>
+<action type="llm" name="primary" id="classify_001" mode="sync">
+{"prompt": "Classify: positive, negative, or neutral - 'Build succeeded'"}
+</action>
+<response final="true">
+Text classified as positive.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, RESPONSE
+actions:
+  - name: primary
+    type: llm
+complete: true

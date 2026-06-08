@@ -1,0 +1,20 @@
+version: "3.8"
+services:
+  event_bus:
+    build: .
+    container_name: relic_event_bus
+    ports:
+      - "8012:8012"
+    volumes:
+      - eventbus_data:/data
+    environment:
+      - SQLITE_DB_PATH=/data/eventbus.db
+      - MAX_HISTORY=1000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8012/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+volumes:
+  eventbus_data:

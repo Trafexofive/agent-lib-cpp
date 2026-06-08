@@ -1,0 +1,69 @@
+kind: Relic
+version: "1.0"
+name: "state_checkpoint"
+summary: "Agent state serialization for crash recovery and hot-reload"
+author: "CORTEX_STD_LIB"
+state: "stable"
+mode: builtin
+
+description: |
+  Built-in relic for agent state checkpointing.
+  Snapshots the full agent context: FSM state, tool results, history, variables.
+  Used for crash recovery, hot-reload, and agent migration.
+  - Checkpoint current agent state
+  - Restore from checkpoint on crash/restart
+  - List available checkpoints
+  - Garbage-collect stale checkpoints
+  No Docker, no network — direct filesystem from runtime.
+
+service_type: "runtime"
+
+interface:
+  type: "builtin"
+  base_url: "builtin://state_checkpoint"
+
+endpoints:
+  - name: "save"
+    method: "POST"
+    path: "/checkpoints/{namespace}/{agent_name}"
+    description: "Save a state checkpoint"
+    parameters:
+      namespace: { type: "string", required: true }
+      agent_name: { type: "string", required: true }
+      state: { type: "object", required: true, description: "Full agent state blob" }
+      label: { type: "string", required: false }
+
+  - name: "load"
+    method: "GET"
+    path: "/checkpoints/{namespace}/{agent_name}/latest"
+    description: "Load latest checkpoint for an agent"
+    parameters:
+      namespace: { type: "string", required: true }
+      agent_name: { type: "string", required: true }
+
+  - name: "list"
+    method: "GET"
+    path: "/checkpoints/{namespace}"
+    description: "List available checkpoints"
+    parameters:
+      namespace: { type: "string", required: true }
+      agent_name: { type: "string", required: false }
+
+  - name: "gc"
+    method: "DELETE"
+    path: "/checkpoints/{namespace}/gc"
+    description: "Garbage-collect stale checkpoints"
+    parameters:
+      namespace: { type: "string", required: true }
+      max_age_seconds: { type: "integer", required: false }
+      max_per_agent: { type: "integer", required: false, description: "Keep at most N checkpoints per agent" }
+
+health_check:
+  type: "builtin"
+  endpoint: "/health"
+
+tags:
+  - runtime
+  - checkpoint
+  - recovery
+  - builtin

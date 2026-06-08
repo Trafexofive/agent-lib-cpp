@@ -1,0 +1,26 @@
+# Test 04: Nested Action Inside Thought
+# NOTE: <thought> is being deprecated. Nested actions inside <thought>
+# are intentionally not parsed. This test documents the edge case.
+# When thought is removed, this protocol pattern goes away.
+# EXPECTED: FAIL (by design)
+<thought>
+I need to check the system time and current directory.
+<action type="tool" name="system_clock" id="s1" mode="async">
+{}
+</action>
+<action type="tool" name="list" id="s2" mode="async">
+{"path": "."}
+</action>
+</thought>
+<thought>
+Both results are back. Current time and directory contents received.
+</thought>
+<response final="true">
+It is currently [time] and the directory contains [files].
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, ACTION, THOUGHT, RESPONSE
+actions:
+  - name: system_clock
+  - name: list
+complete: true

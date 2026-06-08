@@ -1,0 +1,15 @@
+# Test 18: File Watcher
+<thought>
+I need to watch the source directory for changes.
+</thought>
+<action type="relic" name="file_watcher" id="fw_001" mode="sync">
+{"endpoint": "watch", "namespace": "dev", "path": "src/", "recursive": true, "events": ["modify", "create"], "exclude": "*.o"}
+</action>
+<response final="true">
+File watcher set up on src/ directory.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, RESPONSE
+actions:
+  - name: file_watcher
+complete: true

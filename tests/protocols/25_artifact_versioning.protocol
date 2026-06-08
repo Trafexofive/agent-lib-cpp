@@ -1,0 +1,22 @@
+# Test 25: Artifact Versioning
+<thought>
+I'll store a new version of the build output.
+</thought>
+<action type="relic" name="artifact_store" id="put_001" mode="sync">
+{"endpoint": "put", "namespace": "ci", "key": "build.log", "content": "Build v2 succeeded", "tags": ["build", "v2"]}
+</action>
+<thought>
+Now let me check the version history.
+</thought>
+<action type="relic" name="artifact_store" id="get_001" mode="sync">
+{"endpoint": "get", "namespace": "ci", "key": "build.log", "version": 1}
+</action>
+<response final="true">
+Artifact stored as version 2. Retrieved version 1 for comparison.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, THOUGHT, ACTION, RESPONSE
+actions:
+  - name: artifact_store
+  - name: artifact_store
+complete: true

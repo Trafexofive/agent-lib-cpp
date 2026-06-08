@@ -1,0 +1,22 @@
+kind: Feed
+name: example_python
+version: "1.0"
+summary: "Example feed demonstrating Python runtime — reports timestamp, PID, uptime"
+runtime: python3
+entrypoint: ./feed.py
+interval_secs: 60
+output_schema:
+  type: object
+  properties:
+    timestamp:
+      type: string
+      description: "ISO 8601 timestamp"
+    epoch:
+      type: integer
+      description: "Unix epoch seconds"
+    pid:
+      type: integer
+      description: "Process ID of the script"
+    uptime_seconds:
+      type: integer
+      description: "System uptime in seconds (from /proc/uptime)"

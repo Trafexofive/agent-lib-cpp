@@ -1,0 +1,73 @@
+TEST: test_25 -  Artifact Versioning
+RESULT: PASS
+ITERATIONS: 3
+EVENTS: 9
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(artifact_store)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] ACTION_START
+  [7] ACTION_RESULT
+  [8] ACTION_RESULT
+  [9] RESPONSE
+ACTIONS EXECUTED: 2
+  - artifact_store
+  - artifact_store
+
+=== INPUT XML ===
+<thought>
+I'll store a new version of the build output.
+</thought>
+<action type="relic" name="artifact_store" id="put_001" mode="sync">
+{"endpoint": "put", "namespace": "ci", "key": "build.log", "content": "Build v2 succeeded", "tags": ["build", "v2"]}
+</action>
+<thought>
+Now let me check the version history.
+</thought>
+<action type="relic" name="artifact_store" id="get_001" mode="sync">
+{"endpoint": "get", "namespace": "ci", "key": "build.log", "version": 1}
+</action>
+<response final="true">
+Artifact stored as version 2. Retrieved version 1 for comparison.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(artifact_store)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

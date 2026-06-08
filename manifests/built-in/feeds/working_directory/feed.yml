@@ -1,0 +1,27 @@
+kind: Feed
+name: working_directory
+version: "1.0"
+summary: "Working directory and git context"
+
+description: |
+  Provides the current working directory and, if inside a git repo,
+  the root path, branch name, and dirty state. Always available —
+  compiled into the binary as a built-in feed.
+category: core
+tags: [directory, git, workspace]
+
+output_schema:
+  type: object
+  properties:
+    path:
+      type: string
+    git_repo:
+      type: boolean
+    git_root:
+      type: string
+    git_branch:
+      type: string
+    git_dirty:
+      type: boolean
+    git_commit:
+      type: string

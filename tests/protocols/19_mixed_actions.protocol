@@ -1,0 +1,23 @@
+# Test 19: Mixed Action Types (tool + agent + relic)
+<thought>
+I need to read the spec, delegate to builder, and store the result.
+</thought>
+<action type="tool" name="fs_read" id="step_001" mode="sync">
+{"path": "specs/api_spec.json"}
+</action>
+<action type="agent" name="builder" id="build_001" mode="sync">
+{"instruction": "Implement the API client based on the spec"}
+</action>
+<action type="relic" name="artifact_store" id="store_001" mode="async">
+{"endpoint": "put", "namespace": "builds", "key": "api_client.py", "content": "implementation"}
+</action>
+<response final="true">
+API client implemented and stored in artifact store.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, ACTION, ACTION, RESPONSE
+actions:
+  - name: fs_read
+  - name: builder
+  - name: artifact_store
+complete: true

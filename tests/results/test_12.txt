@@ -1,0 +1,57 @@
+TEST: test_12 -  Complex JSON Parameters
+RESULT: PASS
+ITERATIONS: 2
+EVENTS: 6
+  [1] THOUGHT
+  [2] ACTION_START
+  [3] ACTION(fs_write)
+  [4] ACTION_RESULT
+  [5] ACTION_RESULT
+  [6] RESPONSE
+ACTIONS EXECUTED: 1
+  - fs_write
+
+=== INPUT XML ===
+<thought>
+I need to write a complex configuration file.
+</thought>
+<action type="tool" name="fs_write" id="step_001" mode="sync">
+{"path": "config/app.json", "content": {"database": {"host": "localhost", "port": 5432, "pools": [10, 20, 30]}, "features": {"auth": true, "cache": false}}, "append": false}
+</action>
+<response final="true">
+Configuration file written with nested database and feature settings.
+</response>
+
+=== PROMPT BUILT (sent to LLM) ===
+<agent_identity>
+  <name>test-agent</name>
+  <summary>Protocol test agent</summary>
+</agent_identity>
+
+<system_prompt>
+You are a test agent.
+</system_prompt>
+
+<available_tools>
+  <tool name="shell_exec">Execute shell commands</tool>
+  <tool name="fs_ops">Filesystem operations</tool>
+  <tool name="simple_math">Basic arithmetic</tool>
+</available_tools>
+
+<history>
+User: Run protocol test
+Agent: <thought>...</thought>
+Agent: <action>ACTION_START</action>
+System (Action Result): success
+Agent: <action>ACTION(fs_write)</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <action>ACTION_RESULT</action>
+System (Action Result): success
+Agent: <response>...</response>
+</history>
+
+<user_input>
+Continue test
+</user_input>

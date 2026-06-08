@@ -1,0 +1,32 @@
+# Preset 08: Protocol — multi-turn with tools
+# Simulates a full agent turn: thought → action → result → response
+
+<stream>
+<thought>Let me list the directory first.</thought>
+<action type="tool" name="list" id="ls1" mode="sync">{"path":"src/"}</action>
+<result id="ls1" status="ok">{"count":5,"results":"agent.cpp\nagent.hpp\nmain.cpp\nMakefile\nconfig/"}</result>
+<thought>Good, I see the source files. Let me search for TODOs.</thought>
+<action type="tool" name="grep" id="g1" mode="sync">{"pattern":"TODO","path":"src/"}</action>
+<result id="g1" status="ok">{"matches":["src/core/agent.cpp:45:TODO: add retry logic","src/main.cpp:12:TODO: parse config"]}</result>
+
+<response final="true">
+Found **2 TODOs**:
+
+- `src/core/agent.cpp:45` — add retry logic
+- `src/main.cpp:12` — parse config
+</response>
+</stream>
+
+---EXPECT---
+# Actions appear with icons
+renders_action: list
+renders_action: grep
+# Results shown
+contains: agent.cpp
+contains: TODO: add retry logic
+contains: TODO: parse config
+# Final response has markdown rendering
+contains: 2 TODOs
+contains: bold rendering for "**2 TODOs**"
+# Order is preserved
+order: [thought, action_list, result_list, thought, action_grep, result_grep, response]

@@ -1,0 +1,11 @@
+# Module configuration
+runtime:
+  timeout: 10
+  max_retries: 0
+logging:
+  level: warning
+limits:
+  max_secret_size: 65536
+security:
+  master_key_path: /run/secrets/master_key
+  audit_all_access: true

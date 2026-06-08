@@ -1,0 +1,39 @@
+kind: Tool
+name: context_peek
+version: "1.0"
+summary: "Peek at a file in context for N cycles, then auto-evict"
+category: context
+tags: [context, peek, ephemeral, temporary]
+
+description: |
+  Reads a file into the agent's context for a limited number of cycles.
+  After N cycles, the content is automatically removed from context.
+  Use for: one-off file reads, inspecting outputs, checking intermediate state.
+  Prevents context bloat from stale file reads — the file doesn't linger forever.
+
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "File path to peek at"
+    cycles:
+      type: integer
+      description: "Number of iterations to keep in context (default 1)"
+      default: 1
+
+output_schema:
+  type: object
+  properties:
+    success: { type: boolean }
+    path: { type: string }
+    size: { type: integer }
+    cycles: { type: integer }
+    mode: { type: string }
+
+examples:
+  - description: "Peek at a build output for 2 cycles"
+    params:
+      path: "build/output.log"
+      cycles: 2

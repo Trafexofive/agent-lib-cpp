@@ -1,0 +1,25 @@
+kind: Agent
+name: artificer
+version: '2.0'
+summary: Tool creation and implementation specialist
+cognitive_engine:
+  primary:
+    provider: zen
+    model: zai-org/GLM-5.1-FP8
+    parameters:
+      temperature: 0.5
+      max_tokens: 4096
+persona:
+  agent: ./system-prompts/artificer.md
+import:
+  tools:
+  - exec
+  - fs_read
+  - fs_write
+  - grep
+  - list
+  - json
+  - web_fetch
+  - context_pin
+  - context_peek
+  - context_unpin

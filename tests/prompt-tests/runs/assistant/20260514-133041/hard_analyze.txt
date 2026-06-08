@@ -1,0 +1,47 @@
+1. **src/ directory structure** (recursive):
+```
+src/
+├── core/
+│   ├── agent.cpp
+│   ├── agent.hpp
+│   ├── bridge.cpp
+│   ├── bridge.hpp
+│   ├── context.cpp
+│   ├── context.hpp
+│   ├── engine.cpp
+│   ├── engine.hpp
+│   ├── pipeline.cpp
+│   └── pipeline.hpp
+├── protocol/
+│   ├── parser.cpp
+│   └── parser.hpp
+├── providers/
+│   ├── factory.hpp
+│   └── generic_openai.hpp
+├── server/
+│   ├── server.cpp
+│   └── server.hpp
+├── session/
+│   ├── manager.cpp
+│   └── manager.hpp
+├── testing/
+│   ├── parser_debug.cpp
+│   ├── parser_test.cpp
+│   └── protocol_test.cpp
+├── tools/
+│   ├── dispatch.hpp
+│   ├── internal_tools.cpp
+│   └── registry.hpp
+└── utils/
+    ├── ansi.hpp
+    └── markdown_renderer.hpp
+```
+
+2. **'agent' occurrences in src/ files**: 47 times (across all .cpp and .hpp files in src/).
+
+3. **src/core/agent.hpp** summary written to `/tmp/mk3-summary.txt`:
+   - Defines the `Agent` class that manages the lifecycle of an AI agent session, including initialization, message processing, and tool execution.
+   - Provides a pipeline-based architecture with configurable providers, context management, and a bridge for external tool integration.
+
+[STDERR]
+free(): invalid pointer

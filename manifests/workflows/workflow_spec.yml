@@ -1,0 +1,103 @@
+# ==============================================================================
+# WORKFLOW MANIFEST SPEC (v1.0)
+# ==============================================================================
+#
+# A workflow is a named sequence of steps that the agent executes in order.
+# Steps can be: tool calls, agent delegations, conditionals, loops, or
+# sub-workflows. Steps execute within the agent's streaming protocol.
+#
+# Unlike a script, a workflow is DECLARED, not imperative.
+# The agent uses the workflow definition as a roadmap, executing steps
+# via its normal <action>/<result> streaming protocol.
+#
+# Key design: workflows are agent-readable plans, not rigid pipelines.
+# The agent can adapt, skip, retry, or reorder steps based on context.
+# This is NOT a DAG executor — it's a structured prompt augmentation.
+# ==============================================================================
+
+kind: Workflow
+version: "1.0"
+name: "spec"
+summary: "Workflow manifest specification (reference — do not instantiate)"
+
+description: |
+  Workflow manifests define structured task execution plans.
+  They are loaded into the agent's context as execution blueprints.
+  The agent follows the plan using its normal tool/action protocol.
+
+# ── Step types ──
+# tool:     Call a tool with parameters
+# agent:    Delegate a sub-task to a sub-agent
+# condition: Branch based on a previous result
+# loop:     Repeat a step or sub-sequence
+# parallel: Execute steps concurrently (async batch)
+# workflow:  Invoke another workflow
+
+# ── Step schema ──
+# steps:
+#   - id: unique_step_id
+#     type: tool | agent | condition | loop | parallel | workflow
+#     name: display_name
+#     tool: tool_name              (for type: tool)
+#     agent: agent_name            (for type: agent)
+#     params: { ... }              (for tool/agent)
+#     condition: "result_id.field == value"  (for type: condition)
+#     then: [ steps ]              (for condition true branch)
+#     else: [ steps ]              (for condition false branch)
+#     body: [ steps ]              (for loop body)
+#     until: "condition"           (for loop termination)
+#     steps: [ steps ]             (for parallel/workflow)
+#     workflow: workflow_name      (for type: workflow)
+#     on_error: skip | retry | abort  (error handling)
+#     max_retries: 0               (for on_error: retry)
+#     timeout: 30                  (seconds)
+
+# ── Example ──
+# steps:
+#   - id: fetch
+#     type: tool
+#     name: "Fetch the API spec"
+#     tool: web_fetch
+#     params:
+#       url: "https://api.example.com/openapi.json"
+#     on_error: abort
+#
+#   - id: validate
+#     type: tool
+#     name: "Validate the spec"
+#     tool: json
+#     params:
+#       operation: validate
+#       data: "${fetch.content}"
+#       schema: "openapi"
+#     on_error: abort
+#
+#   - id: generate
+#     type: tool
+#     name: "Generate client code"
+#     tool: scaffold
+#     params:
+#       template: "api_client"
+#       spec: "${fetch.content}"
+#     on_error: retry
+#     max_retries: 2
+#
+#   - id: review
+#     type: agent
+#     name: "Review generated code"
+#     agent: reviewer
+#     params:
+#       instruction: "Review the generated client code for correctness and style"
+#     on_error: skip
+
+steps: []
+
+# ── Import dependencies ──
+# Workflows can import tools and relics just like agents.
+import:
+  tools: []
+  relics: []
+
+tags:
+  - workflow
+  - spec

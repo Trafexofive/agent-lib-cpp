@@ -1,0 +1,71 @@
+kind: Relic
+version: "1.0"
+name: "session_journal"
+summary: "Runtime-local session and context persistence"
+author: "CORTEX_STD_LIB"
+state: "stable"
+mode: builtin
+
+description: |
+  Built-in relic for session persistence and context archival.
+  Compiled into the binary — available before any Docker relic starts.
+  - Record session events (prompts, responses, tool calls, errors)
+  - Query session history with time-range and type filters
+  - Export sessions to portable JSON
+  - Prune old sessions by age or count
+  No Docker, no network — direct filesystem access from the runtime.
+
+service_type: "persistence"
+
+interface:
+  type: "builtin"
+  base_url: "builtin://session_journal"
+
+endpoints:
+  - name: "record"
+    method: "POST"
+    path: "/journal/{namespace}/record"
+    description: "Record a session event"
+    parameters:
+      namespace: { type: "string", required: true }
+      event_type: { type: "string", required: true, description: "prompt, response, tool_call, tool_result, error" }
+      content: { type: "object", required: true }
+      session_id: { type: "string", required: false }
+
+  - name: "query"
+    method: "GET"
+    path: "/journal/{namespace}"
+    description: "Query session events with filters"
+    parameters:
+      namespace: { type: "string", required: true }
+      session_id: { type: "string", required: false }
+      event_type: { type: "string", required: false }
+      from_time: { type: "string", required: false }
+      to_time: { type: "string", required: false }
+      limit: { type: "integer", required: false }
+
+  - name: "export"
+    method: "GET"
+    path: "/journal/{namespace}/export"
+    description: "Export a session to portable JSON"
+    parameters:
+      namespace: { type: "string", required: true }
+      session_id: { type: "string", required: true }
+
+  - name: "prune"
+    method: "DELETE"
+    path: "/journal/{namespace}/prune"
+    description: "Prune old session events"
+    parameters:
+      namespace: { type: "string", required: true }
+      max_age_seconds: { type: "integer", required: false }
+      max_records: { type: "integer", required: false }
+
+health_check:
+  type: "builtin"
+  endpoint: "/health"
+
+tags:
+  - persistence
+  - sessions
+  - builtin

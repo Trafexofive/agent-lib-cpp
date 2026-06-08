@@ -1,0 +1,19 @@
+# Test 21: Error in Nested Thought Action
+# NOTE: <thought> is being deprecated. Nested actions inside <thought>
+# are intentionally not parsed. This test documents the edge case.
+# EXPECTED: FAIL (by design)
+<thought>
+I'll try to read a protected file.
+<action type="tool" name="fs_read" id="fail_001" mode="async">
+{"path": "/etc/shadow"}
+</action>
+</thought>
+<thought>
+The file read failed due to permissions. Expected.
+</thought>
+<response final="true">
+Cannot access system files. Working with available project files.
+</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, THOUGHT, RESPONSE
+complete: true

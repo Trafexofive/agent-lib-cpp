@@ -1,0 +1,11 @@
+# Module configuration
+runtime:
+  timeout: 10
+  max_retries: 0
+logging:
+  level: info
+limits:
+  max_input_size: 10485760
+json:
+  pretty_print: true
+  sort_keys: false

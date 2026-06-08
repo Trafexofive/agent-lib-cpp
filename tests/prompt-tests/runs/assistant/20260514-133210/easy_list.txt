@@ -1,0 +1,12 @@
+total 106192
+drwxr-xr-x 10 mlamkadm mlamkadm     4096 May 14 13:32 .
+drwxr-xr-x 15 mlamkadm mlamkadm     4096 May 13 21:32 ..
+drwxr-xr-x  4 mlamkadm mlamkadm     4096 May 14 12:30 build
+drwxr-xr-x  7 mlamkadm mlamkadm     4096 May 13 21:38 config
+-rwxr-xr-x  1 mlamkadm mlamkadm 15914080 May 14 13:32 cortex-mk3
+-rwxr-xr-x  1 mlamkadm mlamkadm 18571176 May 14 12:30 cortex-mk3-server
+drwxr-xr-x  2 mlamkadm mlamkadm     4096 May 13 21:38 examples
+drwxr-xr-x  3 mlamkadm mlamkadm     4096 May 13 21:32 ...
+(truncated)
+
+[STDERR]

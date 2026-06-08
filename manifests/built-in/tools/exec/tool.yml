@@ -1,0 +1,63 @@
+kind: Tool
+name: exec
+version: "2.0"
+summary: "Execute a shell command"
+description: |
+  Execute a shell command and return stdout/stderr with exit code.
+  
+  **Rules:**
+  - Commands run in a subshell. State is NOT preserved between calls.
+  - Non-zero exit codes are errors. Check `exit_code` before assuming success.
+  - Commands that hang will be killed after `timeout` seconds (default 30).
+  - Pipe output through `head`, `tail`, or `grep` for large results. Full output is truncated.
+  - Working directory defaults to the agent's CWD.
+
+  **DO:**
+  - Use for file operations (mkdir, cp, mv), git, build commands, package installs
+  - Pipe long output: `ls -la | head -20`
+  - Chain with `&&`: `cd /tmp && ./script.sh`
+
+  **DON'T:**
+  - Use `exec` when `fs_read` or `list` is more appropriate
+  - Run `rm -rf` without explicit user approval
+  - Run interactive commands (`vim`, `top`)
+  - Run commands that require user input
+category: system
+tags: [exec, shell, command, run]
+input_schema:
+  type: object
+  required: [command]
+  properties:
+    command:
+      type: string
+      description: "Shell command to execute"
+    cwd:
+      type: string
+      description: "Working directory for the command"
+    timeout:
+      type: integer
+      description: "Max seconds before kill (default 30)"
+output_schema:
+  type: object
+  properties:
+    exit_code:
+      type: integer
+      description: "0 = success, non-zero = failure"
+    output:
+      type: string
+      description: "stdout + stderr combined, truncated at ~8KB"
+examples:
+  - description: "List files"
+    params:
+      command: "ls -la"
+  - description: "Check git status in repo"
+    params:
+      command: "git status --short"
+      cwd: "/workspace"
+  - description: "Build with make"
+    params:
+      command: "make -j4"
+      timeout: 120
+  - description: "Count Python files"
+    params:
+      command: "find . -name '*.py' | wc -l"

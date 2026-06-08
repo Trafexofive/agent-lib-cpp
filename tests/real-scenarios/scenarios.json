@@ -1,0 +1,58 @@
+[
+  {
+    "id": "smoke-ping",
+    "tier": "smoke",
+    "fixture": null,
+    "verify": null,
+    "prompt": "Respond with hello using the protocol."
+  },
+  {
+    "id": "smoke-ls-discovery",
+    "tier": "smoke",
+    "fixture": null,
+    "verify": null,
+    "prompt": "Discover this project: list top-level files, identify the source directory, and summarize what kind of project this is."
+  },
+  {
+    "id": "tdd-python-cli",
+    "tier": "code-task",
+    "fixture": "fixtures/tdd-python-cli",
+    "verify": "python3 -m unittest discover -s tests -v",
+    "prompt": "This is a TDD repair task. First run the exact verifier command `python3 -m unittest discover -s tests -v` and inspect the failing test. Read only the files needed to identify the root cause. Do not repeat the same verifier before editing. Once the root cause is clear, edit the code using the available file-write tool; make the minimum code change needed to pass. Then re-run the same verifier command. Report the red/green result and the file changed. Do not rewrite the project."
+  },
+  {
+    "id": "decouple-main-py",
+    "tier": "code-task",
+    "fixture": "fixtures/decouple-main-py",
+    "verify": "python3 -m unittest discover -s tests -v",
+    "prompt": "This is a decoupling/refactor task. First run the exact verifier command `python3 -m unittest discover -s tests -v` to establish green baseline. Then edit files using the available file-write tool: refactor the monolithic `main.py` by extracting parsing, invoice calculation, and report formatting into focused modules while preserving CLI behavior. Re-run the same verifier command and report what changed."
+  },
+  {
+    "id": "harness-read-file",
+    "tier": "harness",
+    "fixture": "fixtures/harness-project",
+    "verify": null,
+    "prompt": "Read the file config/harness/default.md using the fs_read tool and tell me its exact size in bytes."
+  },
+  {
+    "id": "harness-grep-then-read",
+    "tier": "harness",
+    "fixture": "fixtures/harness-project",
+    "verify": null,
+    "prompt": "Search for 'supportsTopK' in the config/ directory using grep, then read the file that contains it and report which provider has it set to false."
+  },
+  {
+    "id": "harness-list-and-summarize",
+    "tier": "harness",
+    "fixture": "fixtures/harness-project",
+    "verify": null,
+    "prompt": "List the top-level contents using the list tool, then read the Makefile and report what build targets are available."
+  },
+  {
+    "id": "harness-write-verify",
+    "tier": "harness",
+    "fixture": "fixtures/harness-project",
+    "verify": "test -f /tmp/mk3-harness-test.txt && grep -q 'harness compliance' /tmp/mk3-harness-test.txt",
+    "prompt": "Write the text 'harness compliance test passed' to /tmp/mk3-harness-test.txt using fs_write, then read it back with fs_read to confirm."
+  }
+]

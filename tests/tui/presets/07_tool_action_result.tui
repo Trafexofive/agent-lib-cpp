@@ -1,0 +1,20 @@
+# Preset 07: Protocol — tool action + result
+# Lazy render: wait for action block to close before rendering
+
+<stream>
+<action type="tool" name="list" id="ls1" mode="sync">{"path":"."}</action>
+<result id="ls1" status="ok">{"count":3,"results":"file1.txt\nfile2.txt\nREADME.md"}</result>
+Now I can see the files. Let me read one.
+</stream>
+
+---EXPECT---
+# Action rendered with icon
+contains: list
+renders_with_icon: true          # "⚙ list" style rendering
+# Result rendered
+contains: file1.txt
+contains: README.md
+# Response text after
+contains: Let me read one
+# Lazy: action doesn't render until </action> seen
+not_partial_action: true

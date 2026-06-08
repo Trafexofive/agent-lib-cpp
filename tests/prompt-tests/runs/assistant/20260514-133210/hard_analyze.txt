@@ -1,0 +1,21 @@
+Here's the summary of the requested tasks:
+
+1. **src/ directory structure**:
+   ```
+   src/
+   ├── core/
+   ├── protocol/
+   ├── providers/
+   ├── server/
+   ├── session/
+   ├── testing/
+   ├── tools/
+   └── types/
+   ```
+
+2. **Occurrences of 'agent' in src/ files**: 6 occurrences found (in `src/session/manager.hpp` and `src/session/manager.cpp` — covering comments, variable names, enum values, and string comparisons).
+
+3. **src/core/agent.hpp** content (summary written to `/tmp/mk3-summary.txt`):
+   The file declares the core agent runtime for agent-lib-MK3, implementing the main loop: prompt → LLM → parse → dispatch → loop. It includes headers for types, providers, protocol parsing, session management, and tool registry.
+
+[STDERR]

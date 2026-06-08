@@ -1,0 +1,13 @@
+# Module configuration
+runtime:
+  timeout: 15
+  max_retries: 0
+logging:
+  level: info
+limits:
+  max_log_size: 10485760
+  max_processes: 50
+process:
+  pid_host_mode: true
+  default_signal: SIGTERM
+  kill_timeout: 5
