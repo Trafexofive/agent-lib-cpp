@@ -1154,7 +1154,8 @@ void Agent::harvestPendingTools() {
 
 int Agent::reloadManifests(bool backup) {
     std::string dir = config_.manifestDir.empty() ? "./manifests" : config_.manifestDir;
-    if (!std::filesystem::exists(dir)) return 0;
+    std::cerr << "[reload] scanning " << dir << std::endl;
+    if (!std::filesystem::exists(dir)) { std::cerr << "[reload] dir not found" << std::endl; return 0; }
     if (backup) {
         auto ts = std::chrono::system_clock::now().time_since_epoch().count();
         std::string backupDir = dir + "/_backups/" + std::to_string(ts);
@@ -1166,12 +1167,21 @@ int Agent::reloadManifests(bool backup) {
         if (!it->is_regular_file() || it->path().extension() != ".yml") continue;
         auto schema = ManifestLoader::loadToolManifest(it->path().string());
         if (schema.name.empty() || disabledBuiltins_.count(schema.name)) continue;
-        ToolDef td{schema.name, schema.description};
+        // Skip non-tool manifests
+        if (schema.name == "bootstrapper" || schema.name == "code-review" || schema.name == "full-analysis") continue;
+        ToolDef td;
+        td.name = schema.name;
+        td.description = schema.description;
+        td.isNative = false;
         if (!schema.runtime.empty() && !schema.entrypoint.empty()) {
-            td.isNative = false; td.scriptRuntime = schema.runtime;
+            td.scriptRuntime = schema.runtime;
             td.scriptPath = (it->path().parent_path() / schema.entrypoint).string();
+        } else {
+            // Not a script tool — skip
+            continue;
         }
         tools_[td.name] = td;
+        std::cerr << "[reload] loaded " << td.name << " from " << it->path() << std::endl;
         count++;
     }
     return count;
