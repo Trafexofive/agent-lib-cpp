@@ -495,6 +495,7 @@ void Parser::clearResults() {
     std::lock_guard<std::mutex> lock(mtx_);
     results_.clear();
     completed_.clear();
+    usedActionIds_.clear();
 }
 
 // ---------------------------------------------------------------------------
