@@ -472,76 +472,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
         }
 
         if (results.empty() && !taskComplete) {
-            // DeepSeek often outputs bare JSON instead of <action> tags
-            // Detect JSON objects in rawLlOutput_ (full stream) and synthesize
-            // actions
-            auto jsonStart = rawLlOutput_.find('{');
-            auto jsonEnd = rawLlOutput_.rfind('}');
-            if (jsonStart != std::string::npos &&
-                jsonEnd != std::string::npos && jsonEnd > jsonStart) {
-                std::string jsonStr =
-                    rawLlOutput_.substr(jsonStart, jsonEnd - jsonStart + 1);
-                Json::Value params;
-                Json::CharReaderBuilder rbuilder;
-                std::string errs;
-                std::istringstream jss(jsonStr);
-                if (Json::parseFromStream(rbuilder, jss, &params, &errs)) {
-                    std::string actionName, actionType;
-                    if (params.isMember("instruction")) {
-                        actionType = "agent";
-                        for (auto &[name, _] : subAgents_) {
-                            if (rawLlOutput_.find(name) != std::string::npos) {
-                                actionName = name;
-                                break;
-                            }
-                        }
-                        if (actionName.empty())
-                            actionName = "builder";
-                    } else if (params.isMember("command")) {
-                        actionType = "tool";
-                        actionName = "exec";
-                    } else if (params.isMember("path")) {
-                        actionType = "tool";
-                        if (rawLlOutput_.find("list") != std::string::npos)
-                            actionName = "list";
-                        else if (rawLlOutput_.find("read") != std::string::npos)
-                            actionName = "fs_read";
-                        else
-                            actionName = "list";
-                    } else if (params.isMember("pattern")) {
-                        actionType = "tool";
-                        actionName = "grep";
-                    }
-                    if (!actionName.empty()) {
-                        std::string synId = actionName + "_synth" +
-                                            std::to_string(ctx.iteration);
-                        protocolActions_.push_back(
-                            {actionType, actionName, synId, "", true});
-                        auto dresult = d.dispatch(protocol::ParsedAction{
-                            synId,
-                            (actionType == "agent")
-                                ? protocol::ActionType::AGENT
-                                : protocol::ActionType::TOOL,
-                            protocol::ExecutionMode::SYNC, actionName, params,
-                            jsonStr});
-                        results[synId] = dresult;
-                        history_.push_back(
-                            "Agent: <action type=\"" + actionType +
-                            "\" name=\"" + actionName + "\" id=\"" + synId +
-                            "\" mode=\"sync\">" + jsonStr + "</action>");
-                        bool ok = dresult.isMember("success") &&
-                                  dresult["success"].asBool();
-                        protocolResults_.push_back(
-                            {synId, ok,
-                             ok ? actionName : actionName + " (synthesized)",
-                             actionName});
-                        // Fall through — results stored, will be pushed to next
-                        // prompt below
-                    }
-                }
-            }
-            // No actions extracted — LLM produced bare text. Treat as response,
-            // complete.
+            // No parsed actions and no response tags — LLM produced bare text.
+            // Treat as response and complete.
             taskComplete = true;
             if (responseOutput_.empty())
                 responseOutput_ = sanitize(llmOutput);
@@ -714,8 +646,15 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     // ═══ DYNAMIC: history — conversation turns ═══
     ss << "<history>\n";
 
+    // Apply history cap — only include the most recent N entries
+    size_t histStart = 0;
+    if (config_.historyCap > 0 && history_.size() > (size_t)config_.historyCap) {
+        histStart = history_.size() - config_.historyCap;
+    }
+
     bool open = false;
-    for (const auto &h : history_) {
+    for (size_t hi = histStart; hi < history_.size(); hi++) {
+        const auto &h = history_[hi];
         if (h.rfind("User: ", 0) == 0) {
             if (open)
                 ss << "  </turn>\n";

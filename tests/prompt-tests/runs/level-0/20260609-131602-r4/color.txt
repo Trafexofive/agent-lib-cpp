@@ -1,0 +1,1 @@
+<response final="true">The sky appears blue during the day due to Rayleigh scattering of sunlight by the atmosphere.</response>

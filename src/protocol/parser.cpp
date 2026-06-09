@@ -61,10 +61,14 @@ void Parser::processBuffer() {
             return;
         }
 
-        // Emit plain text before this tag
+        // Emit plain text before this tag (as RESPONSE if inside <response>, else TEXT)
         if (tagStart > readPos_) {
             std::string text = buffer_.substr(readPos_, tagStart - readPos_);
-            emit({TokenEvent::TEXT, text, {}, {}});
+            if (inResponse_) {
+                emit({TokenEvent::RESPONSE, text, {}, {}});
+            } else {
+                emit({TokenEvent::TEXT, text, {}, {}});
+            }
             readPos_ = tagStart;
         }
 
@@ -75,14 +79,28 @@ void Parser::processBuffer() {
         // Identify the tag
         std::string tagName = identifyTag(readPos_);
         if (tagName.empty()) {
-            // Unknown tag — if it's a closing </response>, reset streaming state
+            // Unknown tag — check if it's a closing </tag>
             size_t nameStart = readPos_ + 1;
+            // Skip leading '/' for closing tags
+            if (nameStart < buffer_.size() && buffer_[nameStart] == '/') {
+                nameStart++;
+            }
             size_t nameEnd = buffer_.find_first_of(" >/", nameStart);
             if (nameEnd != std::string::npos) {
                 std::string raw = buffer_.substr(nameStart, nameEnd - nameStart);
-                if (raw == "/response") inResponse_ = false;
+                if (raw == "response" && inResponse_) {
+                    inResponse_ = false;
+                    // Remap raw attrs to metadata keys (matching handleResponse)
+                    TokenEvent ev{TokenEvent::RESPONSE, "", {}, {}};
+                    auto fit = responseAttrs_.find("final");
+                    if (fit != responseAttrs_.end()) {
+                        ev.metadata["is_final"] = fit->second;
+                    }
+                    emit(ev);
+                    responseAttrs_.clear();
+                }
             }
-            // Skip past the entire opening tag
+            // Skip past the entire closing tag
             readPos_ = gt + 1;
             continue;
         }
@@ -103,13 +121,16 @@ void Parser::processBuffer() {
             // STREAMING: emit partial response content as it arrives
             contentStart = gt + 1;
             closingPos = findClosingTag(tagName, contentStart);
+            // Save attrs from opening tag for final emission
+            openingTag = buffer_.substr(readPos_ + 1, contentStart - readPos_ - 2);
+            responseAttrs_ = parseAttrs(openingTag);
             inResponse_ = true;
             if (closingPos == std::string::npos) {
                 // </response> not arrived yet — emit whatever content we have
                 std::string partial = buffer_.substr(contentStart);
                 readPos_ = buffer_.size();
                 if (!partial.empty()) {
-                    emit({TokenEvent::RESPONSE, partial, {}, {}});
+                    emit({TokenEvent::RESPONSE, partial, {}, responseAttrs_});
                 }
                 return; // Wait for more data
             }
@@ -117,7 +138,6 @@ void Parser::processBuffer() {
             inResponse_ = false;
             size_t closingTagStart = closingPos - (tagName.length() + 3);
             content = buffer_.substr(contentStart, closingTagStart - contentStart);
-            openingTag = buffer_.substr(readPos_ + 1, contentStart - readPos_ - 2);
             readPos_ = closingPos;  // skip past </response>
         } else {
             closingPos = findClosingTag(tagName, gt + 1);
@@ -491,6 +511,7 @@ void Parser::reset() {
     idCounter_ = 0;
     finalResponseSeen_ = false;
     usedActionIds_.clear();
+    responseAttrs_.clear();
 }
 
 // ---------------------------------------------------------------------------

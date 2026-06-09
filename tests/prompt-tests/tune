@@ -18,7 +18,7 @@ def run_input(binary, prompt_file, model, provider, user_prompt, run_dir, input_
     cmd = [
         os.path.join(REPO_DIR, binary),
         "--raw",
-        "--harness-prompt", os.path.join(REPO_DIR, prompt_file),
+        "--harness", os.path.join(REPO_DIR, prompt_file),
         "--model", model,
         "--provider", provider,
         "--prompt", user_prompt,

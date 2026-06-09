@@ -1,0 +1,1 @@
+<response final="true">Hello! I'm your assistant. How can I help you today?</response>

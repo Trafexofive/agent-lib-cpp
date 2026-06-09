@@ -138,6 +138,7 @@ private:
     size_t readPos_ = 0;
     bool inResponse_ = false;  // true between <response> and </response> for streaming
     bool finalResponseSeen_ = false;  // true after first <response final="true">
+    std::map<std::string, std::string> responseAttrs_;  // attrs from opening <response>, applied when streaming closes
 
     // Results
     std::map<std::string, Json::Value> results_;
