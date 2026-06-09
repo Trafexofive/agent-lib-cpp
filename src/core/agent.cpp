@@ -11,6 +11,7 @@
 #include "dispatch.hpp"
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <regex>
 #include <sstream>
@@ -157,6 +158,46 @@ std::string Agent::prompt(const std::string &input, StreamCallback onToken,
 
 // ═══════════════════════════════════════════════════════════════════════
 // Core Loop
+static std::string buildResultTag(const std::string& id, const Json::Value& result, bool compact = false) {
+    std::ostringstream os;
+    bool ok = result.isMember("success") && result["success"].asBool();
+    int exit = result.isMember("exit_code") ? result["exit_code"].asInt() : (ok ? 0 : -1);
+    double ms = result.isMember("_elapsed_ms") ? result["_elapsed_ms"].asDouble() : 0;
+
+    os << "<result id=\"" << id << "\" ok=\"" << (ok ? "true" : "false") << "\"";
+    if (exit != 0) os << " exit=\"" << exit << "\"";
+    if (ms > 0) os << " ms=\"" << std::fixed << std::setprecision(1) << ms << "\"";
+
+    // Extract primary output body
+    std::string body;
+    for (const char* key : {"content", "output", "stdout", "result", "results", "data"}) {
+        if (result.isMember(key) && result[key].isString()) {
+            body = result[key].asString();
+            break;
+        }
+    }
+    if (body.empty() && result.isMember("error") && result["error"].isString())
+        body = "error: " + result["error"].asString();
+
+    if (!body.empty()) {
+        size_t bytes = body.size();
+        if (compact && bytes > 2000) {
+            body = body.substr(0, 2000);
+            os << " bytes=\"" << bytes << "\" truncated=\"true\"";
+        } else if (bytes > 0) {
+            os << " bytes=\"" << bytes << "\"";
+        }
+        os << ">" << body << "</result>";
+    } else {
+        os << "/>";
+    }
+    return os.str();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tool Dispatch
+// ═══════════════════════════════════════════════════════════════════════
+
 // ═══════════════════════════════════════════════════════════════════════
 
 std::string Agent::runLoop(AgentContext &ctx) {
@@ -284,11 +325,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
 
             // Inject <result> tag into raw output — plain text body, not JSON
             {
-                bool ok = result.get("success", false).asBool();
-                rawLlOutput_ += "\n<result id=\"" + action.id + "\" status=\"" +
-                                (ok ? "ok" : "error") + "\">";
-                rawLlOutput_ += extractResultBody(result);
-                rawLlOutput_ += "</result>\n";
+                rawLlOutput_ += "\n" + buildResultTag(action.id, result) + "\n";
             }
 
             // Store protocol result
@@ -511,7 +548,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
             if (!results.empty()) {
                 os << "### TOOL RESULTS\n\n";
                 for (auto &[id, r] : results) {
-                    os << "<result id=\"" << id << "\">" << extractResultBody(r) << "</result>\n";
+                    os << buildResultTag(id, r) << "\n";
                 }
             }
             iterationOutputs_.push_back(os.str());
@@ -529,10 +566,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 std::ostringstream sysMsg;
                 bool ok =
                     result.isMember("success") && result["success"].asBool();
-                sysMsg << "<result id=\"" << id << "\" status=\""
-                       << (ok ? "ok" : "error") << "\">";
-                sysMsg << extractResultBody(result, true);
-                sysMsg << "</result>";
+                sysMsg << buildResultTag(id, result, true);
                 history_.push_back("System: " + sysMsg.str());
             }
         }
@@ -781,34 +815,9 @@ std::string Agent::sanitize(const std::string &output) {
                                         : out.substr(start, end - start + 1);
 }
 
-std::string Agent::formatResult(const std::string &id,
-                                const Json::Value &result) {
-    return "System (Action Result): <result id=\"" + id + "\">" +
-           Json::writeString(Json::StreamWriterBuilder(), result) + "</result>";
-}
 
-// Extract plain-text body from tool result for <result> tag rendering.
-// LLMs cannot read JSON-escaped content — render as raw text instead.
-std::string Agent::extractResultBody(const Json::Value &result, bool compact) {
-    // Priority-ordered extraction of the primary output field
-    for (const char* key : {"content", "output", "stdout", "result", "results", "data"}) {
-        if (result.isMember(key) && result[key].isString()) {
-            std::string body = result[key].asString();
-            if (compact && body.size() > 2000)
-                body = body.substr(0, 2000) + "\n... [truncated " + std::to_string(body.size()) + "b]";
-            return body;
-        }
-    }
-    // Fallback: error message, count, or status-only
-    if (result.isMember("error")) return "error: " + result["error"].asString();
-    if (result.isMember("count")) return std::to_string(result["count"].asInt()) + " results";
-    return result.get("success", false).asBool() ? "ok" : "error";
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Tool Dispatch
-// ═══════════════════════════════════════════════════════════════════════
-
+// Build rich <result> tag with metadata attributes + plain-text body.
+// Returns full XML: <result id="..." ok="..." exit="0" ms="12" bytes="2048">body</result>
 Json::Value Agent::dispatchTool(const protocol::ParsedAction &action) {
     // ── Sandbox validation ──
     if (sandboxPolicy_.enabled) {
