@@ -92,6 +92,7 @@ public:
     void addRelic(const std::string& name) { relics_.insert(name); }
     void removeTool(const std::string& name);
     Json::Value toggleBuiltin(const Json::Value& params, bool enable);
+    int reloadManifests(bool backup);
     bool hasTool(const std::string& name) const;
     std::vector<std::string> toolNames() const;
 

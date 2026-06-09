@@ -9,6 +9,8 @@
 #include "../tools/dispatch.hpp"
 #include "../utils/ansi.hpp"
 #include "dispatch.hpp"
+#include "manifest_loader.hpp"
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -828,8 +830,9 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction &action) {
     }
     if (action.name == "reload_manifests") {
         Json::Value r;
-        r["success"] = false;
-        r["error"] = "reloadManifests not yet wired — coming soon";
+        bool backup = action.params.get("backup", false).asBool();
+        r["loaded"] = reloadManifests(backup);
+        r["success"] = true;
         return r;
     }
 
@@ -1146,6 +1149,32 @@ void Agent::harvestPendingTools() {
                                        pendingTools_.end(),
                                        [](auto &pt) { return pt->harvested; }),
                         pendingTools_.end());
+}
+
+
+int Agent::reloadManifests(bool backup) {
+    std::string dir = config_.manifestDir.empty() ? "./manifests" : config_.manifestDir;
+    if (!std::filesystem::exists(dir)) return 0;
+    if (backup) {
+        auto ts = std::chrono::system_clock::now().time_since_epoch().count();
+        std::string backupDir = dir + "/_backups/" + std::to_string(ts);
+        std::filesystem::create_directories(backupDir);
+    }
+    int count = 0;
+    for (auto it = std::filesystem::recursive_directory_iterator(dir);
+         it != std::filesystem::recursive_directory_iterator(); ++it) {
+        if (!it->is_regular_file() || it->path().filename() != "tool.yml") continue;
+        auto schema = ManifestLoader::loadToolManifest(it->path().string());
+        if (schema.name.empty() || disabledBuiltins_.count(schema.name)) continue;
+        ToolDef td{schema.name, schema.description};
+        if (!schema.runtime.empty() && !schema.entrypoint.empty()) {
+            td.isNative = false; td.scriptRuntime = schema.runtime;
+            td.scriptPath = (it->path().parent_path() / schema.entrypoint).string();
+        }
+        tools_[td.name] = td;
+        count++;
+    }
+    return count;
 }
 
 } // namespace cortex::mk3
