@@ -1,1 +1,0 @@
-final="true">Hello! Ready to help.</response>
