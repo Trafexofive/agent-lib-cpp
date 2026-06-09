@@ -46,18 +46,17 @@ static std::string shellEscape(const std::string& input) {
 }
 
 static int runCmd(const std::string& cmd, std::string& output, int timeoutSec = 30) {
-    std::string fullCmd = cmd + " 2>&1";
+    // Use system timeout to enforce hard kill — fgets/pclose can hang forever on
+    // commands that produce no output (sleep, tail -f, hanging network calls).
+    std::string fullCmd = "timeout " + std::to_string(timeoutSec) + " " + cmd + " 2>&1";
     FILE* pipe = popen(fullCmd.c_str(), "r");
     if (!pipe) return -1;
     char buf[256];
-    auto start = std::chrono::steady_clock::now();
     while (fgets(buf, sizeof(buf), pipe)) {
         output += buf;
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::steady_clock::now() - start).count();
-        if (elapsed > timeoutSec) break;
     }
     int rc = pclose(pipe);
+    // timeout exits 124 on kill, 128+SIGTERM otherwise
     return WIFEXITED(rc) ? WEXITSTATUS(rc) : -1;
 }
 
