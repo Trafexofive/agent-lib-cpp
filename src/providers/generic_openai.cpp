@@ -90,13 +90,14 @@ void GenericOpenAIClient::generateStream(const ChatMessages& msgs, StreamCallbac
 std::string GenericOpenAIClient::httpPost(const std::string& url,
                                            const Json::Value& body,
                                            StreamCallback cb, bool stream) {
-    CURL* curl = curl_easy_init();
-    if (!curl) throw std::runtime_error("Failed to initialize CURL");
-
-    // Serialize body
+    // Serialize body once (doesn't change across retries)
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
     std::string bodyStr = Json::writeString(writer, body);
+
+    for (int retry = 0; retry <= maxRetries_; retry++) {
+    CURL* curl = curl_easy_init();
+    if (!curl) throw std::runtime_error("Failed to initialize CURL");
 
     std::string responseBuffer;
     StreamCtx ctx{cb, {}, {}};
@@ -108,7 +109,6 @@ std::string GenericOpenAIClient::httpPost(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
 
-    // Headers
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     std::string authHeader = "Authorization: Bearer " + apiKey_;
@@ -122,7 +122,6 @@ std::string GenericOpenAIClient::httpPost(const std::string& url,
     if (stream) {
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, streamCb);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
-        // Abort transfer on Ctrl+C (checks g_running every ~100ms)
         curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, abortCheckCb);
         curl_easy_setopt(curl, CURLOPT_XFERINFODATA, nullptr);
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
@@ -132,8 +131,6 @@ std::string GenericOpenAIClient::httpPost(const std::string& url,
     }
 
     CURLcode res = curl_easy_perform(curl);
-
-    // Check HTTP status
     long httpCode = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
     curl_slist_free_all(headers);
@@ -144,32 +141,24 @@ std::string GenericOpenAIClient::httpPost(const std::string& url,
     }
 
     if (httpCode >= 400) {
-        // For streaming mode, the error body is in ctx.buffer (not responseBuffer)
-        std::string errorBody = stream ? 
+        std::string errorBody = stream ?
             (ctx.lastErrorBody.empty() ? ctx.buffer : ctx.lastErrorBody) : responseBuffer;
-
-        // ── Retry logic for rate limits ──
-        // 429 = rate limited, always retry
-        // 413 with "rate_limit_exceeded" = Groq TPM rate limit (not context size)
         bool isRetryable = (httpCode == 429) ||
             (httpCode == 413 && errorBody.find("rate_limit_exceeded") != std::string::npos);
 
-        if (isRetryable && retryCount_ < maxRetries_) {
-            ++retryCount_;
-            // Exponential backoff: 10s, 20s, 40s... capped at 120s
-            int waitSec = std::min((1 << retryCount_) * 5, 120);
+        if (isRetryable && retry < maxRetries_) {
+            int waitSec = std::min((1 << (retry + 1)) * 5, 120);
             std::cerr << "[MK3:RETRY] HTTP " << httpCode << " — retrying in "
-                      << waitSec << "s (attempt " << retryCount_ << "/" << maxRetries_ << ")" << std::endl;
+                      << waitSec << "s (attempt " << (retry + 1) << "/" << maxRetries_ << ")" << std::endl;
             std::this_thread::sleep_for(std::chrono::seconds(waitSec));
-            return httpPost(url, body, cb, stream);  // recursive retry
+            continue;
         }
-
         throw std::runtime_error("HTTP " + std::to_string(httpCode) +
             " — response: " + errorBody.substr(0, 500));
     }
-
-    retryCount_ = 0;  // reset on success
     return responseBuffer;
+    } // retry loop
+    throw std::runtime_error("max retries exceeded");
 }
 
 // ---------------------------------------------------------------------------

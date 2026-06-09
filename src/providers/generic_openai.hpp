@@ -94,7 +94,6 @@ private:
     // Model cache
     mutable std::vector<ModelInfo> cachedModels_;
     mutable bool modelsFetched_ = false;
-    mutable int retryCount_ = 0;
     int maxRetries_ = 3;
 };
 
