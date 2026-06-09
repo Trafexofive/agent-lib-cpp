@@ -6,6 +6,7 @@
 
 #include "agent.hpp"
 #include "../feeds/feed_engine.hpp"
+#include "../relics/builtin_relics.hpp"
 #include "../tools/dispatch.hpp"
 #include "../utils/ansi.hpp"
 #include "dispatch.hpp"
@@ -839,6 +840,17 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction &action) {
         return r;
     }
 
+    // ── Relic dispatch ──
+    if (action.type == protocol::ActionType::RELIC) {
+        auto result = relics::RelicDispatcher::instance().dispatch(
+            action.name, action.params.get("endpoint", "").asString(), action.params);
+        Json::Value r;
+        r["success"] = result.success;
+        r["output"] = result.success ? result.data : result.error;
+        if (result.success && !result.data.empty()) r["data"] = result.data;
+        return r;
+    }
+
     // ── Sandbox validation ──
     if (sandboxPolicy_.enabled) {
         Json::StreamWriterBuilder w;
@@ -1169,8 +1181,18 @@ int Agent::reloadManifests(bool backup) {
         if (!it->is_regular_file() || it->path().extension() != ".yml") continue;
         auto schema = ManifestLoader::loadToolManifest(it->path().string());
         if (schema.name.empty() || disabledBuiltins_.count(schema.name)) continue;
-        // Skip non-tool manifests
-        if (schema.name == "bootstrapper" || schema.name == "code-review" || schema.name == "full-analysis") continue;
+        // Skip non-tool manifests by checking kind field in YAML
+        auto readYaml = [](const std::string& p) {
+            std::ifstream f(p);
+            if (!f) return std::string();
+            return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        };
+        auto yaml = readYaml(it->path().string());
+        if (!yaml.empty()) {
+            auto root = ManifestYaml::parse(yaml);
+            std::string kind = ManifestYaml::get(root, "kind");
+            if (kind == "Agent" || kind == "Workflow" || kind == "Feed" || kind == "Relic") continue;
+        }
         ToolDef td;
         td.name = schema.name;
         td.description = schema.description;
