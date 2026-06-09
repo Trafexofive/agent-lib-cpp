@@ -127,7 +127,7 @@ struct AgentConfig {
     double presencePenalty = 0.0;
     double frequencyPenalty = 0.0;
     int maxTokens = 8192;
-    int iterationCap = 8;   // agent turns before forced response (override via manifest max_iterations)
+    int iterationCap = 20;   // agent turns before forced response (override via manifest max_iterations)
     int actionTimeoutSec = 30;  // max seconds to wait for dispatched actions
     int historyCap = 40;
 
