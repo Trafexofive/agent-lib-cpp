@@ -1,6 +1,0 @@
-# Module configuration
-runtime:
-  timeout: 30
-search:
-  max_results: 10
-  default_engine: duckduckgo

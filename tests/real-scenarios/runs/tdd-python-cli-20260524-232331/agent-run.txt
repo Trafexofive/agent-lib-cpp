@@ -1,9 +1,0 @@
-$ /home/mlamkadm/repos/Cortex-Prime-MK1/services/agent-lib-MK3/cortex-mk3 --raw --provider openrouter --model deepseek/deepseek-v4-flash --manifest-dir /home/mlamkadm/repos/Cortex-Prime-MK1/services/agent-lib-MK3/manifests --manifest /home/mlamkadm/repos/Cortex-Prime-MK1/services/agent-lib-MK3/tests/real-scenarios/agent.yml --harness /home/mlamkadm/repos/Cortex-Prime-MK1/services/agent-lib-MK3/config/harness/default.md --sandbox run -p This is a TDD repair task. First run the exact verifier command `python3 -m unittest discover -s tests -v` and inspect the failing test. Read only the files needed to identify the root cause. Do not repeat the same verifier before editing. Once the root cause is clear, edit the code using the available file-write tool; make the minimum code change needed to pass. Then re-run the same verifier command. Report the red/green result and the file changed. Do not rewrite the project.
-# exit=0 elapsed=147.59s
-
-## STDOUT
-Error: HTTP 402 — response: 
-
-
-## STDERR
-

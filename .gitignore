@@ -23,3 +23,5 @@ tests/tui/*_demo
 tests/tui/pipe_demo
 tests/sandbox/run.sh
 tests/scenario-runner
+iterations.md
+raw.md

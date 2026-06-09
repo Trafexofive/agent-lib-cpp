@@ -1,9 +1,0 @@
-$ /home/mlamkadm/repos/Cortex-Prime-MK1/services/agent-lib-MK3/cortex-mk3 --raw --provider groq --model llama-3.3-70b-versatile --manifest-dir /home/mlamkadm/repos/Cortex-Prime-MK1/services/agent-lib-MK3/manifests --manifest /home/mlamkadm/repos/Cortex-Prime-MK1/services/agent-lib-MK3/tests/real-scenarios/agent.yml --harness /home/mlamkadm/repos/Cortex-Prime-MK1/services/agent-lib-MK3/config/harness/default.md --sandbox run -p Respond with hello using the protocol.
-# exit=0 elapsed=0.30s
-
-## STDOUT
-Error: HTTP 400 — response: 
-
-
-## STDERR
-

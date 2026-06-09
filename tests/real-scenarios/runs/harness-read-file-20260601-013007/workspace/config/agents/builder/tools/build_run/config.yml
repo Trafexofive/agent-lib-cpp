@@ -1,7 +1,0 @@
-# Module configuration
-runtime:
-  timeout: 120
-build:
-  detect_project_type: true
-  max_output_lines: 200
-  cache_binaries: true

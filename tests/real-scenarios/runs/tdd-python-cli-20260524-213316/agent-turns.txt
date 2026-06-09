@@ -1,9 +1,0 @@
-── Agent turn 1 ──
-<action type="tool" name="exec" id="test1" mode="sync">{"command":"python3 -m unittest -v 2>&1"}</action>
-
-── Agent turn 2 ──
-<action type="tool" name="exec" id="test1" mode="sync">{"command":"python3 -m unittest -v 2>&1"}</action>
-
-── Agent turn 3 ──
-<action type="tool" name="list" id="ls1" mode="sync">{"detail":"full","path":".","recursive":true}</action>
-
