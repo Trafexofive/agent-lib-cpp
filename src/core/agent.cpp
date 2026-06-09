@@ -878,52 +878,42 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction &action) {
 
 Json::Value Agent::executeScriptTool(const ToolDef &tool,
                                      const Json::Value &params) {
-    // Threaded execution — non-blocking, output streams live
-    auto pt = std::make_shared<PendingTool>();
-    pt->name = tool.name;
-    pt->id = "tool_" + std::to_string(pendingTools_.size());
-    pt->startTime = std::chrono::steady_clock::now();
-
-    Json::StreamWriterBuilder w;
-    w["indentation"] = "";
-    std::string paramsJson = Json::writeString(w, params);
+    // Synchronous execution — blocks but returns actual output
     std::string cmd = tool.scriptRuntime + " " + tool.scriptPath;
 
-    // Write params to a per-invocation tmpfile (avoids setenv data race)
-    std::string tmpFile = "/tmp/cortex-tool-" + pt->id + ".json";
+    // Write params to tmpfile for script to read
+    std::string tmpFile = "/tmp/cortex-tool-" + tool.name + ".json";
     {
+        Json::StreamWriterBuilder w;
+        w["indentation"] = "";
         std::ofstream tf(tmpFile);
-        tf << paramsJson;
+        tf << Json::writeString(w, params);
     }
     std::string cmdWithArg = cmd + " " + tmpFile;
 
-    // Spawn thread: run popen, read output, signal completion
-    toolThreads_.push_back(std::thread([pt, cmdWithArg, tmpFile]() {
-        FILE *p = popen((cmdWithArg + " 2>&1").c_str(), "r");
-        if (!p) {
-            pt->ok = false;
-            pt->output = "failed to launch: " + cmdWithArg;
-            pt->done = true;
-            return;
-        }
-        char buf[4096];
-        while (fgets(buf, sizeof(buf), p)) {
-            std::lock_guard<std::mutex> lk(pt->outMtx);
-            pt->output += buf;
-        }
-        pt->exitCode = pclose(p);
-        pt->ok = (pt->exitCode == 0);
-        pt->done = true;
-        // Clean up tmp file (best-effort)
+    auto start = std::chrono::steady_clock::now();
+    FILE *p = popen((cmdWithArg + " 2>&1").c_str(), "r");
+    if (!p) {
         unlink(tmpFile.c_str());
-    }));
-
-    pendingTools_.push_back(pt);
+        Json::Value err;
+        err["success"] = false;
+        err["error"] = "failed to launch: " + cmdWithArg;
+        return err;
+    }
+    std::string output;
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), p)) output += buf;
+    int exitCode = pclose(p);
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start).count();
+    unlink(tmpFile.c_str());
 
     Json::Value r;
-    r["success"] = true;
-    r["pending"] = true;
-    r["tool_id"] = pt->id;
+    r["success"] = (exitCode == 0);
+    r["exit"] = exitCode;
+    r["ms"] = (Json::Int64)elapsed;
+    r["output"] = output;
+    if (exitCode != 0) r["error"] = "exit code " + std::to_string(exitCode);
     return r;
 }
 
