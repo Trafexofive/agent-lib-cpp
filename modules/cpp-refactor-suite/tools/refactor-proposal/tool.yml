@@ -1,0 +1,92 @@
+kind: Tool
+name: refactor-proposal
+version: "1.0"
+summary: "Generate structured refactoring proposals with before/after diffs"
+description: >
+  Takes analysis results (complexity, deps, churn, duplication) and generates
+  concrete refactoring proposals. Each proposal includes: problem description,
+  affected files, estimated effort, risk level, before/after code diff, and
+  verification steps. Outputs structured JSON suitable for review workflows.
+
+category: refactoring
+tags: [refactoring, proposal, planning, code-quality]
+
+implementation:
+  runtime: python3
+  entrypoint: propose.py
+  timeout: 45
+
+input_schema:
+  type: object
+  required: [analysis_data]
+  properties:
+    analysis_data:
+      oneOf:
+        - type: string
+          description: "Path to JSON file containing analysis results"
+        - type: object
+          description: "Inline analysis results object"
+      description: "Analysis results from complexity/dep-graph/churn/duplication tools"
+    max_proposals:
+      type: integer
+      default: 5
+      minimum: 1
+      maximum: 20
+    min_impact:
+      type: string
+      enum: [low, medium, high]
+      default: medium
+      description: "Minimum impact level to include"
+    focus:
+      type: array
+      items:
+        type: string
+        enum: [complexity, dependencies, duplication, churn, coverage]
+      default: [complexity, dependencies, duplication]
+      description: "Analysis dimensions to prioritize"
+    output_path:
+      type: string
+      description: "Write proposals to file instead of stdout"
+    format:
+      type: string
+      enum: [json, markdown, diff]
+      default: json
+
+output_schema:
+  type: object
+  properties:
+    proposals:
+      type: array
+      items:
+        type: object
+        properties:
+          id: { type: string }
+          title: { type: string }
+          category:
+            type: string
+            enum: [extract_function, extract_class, simplify_conditional,
+                   remove_duplication, break_dependency, improve_coverage,
+                   reduce_complexity, split_file]
+          severity: { type: string, enum: [info, warning, critical] }
+          affected_files:
+            type: array
+            items: { type: string }
+          estimated_effort:
+            type: string
+            enum: [trivial, small, medium, large, epic]
+          risk: { type: string, enum: [low, medium, high] }
+          problem: { type: string }
+          solution: { type: string }
+          before: { type: string, description: "Current code snippet" }
+          after: { type: string, description: "Proposed refactored code" }
+          verification:
+            type: array
+            items: { type: string }
+            description: "Steps to verify the refactoring is safe"
+          rationale: { type: string }
+    summary:
+      type: object
+      properties:
+        total_proposals: { type: integer }
+        by_severity: { type: object }
+        total_estimated_hours: { type: number }

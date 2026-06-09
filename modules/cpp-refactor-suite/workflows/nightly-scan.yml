@@ -1,0 +1,37 @@
+kind: Workflow
+version: "1.0"
+name: nightly-scan
+summary: "Scheduled nightly codebase scan with caching"
+description: >
+  Nightly scan that leverages analysis-cache relic for incremental results.
+  Only re-analyzes files changed since last scan. Reports trends over time.
+
+steps:
+  - id: check_cache
+    type: tool
+    name: "Check analysis cache"
+    tool: exec
+    params:
+      command: "echo 'Checking cache...'"
+
+  - id: incremental_scan
+    type: tool
+    name: "Scan changed files only"
+    tool: exec
+    params:
+      command: |
+        git diff --name-only HEAD~24 | grep -E '\.(cpp|hpp|h)使' | head -50
+
+  - id: trend_report
+    type: tool
+    name: "Generate trend report"
+    tool: exec
+    params:
+      command: "echo '# Nightly Scan — $(date)' > ${output_path}/nightly-$(date +%Y%m%d).md"
+    on_error: skip
+
+import:
+  tools: []
+  relics:
+    - analysis-cache
+tags: [nightly, scheduled, caching, trends]

@@ -1,0 +1,14 @@
+# Staging overrides — less aggressive thresholds for dev branches
+complexity:
+  max_cyclomatic: 20
+  warn_threshold: 12
+test_coverage:
+  min_percent: 60
+churn:
+  since: "7 days ago"
+duplication:
+  min_lines: 10
+  min_tokens: 80
+refactor:
+  auto_apply: true
+  max_proposals: 10

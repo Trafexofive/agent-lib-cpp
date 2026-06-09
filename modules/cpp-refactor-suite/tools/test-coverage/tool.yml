@@ -1,0 +1,76 @@
+kind: Tool
+name: test-coverage
+version: "1.1"
+summary: "Test coverage analyzer for C++ projects"
+description: >
+  Maps test files to source files, calculates coverage ratios, identifies
+  untested public APIs, and tracks historical coverage trends.
+
+category: testing
+tags: [coverage, testing, c++, quality, metrics]
+
+implementation:
+  runtime: python3
+  entrypoint: coverage.py
+  timeout: 45
+
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "Project root directory"
+    min_percent:
+      type: integer
+      default: 80
+      minimum: 0
+      maximum: 100
+      description: "Coverage threshold for warnings"
+    exclude_tests:
+      type: boolean
+      default: true
+      description: "Exclude test files from source count"
+    report_untested_public:
+      type: boolean
+      default: true
+      description: "Flag public APIs with no tests"
+    format:
+      type: string
+      enum: [json, summary, html]
+      default: json
+      description: "Output format"
+    compare_branch:
+      type: string
+      description: "Git branch to compare coverage against"
+
+output_schema:
+  type: object
+  properties:
+    coverage_percent: { type: number }
+    total_source_files: { type: integer }
+    tested_files: { type: integer }
+    untested_files: { type: integer }
+    untested_public_apis:
+      type: array
+      items:
+        type: object
+        properties:
+          file: { type: string }
+          function: { type: string }
+          signature: { type: string }
+          risk: { type: string, enum: [low, medium, high, critical] }
+    by_directory:
+      type: object
+      additionalProperties:
+        type: object
+        properties:
+          coverage: { type: number }
+          files: { type: integer }
+    trend:
+      type: object
+      properties:
+        previous: { type: number }
+        current: { type: number }
+        delta: { type: number }
+        direction: { type: string, enum: [up, down, flat] }

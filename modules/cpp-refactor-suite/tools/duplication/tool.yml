@@ -1,0 +1,88 @@
+kind: Tool
+name: duplication
+version: "1.0"
+summary: "Copy-paste detection via token-based similarity hashing"
+description: >
+  Detects duplicated code blocks using token-based similarity hashing.
+  Tokenizes source files, computes rolling hashes, identifies blocks with
+  high similarity scores. Reports duplicate pairs with line numbers,
+  similarity percentages, and suggested extraction opportunities.
+
+category: static-analysis
+tags: [duplication, copy-paste, dry, refactoring, quality]
+
+implementation:
+  runtime: python3
+  entrypoint: dupes.py
+  timeout: 60
+
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "Directory or file to scan"
+    min_lines:
+      type: integer
+      default: 6
+      minimum: 3
+      description: "Minimum duplicate block size in lines"
+    min_tokens:
+      type: integer
+      default: 50
+      minimum: 20
+      description: "Minimum token count for a block"
+    similarity_threshold:
+      type: number
+      default: 0.8
+      minimum: 0.5
+      maximum: 1.0
+      description: "Similarity threshold (0.5-1.0)"
+    exclude_comments:
+      type: boolean
+      default: true
+      description: "Strip comments before comparison"
+    exclude_imports:
+      type: boolean
+      default: true
+      description: "Strip #include / import lines"
+    max_files:
+      type: integer
+      default: 500
+      description: "Max files to process"
+    format:
+      type: string
+      enum: [json, summary, groups]
+      default: json
+
+output_schema:
+  type: object
+  properties:
+    files_processed: { type: integer }
+    duplicates_found: { type: integer }
+    total_duplicated_lines: { type: integer }
+    duplication_percent: { type: number }
+    pairs:
+      type: array
+      items:
+        type: object
+        properties:
+          file_a: { type: string }
+          file_b: { type: string }
+          lines_a: { type: string, description: "Line range e.g. 45-72" }
+          lines_b: { type: string }
+          similarity: { type: number }
+          tokens: { type: integer }
+          suggestion:
+            type: string
+            description: "E.g. 'Extract to shared utility function'"
+    groups:
+      type: array
+      items:
+        type: object
+        properties:
+          id: { type: string }
+          files: { type: array, items: { type: string } }
+          common_lines: { type: integer }
+      description: "Only when format=groups"

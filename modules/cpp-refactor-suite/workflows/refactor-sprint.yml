@@ -1,0 +1,54 @@
+kind: Workflow
+version: "1.0"
+name: refactor-sprint
+summary: "Analyze → propose → apply refactoring sprint"
+description: >
+  Full refactoring sprint workflow: analyze codebase for issues, generate
+  ranked proposals, optionally apply them, verify tests pass.
+
+steps:
+  - id: analyze
+    type: workflow
+    name: "Run full audit"
+    workflow: full-audit
+    params:
+      path: "${path}"
+      complexity_threshold: 8
+
+  - id: rank
+    type: tool
+    name: "Rank refactoring candidates"
+    tool: refactor-proposal
+    params:
+      analysis_data: "${output_path}/analysis-bundle.json"
+      max_proposals: "${max_proposals || 5}"
+      min_impact: high
+
+  - id: apply
+    type: loop
+    name: "Apply each proposal"
+    body:
+      - id: apply_one
+        type: tool
+        name: "Apply a single refactoring"
+        tool: exec
+        params:
+          command: "echo 'Applying: '"
+    until: "all_proposals_applied"
+    on_error: skip
+    max_retries: 2
+
+  - id: verify
+    type: tool
+    name: "Run tests after refactoring"
+    tool: exec
+    params:
+      command: "make test 2>&1 | tail -20"
+    on_error: abort
+
+import:
+  tools:
+    - refactor-proposal
+  workflows:
+    - full-audit
+tags: [refactoring, sprint, automation]

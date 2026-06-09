@@ -1,0 +1,52 @@
+kind: Workflow
+version: "1.0"
+name: pr-review
+summary: "Pull request review — analyze changed files only"
+description: >
+  Focused analysis on files changed in a PR. Runs complexity, dependency,
+  duplication, and churn analysis only on changed files. Flags regressions
+  and risky changes.
+
+steps:
+  - id: get_changed_files
+    type: tool
+    name: "Get PR changed files"
+    tool: exec
+    params:
+      command: "git diff --name-only ${base_branch || 'origin/master'}...HEAD"
+
+  - id: complexity_pr
+    type: tool
+    name: "Complexity on changed files"
+    tool: complexity
+    params:
+      path: "${get_changed_files.output}"
+      format: summary
+    on_error: skip
+
+  - id: condition_check
+    type: condition
+    name: "Check for critical findings"
+    condition: "${complexity_pr.critical_count > 0}"
+    then:
+      - id: proposal_pr
+        type: tool
+        name: "Generate PR-specific proposals"
+        tool: refactor-proposal
+        params:
+          analysis_data: "${complexity_pr.output}"
+          max_proposals: 3
+          focus: [complexity]
+    else:
+      - id: clean_bill
+        type: tool
+        name: "Report clean PR"
+        tool: exec
+        params:
+          command: "echo '✅ No critical complexity issues in this PR'"
+
+import:
+  tools:
+    - complexity
+    - refactor-proposal
+tags: [pr, review, ci, quality-gate]

@@ -1,0 +1,84 @@
+kind: Tool
+name: git-churn
+version: "1.2"
+summary: "Git churn analysis — per-file volatility over commit history"
+description: >
+  Analyzes git log --numstat to calculate per-file churn (lines added + deleted).
+  Supports date ranges, author filters, directory grouping, and trend analysis.
+  Identifies hotspot files that change frequently — prime refactoring candidates.
+
+category: vcs
+tags: [git, churn, volatility, metrics, refactoring]
+
+implementation:
+  runtime: python3
+  entrypoint: churn.py
+  timeout: 30
+
+input_schema:
+  type: object
+  required: [repo_path]
+  properties:
+    repo_path:
+      type: string
+      description: "Path to git repository"
+    limit:
+      type: integer
+      default: 20
+      minimum: 1
+      maximum: 1000
+      description: "Max files to return"
+    since:
+      type: string
+      default: "90 days ago"
+      description: "Git date string for --since"
+    until:
+      type: string
+      description: "Git date string for --until"
+    author:
+      type: string
+      description: "Filter by author email/name"
+    glob:
+      type: string
+      default: "*.{cpp,hpp,h,c,hxx}"
+      description: "File pattern to match"
+    group_by_dir:
+      type: boolean
+      default: false
+      description: "Aggregate churn by directory"
+    include_binary:
+      type: boolean
+      default: false
+      description: "Include binary files"
+    format:
+      type: string
+      enum: [json, csv, summary]
+      default: json
+
+output_schema:
+  type: object
+  properties:
+    repo: { type: string }
+    period: { type: string }
+    total_commits_analyzed: { type: integer }
+    total_churn: { type: integer }
+    files:
+      type: array
+      items:
+        type: object
+        properties:
+          file: { type: string }
+          added: { type: integer }
+          deleted: { type: integer }
+          churn: { type: integer }
+          commits: { type: integer }
+          authors: { type: integer }
+          last_modified: { type: string, format: date-time }
+    hotspots:
+      type: array
+      items:
+        type: object
+        properties:
+          file: { type: string }
+          churn_percent: { type: number }
+          risk: { type: string, enum: [low, medium, high] }

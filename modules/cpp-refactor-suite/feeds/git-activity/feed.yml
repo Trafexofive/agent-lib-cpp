@@ -1,0 +1,42 @@
+kind: Feed
+name: git-activity
+version: "1.0"
+summary: "Recent git activity — commits, branches, authors"
+description: >
+  Reports recent git activity: last 10 commits, active branches,
+  top contributors, and files changed in the last hour/day/week.
+
+category: vcs
+tags: [git, activity, commits, authors]
+refresh_seconds: 60
+
+output_schema:
+  type: object
+  properties:
+    recent_commits:
+      type: array
+      items:
+        type: object
+        properties:
+          hash: { type: string }
+          author: { type: string }
+          date: { type: string, format: date-time }
+          message: { type: string }
+          files_changed: { type: integer }
+    active_branches:
+      type: array
+      items: { type: string }
+    top_authors:
+      type: array
+      items:
+        type: object
+        properties:
+          name: { type: string }
+          commits: { type: integer }
+    files_changed_recently:
+      type: array
+      items:
+        type: object
+        properties:
+          file: { type: string }
+          change_count: { type: integer }

@@ -1,0 +1,94 @@
+kind: Tool
+name: complexity
+version: "1.2"
+summary: "McCabe cyclomatic complexity analyzer for C/C++"
+description: >
+  Analyzes C/C++ source files and reports cyclomatic complexity per function.
+  Counts branching constructs (if/for/while/switch/case/catch/&&/||/?:).
+  Flags functions exceeding warn_threshold and max_cyclomatic thresholds.
+  Outputs JSON with per-function scores, file-level aggregates, and hotspots.
+
+category: static-analysis
+tags: [complexity, mccabe, c++, metrics, quality]
+
+implementation:
+  runtime: python3
+  entrypoint: analyze.py
+  timeout: 60
+
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "File or directory to analyze (recursive for dirs)"
+    format:
+      type: string
+      enum: [json, text, summary, csv]
+      default: json
+      description: "Output format"
+    threshold:
+      type: integer
+      default: 10
+      minimum: 1
+      maximum: 100
+      description: "Warn threshold override (overrides config)"
+    max_threshold:
+      type: integer
+      default: 15
+      minimum: 1
+      description: "Critical threshold override"
+    exclude_headers:
+      type: boolean
+      default: false
+      description: "Skip .h/.hpp files"
+    exclude_tests:
+      type: boolean
+      default: true
+      description: "Skip files matching *test* or *spec*"
+    glob:
+      type: string
+      default: "*.cpp"
+      description: "File pattern to match"
+
+output_schema:
+  type: object
+  properties:
+    files_analyzed:
+      type: integer
+    total_functions:
+      type: integer
+    max_complexity:
+      type: integer
+    average_complexity:
+      type: number
+    files:
+      type: array
+      items:
+        type: object
+        properties:
+          path: { type: string }
+          functions: { type: integer }
+          max_complexity: { type: integer }
+          hotspots:
+            type: array
+            items:
+              type: object
+              properties:
+                function: { type: string }
+                line: { type: integer }
+                score: { type: integer }
+                level: { type: string, enum: [ok, warn, critical] }
+    summary:
+      type: object
+      properties:
+        critical_count: { type: integer }
+        warn_count: { type: integer }
+        ok_count: { type: integer }
+
+examples:
+  - input: { path: "src/core/agent.cpp" }
+    output: { files_analyzed: 1, total_functions: 34, max_complexity: 18 }
+  - input: { path: "src/", format: "summary", threshold: 8 }
+    output: { files_analyzed: 42, total_functions: 287, critical_count: 3, warn_count: 12 }

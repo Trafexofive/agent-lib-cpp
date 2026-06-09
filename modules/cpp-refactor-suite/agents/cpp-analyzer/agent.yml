@@ -1,0 +1,78 @@
+kind: Agent
+name: cpp-analyzer
+version: "2.0"
+summary: "Production-grade C++ static analysis agent"
+description: >
+  Specialized agent for deep C++ codebase analysis. Runs complexity scoring,
+  dependency graphing, test coverage tracking, git churn analysis, and
+  duplication detection. Produces consolidated reports and refactoring proposals.
+
+cognitive_engine:
+  primary: { provider: deepseek, model: deepseek-v4-pro }
+  fallback: { provider: opencode, model: deepseek-v4-flash-free }
+
+runtime:
+  max_iterations: 20
+  history_cap: 40
+  timeout: 600
+
+persona:
+  agent: system-prompts/analyzer.md
+
+import:
+  tools:
+    - builtin/exec
+    - builtin/fs_read
+    - builtin/fs_write
+    - builtin/grep
+    - builtin/list
+    - builtin/json
+    - builtin/web_fetch
+    - complexity
+    - dep-graph
+    - test-coverage
+    - git-churn
+    - duplication
+    - refactor-proposal
+  feeds:
+    - build-status
+    - git-activity
+    - system-load
+  relics:
+    - analysis-cache
+    - report-store
+    - config-vault
+  workflows:
+    - full-audit
+    - pr-review
+    - refactor-sprint
+    - nightly-scan
+
+config:
+  complexity:
+    max_cyclomatic: 15
+    warn_threshold: 8
+    exclude_headers: false
+    exclude_tests: true
+  dep_graph:
+    max_depth: 5
+    max_fan_out_warn: 10
+    exclude_patterns: ["*/build/*", "*/third_party/*", "*/_archive/*", "*/.pi/*"]
+    detect_circular: true
+  test_coverage:
+    min_percent: 80
+    exclude_tests: true
+    report_untested_public_apis: true
+  churn:
+    max_files: 20
+    since: "90 days ago"
+    group_by_dir: true
+  duplication:
+    min_lines: 6
+    min_tokens: 50
+    exclude_comments: true
+    exclude_imports: true
+  refactor:
+    auto_apply: false
+    max_proposals: 5
+    require_approval: true

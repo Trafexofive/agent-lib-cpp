@@ -1,0 +1,42 @@
+kind: Relic
+version: "1.0"
+name: report-store
+summary: "Versioned report storage with metadata indexing"
+author: "CORTEX_STD_LIB"
+state: "experimental"
+mode: builtin
+description: >
+  Stores generated analysis reports with versioning and metadata.
+  Supports full-text search, time-range queries, and export to multiple
+  formats (JSON, Markdown, HTML, PDF via pandoc).
+
+service_type: persistence
+interface:
+  type: builtin
+  base_url: builtin://report-store
+endpoints:
+  - name: store
+    method: POST
+    path: /reports/{namespace}
+    description: "Store a new report with metadata"
+  - name: get
+    method: GET
+    path: /reports/{namespace}/{report_id}
+    description: "Retrieve a specific report"
+  - name: list
+    method: GET
+    path: /reports/{namespace}
+    description: "List reports with optional filters"
+  - name: search
+    method: GET
+    path: /reports/{namespace}/search
+    description: "Full-text search across reports"
+  - name: export
+    method: GET
+    path: /reports/{namespace}/{report_id}/export
+    description: "Export report to specified format"
+  - name: compare
+    method: GET
+    path: /reports/{namespace}/compare
+    description: "Diff two reports by ID"
+tags: [reports, storage, versioning, export]

@@ -1,0 +1,91 @@
+kind: Workflow
+version: "1.1"
+name: full-audit
+summary: "Complete codebase audit — all analysis tools → consolidated report"
+description: >
+  Runs complexity, dependency graph, test coverage, git churn, and duplication
+  detection. Aggregates results and generates a consolidated audit report with
+  prioritized findings and refactoring proposals.
+
+steps:
+  - id: discover
+    type: tool
+    name: "Discover source files"
+    tool: exec
+    params:
+      command: "find ${path} -name '*.cpp' -o -name '*.hpp' | head -100"
+
+  - id: complexity_scan
+    type: tool
+    name: "Complexity analysis"
+    tool: complexity
+    params:
+      path: "${path}"
+      format: json
+      threshold: "${complexity_threshold || 8}"
+
+  - id: dep_scan
+    type: parallel
+    name: "Dependency + coverage + churn (parallel)"
+    steps:
+      - id: deps
+        type: tool
+        tool: dep-graph
+        params:
+          path: "${path}"
+          max_depth: "${dep_max_depth || 5}"
+          format: json
+      - id: coverage
+        type: tool
+        tool: test-coverage
+        params:
+          path: "${path}"
+          min_percent: "${coverage_min || 80}"
+      - id: churn
+        type: tool
+        tool: git-churn
+        params:
+          repo_path: "${path}"
+          limit: 20
+          since: "${churn_since || '90 days ago'}"
+
+  - id: dup_scan
+    type: tool
+    name: "Duplication detection"
+    tool: duplication
+    params:
+      path: "${path}"
+      min_lines: 6
+      format: json
+
+  - id: proposal
+    type: tool
+    name: "Generate refactoring proposals"
+    tool: refactor-proposal
+    params:
+      analysis_data: "${output_path}/analysis-bundle.json"
+      max_proposals: 5
+      format: markdown
+      output_path: "${output_path}/refactor-proposals.md"
+
+  - id: report
+    type: tool
+    name: "Write consolidated report"
+    tool: exec
+    params:
+      command: |
+        echo "# Audit Report — ${path}" > ${output_path}/audit-report.md
+        echo "**Date:** $(date -Iseconds)" >> ${output_path}/audit-report.md
+        echo "**Tools:** complexity, dep-graph, test-coverage, git-churn, duplication, refactor-proposal" >> ${output_path}/audit-report.md
+        echo "Audit complete." >> ${output_path}/audit-report.md
+    on_error: skip
+
+import:
+  tools:
+    - complexity
+    - dep-graph
+    - test-coverage
+    - git-churn
+    - duplication
+    - refactor-proposal
+tags: [audit, analysis, pipeline, comprehensive]

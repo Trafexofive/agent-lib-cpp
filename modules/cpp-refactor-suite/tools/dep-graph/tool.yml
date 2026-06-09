@@ -1,0 +1,87 @@
+kind: Tool
+name: dep-graph
+version: "1.1"
+summary: "C++ include dependency graph analyzer"
+description: >
+  Traces #include directives recursively to build a directed dependency graph.
+  Detects circular dependencies, ranks files by fan-in/fan-out, identifies
+  God objects (>10 includers), and generates DOT format for visualization.
+
+category: static-analysis
+tags: [dependencies, graph, include, c++, architecture]
+
+implementation:
+  runtime: python3
+  entrypoint: graph.py
+  timeout: 60
+
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "Root directory to scan"
+    max_depth:
+      type: integer
+      default: 5
+      minimum: 1
+      maximum: 20
+      description: "Maximum include recursion depth"
+    format:
+      type: string
+      enum: [json, dot, summary, matrix]
+      default: json
+      description: "Output format"
+    exclude:
+      type: array
+      items: { type: string }
+      default: []
+      description: "Path patterns to exclude"
+    detect_circular:
+      type: boolean
+      default: true
+      description: "Detect and report circular dependencies"
+    max_fan_out_warn:
+      type: integer
+      default: 10
+      description: "Flag files with more includers than this"
+    group_by:
+      type: string
+      enum: [file, directory, module]
+      default: file
+      description: "Aggregation level"
+
+output_schema:
+  type: object
+  properties:
+    total_files: { type: integer }
+    total_edges: { type: integer }
+    max_depth_reached: { type: integer }
+    circular_deps:
+      type: array
+      items:
+        type: object
+        properties:
+          cycle: { type: array, items: { type: string } }
+          length: { type: integer }
+    top_included:
+      type: array
+      items:
+        type: object
+        properties:
+          file: { type: string }
+          includers: { type: integer }
+          level: { type: string, enum: [normal, god_object] }
+    most_dependent:
+      type: array
+      items:
+        type: object
+        properties:
+          file: { type: string }
+          includes: { type: integer }
+    graph:
+      type: object
+      properties:
+        dot: { type: string, description: "Graphviz DOT format" }
+      description: "Only present when format=dot"

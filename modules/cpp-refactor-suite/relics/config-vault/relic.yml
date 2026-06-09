@@ -1,0 +1,33 @@
+kind: Relic
+version: "1.0"
+name: config-vault
+summary: "Secure configuration store for tool thresholds and API keys"
+author: "CORTEX_STD_LIB"
+state: "experimental"
+mode: builtin
+description: >
+  Encrypted key-value store for configuration that shouldn't be in
+  plaintext manifests: API tokens, threshold overrides per project,
+  and environment-specific settings. Values never appear in tool output.
+
+service_type: persistence
+interface:
+  type: builtin
+  base_url: builtin://config-vault
+endpoints:
+  - name: get
+    method: GET
+    path: /vault/{namespace}/{key}
+    description: "Retrieve a config value (redacted in output)"
+  - name: set
+    method: PUT
+    path: /vault/{namespace}/{key}
+    description: "Store a config value"
+  - name: delete
+    method: DELETE
+    path: /vault/{namespace}/{key}
+  - name: list_keys
+    method: GET
+    path: /vault/{namespace}
+    description: "List keys (values redacted)"
+tags: [config, secrets, security, vault]

@@ -1,0 +1,38 @@
+kind: Relic
+version: "1.1"
+name: analysis-cache
+summary: "Persistent cache for incremental code analysis results"
+author: "CORTEX_STD_LIB"
+state: "experimental"
+mode: builtin
+description: >
+  Filesystem-backed cache for analysis results. Stores complexity scores,
+  dependency graphs, churn data, and duplication reports keyed by git commit
+  hash. Enables incremental analysis — only re-analyze changed files.
+
+service_type: persistence
+interface:
+  type: builtin
+  base_url: builtin://analysis-cache
+endpoints:
+  - name: get
+    method: GET
+    path: /cache/{namespace}/{key}
+    description: "Retrieve cached analysis by namespace and key"
+  - name: put
+    method: PUT
+    path: /cache/{namespace}/{key}
+    description: "Store analysis result with TTL"
+  - name: invalidate
+    method: DELETE
+    path: /cache/{namespace}/{key}
+    description: "Invalidate specific cached entry"
+  - name: list
+    method: GET
+    path: /cache/{namespace}
+    description: "List all cached entries for a namespace"
+  - name: prune
+    method: DELETE
+    path: /cache/{namespace}
+    description: "Remove entries older than max_age_seconds"
+tags: [cache, analysis, persistence, incremental]

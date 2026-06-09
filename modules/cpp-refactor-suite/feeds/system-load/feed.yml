@@ -1,0 +1,26 @@
+kind: Feed
+name: system-load
+version: "1.0"
+summary: "Host system resource usage"
+description: >
+  Reports CPU usage, memory, disk I/O, and process count.
+  Useful for monitoring analysis tool impact.
+
+category: system
+tags: [system, cpu, memory, monitoring]
+refresh_seconds: 15
+
+output_schema:
+  type: object
+  properties:
+    cpu_percent: { type: number }
+    memory_used_gb: { type: number }
+    memory_total_gb: { type: number }
+    load_average:
+      type: object
+      properties:
+        _1min: { type: number }
+        _5min: { type: number }
+        _15min: { type: number }
+    disk_free_gb: { type: number }
+    process_count: { type: integer }

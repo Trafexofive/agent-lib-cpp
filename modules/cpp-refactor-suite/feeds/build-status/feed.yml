@@ -1,0 +1,46 @@
+kind: Feed
+name: build-status
+version: "1.1"
+summary: "Real-time CI/CD build status from .build-status.json"
+description: >
+  Reads .build-status.json from project root on each turn. Reports last
+  build result, duration, commit hash, branch, failing targets, and test
+  pass/fail counts. Falls back gracefully when file is absent.
+
+category: ci
+tags: [build, ci, status, pipeline]
+refresh_seconds: 30
+
+output_schema:
+  type: object
+  properties:
+    last_build:
+      type: string
+      format: date-time
+      description: "ISO8601 timestamp of last build"
+    status:
+      type: string
+      enum: [passing, failing, unknown, building, cancelled]
+    duration_seconds:
+      type: number
+      description: "Build wall-clock time"
+    commit:
+      type: string
+      description: "Git commit hash"
+    branch:
+      type: string
+    failing_targets:
+      type: array
+      items:
+        type: object
+        properties:
+          target: { type: string }
+          error: { type: string }
+          log_path: { type: string }
+    test_summary:
+      type: object
+      properties:
+        total: { type: integer }
+        passed: { type: integer }
+        failed: { type: integer }
+        skipped: { type: integer }
