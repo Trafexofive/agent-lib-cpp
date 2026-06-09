@@ -961,7 +961,11 @@ void Agent::saveSession(const std::string &id) {
             rec.content = h.substr(7);
         } else {
             rec.role = SessionRecord::SYSTEM;
-            rec.content = h;
+            // Strip "System: " prefix to prevent doubling on load
+            if (h.rfind("System: ", 0) == 0)
+                rec.content = h.substr(8);
+            else
+                rec.content = h;
         }
         session.records.push_back(rec);
     }
