@@ -230,16 +230,30 @@ public:
 private:
     WorkflowStep parseStep(const MiniYaml::Node& node) {
         WorkflowStep s;
-        s.id = MiniYaml::get(node, "id");
-        s.type = MiniYaml::get(node, "type");
-        s.name = MiniYaml::get(node, "name");
-        s.tool = MiniYaml::get(node, "tool");
-        s.agent = MiniYaml::get(node, "agent");
-        s.condition = MiniYaml::get(node, "condition");
-        s.workflow = MiniYaml::get(node, "workflow");
-        s.onError = MiniYaml::get(node, "on_error", "abort");
-        s.maxRetries = std::stoi(MiniYaml::get(node, "max_retries", "0"));
-        s.timeout = std::stoi(MiniYaml::get(node, "timeout", "30"));
+        // For list items ("- id: discover"), the key is on the node itself
+        // For regular nodes, keys are in children. Handle both.
+        auto getAttr = [&](const std::string& key, const std::string& def = "") {
+            if (node.key == key) return node.value;
+            return MiniYaml::get(node, key, def);
+        };
+        s.id = getAttr("id");
+        s.type = getAttr("type");
+        s.name = getAttr("name");
+        s.tool = getAttr("tool");
+        s.agent = getAttr("agent");
+        s.condition = getAttr("condition");
+        s.workflow = getAttr("workflow");
+        s.onError = getAttr("on_error", "abort");
+        s.maxRetries = std::stoi(getAttr("max_retries", "0"));
+        s.timeout = std::stoi(getAttr("timeout", "30"));
+
+        // Parse params as JSON
+        auto* paramsNode = MiniYaml::find(node, "params");
+        if (paramsNode) {
+            for (auto& p : paramsNode->children) {
+                if (!p.key.empty()) s.params[p.key] = p.value;
+            }
+        }
 
         // Sub-steps
         auto* thenNode = MiniYaml::find(node, "then");
@@ -264,6 +278,13 @@ private:
         if (s.onError != "abort") ss << " on_error=\"" << s.onError << "\"";
         if (s.maxRetries > 0) ss << " max_retries=\"" << s.maxRetries << "\"";
         ss << ">\n";
+
+        // Render params if present
+        if (!s.params.empty()) {
+            Json::StreamWriterBuilder w;
+            w["indentation"] = std::string(indent + 4, ' ');
+            ss << Json::writeString(w, s.params) << "\n";
+        }
 
         if (!s.thenSteps.empty()) {
             ss << pad << "  <then>\n";
