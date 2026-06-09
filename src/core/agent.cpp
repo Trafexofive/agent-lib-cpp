@@ -1154,8 +1154,7 @@ void Agent::harvestPendingTools() {
 
 int Agent::reloadManifests(bool backup) {
     std::string dir = config_.manifestDir.empty() ? "./manifests" : config_.manifestDir;
-    std::cerr << "[reload] scanning " << dir << std::endl;
-    if (!std::filesystem::exists(dir)) { std::cerr << "[reload] dir not found" << std::endl; return 0; }
+    if (!std::filesystem::exists(dir)) return 0;
     if (backup) {
         auto ts = std::chrono::system_clock::now().time_since_epoch().count();
         std::string backupDir = dir + "/_backups/" + std::to_string(ts);
@@ -1181,7 +1180,6 @@ int Agent::reloadManifests(bool backup) {
             continue;
         }
         tools_[td.name] = td;
-        std::cerr << "[reload] loaded " << td.name << " from " << it->path() << std::endl;
         count++;
     }
     return count;

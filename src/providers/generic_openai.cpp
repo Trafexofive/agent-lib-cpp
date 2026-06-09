@@ -64,7 +64,11 @@ std::string GenericOpenAIClient::generate(const ChatMessages& msgs) {
     }
 
     if (root.isMember("error")) {
-        throw std::runtime_error("API error: " + root["error"]["message"].asString());
+        std::string errMsg = "unknown error";
+        auto& err = root["error"];
+        if (err.isObject() && err.isMember("message")) errMsg = err["message"].asString();
+        else if (err.isString()) errMsg = err.asString();
+        throw std::runtime_error("API error: " + errMsg);
     }
 
     auto& choices = root["choices"];
