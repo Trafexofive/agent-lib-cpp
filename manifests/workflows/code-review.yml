@@ -3,12 +3,10 @@ version: "1.0"
 name: "code-review"
 summary: "Review a source file for issues — grep for TODOs, count lines, check imports"
 
-description: |
-  Multi-step code review workflow:
-  1. Discover the target file
-  2. Count lines and grep for patterns
-  3. Read the file
-  4. Summarise findings
+description: >
+  Multi-step code review workflow. Takes a target file, discovers it,
+  counts lines, searches for TODOs/FIXMEs/HACKs/XXXs, reads the source,
+  and writes a review summary to /tmp/code-review-{target}.md.
 
 steps:
   - id: discover
