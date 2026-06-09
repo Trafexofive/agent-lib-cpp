@@ -5,7 +5,7 @@ summary: "Remove a pinned file from agent context"
 category: context
 tags: [context, unpin, release, memory]
 
-description: |
+description: "See input_schema for parameters"
   Removes a previously pinned file from the agent's persistent context.
   The file content will no longer appear in future iterations.
 

@@ -5,7 +5,7 @@ summary: "Peek at a file in context for N cycles, then auto-evict"
 category: context
 tags: [context, peek, ephemeral, temporary]
 
-description: |
+description: "See input_schema for parameters"
   Reads a file into the agent's context for a limited number of cycles.
   After N cycles, the content is automatically removed from context.
   Use for: one-off file reads, inspecting outputs, checking intermediate state.

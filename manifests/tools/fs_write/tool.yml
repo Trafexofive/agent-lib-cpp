@@ -2,7 +2,7 @@ kind: Tool
 name: fs_write
 version: "2.0"
 summary: "Write content to a file"
-description: |
+description: "See input_schema for parameters"
   Writes content to a file path. Creates parent directories if needed.
   Supports overwrite and append modes.
 category: filesystem

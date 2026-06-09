@@ -5,7 +5,7 @@ summary: "Pin a file into persistent agent context"
 category: context
 tags: [context, pin, retain, memory]
 
-description: |
+description: "See input_schema for parameters"
   Reads a file and pins it into the agent's persistent context.
   The file content appears in EVERY future iteration until explicitly unpinned.
   Use for: configuration files, API schemas, reference docs, project structure.

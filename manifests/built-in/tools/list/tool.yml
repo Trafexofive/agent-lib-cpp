@@ -2,7 +2,7 @@ kind: Tool
 name: list
 version: "2.0"
 summary: "List files and directories"
-description: |
+description: "See input_schema for parameters"
   Lists files and directories at a given path. Supports recursive listing,
   pattern filtering, and detail level (names only vs full stat).
 category: filesystem

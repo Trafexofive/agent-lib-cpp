@@ -2,7 +2,7 @@ kind: Tool
 name: fs_read
 version: "2.0"
 summary: "Read file contents"
-description: |
+description: "See input_schema for parameters"
   Read a file's content from the filesystem. Returns the full file text.
   
   **Rules:**

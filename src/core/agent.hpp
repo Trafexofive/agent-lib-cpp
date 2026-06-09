@@ -153,7 +153,8 @@ private:
     std::string responseOutput_;   // sanitized response text
     std::string thoughtOutput_;    // thought content (hidden in FULL)
     std::string lastPrompt_;       // last built prompt for /prompts
-    std::vector<std::string> iterationPrompts_;  // full prompt per iteration (for /prompts toggle)
+    std::vector<std::string> iterationPrompts_;
+    std::vector<std::string> iterationOutputs_;  // LLM response + results per iteration  // full prompt per iteration (for /prompts toggle)
     std::vector<ProtocolAction> protocolActions_;
     std::vector<ProtocolResult> protocolResults_;
     std::map<std::string, std::shared_ptr<Agent>> subAgents_;

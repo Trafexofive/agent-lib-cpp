@@ -2,7 +2,7 @@ kind: Tool
 name: grep
 version: "2.0"
 summary: "Search files with regex"
-description: |
+description: "See input_schema for parameters"
   Searches for regex patterns in files. Supports context lines,
   file glob filtering, and line-number output. Returns matches
   grouped by file with line numbers and surrounding context.

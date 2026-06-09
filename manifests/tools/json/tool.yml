@@ -2,7 +2,7 @@ kind: Tool
 name: json
 version: "2.0"
 summary: "Parse, query, and transform JSON"
-description: |
+description: "See input_schema for parameters"
   JSON utility tool. Validates, pretty-prints, minifies, and queries
   JSON data using jq-style dot notation. Can read from a string or file.
 category: data

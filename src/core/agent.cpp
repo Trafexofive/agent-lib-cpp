@@ -97,6 +97,19 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
         }
     }
 
+    // Register built-in tools with descriptions so they appear in system prompt
+    tools_["exec"]          = {"exec",          "Run shell commands. Params: {\"command\": string, \"cwd\"?: string, \"timeout\"?: int}"};
+    tools_["list"]          = {"list",          "List directory contents. Params: {\"path\"?: string, \"pattern\"?: glob, \"recursive\"?: bool}"};
+    tools_["grep"]          = {"grep",          "Search files for pattern. Params: {\"pattern\": regex, \"path\"?: dir, \"glob\"?: '*.py'}"};
+    tools_["fs_read"]       = {"fs_read",       "Read a file. Params: {\"path\": string, \"offset\"?: int, \"limit\"?: int}"};
+    tools_["fs_write"]      = {"fs_write",      "Write or append to a file. Params: {\"path\": string, \"content\": string, \"append\"?: bool}"};
+    tools_["context_pin"]   = {"context_pin",   "Pin a file to context persistent across turns. Params: {\"path\": string}"};
+    tools_["context_peek"]  = {"context_peek",  "Read file into context for N cycles then auto-evict. Params: {\"path\": string, \"cycles\"?: int}"};
+    tools_["context_unpin"] = {"context_unpin", "Remove a pinned file from context. Params: {\"path\": string}"};
+    tools_["json"]          = {"json",          "Parse, validate, query, or format JSON. Params: {\"data\"?: string, \"path\"?: string, \"op\": parse|query|validate, \"query\"?: jq-path}"};
+    tools_["web_fetch"]     = {"web_fetch",     "Fetch HTTP URL. Params: {\"url\": string, \"method\"?: GET|POST, \"headers\"?: object, \"body\"?: string}"};
+    tools_["ask_tool"]      = {"ask_tool",      "Ask user structured questions via cards. Params: {\"title\": string, \"message\"?: string, \"cards\": [...]}"};
+
     // Register internal tools and feeds
     tools::registerDefaults();
     feeds::registerFeeds();
@@ -153,6 +166,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
     responseOutput_.clear();
     thoughtOutput_.clear();
     iterationPrompts_.clear();
+    iterationOutputs_.clear();
     protocolActions_.clear();
     protocolResults_.clear();
 
@@ -488,6 +502,19 @@ std::string Agent::runLoop(AgentContext &ctx) {
             taskComplete = true;
             if (responseOutput_.empty())
                 responseOutput_ = sanitize(llmOutput);
+        }
+
+        // Capture iteration output for debugging
+        {
+            std::ostringstream os;
+            os << "### LLM RAW OUTPUT\n\n" << rawLlOutput_ << "\n\n";
+            if (!results.empty()) {
+                os << "### TOOL RESULTS\n\n";
+                for (auto &[id, r] : results) {
+                    os << "<result id=\"" << id << "\">" << extractResultBody(r) << "</result>\n";
+                }
+            }
+            iterationOutputs_.push_back(os.str());
         }
 
         if (taskComplete) {
@@ -860,19 +887,25 @@ Json::Value Agent::executeScriptTool(const ToolDef &tool,
 
 #ifdef MK3_DUMP_SESSION
 void Agent::dumpSessionArtifacts() const {
-    // iterations.md
+    // iterations.md — full prompt + response + results per iteration
     if (!iterationPrompts_.empty()) {
         std::ofstream f("iterations.md");
         for (size_t i = 0; i < iterationPrompts_.size(); i++) {
             f << "## Iteration " << (i + 1) << "\n\n";
+            f << "### PROMPT\n\n";
             std::istringstream ss(iterationPrompts_[i]);
             std::string line;
             while (std::getline(ss, line))
                 f << line << "\n";
             f << "\n";
+            // Append response if we have it
+            if (i < iterationOutputs_.size()) {
+                f << "### RESPONSE\n\n";
+                f << iterationOutputs_[i] << "\n\n";
+            }
         }
     }
-    // raw.md
+    // raw.md — complete raw LLM stream with injected <result> tags
     if (!rawLlOutput_.empty()) {
         std::ofstream f("raw.md");
         f << rawLlOutput_;
