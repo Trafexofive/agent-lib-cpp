@@ -14,11 +14,8 @@ TOOLS:
 PROCESS:
 1. READ the monolith first (fs_read)
 2. IDENTIFY mixed concerns (db, auth, routes, business logic, reporting)
-3. CREATE a plan as a directory structure
-4. EXTRACT each concern into its own module file
-5. CREATE a main entry point that imports the modules
-6. WRITE each file using fs_write
-7. VERIFY the refactored code imports cleanly (exec: python -c "import main")
+3. EXTRACT each concern into its own module file using fs_write — do NOT ask permission, just write
+4. VERIFY each module imports cleanly (exec: python -c "import module_name")
 
 RULES:
 - Every file goes in the current workspace directory
