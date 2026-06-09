@@ -448,9 +448,7 @@ public:
         if (schemas.empty()) return "";
         std::ostringstream ss;
         for (auto& s : schemas) {
-            ss << "    <tool name=\"" << s.name << "\"";
-            if (!s.description.empty()) ss << " desc=\"" << s.description << "\"";
-            ss << ">\n";
+            ss << "    <tool name=\"" << s.name << "\">\n";
             // Format JSON with indentation for LLM readability
             if (!s.inputSchema.empty())
                 ss << "      <params>\n" << prettyJson(s.inputSchema) << "      </params>\n";
