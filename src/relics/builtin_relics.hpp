@@ -13,6 +13,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <curl/curl.h>
 #include <vector>
 
 namespace cortex {
@@ -372,11 +373,54 @@ public:
         if (relicName == "state_checkpoint")
             return dispatchCheckpoint(endpoint, params);
 
+        // Docker/HTTP relics — try to call via HTTP
+        auto it = relicUrls_.find(relicName);
+        if (it != relicUrls_.end()) {
+            return dispatchHttp(it->second, endpoint, params);
+        }
+
         // Unknown
         return {false, "Unknown relic: " + relicName, {}};
     }
 
+    void registerRelic(const std::string& name, const std::string& baseUrl) {
+        relicUrls_[name] = baseUrl;
+    }
+
 private:
+    std::map<std::string, std::string> relicUrls_;  // name → base_url
+
+    RelicResult dispatchHttp(const std::string& baseUrl,
+                             const std::string& endpoint,
+                             const Json::Value& params) {
+        std::string url = baseUrl + "/" + endpoint;
+        CURL* curl = curl_easy_init();
+        if (!curl) return {false, "CURL init failed", {}};
+        std::string response;
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](void* p, size_t s, size_t n, void* u) -> size_t {
+            auto* b = static_cast<std::string*>(u);
+            b->append(static_cast<char*>(p), s * n);
+            return s * n;
+        });
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+        if (!params.empty()) {
+            Json::StreamWriterBuilder w;
+            w["indentation"] = "";
+            std::string body = Json::writeString(w, params);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.size());
+            struct curl_slist* h = nullptr;
+            h = curl_slist_append(h, "Content-Type: application/json");
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, h);
+        }
+        CURLcode res = curl_easy_perform(curl);
+        curl_easy_cleanup(curl);
+        if (res != CURLE_OK) return {false, "Relic unreachable: " + url, {}};
+        return {true, "", response};
+    }
+
     RelicResult dispatchJournal(const std::string &endpoint,
                                 const Json::Value &params) {
         auto &j = SessionJournal::instance();

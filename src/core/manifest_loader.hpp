@@ -493,6 +493,17 @@ public:
         return loadToolSchema(toolYmlPath);
     }
 
+    struct RelicConfig { std::string baseUrl; };
+    static RelicConfig loadRelicConfig(const std::string& path) {
+        RelicConfig rc;
+        auto yaml = readFile(path);
+        if (yaml.empty()) return rc;
+        auto root = ManifestYaml::parse(yaml);
+        auto* iface = ManifestYaml::find(root, "interface");
+        if (iface) rc.baseUrl = ManifestYaml::get(*iface, "base_url");
+        return rc;
+    }
+
 private:
     static std::string readFile(const std::string& path) {
         std::ifstream f(path);
