@@ -1,0 +1,24 @@
+kind: Agent
+name: decoupler
+version: "1.0"
+summary: "Decouples monoliths into layered modules: db, auth, routes, business logic"
+
+cognitive_engine:
+  primary: { provider: deepseek, model: deepseek-chat }
+  parameters: { temperature: 0.3, max_tokens: 4096 }
+
+runtime:
+  max_iterations: 5
+  history_cap: 20
+
+persona:
+  agent: personas/decoupler.md
+
+import:
+  tools:
+    - builtin/exec
+    - builtin/list
+    - builtin/fs_read
+    - builtin/fs_write
+  files:
+    - monolith.py

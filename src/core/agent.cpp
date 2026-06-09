@@ -594,7 +594,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
             ss << "/>\n";
         }
     } else {
-        ss << " <![CDATA[\n" << schemaIt->second << "\n ]]\n";
+        ss << " " << schemaIt->second << "\n";
     }
     ss << " </tools>\n";
 
@@ -622,7 +622,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
 
     auto wfIt = env_.find("__WORKFLOW_XML__");
     if (wfIt != env_.end() && !wfIt->second.empty()) {
-        ss << "    <![CDATA[\n" << wfIt->second << "\n    ]]\n";
+        ss << wfIt->second << "\n";
     }
 
     ss << "  <cwd>" << std::filesystem::current_path().string() << "</cwd>\n";
@@ -640,7 +640,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
                 any = true;
             }
             ss << "  <" << fr.name << ">\n";
-            ss << "    <![CDATA[\n" << fr.summary << "\n    ]]\n";
+            ss << "  " << fr.summary << "\n";
             ss << "  </" << fr.name << ">\n";
         }
         if (any)
@@ -651,7 +651,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     if (!contextFeeds_.empty()) {
         ss << "<context_feeds>\n";
         for (auto &feed : contextFeeds_) {
-            ss << "  <![CDATA[\n" << feed << "\n  ]]\n";
+            ss << "  " << feed << "\n";
         }
         ss << "</context_feeds>\n\n";
     }
