@@ -12,8 +12,7 @@
 #include <filesystem>
 #include <fstream>
 
-namespace cortex {
-namespace mk3 {
+namespace cortex::mk3 {
 Json::Value Agent::dispatchTool(const protocol::ParsedAction &action) {
     // ── Meta-tools: reload manifests, toggle builtins ──
     if (action.name == "disable_builtin" || action.name == "enable_builtin") {
@@ -191,62 +190,6 @@ std::string Agent::getEnv(const std::string &key,
 }
 
 // ── Harvest pending tools: complete results + progressive partial output ──
-void Agent::harvestPendingTools() {
-    for (auto &pt : pendingTools_) {
-        pt->name = pt->name; // ensure name is available
-
-        // ── Progressive: stream new output bytes while tool is running ──
-        {
-            std::lock_guard<std::mutex> lk(pt->outMtx);
-            if (pt->output.size() > pt->bytesRendered) {
-                std::string newChunk = pt->output.substr(pt->bytesRendered);
-                pt->bytesRendered = pt->output.size();
-                if (!newChunk.empty()) {
-                    protocolResults_.push_back(
-                        {pt->id, true, newChunk, pt->name, 0, 0.0, 0});
-                }
-            }
-        }
-
-        // ── Final: push complete result when done ──
-        if (!pt->done.load())
-            continue;
-
-        Json::Value r;
-        {
-            std::lock_guard<std::mutex> lk(pt->outMtx);
-            r["success"] = pt->ok.load();
-            r["exit_code"] = pt->exitCode;
-            if (!pt->output.empty()) {
-                Json::CharReaderBuilder rb;
-                std::string errs;
-                std::istringstream ss(pt->output);
-                Json::Value parsed;
-                if (Json::parseFromStream(rb, ss, &parsed, &errs)) {
-                    for (auto &k : parsed.getMemberNames())
-                        r[k] = parsed[k];
-                } else {
-                    r["output"] = pt->output;
-                }
-            }
-        }
-        std::string summary =
-            pt->ok ? pt->output : ("failed: " + pt->output.substr(0, 200));
-        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-                           std::chrono::steady_clock::now() - pt->startTime)
-                           .count() /
-                       1000.0;
-        protocolResults_.push_back({pt->id, pt->ok, summary, pt->name,
-                                    pt->exitCode, elapsed, pt->output.size()});
-        pt->harvested = true;
-    }
-
-    // Only erase entries that completed AND were harvested
-    pendingTools_.erase(std::remove_if(pendingTools_.begin(),
-                                       pendingTools_.end(),
-                                       [](auto &pt) { return pt->harvested; }),
-                        pendingTools_.end());
-}
 
 
 int Agent::reloadManifests(bool backup) {
@@ -337,5 +280,5 @@ void Agent::loadSessionTools() {
 }
 
 
-} // namespace mk3
-} // namespace cortex
+
+} // namespace cortex::mk3

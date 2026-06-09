@@ -40,23 +40,10 @@ struct ProtocolResult {
 };
 
 // ── Pending tool execution (threaded popen, streams output live) ──
-struct PendingTool {
-    std::string id;
-    std::string name;
-    std::atomic<bool> done{false};
-    std::atomic<bool> ok{true};
-    std::mutex outMtx;
-    std::string output;  // mutex-protected, grows as tool produces output
-    int exitCode = 0;
-    bool harvested = false;  // set after final result pushed
-    size_t bytesRendered = 0;  // how many bytes have been streamed to renderer
-    std::chrono::steady_clock::time_point startTime;  // for elapsedMs
-};
-
 class Agent {
 public:
     Agent(AgentConfig cfg, LlmProviderPtr provider);
-    ~Agent();  // joins tool threads to prevent exit crash
+    ~Agent() = default;
 
     // ---- Execution ----
     std::string prompt(const std::string& input, const std::string& sessionId = "",
@@ -78,7 +65,6 @@ public:
     const std::vector<ProtocolResult>& protocolResults() const { return protocolResults_; }
 
     // Threaded tool execution: harvest completed tools, push results to protocolResults_
-    void harvestPendingTools();
 
     // ---- Session ----
     void loadSession(const std::string& id);
@@ -128,9 +114,7 @@ private:
     // Tool dispatch
     Json::Value dispatchTool(const protocol::ParsedAction& action);
     Json::Value executeScriptTool(const ToolDef& tool, const Json::Value& params);
-#ifdef MK3_DUMP_SESSION
     void dumpSessionArtifacts() const;
-#endif
 
     // Output sanitization
     static std::string sanitize(const std::string& output);
@@ -145,9 +129,7 @@ private:
     std::map<std::string, std::string> executedActions_;  // dedup: key → cached result JSON string
     std::map<std::string, ToolDef> tools_;
     std::set<std::string> feeds_;   // enabled feed names (from manifest import)
-    std::vector<std::shared_ptr<PendingTool>> pendingTools_;  // threaded tool execution
     std::set<std::string> disabledBuiltins_;
-    std::vector<std::thread> toolThreads_;  // join on destruction, prevent exit crash
     std::set<std::string> relics_;  // enabled relic names (from manifest import)
     bool raw_ = false;
     bool verbose_ = false;

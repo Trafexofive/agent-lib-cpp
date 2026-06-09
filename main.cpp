@@ -1073,7 +1073,6 @@ static int cmdRun(CliConfig& cli) {
                 if (!cortex::mk3::g_running) return;
                 std::lock_guard<std::mutex> lk(renderMtx);
                 if (firstToken) { renderer.clear(); firstToken = false; }
-                agent.harvestPendingTools();
                 auto& acts = agent.protocolActions();
                 auto& ress = agent.protocolResults();
                 if (!acts.empty() || !agent.responseOutput().empty()) thinkingPhase = false;

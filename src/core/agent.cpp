@@ -125,11 +125,6 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
     loadSessionTools();
 }
 
-Agent::~Agent() {
-    for (auto &t : toolThreads_)
-        if (t.joinable())
-            t.join();
-}
 
 // ═══════════════════════════════════════════════════════════════════════
 // Execution Entry Points
@@ -158,9 +153,7 @@ std::string Agent::prompt(const std::string &input, StreamCallback onToken,
 
     std::string result = runLoop(ctx);
 
-#ifdef MK3_DUMP_SESSION
     dumpSessionArtifacts();
-#endif
 
     return result;
 }
