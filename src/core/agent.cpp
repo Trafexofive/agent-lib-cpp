@@ -603,7 +603,15 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     }
 
     ss << " <tools>\n  <description>Available functions — call with <action type=\"tool\">. Each tool has a name and parameters.</description>\n";
+    auto schemaIt = env_.find("__TOOL_SCHEMAS__");
+    bool hasSchemas = (schemaIt != env_.end() && !schemaIt->second.empty());
+    if (hasSchemas) {
+        ss << schemaIt->second << "\n";
+    }
     for (const auto &[name, tool] : tools_) {
+        // Only emit tools NOT already covered by schemas
+        if (hasSchemas && schemaIt->second.find("name=\"" + name + "\"") != std::string::npos)
+            continue;
         ss << "   <tool name=\"" << xmlAttr(name) << "\"";
         if (!tool.description.empty())
             ss << " desc=\"" << xmlAttr(tool.description) << "\"";

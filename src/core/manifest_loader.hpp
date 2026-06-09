@@ -449,17 +449,45 @@ public:
         std::ostringstream ss;
         for (auto& s : schemas) {
             ss << "    <tool name=\"" << s.name << "\"";
-            if (!s.description.empty()) ss << " description=\"" << s.description << "\"";
+            if (!s.description.empty()) ss << " desc=\"" << s.description << "\"";
             ss << ">\n";
+            // Format JSON with indentation for LLM readability
             if (!s.inputSchema.empty())
-                ss << "      <input_schema>" << s.inputSchema << "</input_schema>\n";
+                ss << "      <params>\n" << prettyJson(s.inputSchema) << "      </params>\n";
             if (!s.outputSchema.empty())
-                ss << "      <output_schema>" << s.outputSchema << "</output_schema>\n";
-            if (!s.examples.empty())
-                ss << "      <examples>" << s.examples << "</examples>\n";
+                ss << "      <returns>\n" << prettyJson(s.outputSchema) << "      </returns>\n";
             ss << "    </tool>\n";
         }
         return ss.str();
+    }
+
+    // Indent JSON for readability — LLMs read structured text better than single-line blobs
+    static std::string prettyJson(const std::string& raw) {
+        std::ostringstream out;
+        int depth = 0;
+        bool inString = false;
+        for (size_t i = 0; i < raw.size(); i++) {
+            char c = raw[i];
+            if (c == '"' && (i == 0 || raw[i-1] != '\\')) inString = !inString;
+            if (inString) { out << c; continue; }
+            if (c == '{' || c == '[') {
+                out << c << '\n';
+                depth++;
+                out << std::string(depth * 2, ' ') << "        ";
+            } else if (c == '}' || c == ']') {
+                out << '\n';
+                depth--;
+                out << std::string(depth * 2, ' ') << "        " << c;
+            } else if (c == ',') {
+                out << ",\n" << std::string(depth * 2, ' ') << "        ";
+            } else if (c == ':') {
+                out << ": ";
+            } else if (c != ' ' && c != '\n' && c != '\t') {
+                out << c;
+            }
+        }
+        out << '\n';
+        return out.str();
     }
 
     // Public wrapper for global manifest autoloaders.
