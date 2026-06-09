@@ -93,6 +93,8 @@ public:
     void removeTool(const std::string& name);
     Json::Value toggleBuiltin(const Json::Value& params, bool enable);
     int reloadManifests(bool backup);
+    void saveSessionTools();
+    void loadSessionTools();
     bool hasTool(const std::string& name) const;
     std::vector<std::string> toolNames() const;
 

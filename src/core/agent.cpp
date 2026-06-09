@@ -119,6 +119,9 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
     // Register internal tools and feeds
     tools::registerDefaults();
     feeds::registerFeeds();
+
+    // Restore dynamically-loaded tools from previous sessions
+    loadSessionTools();
 }
 
 Agent::~Agent() {
@@ -1182,7 +1185,51 @@ int Agent::reloadManifests(bool backup) {
         tools_[td.name] = td;
         count++;
     }
+    // Persist loaded tools to session manifest (survives restarts)
+    if (count > 0) saveSessionTools();
     return count;
+}
+
+void Agent::saveSessionTools() {
+    std::string dir = config_.manifestDir.empty() ? "./manifests" : config_.manifestDir;
+    std::string sessionDir = dir + "/_session";
+    std::filesystem::create_directories(sessionDir);
+    Json::Value arr(Json::arrayValue);
+    for (auto& [name, tool] : tools_) {
+        if (tool.isNative || tool.scriptPath.empty()) continue;
+        Json::Value t;
+        t["name"] = name;
+        t["description"] = tool.description;
+        t["scriptRuntime"] = tool.scriptRuntime;
+        t["scriptPath"] = tool.scriptPath;
+        arr.append(t);
+    }
+    std::ofstream f(sessionDir + "/tools.json");
+    Json::StreamWriterBuilder w;
+    w["indentation"] = "  ";
+    f << Json::writeString(w, arr);
+}
+
+void Agent::loadSessionTools() {
+    std::string dir = config_.manifestDir.empty() ? "./manifests" : config_.manifestDir;
+    std::string sessionFile = dir + "/_session/tools.json";
+    if (!std::filesystem::exists(sessionFile)) return;
+    std::ifstream f(sessionFile);
+    if (!f) return;
+    Json::Value arr;
+    Json::CharReaderBuilder r;
+    std::string errs;
+    if (!Json::parseFromStream(r, f, &arr, &errs)) return;
+    for (auto& t : arr) {
+        if (!t.isMember("name")) continue;
+        ToolDef td;
+        td.name = t["name"].asString();
+        td.description = t.get("description", "").asString();
+        td.isNative = false;
+        td.scriptRuntime = t.get("scriptRuntime", "").asString();
+        td.scriptPath = t.get("scriptPath", "").asString();
+        if (!disabledBuiltins_.count(td.name)) tools_[td.name] = td;
+    }
 }
 
 } // namespace cortex::mk3
