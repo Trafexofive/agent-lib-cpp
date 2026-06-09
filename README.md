@@ -56,19 +56,23 @@ Agents communicate via streaming XML tags:
 
 ## Standard Library
 
-### Tools (10)
+### Tools (14)
 | Tool | Type | Description |
 |------|------|-------------|
-| exec | built-in | Execute shell commands |
+| exec | built-in | Execute shell commands (timeout-enforced) |
 | list | built-in | List directory contents |
 | grep | built-in | Search files with regex |
+| fs_read | built-in | Read file with offset/limit |
+| fs_write | built-in | Write/create files |
 | context_pin | built-in | Pin file to persistent context |
 | context_peek | built-in | Read file for N cycles, auto-evict |
 | context_unpin | built-in | Remove pinned file from context |
-| fs_read | script (python3) | Read file with offset/limit |
-| fs_write | script (python3) | Write/create files |
-| json | script (python3) | Parse, query, validate JSON |
-| web_fetch | script (python3) | HTTP GET/POST |
+| json | built-in | Parse, query, validate JSON |
+| web_fetch | built-in | HTTP GET/POST |
+| ask_tool | built-in | Structured user interaction via cards |
+| reload_manifests | meta | Hot-reload tool manifests from disk |
+| disable_builtin | meta | Disable a built-in tool by name |
+| enable_builtin | meta | Re-enable a disabled built-in |
 
 ### Feeds (3) — auto-injected into prompt
 | Feed | Data |
