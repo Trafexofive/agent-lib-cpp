@@ -6,26 +6,26 @@ core/
     - [ ] curl_easy_perform blocks main thread — spinner freezes, can't type during streaming
         - [ ] replace with curl_multi + select() in main loop
         - [ ] or spawn curl on std::thread + thread-safe token queue (promptAsync — tried, thread never reached prompt() body)
-    - [ ] no HTTP retry on rate-limit/network errors
+    - [x] no HTTP retry on rate-limit/network errors → iterative retry loop with exponential backoff
     - [ ] no connection reuse (new curl handle per request)
     - [ ] no streaming timeout detection (hangs silently if SSE stalls)
 
   agent/
     - [ ] no thread-safety on protocolActions_ / protocolResults_ / rawLlOutput_ — data race when async LLM added
     - [ ] dispatchTool and executeScriptTool both access tools_ without lock
-    - [ ] bare-text-as-response fallback skips JSON synthesis for tool-output-looking text
-    - [ ] iteration loop pushes ALL prior iterations into chat history — context bloat
+    - [x] bare-text-as-response fallback skips JSON synthesis → JSON synthesis REMOVED
+    - [x] iteration loop pushes ALL prior iterations into chat history → history cap enforced
     - [ ] no max-context-token guard — can exceed provider limits
     - [ ] context_feeds_ accumulated but never pruned
     - [ ] no sub-agent result streaming — sub-agent responses arrive as monolithic blocks
-    - [ ] system prompt rebuilds from scratch per iteration (tool schemas, harness, persona) — could cache
+    - [ ] system prompt rebuilds from scratch per iteration (tool schemas, harness, persona) — harness cached, tools not
     - [ ] model parameter overrides in manifest not validated against provider capabilities
-    - [ ] no rate-limit backoff for retryable LLM errors (429, 503)
+    - [x] no rate-limit backoff for retryable LLM errors → iterative retry with exponential backoff
     - [ ] config.yml model/provider overrides not validated — silent fallthrough on miss
 
   tools/
     - [ ] built-in tool dispatch is synchronous — blocks SSE stream for large `exec` outputs
-    - [ ] no tool timeout enforcement — runaway `exec` hangs forever
+    - [x] no tool timeout enforcement → system `timeout` command prepended to every exec
     - [ ] sandbox_launcher not wired to `executeScriptTool` (sandbox flag ignored for script tools)
     - [ ] no tool output size limit — massive outputs crash on JSON serialization
     - [ ] tool parameter validation only in schema — no runtime type checking

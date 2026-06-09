@@ -8,30 +8,33 @@ Living document tracking Cortex-Prime MK3 agent-lib status, priorities, decision
 
 | Area | Status |
 |------|--------|
-| Harness protocol (XML tags) | Deployed — actions, responses, error recovery, guardrails |
-| Iteration loop | Deployed — cap 3, bare text = response, requires `<response final="true">` |
-| Tool execution (script tools) | Deployed — threaded `popen`, progressive output streaming |
-| Built-in tools (`exec`, `list`, `read`) | Deployed — info-rich rendering, full output |
-| Background color blocks | Deployed — foreground-only ANSI, no `ansi::reset()` kill |
-| Incremental renderer | Deployed — O(changes) per frame, append-only |
+| Harness protocol (XML tags) | Deployed — self-checks, failed-turn mirroring, closing reminder |
+| Iteration loop | Deployed — history cap enforced, JSON synthesis removed, bare-text reminder |
+| Tool execution | Deployed — `timeout` enforcement, all 11 built-ins registered |
+| Built-in tools | Deployed — formatted JSON schemas, rich result attrs (ms/bytes/exit) |
+| Tool hot-reload | Deployed — `reload_manifests` tool, disable/enable builtins |
+| Workflow engine | Deployed — code-review workflow, step params, list-item parsing fixed |
+| Result rendering | Deployed — plain-text body, `<result ok="true" ms="12" bytes="2048">` |
+| System prompt | Deployed — section descriptions, consistent indentation, no CDATA |
+| Session persistence | Deployed — prefix doubling fixed, session load/save roundtrip |
+| Parser streaming | Deployed — `</response>` detection, `final=true` propagation, 9/9 tests |
+| CLI flags | Deployed — all short flags working (-s, -E, -H, -y, -S, -R, etc.) |
+| HTTP retry | Deployed — iterative loop with exponential backoff |
 | Metadata headers | Deployed — `✓ 234ms exit:0 12.3KB` per action |
-| History persistence | Deployed — full redraw on display size change |
-| raw.md / iterations.md dumps | Deployed — session artifacts in CWD |
-| Live Markdown rendering | Deployed — during streaming |
+| raw.md / iterations.md dumps | Deployed — PROMPT + RESPONSE + LLM RAW OUTPUT + TOOL RESULTS |
 | Crash: `free(): invalid pointer` | Fixed — threads joined on destructor |
 | **Spinner/live typing during LLM** | **Blocked** — `curl_easy_perform` blocks main thread |
-| **Action call speed** | **Slow** — LLM roundtrip dominates, no async HTTP |
-| **raw.md `<result>` tags** | Deployed — injected after each dispatch |
+| **LLM protocol compliance** | **~60%** — deepseek-chat ceiling, bare text ~40% of turns |
+| **Persona separation** | **Deployed** — assistant.md + decoupler.md pure behavioral, no protocol leaks |
 
 ---
 
 ## 2. Priority Queue
 
-1. **Async LLM** — non-blocking HTTP (curl_multi or threaded client). Unblocks spinner, enables typing during streaming. Foundation for all UX improvements.
-2. **Action rendering UX spec** — define how tool blocks look: pending→running→done states, metadata placement, expand/collapse, spinner per action.
-3. **Action call speed** — after async LLM: measure and reduce tool dispatch latency. Parallel tool execution for independent actions.
-4. **Harness tuning** — LLM protocol compliance (bare text reduction, data piping usage, parallel execution adoption).
-5. **Testing** — automated end-to-end tests: crash on exit, raw.md completeness, protocol roundtrip, rendering snapshots.
+1. **Async LLM** — non-blocking HTTP (curl_multi or threaded client). Last remaining architectural blocker.
+2. **Runtime compliance enforcement** — strict XML mode: reject turns with bare text, inject error result. Complements ~60% prompt-level ceiling.
+3. **Manifest ecosystem** — bi-directional import, remote resolving, disable unsupported builtins for auto-readonly mode.
+4. **Testing** — automated end-to-end tests: crash on exit, pipeline roundtrip, self-improvement scenarios.
 
 ---
 
