@@ -91,6 +91,7 @@ public:
     void addFeed(const std::string& name) { feeds_.insert(name); }
     void addRelic(const std::string& name) { relics_.insert(name); }
     void removeTool(const std::string& name);
+    Json::Value toggleBuiltin(const Json::Value& params, bool enable);
     bool hasTool(const std::string& name) const;
     std::vector<std::string> toolNames() const;
 
@@ -142,6 +143,7 @@ private:
     std::map<std::string, ToolDef> tools_;
     std::set<std::string> feeds_;   // enabled feed names (from manifest import)
     std::vector<std::shared_ptr<PendingTool>> pendingTools_;  // threaded tool execution
+    std::set<std::string> disabledBuiltins_;
     std::vector<std::thread> toolThreads_;  // join on destruction, prevent exit crash
     std::set<std::string> relics_;  // enabled relic names (from manifest import)
     bool raw_ = false;

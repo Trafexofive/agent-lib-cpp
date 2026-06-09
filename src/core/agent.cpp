@@ -110,6 +110,9 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
     tools_["json"]          = {"json",          "Parse, validate, query, or format JSON. Params: {\"data\"?: string, \"path\"?: string, \"op\": parse|query|validate, \"query\"?: jq-path}"};
     tools_["web_fetch"]     = {"web_fetch",     "Fetch HTTP URL. Params: {\"url\": string, \"method\"?: GET|POST, \"headers\"?: object, \"body\"?: string}"};
     tools_["ask_tool"]      = {"ask_tool",      "Ask user structured questions via cards. Params: {\"title\": string, \"message\"?: string, \"cards\": [...]}"};
+    tools_["reload_manifests"] = {"reload_manifests", "Re-scan manifest directory for new/updated tools"};
+    tools_["disable_builtin"]  = {"disable_builtin", "Disable a built-in tool"};
+    tools_["enable_builtin"]   = {"enable_builtin", "Re-enable a disabled built-in tool"};
 
     // Register internal tools and feeds
     tools::registerDefaults();
@@ -819,6 +822,17 @@ std::string Agent::sanitize(const std::string &output) {
 // Build rich <result> tag with metadata attributes + plain-text body.
 // Returns full XML: <result id="..." ok="..." exit="0" ms="12" bytes="2048">body</result>
 Json::Value Agent::dispatchTool(const protocol::ParsedAction &action) {
+    // ── Meta-tools: reload manifests, toggle builtins ──
+    if (action.name == "disable_builtin" || action.name == "enable_builtin") {
+        return toggleBuiltin(action.params, action.name == "enable_builtin");
+    }
+    if (action.name == "reload_manifests") {
+        Json::Value r;
+        r["success"] = false;
+        r["error"] = "reloadManifests not yet wired — coming soon";
+        return r;
+    }
+
     // ── Sandbox validation ──
     if (sandboxPolicy_.enabled) {
         Json::StreamWriterBuilder w;
@@ -996,6 +1010,29 @@ void Agent::addTool(ToolDef tool) {
 
 void Agent::removeTool(const std::string &name) {
     tools_.erase(name);
+    disabledBuiltins_.insert(name);
+}
+
+Json::Value Agent::toggleBuiltin(const Json::Value& params, bool enable) {
+    Json::Value r;
+    r["success"] = true;
+    std::string name = params.get("name", "").asString();
+    if (name.empty() && params.isMember("names") && params["names"].isArray() && params["names"].size() > 0)
+        name = params["names"][0].asString();
+    if (name.empty()) {
+        r["success"] = false;
+        r["error"] = "name or names required";
+        return r;
+    }
+    if (enable) {
+        disabledBuiltins_.erase(name);
+        r["enabled"] = name;
+    } else {
+        tools_.erase(name);
+        disabledBuiltins_.insert(name);
+        r["disabled"] = name;
+    }
+    return r;
 }
 
 bool Agent::hasTool(const std::string &name) const {
