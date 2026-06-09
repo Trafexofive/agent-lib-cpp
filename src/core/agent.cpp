@@ -602,19 +602,12 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
         ss << "  </persona>\n";
     }
 
-    ss << " <tools>\n  <description>Available functions — call with <action type=\"tool\">. Schema defines params and output.</description>\n";
-    auto schemaIt = env_.find("__TOOL_SCHEMAS__");
-    bool hasSchemas = (schemaIt != env_.end() && !schemaIt->second.empty());
-    if (!hasSchemas) {
-        // No CDATA schemas — emit summary tags instead
-        for (const auto &[name, tool] : tools_) {
-            ss << " <tool name=\"" << xmlAttr(name) << "\"";
-            if (!tool.description.empty())
-                ss << " description=\"" << xmlAttr(tool.description) << "\"";
-            ss << "/>\n";
-        }
-    } else {
-        ss << " " << schemaIt->second << "\n";
+    ss << " <tools>\n  <description>Available functions — call with <action type=\"tool\">. Each tool has a name and parameters.</description>\n";
+    for (const auto &[name, tool] : tools_) {
+        ss << "   <tool name=\"" << xmlAttr(name) << "\"";
+        if (!tool.description.empty())
+            ss << " desc=\"" << xmlAttr(tool.description) << "\"";
+        ss << "/>\n";
     }
     ss << " </tools>\n";
 
