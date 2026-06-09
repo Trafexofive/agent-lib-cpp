@@ -18,26 +18,38 @@ make cortex-mk3
 
 ```
 src/
-  core/          Agent loop, prompt builder, config types
+  core/          Agent loop, prompt builder, config types, YAML parser
+                 └─ agent.cpp (828l) — constructor, core loop, harness
+                 └─ agent_tools.cpp (343l) — dispatch, reload, session persist
+                 └─ agent_session.cpp (107l) — save, load, dump, undo
+                 └─ mini_yaml.hpp (129l) — shared YAML parser
   protocol/      Streaming XML parser (<action>, <response>, <context_feed>)
   providers/     LLM backends (DeepSeek, OpenRouter, Groq, Zen, Together, Fireworks)
   tools/         Built-in tool implementations (exec, grep, fs_read, ...)
   feeds/         System feed pollers (clock, stats, working dir)
-  relics/        Built-in relics (session_journal, state_checkpoint)
-  workflows/     Workflow engine (step executor)
-  session/       Session persistence
-  testing/       Protocol test runner, parser tests
+  relics/        Built-in + Docker relic dispatch (session_journal, state_checkpoint)
+  workflows/     Workflow engine (step parsing, XML rendering)
+  session/       Session persistence (JSONL chat history)
+  server/        HTTP server mode (not yet active)
+  sandbox/       Security policy enforcement
+  tui/           Terminal UI renderer
 
 manifests/
   built-in/      Tools, feeds, relics compiled into binary
   tools/         Script tools (fs_read, fs_write, json, web_fetch)
+  feeds/         Declarative feeds (build-status, git-activity, system-load)
   relics/        Docker relics (artifact_store, secret_store, ...)
   agents/        Production agent manifests
-  workflows/     Workflow spec
+  workflows/     Workflow definitions (full-audit, pr-review, ...)
+  _session/      Persisted dynamic tools (auto-created)
+
+modules/
+  cpp-refactor-suite/  Production-scale manifest module (19 manifests, 1074 YAML)
 
 config/
   agents/        Agent manifests under development
   staging/       POC experiments — not loaded by default
+  harness/       Protocol enforcement prompts (default.md, level-0.md)
 ```
 
 ## Protocol

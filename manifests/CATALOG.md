@@ -1,6 +1,8 @@
 # Standard Manifest Catalog
 
-**Cortex-Prime MK2 Standard Library v2.1.0**
+**Cortex-Prime MK3 Standard Library v3.1**
+
+Last updated: 2026-06-09 — after agent.cpp split, manifest module build, session persistence
 
 ## Architecture
 

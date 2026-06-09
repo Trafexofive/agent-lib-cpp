@@ -15,15 +15,16 @@ Every module follows the same pattern:
 ## Layout
 | Path | Content | Status |
 |------|---------|--------|
-| `built-in/tools/` | C++ compiled tools (exec, grep, list, context_*) | ✅ stable |
+| `built-in/tools/` | C++ compiled + meta tools (14 total) | ✅ stable |
 | `built-in/feeds/` | C++ compiled feeds (system_clock, stats, working_dir) | ✅ stable |
 | `built-in/relics/` | Filesystem relics (session_journal, state_checkpoint) | ✅ stable |
-| `tools/` | Python tools (fs_read, fs_write, json, web_fetch) | ✅ stable |
-| `relics/` | Docker relics (artifact_store, secret_store, ...) | 🧪 dispatcher pending |
-| `agents/` | Agent manifests (assistant) | ✅ stable |
-| `workflows/` | Workflow manifests (spec) | ✅ stable |
-
-## Runtimes
+| `tools/` | Script tools (bash, python3, node) | 🟡 growing |
+| `feeds/` | Declarative feeds (build-status, git-activity, system-load) | 🟡 POC |
+| `relics/` | Docker relics (artifact_store, secret_store, ...) | 🟡 dispatcher wired |
+| `agents/` | Agent manifests (assistant, cpp-analyzer, bootstrapper) | ✅ stable |
+| `workflows/` | Workflow definitions (full-audit, pr-review, code-review) | 🟡 growing |
+| `_session/` | Persisted dynamic tools (auto-created, survives restarts) | ✅ stable |
+| `modules/` | Reusable manifest modules (cpp-refactor-suite) | ✅ stable |
 | Runtime | Used by | Manifest field |
 |---------|---------|----------------|
 | `builtin` | C++ tools, feeds, relics | Compiles into binary |

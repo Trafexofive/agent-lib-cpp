@@ -8,6 +8,7 @@ Living document tracking Cortex-Prime MK3 agent-lib status, priorities, decision
 
 | Area | Status |
 |------|--------|
+| **Codebase refactor (Jun 9)** | **Phase 1-2 deployed** — agent.cpp split (3 files), ManifestYaml extracted (mini_yaml.hpp) |
 | Harness protocol (XML tags) | Deployed — self-checks, failed-turn mirroring, closing reminder |
 | Iteration loop | Deployed — history cap enforced, JSON synthesis removed, bare-text reminder |
 | Tool execution | Deployed — `timeout` enforcement, all 11 built-ins registered |
