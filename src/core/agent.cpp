@@ -473,7 +473,18 @@ std::string Agent::runLoop(AgentContext &ctx) {
 
         if (results.empty() && !taskComplete) {
             // No parsed actions and no response tags — LLM produced bare text.
-            // Treat as response and complete.
+            // Inject one-time reminder into history so it persists in context.
+            if (!bareTextReminded_ && !llmOutput.empty()) {
+                std::string trimmed = llmOutput;
+                size_t first = trimmed.find_first_not_of(" \t\n\r");
+                if (first != std::string::npos && trimmed[first] != '<') {
+                    bareTextReminded_ = true;
+                    history_.push_back(
+                        "System: \342\232\240 Your last output was bare text — STRIPPED by parser. "
+                        "Wrap ALL responses in <response final=\"true\">...</response>. "
+                        "This reminder is sent once — it stays in your context.");
+                }
+            }
             taskComplete = true;
             if (responseOutput_.empty())
                 responseOutput_ = sanitize(llmOutput);
@@ -905,6 +916,7 @@ void Agent::clearHistory() {
     history_.clear();
     executedActions_.clear();
     contextFeeds_.clear();
+    bareTextReminded_ = false;
 }
 
 void Agent::undoLastInteraction() {

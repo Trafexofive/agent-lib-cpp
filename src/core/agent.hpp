@@ -147,6 +147,7 @@ private:
     std::set<std::string> relics_;  // enabled relic names (from manifest import)
     bool raw_ = false;
     bool verbose_ = false;
+    bool bareTextReminded_ = false;  // one-time bare-text warning, persists across turns
     std::string rawLlOutput_;      // raw LLM stream (all tokens)
     std::string responseOutput_;   // sanitized response text
     std::string thoughtOutput_;    // thought content (hidden in FULL)
