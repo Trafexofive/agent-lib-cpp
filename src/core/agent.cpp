@@ -268,15 +268,13 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     Json::writeString(Json::StreamWriterBuilder(), result);
             }
 
-            // Inject <result> tag into raw output so raw.md shows system
-            // responses
+            // Inject <result> tag into raw output — plain text body, not JSON
             {
-                std::string resultJson =
-                    Json::writeString(Json::StreamWriterBuilder(), result);
                 bool ok = result.get("success", false).asBool();
                 rawLlOutput_ += "\n<result id=\"" + action.id + "\" status=\"" +
-                                (ok ? "ok" : "error") + "\">" + resultJson +
-                                "</result>\n";
+                                (ok ? "ok" : "error") + "\">";
+                rawLlOutput_ += extractResultBody(result);
+                rawLlOutput_ += "</result>\n";
             }
 
             // Store protocol result
@@ -506,12 +504,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     result.isMember("success") && result["success"].asBool();
                 sysMsg << "<result id=\"" << id << "\" status=\""
                        << (ok ? "ok" : "error") << "\">";
-                Json::StreamWriterBuilder w;
-                w["indentation"] = "";
-                std::string jsonOut = Json::writeString(w, result);
-                if (jsonOut.size() > 800)
-                    jsonOut = jsonOut.substr(0, 800) + "...";
-                sysMsg << jsonOut;
+                sysMsg << extractResultBody(result, true);
                 sysMsg << "</result>";
                 history_.push_back("System: " + sysMsg.str());
             }
@@ -582,7 +575,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
         ss << "  </persona>\n";
     }
 
-    ss << " <tools>\n";
+    ss << " <tools>\n  <description>Available functions — call with <action type=\"tool\">. Schema defines params and output.</description>\n";
     auto schemaIt = env_.find("__TOOL_SCHEMAS__");
     bool hasSchemas = (schemaIt != env_.end() && !schemaIt->second.empty());
     if (!hasSchemas) {
@@ -599,7 +592,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     ss << " </tools>\n";
 
     if (!relics_.empty()) {
-        ss << "  <relics>\n";
+        ss << "  <relics>\n    <description>Persistent stores — read/write session state, checkpoints, journals.</description>\n";
         for (auto &name : relics_) {
             auto it = BUILTIN_RELICS.find(name);
             if (it != BUILTIN_RELICS.end())
@@ -610,7 +603,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     }
 
     if (!subAgents_.empty()) {
-        ss << "  <subagents>\n";
+        ss << "  <subagents>\n    <description>Delegatable agents — call with <action type=\"agent\">.</description>\n";
         for (const auto &[name, agent] : subAgents_) {
             ss << "    <agent name=\"" << xmlAttr(name) << "\"";
             if (!agent->config().summary.empty())
@@ -636,7 +629,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
             if (!feeds_.count(fr.name))
                 continue;
             if (!any) {
-                ss << "<feeds>\n";
+                ss << "<feeds>\n  <description>System context refreshed each turn — clock, stats, working dir, git.</description>\n";
                 any = true;
             }
             ss << "  <" << fr.name << ">\n";
@@ -649,7 +642,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
 
     // ═══ DYNAMIC: context_feeds — LLM-requested from prior iterations ═══
     if (!contextFeeds_.empty()) {
-        ss << "<context_feeds>\n";
+        ss << "<context_feeds>\n  <description>LLM-requested context from prior turns.</description>\n";
         for (auto &feed : contextFeeds_) {
             ss << "  " << feed << "\n";
         }
@@ -657,7 +650,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     }
 
     // ═══ DYNAMIC: history — conversation turns ═══
-    ss << "<history>\n";
+    ss << "<history>\n  <description>Prior conversation between User and Agent.</description>\n";
 
     // Apply history cap — only include the most recent N entries
     size_t histStart = 0;
@@ -764,6 +757,24 @@ std::string Agent::formatResult(const std::string &id,
                                 const Json::Value &result) {
     return "System (Action Result): <result id=\"" + id + "\">" +
            Json::writeString(Json::StreamWriterBuilder(), result) + "</result>";
+}
+
+// Extract plain-text body from tool result for <result> tag rendering.
+// LLMs cannot read JSON-escaped content — render as raw text instead.
+std::string Agent::extractResultBody(const Json::Value &result, bool compact) {
+    // Priority-ordered extraction of the primary output field
+    for (const char* key : {"content", "output", "stdout", "result", "results", "data"}) {
+        if (result.isMember(key) && result[key].isString()) {
+            std::string body = result[key].asString();
+            if (compact && body.size() > 2000)
+                body = body.substr(0, 2000) + "\n... [truncated " + std::to_string(body.size()) + "b]";
+            return body;
+        }
+    }
+    // Fallback: error message, count, or status-only
+    if (result.isMember("error")) return "error: " + result["error"].asString();
+    if (result.isMember("count")) return std::to_string(result["count"].asInt()) + " results";
+    return result.get("success", false).asBool() ? "ok" : "error";
 }
 
 // ═══════════════════════════════════════════════════════════════════════

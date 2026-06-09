@@ -131,6 +131,7 @@ private:
     // Output sanitization
     static std::string sanitize(const std::string& output);
     static std::string formatResult(const std::string& id, const Json::Value& result);
+    static std::string extractResultBody(const Json::Value& result, bool compact = false);
 
     // Members
     AgentConfig config_;
