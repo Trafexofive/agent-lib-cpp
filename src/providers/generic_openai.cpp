@@ -137,6 +137,16 @@ std::string GenericOpenAIClient::httpPost(const std::string& url,
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
+        bool isRetryable = (res == CURLE_RECV_ERROR || res == CURLE_SEND_ERROR
+                         || res == CURLE_PARTIAL_FILE || res == CURLE_GOT_NOTHING
+                         || res == CURLE_OPERATION_TIMEDOUT);
+        if (isRetryable && retry < maxRetries_) {
+            int waitSec = std::min((1 << (retry + 1)) * 5, 120);
+            std::cerr << "[MK3:RETRY] CURL error " << res << " — retrying in "
+                      << waitSec << "s (attempt " << (retry + 1) << "/" << maxRetries_ << ")" << std::endl;
+            std::this_thread::sleep_for(std::chrono::seconds(waitSec));
+            continue;
+        }
         throw std::runtime_error(std::string("CURL error: ") + curl_easy_strerror(res));
     }
 

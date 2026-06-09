@@ -1163,7 +1163,7 @@ int Agent::reloadManifests(bool backup) {
     int count = 0;
     for (auto it = std::filesystem::recursive_directory_iterator(dir);
          it != std::filesystem::recursive_directory_iterator(); ++it) {
-        if (!it->is_regular_file() || it->path().filename() != "tool.yml") continue;
+        if (!it->is_regular_file() || it->path().extension() != ".yml") continue;
         auto schema = ManifestLoader::loadToolManifest(it->path().string());
         if (schema.name.empty() || disabledBuiltins_.count(schema.name)) continue;
         ToolDef td{schema.name, schema.description};
