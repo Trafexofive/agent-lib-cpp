@@ -1,0 +1,57 @@
+kind: Workflow
+version: "1.0"
+name: full-analysis
+summary: "Complete code analysis pipeline — complexity → deps → coverage → summary"
+
+description: >
+  Runs all analysis tools in sequence and produces a consolidated report.
+  Steps: discover files, analyze complexity, map dependencies, check coverage,
+  flag issues, write report.
+
+steps:
+  - id: discover
+    type: tool
+    name: "Discover C++ source files"
+    tool: exec
+    params:
+      command: "find . -name '*.cpp' -o -name '*.hpp' | head -50"
+
+  - id: complexity_check
+    type: tool
+    name: "Analyze complexity"
+    tool: complexity
+    params:
+      path: "src/"
+      format: json
+
+  - id: dep_check
+    type: tool
+    name: "Map dependencies"
+    tool: dep-graph
+    params:
+      path: "src/"
+      max_depth: 3
+
+  - id: coverage_check
+    type: tool
+    name: "Check test coverage"
+    tool: test-coverage
+    params:
+      path: "."
+      min_percent: 80
+
+  - id: report
+    type: tool
+    name: "Write analysis report"
+    tool: exec
+    params:
+      command: "echo 'Analysis complete' > /tmp/analysis-report.txt"
+    on_error: skip
+
+import:
+  tools:
+    - complexity
+    - dep-graph
+    - test-coverage
+
+tags: [analysis, pipeline, c++]

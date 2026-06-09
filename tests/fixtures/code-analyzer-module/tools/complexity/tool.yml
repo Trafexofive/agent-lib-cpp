@@ -1,0 +1,59 @@
+kind: Tool
+name: complexity
+version: "1.1"
+summary: "McCabe cyclomatic complexity analyzer for C++ files"
+description: >
+  Analyzes C++ source files and reports cyclomatic complexity per function.
+  Flags functions exceeding warn_threshold and max_cyclomatic from config.
+  Outputs JSON with per-function scores, rankings, and hotspots.
+
+category: analysis
+tags: [complexity, static-analysis, c++, metrics]
+
+implementation:
+  runtime: bash
+  entrypoint: analyze.sh
+  timeout: 30
+
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "File or directory to analyze"
+    format:
+      type: string
+      enum: [json, text, summary]
+      default: json
+    threshold:
+      type: integer
+      default: 10
+      description: "Warn threshold override"
+
+output_schema:
+  type: object
+  properties:
+    file:
+      type: string
+    total_functions:
+      type: integer
+    max_complexity:
+      type: integer
+    average_complexity:
+      type: number
+    hotspots:
+      type: array
+      items:
+        type: object
+        properties:
+          function: { type: string }
+          line: { type: integer }
+          score: { type: integer }
+          level: { type: string, enum: [ok, warn, critical] }
+
+examples:
+  - input: { path: "src/core/agent.cpp" }
+    output: { total_functions: 34, max_complexity: 18, hotspots: ["Agent::prompt", "Agent::dispatchTool"] }
+  - input: { path: "src/core/agent.cpp", format: "summary" }
+    output: { total_functions: 34, max_complexity: 18, average_complexity: 4.2 }

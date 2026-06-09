@@ -1,0 +1,46 @@
+kind: Tool
+name: dep-graph
+version: "1.0"
+summary: "Generate dependency graph for C++ projects from #include analysis"
+description: >
+  Traces #include directives to build a directed dependency graph.
+  Detects circular dependencies, ranks files by fan-in/fan-out,
+  and identifies God objects (>10 includers).
+
+category: analysis
+tags: [dependencies, graph, include, c++]
+
+implementation:
+  runtime: bash
+  entrypoint: graph.sh
+  timeout: 30
+
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+    max_depth:
+      type: integer
+      default: 3
+    format:
+      type: string
+      enum: [json, dot, summary]
+      default: json
+    exclude:
+      type: array
+      items: { type: string }
+      default: []
+
+output_schema:
+  type: object
+  properties:
+    total_files: { type: integer }
+    total_edges: { type: integer }
+    circular_deps:
+      type: array
+      items: { type: string }
+    top_included:
+      type: array
+      items: { type: object }

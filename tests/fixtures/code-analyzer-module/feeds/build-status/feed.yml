@@ -1,0 +1,28 @@
+kind: Feed
+name: build-status
+version: "1.0"
+summary: "Real-time build and CI status feed"
+description: >
+  Reads .build-status.json from the project root. Reports last build
+  result, duration, commit hash, and failing targets.
+
+category: ci
+tags: [build, ci, status]
+refresh_seconds: 30
+
+output_schema:
+  type: object
+  properties:
+    last_build:
+      type: string
+      format: date-time
+    status:
+      type: string
+      enum: [passing, failing, unknown, building]
+    duration_seconds:
+      type: number
+    commit:
+      type: string
+    failing_targets:
+      type: array
+      items: { type: string }

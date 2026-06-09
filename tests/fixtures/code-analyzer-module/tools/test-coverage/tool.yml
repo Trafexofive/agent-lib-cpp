@@ -1,0 +1,39 @@
+kind: Tool
+name: test-coverage
+version: "1.0"
+summary: "Track test coverage for C++ projects — test files vs source files"
+description: >
+  Maps test files to source files, calculates coverage ratio,
+  identifies untested files and over-tested files.
+
+category: testing
+tags: [coverage, testing, c++, metrics]
+
+implementation:
+  runtime: bash
+  entrypoint: coverage.sh
+  timeout: 20
+
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+    min_percent:
+      type: integer
+      default: 80
+    exclude_tests:
+      type: boolean
+      default: true
+
+output_schema:
+  type: object
+  properties:
+    coverage_percent: { type: number }
+    tested_files: { type: integer }
+    untested_files: { type: integer }
+    total_source_files: { type: integer }
+    untested_list:
+      type: array
+      items: { type: string }

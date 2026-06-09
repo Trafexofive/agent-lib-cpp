@@ -1,0 +1,51 @@
+kind: Agent
+name: code-analyzer
+version: "2.0"
+summary: "Full-featured code analysis agent — complexity, dependencies, coverage, linting"
+description: >
+  A specialized agent that analyzes C++ codebases. Imports custom tools for
+  cyclomatic complexity analysis, dependency graph generation, test coverage
+  tracking, and lint integration. Uses build-status feed for real-time CI state
+  and analysis-cache relic for incremental results.
+
+cognitive_engine:
+  primary: { provider: deepseek, model: deepseek-v4-pro }
+  fallback: { provider: opencode, model: deepseek-v4-flash-free }
+
+runtime:
+  max_iterations: 12
+  history_cap: 30
+  timeout: 300
+
+persona:
+  agent: system-prompts/analyzer.md
+
+import:
+  tools:
+    - builtin/exec
+    - builtin/fs_read
+    - builtin/fs_write
+    - builtin/grep
+    - builtin/list
+    - builtin/json
+    - builtin/web_fetch
+    - complexity
+    - dep-graph
+    - test-coverage
+  feeds:
+    - build-status
+  relics:
+    - analysis-cache
+  workflows:
+    - full-analysis
+
+config:
+  complexity:
+    max_cyclomatic: 15
+    warn_threshold: 8
+  dep_graph:
+    max_depth: 5
+    exclude_patterns: ["*/build/*", "*/third_party/*", "*/_archive/*"]
+  test_coverage:
+    min_percent: 80
+    exclude_tests: true
