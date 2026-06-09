@@ -341,7 +341,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "p:f:m:Vhr", longOpts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "C:G:P:M:p:f:m:H:y:s:VhrSReEDn", longOpts, nullptr)) != -1) {
         switch (opt) {
         // Global
         case 'C': cli.configPath = optarg; break;
