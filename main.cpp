@@ -162,7 +162,7 @@ void printHelpGeneral() {
 
 Global flags:
   --config <path>      Config file (default: ~/.config/cortex-mk3/config)
-  --manifest-dir <dir> Autoload manifest root (default: ./manifests)
+  --manifest-dir <dir> Manifest catalog root (default: ./manifests; explicit imports only)
   --iterations <n>     Max turns before forced response (default: 20)
   --provider <name>    LLM provider (deepseek, openrouter, groq, zen, together, fireworks)
   --model <name>       Model name
@@ -735,24 +735,12 @@ static int cmdRun(CliConfig& cli) {
     if (cli.iterations > 0) agent.setIterationCap(cli.iterations);
     tui::TuiRenderer renderer(80);
 
-    // Manifest global scope: autoload ./manifests by default (or --manifest-dir/config manifest_dir).
-    // Explicit --manifest then layers its recursive imports on top.
+    // Manifest catalog semantics: ./manifests is a lookup catalog, not an
+    // implicit capability surface. Capabilities are loaded only from the active
+    // manifest's explicit import: block. This prevents unrelated catalog agents
+    // (e.g. orchestrator) from appearing as sub-agents of assistant.
     std::vector<ToolSchema> allSchemas;
     std::string workflowXml;
-    std::string manifestRoot = cli.manifestDir.empty() ? "manifests" : cli.manifestDir;
-    if (fs::exists(manifestRoot)) {
-        auto global = ManifestAutoload::loadGlobal(manifestRoot, agent, acfg.provider, cli.manifestPath);
-        allSchemas.insert(allSchemas.end(), global.toolSchemas.begin(), global.toolSchemas.end());
-        workflowXml += global.workflowXml;
-        if (cli.verbose && !cli.raw) {
-            std::cerr << "[manifest] autoload " << manifestRoot
-                      << " tools=" << global.tools.size()
-                      << " feeds=" << global.feeds.size()
-                      << " relics=" << global.relics.size()
-                      << " agents=" << global.agents.size()
-                      << " workflows=" << global.workflows.size() << "\n";
-        }
-    }
 
     if (!cli.manifestPath.empty()) {
         ManifestLoader::loadFeeds(cli.manifestPath, agent);
