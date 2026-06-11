@@ -96,6 +96,15 @@ public:
                 auto provider = providers::createProvider(cfg.provider, cfg.model);
                 if (!provider) continue;
                 auto sub = std::make_shared<Agent>(cfg, provider);
+
+                // MA01: honor the sub-agent's own import: block. Sub-agents
+                // are ISOLATED — each loads its declared tools/feeds/relics
+                // from its own manifest. No inheritance from the parent.
+                ManifestLoader::loadTools(p.string(), *sub);
+                ManifestLoader::loadFeeds(p.string(), *sub);
+                ManifestLoader::loadRelics(p.string(), *sub);
+                ManifestLoader::loadSubAgents(p.string(), *sub, cfg.provider);
+
                 agent.addSubAgent(sub);
                 report.agents.push_back(cfg.name);
             }

@@ -37,6 +37,31 @@ struct ToolSchema {
 // ── Manifest loader ──
 class ManifestLoader {
 public:
+    // ML01: classify an import-list entry.
+    //   - Names ending in .yml → path
+    //   - Names starting with ./, ../, or / → path
+    //   - Everything else (including "builtin/exec") → bare built-in name
+    //
+    // The legacy `name.find('/')` test broke `builtin/exec` because it routed
+    // a documentation-style prefix into the path branch.
+    static bool isPathImport(const std::string& raw) {
+        if (raw.empty()) return false;
+        if (raw.size() >= 4 && raw.substr(raw.size() - 4) == ".yml") return true;
+        if (raw[0] == '/') return true;
+        if (raw.size() >= 2 && raw[0] == '.' && (raw[1] == '/' || raw[1] == '.')) return true;
+        return false;
+    }
+
+    // Strip a leading "builtin/" prefix from a non-path import name so
+    // `builtin/exec` becomes the same as `exec`.
+    static std::string stripBuiltinPrefix(const std::string& raw) {
+        const std::string prefix = "builtin/";
+        if (raw.size() > prefix.size() &&
+            raw.compare(0, prefix.size(), prefix) == 0)
+            return raw.substr(prefix.size());
+        return raw;
+    }
+
     // Load an agent manifest from path, populate config
     static AgentConfig loadAgentConfig(const std::string& manifestPath) {
         AgentConfig cfg;
@@ -125,13 +150,17 @@ public:
         for (auto& name : feedNames) {
             if (name.size() >= 2 && name.front() == '"' && name.back() == '"')
                 name = name.substr(1, name.size() - 2);
-            // Path-based feed (contains / or .yml) — load from manifest
-            if (name.find(".yml") != std::string::npos || name.find('/') != std::string::npos) {
+            if (isPathImport(name)) {
                 fs::path feedPath = fs::path(manifestPath).parent_path() / name;
+                if (!fs::exists(feedPath)) {
+                    std::cerr << "[manifest] feed path not found: " << feedPath.string()
+                              << " (imported from " << manifestPath << ")\n";
+                    continue;
+                }
                 auto mr = feeds::FeedEngine::instance().loadFeedManifest(feedPath.string());
                 if (mr.success && !mr.name.empty()) agent.addFeed(mr.name);
             } else {
-                agent.addFeed(name);
+                agent.addFeed(stripBuiltinPrefix(name));
             }
         }
     }
@@ -182,13 +211,16 @@ public:
             if (name.size() >= 2 && name.front() == '"' && name.back() == '"')
                 name = name.substr(1, name.size() - 2);
 
-            // Check if it's a path (ends with .yml or contains /)
-            if (name.find(".yml") != std::string::npos || name.find('/') != std::string::npos) {
+            if (isPathImport(name)) {
                 fs::path toolPath = fs::path(manifestPath).parent_path() / name;
+                if (!fs::exists(toolPath)) {
+                    std::cerr << "[manifest] tool path not found: " << toolPath.string()
+                              << " (imported from " << manifestPath << ")\n";
+                    continue;
+                }
                 auto schema = loadToolSchema(toolPath.string());
                 if (!schema.name.empty()) {
                     schemas.push_back(schema);
-                    // Wire up script execution: set isNative=false, populate runtime + entrypoint
                     ToolDef td;
                     td.name = schema.name;
                     td.description = schema.description;
@@ -200,14 +232,14 @@ public:
                     agent.addTool(td);
                 }
             } else {
-                // Built-in tool — load schema AND register with agent
-                auto schema = loadBuiltinToolSchema(name);
+                // Bare name (incl. legacy "builtin/exec" prefix) → built-in tool.
+                std::string bareName = stripBuiltinPrefix(name);
+                auto schema = loadBuiltinToolSchema(bareName);
                 if (!schema.name.empty()) {
                     schemas.push_back(schema);
                     agent.addTool({schema.name, schema.description});
                 } else {
-                    // No schema file found — still add as bare tool (name only)
-                    agent.addTool({name, ""});
+                    agent.addTool({bareName, ""});
                 }
             }
         }

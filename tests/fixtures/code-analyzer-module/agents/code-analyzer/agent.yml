@@ -38,14 +38,3 @@ import:
     - analysis-cache
   workflows:
     - full-analysis
-
-config:
-  complexity:
-    max_cyclomatic: 15
-    warn_threshold: 8
-  dep_graph:
-    max_depth: 5
-    exclude_patterns: ["*/build/*", "*/third_party/*", "*/_archive/*"]
-  test_coverage:
-    min_percent: 80
-    exclude_tests: true
