@@ -100,6 +100,7 @@ public:
 
     // ---- Accessors ----
     const AgentConfig& config() const { return config_; }
+    void setIterationCap(int cap) { config_.iterationCap = cap; }
     const std::string& name() const { return config_.name; }
     session::SessionManager& sessionMgr() { return sessionMgr_; }
 

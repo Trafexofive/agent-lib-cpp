@@ -65,6 +65,7 @@ struct CliConfig {
     std::string promptFile;
     std::string manifestPath;
     std::string manifestDir;
+    int iterations = 0;
     std::string sessionId;
     std::string systemPromptPath;
     std::string harnessPromptPath;
@@ -162,6 +163,7 @@ void printHelpGeneral() {
 Global flags:
   --config <path>      Config file (default: ~/.config/cortex-mk3/config)
   --manifest-dir <dir> Autoload manifest root (default: ./manifests)
+  --iterations <n>     Max turns before forced response (default: 20)
   --provider <name>    LLM provider (deepseek, openrouter, groq, zen, together, fireworks)
   --model <name>       Model name
   --sandbox            Enable sandbox mode (tool restrictions)
@@ -300,6 +302,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
         // Global
         {"config",       required_argument, 0, 'C'},
         {"manifest-dir", required_argument, 0, 'G'},
+        {"iterations", required_argument, 0, 'X'},
         {"provider",     required_argument, 0, 'P'},
         {"model",        required_argument, 0, 'M'},
         {"sandbox",      no_argument,       0, 'S'},
@@ -324,7 +327,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
         {"host",         required_argument, 0, 'o'},
         {"port",         required_argument, 0, 'O'},
         {"threads",      required_argument, 0, 'T'},
-        {"api-key",      required_argument, 0, 'K'},
+        {"api-key",      required_argument, 0, 'X'},
         {"no-cors",      no_argument,       0, 'N'},
 
         // List
@@ -335,13 +338,13 @@ static CliConfig parseArgs(int argc, char* argv[]) {
         // Config
         {"show",         no_argument,       0, 'w'},
         {"set",          required_argument, 0, 'W'},
-        {"init",         no_argument,       0, 'I'},
+        {"init",         no_argument,       0, 'X'},
 
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "C:G:P:M:p:f:m:H:y:s:VhrSReEDn", longOpts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "C:G:P:M:p:f:m:H:y:s:VhrSReEDnX:", longOpts, nullptr)) != -1) {
         switch (opt) {
         // Global
         case 'C': cli.configPath = optarg; break;
@@ -352,6 +355,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
         case 'R': cli.sandbox = true; cli.sandboxReadOnly = true; break;
         case 'V': cli.verbose = true; break;
         case 'D': cli.debug = true; break;
+        case 'X': cli.iterations = std::stoi(optarg); break;
         case 'r': cli.raw = true; break;
         case 'n': cli.dryRun = true; break;
         case 'h': cli.showHelp = true; break;
@@ -728,6 +732,7 @@ static int cmdRun(CliConfig& cli) {
     }
 
     Agent agent(acfg, provider);
+    if (cli.iterations > 0) agent.setIterationCap(cli.iterations);
     tui::TuiRenderer renderer(80);
 
     // Manifest global scope: autoload ./manifests by default (or --manifest-dir/config manifest_dir).
