@@ -107,9 +107,9 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
     tools_["grep"]          = {"grep",          "Search files for pattern. Params: {\"pattern\": regex, \"path\"?: dir, \"glob\"?: '*.py'}"};
     tools_["fs_read"]       = {"fs_read",       "Read a file. Params: {\"path\": string, \"offset\"?: int, \"limit\"?: int}"};
     tools_["fs_write"]      = {"fs_write",      "Write or append to a file. Params: {\"path\": string, \"content\": string, \"append\"?: bool}"};
-    tools_["context_pin"]   = {"context_pin",   "Pin a file to context persistent across turns. Params: {\"path\": string}"};
-    tools_["context_peek"]  = {"context_peek",  "Read file into context for N cycles then auto-evict. Params: {\"path\": string, \"cycles\"?: int}"};
-    tools_["context_unpin"] = {"context_unpin", "Remove a pinned file from context. Params: {\"path\": string}"};
+    tools_["context_pin"]   = {"context_pin",   "Pin a file into the system prompt — persists across turns until context_unpin. Params: {\"path\": string, \"force\"?: bool (allow >64KB)}"};
+    tools_["context_peek"]  = {"context_peek",  "Inject a file into the system prompt for N iterations, then auto-evict. Params: {\"path\": string, \"cycles\"?: int (default 1), \"force\"?: bool (allow >64KB)}"};
+    tools_["context_unpin"] = {"context_unpin", "Remove a pinned or peek entry from context. Params: {\"path\": string}"};
     tools_["json"]          = {"json",          "Parse, validate, query, or format JSON. Params: {\"data\"?: string, \"path\"?: string, \"op\": parse|query|validate, \"query\"?: jq-path}"};
     tools_["web_fetch"]     = {"web_fetch",     "Fetch HTTP URL. Params: {\"url\": string, \"method\"?: GET|POST, \"headers\"?: object, \"body\"?: string}"};
     tools_["ask_tool"]      = {"ask_tool",      "Ask user structured questions via cards. Params: {\"title\": string, \"message\"?: string, \"cards\": [...]}"};
@@ -573,6 +573,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
             }
         }
         parser.clearResults(); // prevent result leakage to next iteration
+        tickContextCycles();   // decrement peek cycles; auto-evict at 0
     }
 
     if (!ctx.ephemeral && !ctx.sessionId.empty()) {
@@ -684,6 +685,37 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
 
     ss << "  <cwd>" << std::filesystem::current_path().string() << "</cwd>\n";
     ss << "</system>\n\n";
+
+    // ═══ DYNAMIC: pinned context — files the LLM asked to keep in view ═══
+    if (!pinned_.empty()) {
+        ss << "<pinned_context>\n"
+              "  <description>Files the agent pinned via context_pin. "
+              "Persist until context_unpin.</description>\n";
+        for (auto &[key, e] : pinned_) {
+            ss << "  <file path=\"" << xmlAttr(e.displayPath)
+               << "\" bytes=\"" << e.bytes << "\">\n";
+            ss << e.content;
+            if (!e.content.empty() && e.content.back() != '\n') ss << '\n';
+            ss << "  </file>\n";
+        }
+        ss << "</pinned_context>\n\n";
+    }
+
+    // ═══ DYNAMIC: ephemeral context — peek entries with remaining cycles ═══
+    if (!peeking_.empty()) {
+        ss << "<ephemeral_context>\n"
+              "  <description>Files peeked via context_peek. Auto-evicted "
+              "after their cycle count expires.</description>\n";
+        for (auto &[key, e] : peeking_) {
+            ss << "  <file path=\"" << xmlAttr(e.displayPath)
+               << "\" bytes=\"" << e.bytes
+               << "\" cycles_remaining=\"" << e.cyclesRemaining << "\">\n";
+            ss << e.content;
+            if (!e.content.empty() && e.content.back() != '\n') ss << '\n';
+            ss << "  </file>\n";
+        }
+        ss << "</ephemeral_context>\n\n";
+    }
 
     // ═══ DYNAMIC: feeds — only poll feeds explicitly imported ═══
     if (!feeds_.empty()) {

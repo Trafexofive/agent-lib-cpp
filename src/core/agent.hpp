@@ -76,6 +76,19 @@ public:
     void addTool(ToolDef tool);
     void addFeed(const std::string& name) { feeds_.insert(name); }
     void addRelic(const std::string& name) { relics_.insert(name); }
+
+    // ---- Context management (pin / peek / unpin) ----
+    // A pinned file lives in the system prompt indefinitely until unpin.
+    // A peek file lives in the system prompt for `cycles` iterations, then evicts.
+    // Path keys are canonicalised so `./x.cpp`, `x.cpp`, `src/../x.cpp` are equivalent.
+    Json::Value contextPin(const std::string& path, bool force = false);
+    Json::Value contextPeek(const std::string& path, int cycles = 1, bool force = false);
+    Json::Value contextUnpin(const std::string& path);
+    void tickContextCycles();                       // called at end of each iteration
+    Json::Value contextSnapshot() const;            // for debugging / introspection
+    std::string renderSystemPrompt() const;         // testing hook — no LLM call
+    static constexpr size_t kContextSizeLimit = 65536; // 64 KB per entry; override via force=true
+
     void removeTool(const std::string& name);
     Json::Value toggleBuiltin(const Json::Value& params, bool enable);
     int reloadManifests(bool backup);
@@ -132,6 +145,21 @@ private:
     std::set<std::string> feeds_;   // enabled feed names (from manifest import)
     std::set<std::string> disabledBuiltins_;
     std::set<std::string> relics_;  // enabled relic names (from manifest import)
+
+    // ── Context entries (live in <pinned_context>/<ephemeral_context>) ──
+    struct PinnedEntry {
+        std::string displayPath;   // original path as requested by the LLM
+        std::string content;
+        size_t bytes = 0;
+    };
+    struct PeekEntry {
+        std::string displayPath;
+        std::string content;
+        size_t bytes = 0;
+        int cyclesRemaining = 0;
+    };
+    std::map<std::string, PinnedEntry> pinned_;
+    std::map<std::string, PeekEntry>   peeking_;
     bool raw_ = false;
     bool verbose_ = false;
     bool bareTextReminded_ = false;  // one-time bare-text warning, persists across turns

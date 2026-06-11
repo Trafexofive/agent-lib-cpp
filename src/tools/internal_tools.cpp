@@ -339,9 +339,10 @@ void registerDefaults() {
     reg.registerFn("fs_write",      toolFsWrite);
     reg.registerFn("json",          toolJson);
     reg.registerFn("web_fetch",     toolWebFetch);
-    reg.registerFn("context_pin",   toolContextPin);
-    reg.registerFn("context_peek",  toolContextPeek);
-    reg.registerFn("context_unpin", toolContextUnpin);
+    // context_pin / peek / unpin are handled directly in Agent::dispatchTool
+    // because they need to mutate Agent state (pinned_/peeking_ maps).
+    // Registering them here would shadow that path with the old write-only
+    // implementations, so we leave them out of the registry.
     reg.registerFn("ask_tool",    toolAskTool);
 }
 

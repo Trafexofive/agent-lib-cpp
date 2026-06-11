@@ -14,30 +14,8 @@
 
 namespace cortex::mk3 {
 Json::Value Agent::dispatchTool(const protocol::ParsedAction &action) {
-    // ── Meta-tools: reload manifests, toggle builtins ──
-    if (action.name == "disable_builtin" || action.name == "enable_builtin") {
-        return toggleBuiltin(action.params, action.name == "enable_builtin");
-    }
-    if (action.name == "reload_manifests") {
-        Json::Value r;
-        bool backup = action.params.get("backup", false).asBool();
-        r["loaded"] = reloadManifests(backup);
-        r["success"] = true;
-        return r;
-    }
-
-    // ── Relic dispatch ──
-    if (action.type == protocol::ActionType::RELIC) {
-        auto result = relics::RelicDispatcher::instance().dispatch(
-            action.name, action.params.get("endpoint", "").asString(), action.params);
-        Json::Value r;
-        r["success"] = result.success;
-        r["output"] = result.success ? result.data : result.error;
-        if (result.success && !result.data.empty()) r["data"] = result.data;
-        return r;
-    }
-
-    // ── Sandbox validation ──
+    // ── Sandbox validation (BT04, SB07) — runs FIRST so meta-tools and
+    //    context_pin/peek/unpin can't bypass the policy.
     if (sandboxPolicy_.enabled) {
         Json::StreamWriterBuilder w;
         w["indentation"] = "";
@@ -50,6 +28,45 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction &action) {
             err["error"] = blockReason;
             return err;
         }
+    }
+
+    // ── Meta-tools: reload manifests, toggle builtins ──
+    if (action.name == "disable_builtin" || action.name == "enable_builtin") {
+        return toggleBuiltin(action.params, action.name == "enable_builtin");
+    }
+    if (action.name == "reload_manifests") {
+        Json::Value r;
+        bool backup = action.params.get("backup", false).asBool();
+        r["loaded"] = reloadManifests(backup);
+        r["success"] = true;
+        return r;
+    }
+
+    // ── Meta-tools: context management (need Agent state, can't be in registry) ──
+    if (action.name == "context_pin") {
+        return contextPin(
+            action.params.get("path", "").asString(),
+            action.params.get("force", false).asBool());
+    }
+    if (action.name == "context_peek") {
+        return contextPeek(
+            action.params.get("path", "").asString(),
+            action.params.get("cycles", 1).asInt(),
+            action.params.get("force", false).asBool());
+    }
+    if (action.name == "context_unpin") {
+        return contextUnpin(action.params.get("path", "").asString());
+    }
+
+    // ── Relic dispatch ──
+    if (action.type == protocol::ActionType::RELIC) {
+        auto result = relics::RelicDispatcher::instance().dispatch(
+            action.name, action.params.get("endpoint", "").asString(), action.params);
+        Json::Value r;
+        r["success"] = result.success;
+        r["output"] = result.success ? result.data : result.error;
+        if (result.success && !result.data.empty()) r["data"] = result.data;
+        return r;
     }
 
     // Script tools (path-imported, not native)
@@ -280,5 +297,167 @@ void Agent::loadSessionTools() {
 }
 
 
+
+// ═══════════════════════════════════════════════════════════════════════
+// Context management — pinned / peek / unpin
+//
+// Pinned entries persist across iterations until explicitly unpinned.
+// Peek entries decrement once per iteration end (in runLoop) and evict at 0.
+// Path keys are canonicalised so two requests for the same file collapse,
+// and `./x.cpp`, `x.cpp`, `src/../x.cpp` all resolve to the same entry.
+// Size limit is per-entry (default 64 KB); the LLM can override with
+// `force: true` when it explicitly needs a large file in context.
+// ═══════════════════════════════════════════════════════════════════════
+
+static std::string canonicaliseKey(const std::string &path) {
+    std::error_code ec;
+    auto p = std::filesystem::weakly_canonical(std::filesystem::path(path), ec);
+    if (ec || p.empty()) return std::filesystem::absolute(path).lexically_normal().string();
+    return p.string();
+}
+
+static Json::Value contextErr(const std::string &msg) {
+    Json::Value r;
+    r["success"] = false;
+    r["error"] = msg;
+    return r;
+}
+
+Json::Value Agent::contextPin(const std::string &path, bool force) {
+    if (path.empty()) return contextErr("path is required");
+    std::string key = canonicaliseKey(path);
+
+    std::ifstream f(key);
+    if (!f) {
+        // weakly_canonical may return a path that doesn't exist; try the raw input.
+        f.open(path);
+        if (!f) return contextErr("file not found: " + path);
+        key = canonicaliseKey(path);
+    }
+    std::string content((std::istreambuf_iterator<char>(f)),
+                        std::istreambuf_iterator<char>());
+    if (!force && content.size() > kContextSizeLimit) {
+        return contextErr("size " + std::to_string(content.size()) +
+                          " exceeds limit " + std::to_string(kContextSizeLimit) +
+                          " (override with force: true)");
+    }
+
+    // If this path was peeking, unpeek first (pin takes priority).
+    peeking_.erase(key);
+    PinnedEntry e;
+    e.displayPath = path;
+    e.content = std::move(content);
+    e.bytes = e.content.size();
+    pinned_[key] = std::move(e);
+
+    Json::Value r;
+    r["success"] = true;
+    r["path"] = path;
+    r["bytes"] = (Json::UInt64)pinned_[key].bytes;
+    r["mode"] = "pinned";
+    r["pinned_count"] = (int)pinned_.size();
+    r["peek_count"] = (int)peeking_.size();
+    return r;
+}
+
+Json::Value Agent::contextPeek(const std::string &path, int cycles, bool force) {
+    if (path.empty()) return contextErr("path is required");
+    if (cycles < 0) cycles = 1;
+    if (cycles == 0) cycles = 1;   // a 0-cycle peek would evict on the same turn it was added
+    std::string key = canonicaliseKey(path);
+
+    std::ifstream f(key);
+    if (!f) {
+        f.open(path);
+        if (!f) return contextErr("file not found: " + path);
+        key = canonicaliseKey(path);
+    }
+    std::string content((std::istreambuf_iterator<char>(f)),
+                        std::istreambuf_iterator<char>());
+    if (!force && content.size() > kContextSizeLimit) {
+        return contextErr("size " + std::to_string(content.size()) +
+                          " exceeds limit " + std::to_string(kContextSizeLimit) +
+                          " (override with force: true)");
+    }
+
+    // If this path is already pinned, peek is a no-op — pinned wins.
+    if (pinned_.count(key)) {
+        Json::Value r;
+        r["success"] = true;
+        r["path"] = path;
+        r["mode"] = "pinned";   // already pinned; peek ignored
+        r["note"] = "already pinned; peek ignored";
+        return r;
+    }
+    PeekEntry e;
+    e.displayPath = path;
+    e.content = std::move(content);
+    e.bytes = e.content.size();
+    e.cyclesRemaining = cycles;
+    peeking_[key] = std::move(e);
+
+    Json::Value r;
+    r["success"] = true;
+    r["path"] = path;
+    r["bytes"] = (Json::UInt64)peeking_[key].bytes;
+    r["mode"] = "peek";
+    r["cycles_remaining"] = cycles;
+    r["pinned_count"] = (int)pinned_.size();
+    r["peek_count"] = (int)peeking_.size();
+    return r;
+}
+
+Json::Value Agent::contextUnpin(const std::string &path) {
+    if (path.empty()) return contextErr("path is required");
+    std::string key = canonicaliseKey(path);
+    bool removedPin  = pinned_.erase(key) > 0;
+    bool removedPeek = peeking_.erase(key) > 0;
+    Json::Value r;
+    r["success"] = removedPin || removedPeek;
+    r["path"] = path;
+    r["removed"] = removedPin ? "pinned" : (removedPeek ? "peek" : "none");
+    r["pinned_count"] = (int)pinned_.size();
+    r["peek_count"] = (int)peeking_.size();
+    if (!removedPin && !removedPeek) r["error"] = "not in context: " + path;
+    return r;
+}
+
+void Agent::tickContextCycles() {
+    for (auto it = peeking_.begin(); it != peeking_.end();) {
+        if (--it->second.cyclesRemaining <= 0)
+            it = peeking_.erase(it);
+        else
+            ++it;
+    }
+}
+
+std::string Agent::renderSystemPrompt() const {
+    AgentContext ctx;
+    return buildSystemPrompt(ctx);
+}
+
+Json::Value Agent::contextSnapshot() const {
+    Json::Value r(Json::objectValue);
+    Json::Value pinned(Json::arrayValue);
+    for (auto &[key, e] : pinned_) {
+        Json::Value entry;
+        entry["path"] = e.displayPath;
+        entry["key"] = key;
+        entry["bytes"] = (Json::UInt64)e.bytes;
+        pinned.append(entry);
+    }
+    Json::Value peek(Json::arrayValue);
+    for (auto &[key, e] : peeking_) {
+        Json::Value entry;
+        entry["path"] = e.displayPath;
+        entry["key"] = key;
+        entry["bytes"] = (Json::UInt64)e.bytes;
+        entry["cycles_remaining"] = e.cyclesRemaining;
+        peek.append(entry);
+    }
+    r["pinned"] = pinned;
+    r["peeking"] = peek;
+    return r;
+}
 
 } // namespace cortex::mk3
