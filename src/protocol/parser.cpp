@@ -194,19 +194,64 @@ std::string Parser::identifyTag(size_t tagStart) {
 
 // ---------------------------------------------------------------------------
 // Find closing tag
+//
+// PP01: depth-counting + JSON-string-aware so that
+//   <action ...>{"snippet": "<action></action>"}</action>
+// closes at the OUTER </action>, not the one inside the JSON body.
 // ---------------------------------------------------------------------------
 size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
-    std::string closingTag = "</" + tagName + ">";
-    size_t pos = buffer_.find(closingTag, contentStart);
-    if (pos != std::string::npos) return pos + closingTag.length(); // past </tagName>
+    const std::string openMarker  = "<"  + tagName;
+    const std::string closeMarker = "</" + tagName + ">";
 
-    // Handle self-closing: <tag ... />
-    size_t selfClose = buffer_.find("/>", contentStart);
-    size_t nextOpen = buffer_.find("<" + tagName, contentStart);
+    int depth = 1;
+    bool inString = false;
+    bool escape = false;
 
-    if (selfClose != std::string::npos) {
-        if (nextOpen == std::string::npos || selfClose < nextOpen) {
-            return selfClose + 2; // past />
+    size_t i = contentStart;
+    while (i < buffer_.size()) {
+        char c = buffer_[i];
+        if (escape) { escape = false; ++i; continue; }
+        if (inString) {
+            if (c == '\\')      escape = true;
+            else if (c == '"')  inString = false;
+            ++i;
+            continue;
+        }
+        if (c == '"') { inString = true; ++i; continue; }
+
+        if (c == '<') {
+            // Closing tag match
+            if (i + closeMarker.size() <= buffer_.size() &&
+                buffer_.compare(i, closeMarker.size(), closeMarker) == 0) {
+                if (--depth == 0) return i + closeMarker.size();
+                i += closeMarker.size();
+                continue;
+            }
+            // Nested opening tag match: <tagName followed by space, > or /
+            if (i + openMarker.size() <= buffer_.size() &&
+                buffer_.compare(i, openMarker.size(), openMarker) == 0) {
+                size_t after = i + openMarker.size();
+                char next = (after < buffer_.size()) ? buffer_[after] : '\0';
+                if (next == ' ' || next == '\t' || next == '>' || next == '/') {
+                    size_t gt = buffer_.find('>', i);
+                    if (gt == std::string::npos) return std::string::npos;
+                    bool selfClosingNested = (gt > i && buffer_[gt - 1] == '/');
+                    if (!selfClosingNested) ++depth;
+                    i = gt + 1;
+                    continue;
+                }
+            }
+        }
+        ++i;
+    }
+
+    // Fall back to self-closing inline form: <tag ... />
+    if (depth == 1) {
+        size_t selfClose = buffer_.find("/>", contentStart);
+        if (selfClose != std::string::npos) {
+            size_t nextOpen = buffer_.find("<" + tagName, contentStart);
+            if (nextOpen == std::string::npos || selfClose < nextOpen)
+                return selfClose + 2;
         }
     }
 
@@ -445,14 +490,19 @@ void Parser::dispatchPending() {
 
 // ---------------------------------------------------------------------------
 // Inject result
+//
+// PP03: dispatchPending() acquires mtx_ itself, so we must NOT hold the lock
+// across that call (the previous implementation self-deadlocked).
 // ---------------------------------------------------------------------------
 void Parser::injectResult(const std::string& id, const Json::Value& result) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    results_[id] = result;
-    completed_[id] = true;
-    emit({TokenEvent::ACTION_RESULT,
-          Json::writeString(Json::StreamWriterBuilder(), result),
-          nullptr, {{"id", id}}});
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        results_[id] = result;
+        completed_[id] = true;
+        emit({TokenEvent::ACTION_RESULT,
+              Json::writeString(Json::StreamWriterBuilder(), result),
+              nullptr, {{"id", id}}});
+    }
     dispatchPending();
 }
 

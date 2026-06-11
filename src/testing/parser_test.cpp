@@ -267,9 +267,125 @@ void test_text_between_tags() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// PP01 — nested-tag depth: action body contains </action> as a quoted
+// string (e.g. agent emitting an example snippet). Current parser does
+// plain substring search for </action>, truncating the JSON at the inner
+// closer. Expected: outer action's content is the FULL JSON, and the
+// dispatched action's parameter survives intact.
+// ═══════════════════════════════════════════════════════════════════════
+void test_PP01_nested_action_substring() {
+    TEST("PP01 nested </action> in JSON body");
+    TestHarness h;
+    std::string snippetCaptured;
+    Parser parser([&](const ParsedAction& a) -> Json::Value {
+        if (a.params.isMember("snippet")) snippetCaptured = a.params["snippet"].asString();
+        Json::Value r; r["success"] = true; r["id"] = a.id; return r;
+    });
+    parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
+
+    parser.feed(
+        "<action type=\"tool\" name=\"echo\" id=\"e1\" mode=\"sync\">"
+        "{\"snippet\": \"<action></action>\"}"
+        "</action>",
+        true);
+
+    CHECK(!snippetCaptured.empty(), "snippet should be parsed from JSON body");
+    CHECK(snippetCaptured == "<action></action>",
+          (std::string("snippet truncated by inner closer: got '") + snippetCaptured + "'").c_str());
+    PASS();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PP02 — closingTagStart math correctness across response + action paths.
+// Pin the boundary: content should end exactly before `</tag>`, no extra
+// byte, no missing byte.
+// ═══════════════════════════════════════════════════════════════════════
+void test_PP02_closing_tag_boundary() {
+    TEST("PP02 closing-tag boundary exact");
+    TestHarness h;
+    Parser parser([&](const ParsedAction& a) { return h.executeAction(a); });
+    parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
+
+    parser.feed("<response final=\"true\">EXACT_CONTENT_NO_EXTRA</response>", true);
+
+    CHECK(h.responseText == "EXACT_CONTENT_NO_EXTRA",
+          (std::string("response truncated/extended: '") + h.responseText + "'").c_str());
+    PASS();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PP03 — injectResult must not self-deadlock. Run with a timeout watchdog.
+// ═══════════════════════════════════════════════════════════════════════
+#include <future>
+#include <chrono>
+#include <thread>
+#include <atomic>
+void test_PP03_injectResult_no_deadlock() {
+    TEST("PP03 injectResult does not deadlock");
+    // Heap-allocate parser so we can leak it cleanly if the worker deadlocks.
+    auto parser = std::make_shared<Parser>([](const ParsedAction& a) -> Json::Value {
+        Json::Value r; r["success"] = true; r["id"] = a.id; return r;
+    });
+
+    // Seed a pending action so dispatchPending() walks the queue.
+    parser->feed(
+        "<action type=\"tool\" name=\"x\" id=\"a1\" mode=\"sync\" depends_on=\"injected\">"
+        "{}</action>",
+        false);
+
+    std::atomic<bool> done{false};
+    std::thread worker([parser, &done] {
+        Json::Value v; v["success"] = true;
+        parser->injectResult("injected", v);
+        done.store(true);
+    });
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline && !done.load())
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    if (!done.load()) {
+        worker.detach();   // leak; otherwise we'd block program exit
+        FAIL("injectResult deadlocked (timed out after 2s)");
+        return;
+    }
+    worker.join();
+    PASS();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PP04 — async actions must not race on shared maps. Run many async
+// actions; expect no crash and all results recorded.
+// ═══════════════════════════════════════════════════════════════════════
+void test_PP04_async_race_smoke() {
+    TEST("PP04 async actions don't crash under load");
+    std::atomic<int> count{0};
+    Parser parser([&](const ParsedAction& a) -> Json::Value {
+        count++;
+        Json::Value r; r["success"] = true; r["id"] = a.id;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        return r;
+    });
+
+    for (int i = 0; i < 50; ++i) {
+        std::string id = "a" + std::to_string(i);
+        std::string xml = "<action type=\"tool\" name=\"x\" id=\"" + id +
+                          "\" mode=\"async\">{}</action>";
+        parser.feed(xml, false);
+    }
+    parser.feed("", true);
+    parser.waitForActions(std::chrono::seconds(10));
+
+    CHECK(count.load() == 50,
+          (std::string("expected 50 executions, got ") + std::to_string(count.load())).c_str());
+    PASS();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // main
 // ═══════════════════════════════════════════════════════════════════════
 int main() {
+    std::cout.setf(std::ios::unitbuf);
     std::cout << "\n╔══════════════════════════════════════════╗\n";
     std::cout << "║   MK3 Parser Unit Tests                  ║\n";
     std::cout << "╚══════════════════════════════════════════╝\n\n";
@@ -283,6 +399,10 @@ int main() {
     test_thought_tag();
     test_variable_resolution();
     test_text_between_tags();
+    test_PP01_nested_action_substring();
+    test_PP02_closing_tag_boundary();
+    test_PP03_injectResult_no_deadlock();
+    test_PP04_async_race_smoke();
 
     std::cout << "\n──────────────────────────────────────────\n";
     std::cout << "  " << passed << " passed, " << failed << " failed\n";
