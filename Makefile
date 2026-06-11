@@ -2,7 +2,7 @@
 # Lean, modular C++17 agent runtime with native DeepSeek inference.
 
 CXX      ?= g++
-CXXFLAGS ?= -std=c++17 -Wall -Wextra -O2 -g -fPIC -DMK3_DUMP_SESSION -MMD -MP
+CXXFLAGS ?= -std=c++17 -Wall -Wextra -O2 -g -fPIC -MMD -MP
 LDFLAGS  ?= -lcurl -ljsoncpp -lpthread -lreadline
 
 SRC_DIR   := src
@@ -23,7 +23,7 @@ BIN_SERVER := cortex-mk3-server
 LIB_SHARED := libagent-mk3.so
 LIB_STATIC := libagent-mk3.a
 
-.PHONY: all lib clean run test
+.PHONY: all lib clean run test install uninstall format lint watch dev all-tests smoke
 
 all: $(BIN_CLI) $(BIN_SERVER) lib
 
@@ -169,3 +169,47 @@ $(TUI_TERMINAL_TEST_BIN): $(TUI_TERMINAL_TEST_SRC)
 	$(CXX) $(CXXFLAGS) -Isrc $(TUI_TERMINAL_TEST_SRC) -o $@
 test-tui-terminal: $(TUI_TERMINAL_TEST_BIN)
 	@./$(TUI_TERMINAL_TEST_BIN)
+
+# ── Install / Uninstall ──
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+
+install: $(BIN_CLI)
+	@mkdir -p $(DESTDIR)$(BINDIR)
+	install -m 755 $(BIN_CLI) $(DESTDIR)$(BINDIR)/$(BIN_CLI)
+	@echo "✓ installed $(BIN_CLI) → $(DESTDIR)$(BINDIR)/$(BIN_CLI)"
+	@if [ -f $(BIN_SERVER) ]; then install -m 755 $(BIN_SERVER) $(DESTDIR)$(BINDIR)/$(BIN_SERVER); echo "✓ installed $(BIN_SERVER) → $(DESTDIR)$(BINDIR)/$(BIN_SERVER)"; fi
+
+uninstall:
+	rm -f $(DESTDIR)$(BINDIR)/$(BIN_CLI)
+	rm -f $(DESTDIR)$(BINDIR)/$(BIN_SERVER)
+	@echo "✓ uninstalled from $(DESTDIR)$(BINDIR)"
+
+# ── Code quality ──
+format:
+	@which clang-format >/dev/null 2>&1 || { echo "clang-format not found — install with: sudo pacman -S clang"; exit 1; }
+	find src main.cpp server_main.cpp -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i -style=file 2>/dev/null
+	@echo "✓ formatted"
+
+lint:
+	@which clang-tidy >/dev/null 2>&1 || { echo "clang-tidy not found — install with: sudo pacman -S clang"; exit 1; }
+	find src -name '*.cpp' ! -path '*/testing/*' | xargs clang-tidy -p build --quiet 2>/dev/null || true
+	@echo "✓ lint complete"
+
+# ── Development shortcuts ──
+watch:
+	@which entr >/dev/null 2>&1 || { echo "entr not found — install with: sudo pacman -S entr"; exit 1; }
+	find src main.cpp -name '*.cpp' -o -name '*.hpp' | entr -c make cortex-mk3
+
+smoke: $(BIN_CLI)
+	@echo "=== smoke: version ===" && ./$(BIN_CLI) version 2>/dev/null
+	@echo "=== smoke: built ===" && ls -lh $(BIN_CLI)
+
+dev: clean all
+	@$(MAKE) -s smoke
+	@$(MAKE) -s test-parser
+	@$(MAKE) -s test-protocol 2>/dev/null | tail -3
+	@echo "✓ dev build complete"
+
+all-tests: test-parser test-protocol test-feeds test-policy
+	@echo "✓ all tests passed"
