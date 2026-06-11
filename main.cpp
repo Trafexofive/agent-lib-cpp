@@ -327,7 +327,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
         {"host",         required_argument, 0, 'o'},
         {"port",         required_argument, 0, 'O'},
         {"threads",      required_argument, 0, 'T'},
-        {"api-key",      required_argument, 0, 'X'},
+        {"api-key",      required_argument, 0, 'K'},
         {"no-cors",      no_argument,       0, 'N'},
 
         // List
@@ -338,7 +338,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
         // Config
         {"show",         no_argument,       0, 'w'},
         {"set",          required_argument, 0, 'W'},
-        {"init",         no_argument,       0, 'X'},
+        {"init",         no_argument,       0, 'I'},
 
         {0, 0, 0, 0}
     };
@@ -1167,15 +1167,16 @@ static int cmdRun(CliConfig& cli) {
         if (historyLines.empty()) historyLines.push_back("");
         renderer.clear();
         streaming = false;
-        sess.records.push_back({SessionRecord::USER, cmd, session::SessionManager::iso8601(), ""});
-        sess.records.push_back({SessionRecord::AGENT, agent.responseOutput(), session::SessionManager::iso8601(), ""});
-        sm.save(sess);
+        // AC15 — agent.prompt() already persisted the turn via Agent::saveSession.
+        // Writing here again with a separate `sess` clobbered tool-call records;
+        // refresh the local copy from disk instead so display/list stays current.
+        sess = sm.load(sessionId);
         renderScreen();
     }
 
     input.stop();
     input.history().save(histPath);
-    sm.save(sess);
+    // No final save — agent owns persistence.
     std::cout << "\nBye.\n";
     return 0;
 }
