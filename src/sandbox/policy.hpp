@@ -80,6 +80,16 @@ struct SandboxPolicy {
             }
         }
 
+        // SB07 — context_pin/peek/unpin read arbitrary files, must be sandboxed.
+        // unpin doesn't touch the disk so we only validate pin and peek paths.
+        if (toolName == "context_pin" || toolName == "context_peek") {
+            auto path = extractPath(paramsJson);
+            if (!path.empty() && !isWithinWorkspace(path)) {
+                return "sandbox: " + toolName + " path '" + path +
+                       "' outside workspace";
+            }
+        }
+
         // Restrict web_fetch to allowed API host only
         if (toolName == "web_fetch") {
             auto urlPos = paramsJson.find("\"url\":");
@@ -137,11 +147,27 @@ private:
 
     bool isWithinWorkspace(const std::string& path) const {
         if (workspace.empty()) return true;
-        // Absolute path check
-        if (path[0] == '/') {
-            return path.rfind(workspace, 0) == 0;
+        // Relative paths are trusted to the OS-level sandbox (Docker sets
+        // CWD = workspace inside the container). This keeps dev-mode ergonomics
+        // intact while still defending against absolute-path escapes.
+        if (path.empty() || path[0] != '/') return true;
+
+        // SB02 — canonicalise the absolute path before prefix-comparing so
+        // `workspace/../outside` is correctly rejected. lexically_normal handles
+        // `..` resolution without requiring the path to exist on disk.
+        std::error_code ec;
+        fs::path candidate = fs::path(path).lexically_normal();
+        fs::path root = fs::path(workspace);
+        if (root.is_relative()) root = fs::current_path(ec) / root;
+        root = root.lexically_normal();
+
+        // Compare component-wise so `/a/b` isn't treated as a prefix of `/a/bb`.
+        auto rIt = root.begin(), rEnd = root.end();
+        auto cIt = candidate.begin(), cEnd = candidate.end();
+        for (; rIt != rEnd; ++rIt, ++cIt) {
+            if (cIt == cEnd) return false;
+            if (*cIt != *rIt) return false;
         }
-        // Relative paths are within CWD (which should be workspace)
         return true;
     }
 };
