@@ -79,6 +79,10 @@ Session SessionManager::load(const std::string& id) const {
             for (auto& k : root["metadata"].getMemberNames())
                 s.metadata[k] = root["metadata"][k].asString();
         }
+        if (root.isMember("context_feeds")) {
+            for (auto& v : root["context_feeds"])
+                s.contextFeeds.push_back(v.asString());
+        }
         return s;
     } catch (...) { return s; }
 }
@@ -105,6 +109,9 @@ void SessionManager::save(const Session& s) const {
     Json::Value meta(Json::objectValue);
     for (auto& [k,v] : s.metadata) meta[k] = v;
     root["metadata"] = meta;
+    Json::Value feeds(Json::arrayValue);
+    for (auto& f : s.contextFeeds) feeds.append(f);
+    root["context_feeds"] = feeds;
     std::string path = sessionPath(s.id);
     std::ofstream f(path + ".tmp");
     Json::StreamWriterBuilder w; w["indentation"] = "  ";

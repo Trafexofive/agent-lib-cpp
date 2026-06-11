@@ -127,7 +127,7 @@ struct AgentConfig {
     double presencePenalty = 0.0;
     double frequencyPenalty = 0.0;
     int maxTokens = 8192;
-    int iterationCap = 20;   // agent turns before forced response (override via manifest max_iterations)
+    int iterationCap = 50;   // agent turns before forced response (override via manifest max_iterations)
     int actionTimeoutSec = 30;  // max seconds to wait for dispatched actions
     int historyCap = 40;
 
@@ -184,6 +184,8 @@ struct Session {
     std::string updated;
     std::vector<SessionRecord> records;
     std::map<std::string, std::string> metadata;
+    // LLM-injected context feeds accumulated across iterations; restored on resume
+    std::vector<std::string> contextFeeds;
 };
 
 } // namespace cortex::mk3

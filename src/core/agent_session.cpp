@@ -5,13 +5,29 @@
 #include <fstream>
 #include <filesystem>
 
-namespace cortex {
-namespace mk3 {
+namespace cortex::mk3 {
 
 void Agent::dumpSessionArtifacts() const {
-    // iterations.md — full prompt + response + results per iteration
+    // AC17 — never pollute CWD. Artifacts go under the session manager's
+    // base directory in a `dumps/<id>/` folder (or `dumps/ephemeral-<ts>/`
+    // when the session isn't keyed). Skip entirely if nothing to dump.
+    if (iterationPrompts_.empty() && rawLlOutput_.empty()) return;
+    if (!verbose_ && !raw_) return;  // only dump when explicitly opted-in
+
+    std::string id = config_.name.empty() ? "anon" : config_.name;
+    std::string base = sessionMgr_.baseDir().empty()
+                           ? std::string("./dumps")
+                           : sessionMgr_.baseDir() + "/dumps";
+    std::string ts = session::SessionManager::iso8601();
+    // Sanitise timestamp for filename safety (replace ':' with '-').
+    for (auto &c : ts) if (c == ':') c = '-';
+    std::string dir = base + "/" + id + "-" + ts;
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) return;  // give up silently rather than crashing the run
+
     if (!iterationPrompts_.empty()) {
-        std::ofstream f("iterations.md");
+        std::ofstream f(dir + "/iterations.md");
         for (size_t i = 0; i < iterationPrompts_.size(); i++) {
             f << "## Iteration " << (i + 1) << "\n\n";
             f << "### PROMPT\n\n";
@@ -20,16 +36,14 @@ void Agent::dumpSessionArtifacts() const {
             while (std::getline(ss, line))
                 f << line << "\n";
             f << "\n";
-            // Append response if we have it
             if (i < iterationOutputs_.size()) {
                 f << "### RESPONSE\n\n";
                 f << iterationOutputs_[i] << "\n\n";
             }
         }
     }
-    // raw.md — complete raw LLM stream with injected <result> tags
     if (!rawLlOutput_.empty()) {
-        std::ofstream f("raw.md");
+        std::ofstream f(dir + "/raw.md");
         f << rawLlOutput_;
     }
 }
@@ -40,6 +54,7 @@ void Agent::dumpSessionArtifacts() const {
 
 void Agent::loadSession(const std::string &id) {
     history_.clear();
+    contextFeeds_.clear();
     auto session = sessionMgr_.load(id);
     for (auto &rec : session.records) {
         std::string prefix;
@@ -56,11 +71,26 @@ void Agent::loadSession(const std::string &id) {
         }
         history_.push_back(prefix + rec.content);
     }
+    // AC18 — restore LLM-injected feeds so resumed sessions don't lose context.
+    contextFeeds_ = session.contextFeeds;
 }
 
 void Agent::saveSession(const std::string &id) {
-    Session session =
-        sessionMgr_.create(id, config_.name, config_.model, "deepseek");
+    // AC04 — preserve `created` timestamp across saves by loading-then-merging
+    //        instead of unconditionally calling create().
+    // AC14 — use the agent's actual provider rather than hardcoded "deepseek".
+    Session session;
+    if (sessionMgr_.exists(id)) {
+        session = sessionMgr_.load(id);
+        // Update mutable fields; keep `created`/`id` stable.
+        session.agentName = config_.name;
+        session.model = config_.model;
+        session.provider = config_.provider;
+        session.updated = session::SessionManager::iso8601();
+        session.records.clear();
+    } else {
+        session = sessionMgr_.create(id, config_.name, config_.model, config_.provider);
+    }
     for (auto &h : history_) {
         SessionRecord rec;
         rec.timestamp = session::SessionManager::iso8601();
@@ -80,6 +110,8 @@ void Agent::saveSession(const std::string &id) {
         }
         session.records.push_back(rec);
     }
+    // AC18 — round-trip the LLM-injected context feeds.
+    session.contextFeeds = contextFeeds_;
     sessionMgr_.save(session);
 }
 
@@ -103,5 +135,5 @@ void Agent::undoLastInteraction() {
 
 
 
-} // namespace mk3
-} // namespace cortex
+
+} // namespace cortex::mk3
