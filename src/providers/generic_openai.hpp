@@ -11,6 +11,9 @@
 #include <string>
 #include <map>
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <vector>
 
 namespace cortex::mk3::providers {
 
@@ -28,11 +31,31 @@ struct OpenAIProviderConfig {
     bool supportsTopK = true;                // some providers (Groq) reject top_k
     std::string chatEndpoint = "/chat/completions";
     std::string modelsEndpoint = "/models";
+    std::string reasoningEffort;             // OpenAI reasoning models: low|medium|high|xhigh
+    int defaultMaxTokens = 65536;
 
     std::string resolveApiKey() const {
         if (!apiKeyEnvVar.empty()) {
             const char* env = std::getenv(apiKeyEnvVar.c_str());
             if (env && env[0]) return env;
+        }
+        if (apiKeyEnvVar == "OPENAI_API_KEY") {
+            const char* home = std::getenv("HOME");
+            if (home && home[0]) {
+                std::ifstream f(std::string(home) + "/.codex/auth.json");
+                if (f.good()) {
+                    Json::Value root;
+                    Json::CharReaderBuilder reader;
+                    std::string errs;
+                    if (Json::parseFromStream(reader, f, &root, &errs)) {
+                        if (root.isMember("OPENAI_API_KEY") && root["OPENAI_API_KEY"].isString())
+                            return root["OPENAI_API_KEY"].asString();
+                        if (root.isMember("tokens") && root["tokens"].isObject() &&
+                            root["tokens"].isMember("access_token") && root["tokens"]["access_token"].isString())
+                            return root["tokens"]["access_token"].asString();
+                    }
+                }
+            }
         }
         return defaultApiKeyFallback;
     }
@@ -41,6 +64,40 @@ struct OpenAIProviderConfig {
 // ---------------------------------------------------------------------------
 // GenericOpenAIClient — the ONE client class
 // ---------------------------------------------------------------------------
+class CodexCliProvider : public ILlmProvider {
+public:
+    CodexCliProvider();
+
+    std::string generate(const ChatMessages& msgs) override;
+    void generateStream(const ChatMessages& msgs, StreamCallback cb) override;
+
+    void setModel(const std::string& model) override { model_ = model; }
+    void setTemperature(double t) override { temperature_ = t; }
+    void setMaxTokens(int n) override { maxTokens_ = n; }
+    void setTopP(double p) override { topP_ = p; }
+    void setTopK(int k) override { topK_ = k; }
+    void setPresencePenalty(double p) override { presencePenalty_ = p; }
+    void setFrequencyPenalty(double p) override { frequencyPenalty_ = p; }
+    std::string getModel() const override { return model_; }
+    double getTemperature() const override { return temperature_; }
+    int getMaxTokens() const override { return maxTokens_; }
+    std::string providerName() const override { return "openai-codex"; }
+    std::vector<ModelInfo> listModels() override;
+
+private:
+    std::string model_ = "gpt-5.5";
+    std::string reasoningEffort_ = "high";
+    double temperature_ = 0.7;
+    double topP_ = 0.95;
+    int topK_ = 40;
+    double presencePenalty_ = 0.0;
+    double frequencyPenalty_ = 0.0;
+    int maxTokens_ = 65536;
+
+    static std::string renderPrompt(const ChatMessages& msgs);
+    static std::string shellEscape(const std::string& input);
+};
+
 class GenericOpenAIClient : public ILlmProvider {
 public:
     explicit GenericOpenAIClient(const OpenAIProviderConfig& cfg);
@@ -112,7 +169,12 @@ inline OpenAIProviderConfig deepseekConfig() {
         {
             {"X-Title", "Cortex-MK3"},
         },
-        true
+        true,
+        true,
+        "/chat/completions",
+        "/models",
+        "",
+        65536
     };
 }
 
@@ -128,8 +190,36 @@ inline OpenAIProviderConfig openrouterConfig() {
             {"HTTP-Referer", "https://github.com/Cortex-Prime-MK1"},
             {"X-Title", "Cortex-MK3"},
         },
-        true
+        true,
+        true,
+        "/chat/completions",
+        "/models",
+        "",
+        65536
     };
+}
+
+// OpenAI Codex subscription/API surface
+inline OpenAIProviderConfig codexConfig() {
+    OpenAIProviderConfig cfg{
+        "openai-codex",
+        "https://api.openai.com/v1",
+        "OPENAI_API_KEY",
+        "",
+        "gpt-5.5",
+        {
+            {"X-Title", "Cortex-MK3"},
+        },
+        true,
+        false,
+        "/chat/completions",
+        "/models",
+        "high",
+        65536
+    };
+    cfg.reasoningEffort = "high";
+    cfg.defaultMaxTokens = 65536;
+    return cfg;
 }
 
 // Groq — does NOT support top_k
@@ -142,7 +232,11 @@ inline OpenAIProviderConfig groqConfig() {
         "llama-3.3-70b-versatile",
         {},
         true,    // supportsTools
-        false    // supportsTopK — Groq rejects top_k
+        false,   // supportsTopK — Groq rejects top_k
+        "/chat/completions",
+        "/models",
+        "",
+        65536
     };
 }
 
@@ -158,7 +252,12 @@ inline OpenAIProviderConfig zenConfig() {
             {"X-Title", "Cortex-MK3"},
             {"HTTP-Referer", "https://github.com/Cortex-Prime-MK1"},
         },
-        true
+        true,
+        true,
+        "/chat/completions",
+        "/models",
+        "",
+        65536
     };
 }
 
@@ -171,7 +270,12 @@ inline OpenAIProviderConfig togetherConfig() {
         "",
         "meta-llama/Llama-3.3-70B-Instruct-Turbo",
         {},
-        true
+        true,
+        true,
+        "/chat/completions",
+        "/models",
+        "",
+        65536
     };
 }
 
@@ -184,7 +288,12 @@ inline OpenAIProviderConfig fireworksConfig() {
         "",
         "accounts/fireworks/models/llama-v3p1-70b-instruct",
         {},
-        true
+        true,
+        true,
+        "/chat/completions",
+        "/models",
+        "",
+        65536
     };
 }
 

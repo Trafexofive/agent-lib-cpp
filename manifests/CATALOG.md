@@ -75,7 +75,7 @@ Flow: build in config/ → graduate to manifests/ when needed globally
 
 | Agent | Model | Provider | Tools | Special |
 |-------|-------|----------|-------|---------|
-| assistant | nex-agi/nex-n2-pro:free | openrouter | 7 | Default agent, also in manifests/ |
+| assistant | gpt-5.5 | openai-codex | 7 | Default agent, also in manifests/ |
 | builder | deepseek-coder | openrouter-free | 8 | build_run tool, build_cache relic |
 | reviewer | minimax-3 | openrouter-free | 8 | diff_analyze tool |
 | researcher | minimax-3 | openrouter-free | 9 | web_search, html_extract tools |

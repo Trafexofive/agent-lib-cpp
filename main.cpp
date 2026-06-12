@@ -55,8 +55,8 @@ struct CliConfig {
     std::string command;  // "run", "serve", "list", "config", "completions", "version", "help"
 
     // Provider
-    std::string provider = "openrouter";
-    std::string model = "nex-agi/nex-n2-pro:free";
+    std::string provider = "openai-codex";
+    std::string model = "gpt-5.5";
     bool providerSet = false;
     bool modelSet = false;
 
@@ -164,7 +164,7 @@ Global flags:
   --config <path>      Config file (default: ~/.config/cortex-mk3/config)
   --manifest-dir <dir> Manifest catalog root (default: ./manifests; explicit imports only)
   --iterations <n>     Max turns before forced response (default: 20)
-  --provider <name>    LLM provider (deepseek, openrouter, groq, zen, together, fireworks)
+  --provider <name>    LLM provider (deepseek, openrouter, openai-codex, groq, zen, together, fireworks)
   --model <name>       Model name
   --sandbox            Enable sandbox mode (tool restrictions)
   --sandbox-ro         Read-only sandbox (no writes, restricted exec)
@@ -411,6 +411,11 @@ static CliConfig parseArgs(int argc, char* argv[]) {
         }
     }
 
+    // List --models accepts both `--models=provider` and `--models provider`.
+    if (cli.command == "list" && cli.listModels && cli.listModelsProvider.empty() && optind < argc) {
+        cli.listModelsProvider = argv[optind];
+    }
+
     // Completions subcommand takes shell name
     if (cli.command == "completions" && optind < argc) {
         cli.completionsShell = argv[optind];
@@ -466,7 +471,8 @@ static int cmdList(const CliConfig& cli) {
     if (cli.listProviders) {
         std::cout << "Available providers:\n\n";
         std::cout << "  deepseek    DeepSeek API        (DEEPSEEK_API_KEY)\n";
-        std::cout << "  openrouter  OpenRouter          (OPENROUTER_API_KEY)\n";
+        std::cout << "  openrouter     OpenRouter          (OPENROUTER_API_KEY)\n";
+        std::cout << "  openai-codex   OpenAI Codex        (OPENAI_API_KEY or ~/.codex/auth.json)\n";
         std::cout << "  groq        Groq                (GROQ_API_KEY)\n";
         std::cout << "  zen         OpenCode Zen        (free tier)\n";
         std::cout << "  together    Together AI         (TOGETHER_API_KEY)\n";
@@ -475,22 +481,47 @@ static int cmdList(const CliConfig& cli) {
     }
 
     if (cli.listModels) {
-        std::string p = cli.listModelsProvider.empty() ? cli.provider : cli.listModelsProvider;
-        auto provider = providers::createProvider(p, "");
-        if (!provider) {
-            std::cerr << "Unknown provider: " << p << "\n";
-            return 1;
+        auto printModels = [](const std::string& p) -> bool {
+            auto provider = providers::createProvider(p, "");
+            if (!provider) {
+                std::cerr << "Unknown provider: " << p << "\n";
+                return false;
+            }
+
+            auto models = provider->listModels();
+            if (p == "openrouter") {
+                std::vector<ILlmProvider::ModelInfo> freeOnly;
+                for (auto& m : models) if (m.isFree) freeOnly.push_back(m);
+                models = std::move(freeOnly);
+            }
+
+            std::cout << "Models for " << p << ":\n";
+            for (auto& m : models) {
+                std::cout << "  " << m.id;
+                if (!m.name.empty() && m.name != m.id) std::cout << " (" << m.name << ")";
+                if (m.isFree) std::cout << " [free]";
+                std::cout << " — " << (m.contextWindow / 1024) << "K ctx\n";
+            }
+            if (models.empty()) {
+                std::string fallback = providers::defaultProviderModel(p);
+                if (!fallback.empty()) {
+                    std::cout << "  " << fallback << " (default)\n";
+                    if (p == "openrouter") std::cout << "  (OpenRouter listing is filtered to free models; specify paid model IDs in manifests.)\n";
+                } else {
+                    std::cout << "  (model listing not supported by this provider)\n";
+                }
+            }
+            return true;
+        };
+
+        if (!cli.listModelsProvider.empty()) {
+            return printModels(cli.listModelsProvider) ? 0 : 1;
         }
-        auto models = provider->listModels();
-        std::cout << "Models for " << p << ":\n";
-        for (auto& m : models) {
-            std::cout << "  " << m.id;
-            if (!m.name.empty() && m.name != m.id) std::cout << " (" << m.name << ")";
-            if (m.isFree) std::cout << " [free]";
-            std::cout << " — " << (m.contextWindow / 1024) << "K ctx\n";
-        }
-        if (models.empty()) {
-            std::cout << "  (model listing not supported by this provider)\n";
+
+        std::cout << "Models for all providers. Use `--models <provider>` to filter.\n\n";
+        for (const auto& p : {"deepseek", "openrouter", "openai-codex", "groq", "zen", "together", "fireworks"}) {
+            if (!printModels(p)) return 1;
+            std::cout << "\n";
         }
         return 0;
     }
@@ -524,8 +555,8 @@ static int cmdConfig(CliConfig& cli) {
 
     if (cli.configInit) {
         std::map<std::string, std::string> defaults = {
-            {"provider", "openrouter"},
-            {"model", "nex-agi/nex-n2-pro:free"},
+            {"provider", "openai-codex"},
+            {"model", "gpt-5.5"},
         };
         saveConfigFile(path, defaults);
         std::cout << "Created config: " << path << "\n";

@@ -39,7 +39,7 @@ public:
     struct ModelInfo {
         std::string id;
         std::string name;
-        int contextWindow = 8192;
+        int contextWindow = 272000;
         bool isFree = false;
     };
     virtual std::vector<ModelInfo> listModels() { return {}; }

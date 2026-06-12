@@ -15,6 +15,11 @@ inline std::shared_ptr<ILlmProvider> createProvider(const std::string& name, con
     OpenAIProviderConfig cfg;
 
     if (name == "deepseek")       cfg = deepseekConfig();
+    else if (name == "openai-codex" || name == "codex-provider" || name == "codex") {
+        auto p = std::make_shared<CodexCliProvider>();
+        if (!overrideModel.empty()) p->setModel(overrideModel);
+        return p;
+    }
     else if (name == "openrouter") cfg = openrouterConfig();
     else if (name == "groq")       cfg = groqConfig();
     else if (name == "zen")        cfg = zenConfig();
@@ -28,12 +33,13 @@ inline std::shared_ptr<ILlmProvider> createProvider(const std::string& name, con
 }
 
 inline std::vector<std::string> availableProviders() {
-    return {"deepseek", "openrouter", "groq", "zen", "together", "fireworks", "sambanova", "cerebras", "hyperbolic", "llm7", "nvidia"};
+    return {"deepseek", "openrouter", "openai-codex", "codex-provider", "groq", "zen", "together", "fireworks", "sambanova", "cerebras", "hyperbolic", "llm7", "nvidia"};
 }
 
 inline std::string defaultProviderModel(const std::string& name) {
     if (name == "deepseek")       return "deepseek-chat";
     if (name == "openrouter")     return "nex-agi/nex-n2-pro:free";
+    if (name == "openai-codex" || name == "codex-provider" || name == "codex") return "gpt-5.5";
     if (name == "groq")           return "llama-3.3-70b-versatile";
     if (name == "zen")            return "big-pickle";
     if (name == "together")       return "meta-llama/Llama-3.3-70B-Instruct-Turbo";

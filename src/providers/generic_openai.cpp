@@ -9,14 +9,93 @@
 #include <regex>
 #include <chrono>
 #include <thread>
+#include <filesystem>
+#include <unistd.h>
 
 namespace cortex::mk3::providers {
+
+CodexCliProvider::CodexCliProvider() = default;
+
+std::string CodexCliProvider::shellEscape(const std::string& input) {
+    std::string out(1, '\'');
+    for (char c : input) {
+        if (c == '\'') out += "'\\''";
+        else out += c;
+    }
+    out += '\'';
+    return out;
+}
+
+std::string CodexCliProvider::renderPrompt(const ChatMessages& msgs) {
+    std::ostringstream ss;
+    ss << "Complete the embedded Cortex MK3 transcript below. Treat it as the task content for this Codex exec run.\n"
+       << "Base answers about available tools or sub-agents only on the embedded MK3 [system] message.\n"
+       << "If the embedded MK3 [system] message has no <subagents> block, the correct answer is that no MK3 sub-agents are available.\n"
+       << "Return the MK3 XML protocol text requested by the embedded transcript. Do not add commentary about Codex or this wrapper.\n\n";
+    for (const auto& m : msgs) {
+        ss << "[" << ChatMessage::roleName(m.role) << "]\n" << m.content << "\n\n";
+    }
+    return ss.str();
+}
+
+std::string CodexCliProvider::generate(const ChatMessages& msgs) {
+    namespace fs = std::filesystem;
+    fs::path base = fs::temp_directory_path() /
+        ("cortex-codex-" + std::to_string(::getpid()) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::path inputPath = base.string() + ".in";
+    fs::path outputPath = base.string() + ".out";
+    fs::path jsonlPath = base.string() + ".jsonl";
+    fs::path errPath = base.string() + ".err";
+
+    {
+        std::ofstream in(inputPath);
+        in << renderPrompt(msgs);
+    }
+
+    std::string cmd = "codex exec --json --model " + shellEscape(model_) +
+        " -c " + shellEscape("model_reasoning_effort=\"" + reasoningEffort_ + "\"") +
+        " --sandbox read-only --skip-git-repo-check --cd " + shellEscape(fs::current_path().string()) +
+        " --output-last-message " + shellEscape(outputPath.string()) +
+        " - < " + shellEscape(inputPath.string()) +
+        " > " + shellEscape(jsonlPath.string()) +
+        " 2> " + shellEscape(errPath.string());
+
+    int rc = std::system(cmd.c_str());
+    std::ifstream outFile(outputPath);
+    std::ostringstream out;
+    out << outFile.rdbuf();
+    std::string result = out.str();
+
+    std::ifstream errFile(errPath);
+    std::ostringstream err;
+    err << errFile.rdbuf();
+
+    std::error_code ec;
+    fs::remove(inputPath, ec);
+    fs::remove(outputPath, ec);
+    fs::remove(jsonlPath, ec);
+    fs::remove(errPath, ec);
+
+    if (rc != 0 || result.empty()) {
+        throw std::runtime_error("codex exec failed: " + err.str());
+    }
+    return result;
+}
+
+void CodexCliProvider::generateStream(const ChatMessages& msgs, StreamCallback cb) {
+    std::string result = generate(msgs);
+    cb(result, true);
+}
+
+std::vector<ILlmProvider::ModelInfo> CodexCliProvider::listModels() {
+    return {{"gpt-5.5", "GPT-5.5", 272000, false}};
+}
 
 // ---------------------------------------------------------------------------
 // Constructor
 // ---------------------------------------------------------------------------
 GenericOpenAIClient::GenericOpenAIClient(const OpenAIProviderConfig& cfg)
-    : config_(cfg), apiKey_(cfg.resolveApiKey()), model_(cfg.defaultModel) {}
+    : config_(cfg), apiKey_(cfg.resolveApiKey()), model_(cfg.defaultModel), maxTokens_(cfg.defaultMaxTokens) {}
 
 // ---------------------------------------------------------------------------
 // Build OpenAI-compatible JSON request body
@@ -27,6 +106,7 @@ Json::Value GenericOpenAIClient::buildRequestBody(const ChatMessages& msgs, bool
     body["temperature"] = temperature_;
     body["top_p"] = topP_;
     if (topK_ > 0 && config_.supportsTopK) body["top_k"] = topK_;
+    if (!config_.reasoningEffort.empty()) body["reasoning_effort"] = config_.reasoningEffort;
     if (presencePenalty_ != 0.0) body["presence_penalty"] = presencePenalty_;
     if (frequencyPenalty_ != 0.0) body["frequency_penalty"] = frequencyPenalty_;
     body["max_tokens"] = maxTokens_;
@@ -282,8 +362,12 @@ std::vector<ILlmProvider::ModelInfo> GenericOpenAIClient::listModels() {
     if (!apiKey_.empty()) {
         std::string auth = "Authorization: Bearer " + apiKey_;
         headers = curl_slist_append(headers, auth.c_str());
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     }
+    for (const auto& [k, v] : config_.extraHeaders) {
+        std::string h = k + ": " + v;
+        headers = curl_slist_append(headers, h.c_str());
+    }
+    if (headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
     CURLcode res = curl_easy_perform(curl);
     curl_slist_free_all(headers);
@@ -297,13 +381,27 @@ std::vector<ILlmProvider::ModelInfo> GenericOpenAIClient::listModels() {
     std::istringstream ss(response);
     if (!Json::parseFromStream(reader, ss, &root, &errs)) return {};
 
-    Json::Value& data = root.isMember("data") ? root["data"] : root;
+    if (root.isMember("error")) return {};
+    Json::Value& data = (root.isObject() && root.isMember("data")) ? root["data"] : root;
+    if (!data.isArray()) return {};
+
     for (auto& m : data) {
+        if (!m.isObject() || !m.isMember("id") || !m["id"].isString()) continue;
         ModelInfo info;
         info.id = m["id"].asString();
-        info.name = m.isMember("name") ? m["name"].asString() : info.id;
-        info.contextWindow = m.get("context_window", 8192).asInt();
-        info.isFree = false;
+        info.name = (m.isMember("name") && m["name"].isString()) ? m["name"].asString() : info.id;
+        info.contextWindow = m.get("context_window", config_.name == "openai-codex" ? 272000 : 65536).asInt();
+        info.isFree = (info.id.find(":free") != std::string::npos || info.name.find(":free") != std::string::npos);
+        if (!info.isFree && m.isMember("pricing") && m["pricing"].isObject()) {
+            auto zeroish = [](const Json::Value& v) {
+                if (v.isString()) return v.asString() == "0" || v.asString() == "0.0";
+                if (v.isNumeric()) return v.asDouble() == 0.0;
+                return false;
+            };
+            bool promptFree = m["pricing"].isMember("prompt") && zeroish(m["pricing"]["prompt"]);
+            bool completionFree = m["pricing"].isMember("completion") && zeroish(m["pricing"]["completion"]);
+            info.isFree = promptFree && completionFree;
+        }
         cachedModels_.push_back(info);
     }
 

@@ -4,6 +4,7 @@
 
 #include "server.hpp"
 #include "../providers/generic_openai.hpp"
+#include "../providers/factory.hpp"
 #include <json/json.h>
 #include <thread>
 #include <iostream>
@@ -294,6 +295,7 @@ void CortexServer::setupRoutes() {
         Json::Value arr(Json::arrayValue);
         arr.append("deepseek");
         arr.append("openrouter");
+        arr.append("openai-codex");
         arr.append("groq");
         arr.append("zen");
         arr.append("together");
@@ -310,29 +312,11 @@ std::string CortexServer::createAgent(const std::string& name, AgentConfig agent
     std::lock_guard<std::mutex> lock(agentsMtx_);
     std::string id = name + "-" + std::to_string(++agentCounter_);
 
-    // Create provider based on config
-    std::shared_ptr<ILlmProvider> prov;
-    if (agentCfg.provider == "deepseek") {
-        auto pcfg = providers::deepseekConfig();
-        pcfg.defaultModel = agentCfg.model;
-        prov = std::make_shared<providers::GenericOpenAIClient>(pcfg);
-    } else if (agentCfg.provider == "openrouter") {
-        auto pcfg = providers::openrouterConfig();
-        pcfg.defaultModel = agentCfg.model;
-        prov = std::make_shared<providers::GenericOpenAIClient>(pcfg);
-    } else if (agentCfg.provider == "groq") {
-        auto pcfg = providers::groqConfig();
-        pcfg.defaultModel = agentCfg.model;
-        prov = std::make_shared<providers::GenericOpenAIClient>(pcfg);
-    } else if (agentCfg.provider == "zen") {
-        auto pcfg = providers::zenConfig();
-        pcfg.defaultModel = agentCfg.model;
-        prov = std::make_shared<providers::GenericOpenAIClient>(pcfg);
-    } else {
-        // Default to DeepSeek
-        auto pcfg = providers::deepseekConfig();
-        pcfg.defaultModel = agentCfg.model;
-        prov = std::make_shared<providers::GenericOpenAIClient>(pcfg);
+    auto prov = providers::createProvider(agentCfg.provider, agentCfg.model);
+    if (!prov) {
+        agentCfg.provider = "openai-codex";
+        agentCfg.model = "gpt-5.5";
+        prov = providers::createProvider(agentCfg.provider, agentCfg.model);
     }
 
     auto inst = std::make_unique<AgentInstance>();
