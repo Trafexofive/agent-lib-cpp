@@ -106,8 +106,16 @@ static std::string toolGrep(const Json::Value& p) {
     std::string cmd = "grep -rn --include=" + shellEscape(glob)
         + (ctx>0?" -C "+std::to_string(ctx):"")
         + " " + shellEscape(pattern) + " " + shellEscape(path) + " 2>/dev/null | head -100";
-    std::string out; int rc = runCmd(cmd, out, 30);
-    Json::Value r; r["success"] = true; r["matches"] = rc==0?1:0; r["results"] = out;
+    std::string out; runCmd(cmd, out, 30);
+    int matches = 0;
+    std::istringstream lines(out);
+    std::string line;
+    while (std::getline(lines, line)) if (!line.empty()) matches++;
+    Json::Value r;
+    r["success"] = true;
+    r["matches"] = matches;
+    r["results"] = out;
+    r["output"] = "matches=" + std::to_string(matches) + "\n" + out;
     return jsonStr(r);
 }
 
