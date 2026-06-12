@@ -4,6 +4,7 @@
 #include "agent.hpp"
 #include <fstream>
 #include <filesystem>
+#include <iostream>
 
 namespace cortex::mk3 {
 
@@ -46,6 +47,9 @@ void Agent::dumpSessionArtifacts() const {
         std::ofstream f(dir + "/raw.md");
         f << rawLlOutput_;
     }
+
+    // Keep stdout clean, but make trace location discoverable for harness work.
+    std::cerr << "[trace] wrote " << dir << "\n";
 }
 
 // ═══════════════════════════════════════════════════════════════════════
