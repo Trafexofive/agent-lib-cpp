@@ -33,7 +33,7 @@ inline std::vector<std::string> availableProviders() {
 
 inline std::string defaultProviderModel(const std::string& name) {
     if (name == "deepseek")       return "deepseek-chat";
-    if (name == "openrouter")     return "meta-llama/llama-3.3-70b-instruct:free";
+    if (name == "openrouter")     return "nex-agi/nex-n2-pro:free";
     if (name == "groq")           return "llama-3.3-70b-versatile";
     if (name == "zen")            return "big-pickle";
     if (name == "together")       return "meta-llama/Llama-3.3-70B-Instruct-Turbo";

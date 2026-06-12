@@ -5,6 +5,6 @@ runtime:
 logging:
   level: info
 agent:
-  default_model: minimax-3
-  default_provider: openrouter-free
+  default_model: nex-agi/nex-n2-pro:free
+  default_provider: openrouter
   temperature: 0.7

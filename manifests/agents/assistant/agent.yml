@@ -5,8 +5,8 @@ summary: General-purpose assistant with file and shell access
 
 cognitive_engine:
   primary:
-    provider: deepseek
-    model: deepseek-v4-pro
+    provider: openrouter
+    model: nex-agi/nex-n2-pro:free
     parameters:
       temperature: 0.7
       max_tokens: 4096

@@ -123,7 +123,7 @@ inline OpenAIProviderConfig openrouterConfig() {
         "https://openrouter.ai/api/v1",
         "OPENROUTER_API_KEY",
         "",
-        "meta-llama/llama-3.1-8b-instruct",
+        "nex-agi/nex-n2-pro:free",
         {
             {"HTTP-Referer", "https://github.com/Cortex-Prime-MK1"},
             {"X-Title", "Cortex-MK3"},

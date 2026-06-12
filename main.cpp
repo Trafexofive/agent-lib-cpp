@@ -55,8 +55,8 @@ struct CliConfig {
     std::string command;  // "run", "serve", "list", "config", "completions", "version", "help"
 
     // Provider
-    std::string provider = "deepseek";
-    std::string model = "deepseek-v4-pro";
+    std::string provider = "openrouter";
+    std::string model = "nex-agi/nex-n2-pro:free";
     bool providerSet = false;
     bool modelSet = false;
 
@@ -524,8 +524,8 @@ static int cmdConfig(CliConfig& cli) {
 
     if (cli.configInit) {
         std::map<std::string, std::string> defaults = {
-            {"provider", "deepseek"},
-            {"model", "deepseek-v4-pro"},
+            {"provider", "openrouter"},
+            {"model", "nex-agi/nex-n2-pro:free"},
         };
         saveConfigFile(path, defaults);
         std::cout << "Created config: " << path << "\n";
