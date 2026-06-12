@@ -6,29 +6,24 @@
 #include <filesystem>
 #include <iostream>
 
+namespace fs = std::filesystem;
+
 namespace cortex::mk3 {
 
 void Agent::dumpSessionArtifacts() const {
-    // AC17 — never pollute CWD. Artifacts go under the session manager's
-    // base directory in a `dumps/<id>/` folder (or `dumps/ephemeral-<ts>/`
-    // when the session isn't keyed). Skip entirely if nothing to dump.
-    if (iterationPrompts_.empty() && rawLlOutput_.empty()) return;
-    if (!verbose_ && !raw_) return;  // only dump when explicitly opted-in
+    // AC17 — explicit raw/debug/verbose runs write trace artifacts in CWD
+    // so live harness work can find `iterations.md` and `raw.md` next to the
+    // run. Skip entirely when the run is not opted into trace dumping.
+    bool debugEnabled = env_.count("__DEBUG_MODE__") && env_.at("__DEBUG_MODE__") == "true";
+    if (!verbose_ && !raw_ && !debugEnabled) return;
 
-    std::string id = config_.name.empty() ? "anon" : config_.name;
-    std::string base = sessionMgr_.baseDir().empty()
-                           ? std::string("./dumps")
-                           : sessionMgr_.baseDir() + "/dumps";
-    std::string ts = session::SessionManager::iso8601();
-    // Sanitise timestamp for filename safety (replace ':' with '-').
-    for (auto &c : ts) if (c == ':') c = '-';
-    std::string dir = base + "/" + id + "-" + ts;
+    fs::path cwd = fs::current_path();
     std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    if (ec) return;  // give up silently rather than crashing the run
+    fs::create_directories(cwd, ec);
+    if (ec) return;
 
     if (!iterationPrompts_.empty()) {
-        std::ofstream f(dir + "/iterations.md");
+        std::ofstream f(cwd / "iterations.md");
         for (size_t i = 0; i < iterationPrompts_.size(); i++) {
             f << "## Iteration " << (i + 1) << "\n\n";
             f << "### PROMPT\n\n";
@@ -43,13 +38,14 @@ void Agent::dumpSessionArtifacts() const {
             }
         }
     }
-    if (!rawLlOutput_.empty()) {
-        std::ofstream f(dir + "/raw.md");
-        f << rawLlOutput_;
-    }
+
+    // Always create raw.md for explicit trace runs. If the provider produced no
+    // bytes, an empty file is still the correct signal that dumping ran.
+    std::ofstream raw(cwd / "raw.md");
+    raw << rawLlOutput_;
 
     // Keep stdout clean, but make trace location discoverable for harness work.
-    std::cerr << "[trace] wrote " << dir << "\n";
+    std::cerr << "[trace] wrote " << cwd << "\n";
 }
 
 // ═══════════════════════════════════════════════════════════════════════

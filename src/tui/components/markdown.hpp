@@ -8,6 +8,7 @@
 #include <regex>
 #include <sstream>
 #include <algorithm>
+#include <unordered_map>
 
 namespace cortex::mk3::tui {
 
@@ -243,6 +244,7 @@ private:
     }
 
     void renderTableBuffer(std::vector<std::string>& lines, int width) const {
+        (void)width;
         // Split all rows into columns and trim
         std::vector<std::vector<std::string>> rows;
         for (auto& row : tableBuffer_) {
@@ -306,6 +308,9 @@ private:
     // Inline formatting
     // ═══════════════════════════════════════════════════════════════════════
     std::string renderInline(const std::string& line) const {
+        auto cached = inlineCache_.find(line);
+        if (cached != inlineCache_.end()) return cached->second;
+
         std::string result = line;
         static const std::regex boldRe(R"(\*\*(.+?)\*\*|__(.+?)__)");
         result = std::regex_replace(result, boldRe, theme_.bold + "$1$2" + theme_.reset);
@@ -324,6 +329,8 @@ private:
         // Images: ![alt](url) → 🖼 alt
         static const std::regex imgRe(R"(!\[([^\]]*)\]\(([^)]+)\))");
         result = std::regex_replace(result, imgRe, theme_.dim + "🖼 $1" + theme_.reset);
+        if (inlineCache_.size() > 512) inlineCache_.clear();
+        inlineCache_[line] = result;
         return result;
     }
 
@@ -387,6 +394,7 @@ private:
     mutable int cached_width_ = 0;
     mutable std::vector<std::string> cached_lines_;
     mutable std::vector<std::string> tableBuffer_;
+    mutable std::unordered_map<std::string, std::string> inlineCache_;
     mutable bool mathBlock_ = false;
 };
 

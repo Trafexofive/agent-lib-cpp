@@ -30,6 +30,31 @@ static int passed = 0, failed = 0;
 
 static fs::path g_tmpDir;
 
+class NoopProvider : public ILlmProvider {
+public:
+    std::string generate(const ChatMessages&) override {
+        return "<response final=\"true\">OK</response>";
+    }
+    void generateStream(const ChatMessages&, StreamCallback cb) override {
+        cb("<response final=\"true\">OK</response>", true);
+    }
+    void setModel(const std::string& model) override { model_ = model; }
+    void setTemperature(double t) override { temperature_ = t; }
+    void setMaxTokens(int n) override { maxTokens_ = n; }
+    void setTopP(double p) override { topP_ = p; }
+    std::string getModel() const override { return model_; }
+    double getTemperature() const override { return temperature_; }
+    int getMaxTokens() const override { return maxTokens_; }
+    std::vector<ModelInfo> listModels() override { return {}; }
+    std::string providerName() const override { return "noop"; }
+
+private:
+    std::string model_ = "noop";
+    double temperature_ = 0.7;
+    int maxTokens_ = 65536;
+    double topP_ = 0.95;
+};
+
 static std::unique_ptr<Agent> makeAgent(const std::string &provider,
                                        const std::string &model) {
     AgentConfig cfg;
@@ -40,6 +65,15 @@ static std::unique_ptr<Agent> makeAgent(const std::string &provider,
     setenv("HOME", g_tmpDir.string().c_str(), 1);
     auto p = providers::createProvider(provider, model);
     return std::make_unique<Agent>(cfg, p);
+}
+
+static std::unique_ptr<Agent> makeNoopAgent() {
+    AgentConfig cfg;
+    cfg.name = "session-test-agent";
+    cfg.provider = "noop";
+    cfg.model = "noop";
+    setenv("HOME", g_tmpDir.string().c_str(), 1);
+    return std::make_unique<Agent>(cfg, std::make_shared<NoopProvider>());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -106,23 +140,24 @@ void test_AC18_context_feeds_roundtrip() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AC17 — dumpSessionArtifacts does NOT write to CWD
+// AC17 — dumpSessionArtifacts writes explicit traces to CWD
 // ─────────────────────────────────────────────────────────────────────────────
-void test_AC17_no_cwd_pollution() {
-    TEST("AC17 dumpSessionArtifacts does not write iterations.md to CWD");
-    fs::path cwd = fs::current_path();
-    fs::remove(cwd / "iterations.md");
-    fs::remove(cwd / "raw.md");
+void test_AC17_cwd_trace_dumps() {
+    TEST("AC17 dumpSessionArtifacts writes raw.md to CWD when opted in");
+    fs::path oldCwd = fs::current_path();
+    fs::path cwd = g_tmpDir / "ac17-cwd";
+    fs::create_directories(cwd);
+    fs::current_path(cwd);
 
-    auto agent = makeAgent("deepseek", "deepseek-chat");
-    // setVerbose(false) + setRaw(false) — default — should suppress entirely.
-    agent->saveSession("ac17-test");
-    // No prompt() was called, so iterationPrompts_ is empty. Even with verbose
-    // on, nothing should be written. Just verify the CWD stays clean.
-    CHECK(!fs::exists(cwd / "iterations.md"),
-          "iterations.md leaked into CWD");
-    CHECK(!fs::exists(cwd / "raw.md"),
-          "raw.md leaked into CWD");
+    auto agent = makeNoopAgent();
+    agent->setRaw(true);
+    agent->setVerbose(true);
+    agent->prompt("dump test", "ac17-test", true);
+
+    CHECK(fs::exists(cwd / "raw.md"), "raw.md should be written to CWD");
+    CHECK(fs::exists(cwd / "iterations.md"), "iterations.md should be written to CWD");
+
+    fs::current_path(oldCwd);
     PASS();
 }
 
@@ -138,7 +173,7 @@ int main() {
     test_AC14_provider_not_hardcoded();
     test_AC04_created_preserved();
     test_AC18_context_feeds_roundtrip();
-    test_AC17_no_cwd_pollution();
+    test_AC17_cwd_trace_dumps();
 
     fs::remove_all(g_tmpDir);
 

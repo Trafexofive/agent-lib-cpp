@@ -170,6 +170,13 @@ $(TUI_TERMINAL_TEST_BIN): $(TUI_TERMINAL_TEST_SRC)
 test-tui-terminal: $(TUI_TERMINAL_TEST_BIN)
 	@./$(TUI_TERMINAL_TEST_BIN)
 
+TUI_RENDER_TEST_SRC = tests/tui/render_test.cpp
+TUI_RENDER_TEST_BIN = tests/tui/render_test
+$(TUI_RENDER_TEST_BIN): $(TUI_RENDER_TEST_SRC)
+	$(CXX) $(CXXFLAGS) -Isrc $(TUI_RENDER_TEST_SRC) -o $@ $(LDFLAGS)
+test-tui-render: $(TUI_RENDER_TEST_BIN)
+	@./$(TUI_RENDER_TEST_BIN)
+
 # ── Install / Uninstall ──
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin

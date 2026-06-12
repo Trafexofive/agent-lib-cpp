@@ -62,66 +62,80 @@ public:
         cached_lines_.clear(); lastAction_ = 0; lastResult_ = 0;
     }
 
-    // Incremental: only renders NEW actions/results since last call
+    // Incremental: only renders NEW actions/results since last call.
     std::vector<std::string> render(int width) {
-        if (width_ != width) { cached_lines_.clear(); lastAction_ = 0; lastResult_ = 0; lastBlock_ = 0; width_ = width; }
-        if (needsRebuild_) { cached_lines_.clear(); lastAction_ = 0; lastResult_ = 0; lastBlock_ = 0; needsRebuild_ = false; }
-
-        size_t ai = lastAction_, ri = lastResult_;
-        for (; ai < actions_.size(); ai++) {
-            auto& a = actions_[ai];
-            std::string bg = bgAction();
-
-            // Action header
-            cached_lines_.push_back(bg + "  " + actionIcon(a) + fgBold() + a.name + fgReset() +
-                (a.id.empty() || a.id == a.name ? "" : fgDim() + "#" + a.id + fgReset()) +
-                std::string(std::max(0, width - (int)visLen(actionIcon(a) + a.name + a.id)), ' ') +
-                bgReset());
-
-            // Action params
-            auto params = actionParams(a, width);
-            for (auto& p : params)
-                cached_lines_.push_back(bg + "      " + p + std::string(std::max(0, width - (int)visLen(p) - 6), ' ') + bgReset());
-
-            // Result
-            if (ri < results_.size()) {
-                auto& r = results_[ri++];
-                auto resLines = resultLines(r, width);
-                std::string rb = r.ok ? bgOk() : bgErr();
-                bool first = true;
-                for (auto& rl : resLines) {
-                    cached_lines_.push_back(rb + (first ? "  " : "    ") + rl +
-                        std::string(std::max(0, width - (int)visLen(rl) - (first ? 2 : 4)), ' ') + bgReset());
-                    first = false;
-                }
-            }
-
-            if (ai + 1 < actions_.size() || ri < results_.size())
-                cached_lines_.push_back(fgDim() + "  ---" + fgReset());
+        if (width_ != width) resetIncrementalState(width);
+        if (needsRebuild_) {
+            cached_lines_.clear();
+            lastAction_ = 0;
+            lastResult_ = 0;
+            lastBlock_ = 0;
+            needsRebuild_ = false;
         }
 
-        for (; ri < results_.size(); ri++) {
-            auto& r = results_[ri];
-            auto resLines = resultLines(r, width);
-            std::string rb = r.ok ? bgOk() : bgErr();
-            bool first = true;
-            for (auto& rl : resLines) {
-                cached_lines_.push_back(rb + (first ? "  " : "    ") + rl +
-                    std::string(std::max(0, width - (int)visLen(rl) - (first ? 2 : 4)), ' ') + bgReset());
-                first = false;
-            }
-            cached_lines_.push_back(fgDim() + "  ---" + fgReset());
-        }
-
-        lastAction_ = actions_.size();
-        lastResult_ = results_.size();
-
-        // Append pre-rendered markdown blocks (incremental — only new blocks)
-        for (size_t i = lastBlock_; i < renderedBlocks_.size(); i++)
-            cached_lines_.insert(cached_lines_.end(), renderedBlocks_[i].begin(), renderedBlocks_[i].end());
-        lastBlock_ = renderedBlocks_.size();
-
+        appendActionBlocks(width);
+        appendStandaloneResults(width);
+        appendRenderedBlocks();
         return cached_lines_;
+    }
+
+    void resetIncrementalState(int width) {
+        cached_lines_.clear();
+        lastAction_ = 0;
+        lastResult_ = 0;
+        lastBlock_ = 0;
+        width_ = width;
+    }
+
+    void appendActionBlocks(int width) {
+        for (size_t ai = lastAction_; ai < actions_.size(); ai++) {
+            appendActionBlock(actions_[ai], width);
+            if (lastResult_ < results_.size()) {
+                appendResultBlock(results_[lastResult_++], width);
+            }
+            if (ai + 1 < actions_.size() || lastResult_ < results_.size()) {
+                appendSeparator();
+            }
+        }
+    }
+
+    void appendActionBlock(const ActionEvent& a, int width) {
+        for (auto& line : actionHeaderLines(a, width)) cached_lines_.push_back(line);
+        for (auto& p : actionParams(a, width)) {
+            cached_lines_.push_back(bgAction() + "      " + p +
+                std::string(std::max(0, width - (int)visLen(p) - 6), ' ') + bgReset());
+        }
+    }
+
+    std::vector<std::string> actionHeaderLines(const ActionEvent& a, int width) const {
+        std::vector<std::string> lines;
+        std::string meta = actionIcon(a) + fgBold() + a.name + fgReset();
+        if (!a.id.empty() && a.id != a.name) meta += fgDim() + "#" + a.id + fgReset();
+        lines.push_back(bgAction() + "  " + meta +
+            std::string(std::max(0, width - (int)visLen(meta)), ' ') + bgReset());
+        return lines;
+    }
+
+    void appendStandaloneResults(int width) {
+        for (size_t ri = lastResult_; ri < results_.size(); ri++) {
+            appendResultBlock(results_[ri], width);
+            appendSeparator();
+        }
+    }
+
+    void appendResultBlock(const ResultEvent& r, int width) {
+        for (auto& line : resultLines(r, width)) cached_lines_.push_back(line);
+    }
+
+    void appendRenderedBlocks() {
+        for (size_t i = lastBlock_; i < renderedBlocks_.size(); i++) {
+            cached_lines_.insert(cached_lines_.end(), renderedBlocks_[i].begin(), renderedBlocks_[i].end());
+        }
+        lastBlock_ = renderedBlocks_.size();
+    }
+
+    void appendSeparator() {
+        cached_lines_.push_back(fgDim() + "  ---" + fgReset());
     }
 
     std::vector<std::string> incremental(int width) {

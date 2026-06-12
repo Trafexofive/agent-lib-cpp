@@ -7,6 +7,7 @@
 #include <vector>
 #include <map>
 #include <functional>
+#include <unordered_map>
 
 namespace cortex::mk3::tui {
 
@@ -28,13 +29,16 @@ public:
 
     // ── Cell management ──
     Cell& addCell(const std::string& id, int row, int col, int w, int h) {
+        size_t idx = cells_.size();
         cells_.push_back({id, row, col, w, std::max(1, h), {}, true});
+        index_[id] = idx;
         return cells_.back();
     }
 
     Cell* findCell(const std::string& id) {
-        for (auto& c : cells_) if (c.id == id) return &c;
-        return nullptr;
+        auto it = index_.find(id);
+        if (it == index_.end()) return nullptr;
+        return &cells_[it->second];
     }
 
     void setContent(const std::string& id, const std::vector<std::string>& lines) {
@@ -42,7 +46,7 @@ public:
         if (cell) { cell->content = lines; cell->height = std::max(1, (int)lines.size()); }
     }
 
-    void clear() { cells_.clear(); snapshot_.clear(); }
+    void clear() { cells_.clear(); index_.clear(); snapshot_.clear(); }
 
     // ── ANSI-aware cell content fitter ──
     // Truncates or pads to exact visible width, closing any open escape sequences.
@@ -127,6 +131,7 @@ private:
     int width_, height_;
     std::vector<Cell> cells_;
     std::map<std::string, std::vector<std::string>> snapshot_;
+    std::unordered_map<std::string, size_t> index_;
 };
 
 } // namespace cortex::mk3::tui

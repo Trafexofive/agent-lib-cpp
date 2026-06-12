@@ -50,7 +50,7 @@ public:
     void setMode(RenderMode m) { mode_ = m; }
     RenderMode mode() const { return mode_; }
     static const char* modeName(RenderMode m) {
-        switch(m) { case RenderMode::FULL: return "FULL"; case RenderMode::RAW: return "RAW"; }
+        switch(m) { case RenderMode::FULL: return "FULL"; case RenderMode::SEMI: return "SEMI"; case RenderMode::RAW: return "RAW"; }
         return "?";
     }
 
