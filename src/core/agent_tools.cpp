@@ -30,6 +30,15 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction &action) {
         }
     }
 
+    // Manifest opt-in gate: tool implementations may exist in the backend
+    // registry, but the active agent can only call tools present in tools_.
+    if (action.type == protocol::ActionType::TOOL && !tools_.count(action.name)) {
+        Json::Value err;
+        err["success"] = false;
+        err["error"] = "tool not available: " + action.name + " (not imported by active manifest)";
+        return err;
+    }
+
     // ── Meta-tools: reload manifests, toggle builtins ──
     if (action.name == "disable_builtin" || action.name == "enable_builtin") {
         return toggleBuiltin(action.params, action.name == "enable_builtin");

@@ -101,23 +101,11 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
         }
     }
 
-    // Register built-in tools with descriptions so they appear in system prompt
-    tools_["exec"]          = {"exec",          "Run shell commands. Params: {\"command\": string, \"cwd\"?: string, \"timeout\"?: int}"};
-    tools_["list"]          = {"list",          "List directory contents. Params: {\"path\"?: string, \"pattern\"?: glob, \"recursive\"?: bool}"};
-    tools_["grep"]          = {"grep",          "Search files for pattern. Params: {\"pattern\": regex, \"path\"?: dir, \"glob\"?: '*.py'}"};
-    tools_["fs_read"]       = {"fs_read",       "Read a file. Params: {\"path\": string, \"offset\"?: int, \"limit\"?: int}"};
-    tools_["fs_write"]      = {"fs_write",      "Write or append to a file. Params: {\"path\": string, \"content\": string, \"append\"?: bool}"};
-    tools_["context_pin"]   = {"context_pin",   "Pin a file into the system prompt — persists across turns until context_unpin. Params: {\"path\": string, \"force\"?: bool (allow >64KB)}"};
-    tools_["context_peek"]  = {"context_peek",  "Inject a file into the system prompt for N iterations, then auto-evict. Params: {\"path\": string, \"cycles\"?: int (default 1), \"force\"?: bool (allow >64KB)}"};
-    tools_["context_unpin"] = {"context_unpin", "Remove a pinned or peek entry from context. Params: {\"path\": string}"};
-    tools_["json"]          = {"json",          "Parse, validate, query, or format JSON. Params: {\"data\"?: string, \"path\"?: string, \"op\": parse|query|validate, \"query\"?: jq-path}"};
-    tools_["web_fetch"]     = {"web_fetch",     "Fetch HTTP URL. Params: {\"url\": string, \"method\"?: GET|POST, \"headers\"?: object, \"body\"?: string}"};
-    tools_["ask_tool"]      = {"ask_tool",      "Ask user structured questions via cards. Params: {\"title\": string, \"message\"?: string, \"cards\": [...]}"};
-    tools_["reload_manifests"] = {"reload_manifests", "Re-scan manifest directory for new/updated tools"};
-    tools_["disable_builtin"]  = {"disable_builtin", "Disable a built-in tool"};
-    tools_["enable_builtin"]   = {"enable_builtin", "Re-enable a disabled built-in tool"};
+    // Built-ins are registered in the backend registry below, but NOT granted
+    // to this agent by default. Capabilities are declarative: a tool appears in
+    // tools_ only when the active manifest imports it.
 
-    // Register internal tools and feeds
+    // Register internal tool implementations and feeds
     tools::registerDefaults();
     feeds::registerFeeds();
 
