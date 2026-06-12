@@ -484,7 +484,10 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     parser.feed(token, isFinal);
                 });
         } catch (const std::exception &e) {
-            return std::string("Error: ") + e.what();
+            std::string err = std::string("Error: ") + e.what();
+            rawLlOutput_ += err;
+            iterationOutputs_.push_back(err);
+            return err;
         }
 
         if (!parser.waitForActions(

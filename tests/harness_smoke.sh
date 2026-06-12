@@ -39,8 +39,37 @@ run_case() {
     >"$stdout_file" 2>"$stderr_file"
 
   last_trace=$(awk '/^\[trace\] wrote /{sub(/^\[trace\] wrote /, ""); print}' "$stderr_file" | tail -1)
-  if [[ -z "$last_trace" || ! -f "$last_trace/iterations.md" || ! -f "$last_trace/raw.md" ]]; then
-    echo "[harness-smoke] FAIL $name: trace files missing" >&2
+
+  if grep -Eq '^(Error: )?HTTP [0-9]{3}|Rate limit exceeded|API error:' "$stdout_file" "$stderr_file"; then
+    echo "[harness-smoke] FAIL $name: provider/API failure" >&2
+    echo "--- stdout ---" >&2
+    cat "$stdout_file" >&2
+    echo "--- stderr ---" >&2
+    cat "$stderr_file" >&2
+    [[ -n "$last_trace" ]] && echo "--- trace: $last_trace ---" >&2
+    exit 1
+  fi
+
+  if [[ -z "$last_trace" ]]; then
+    echo "[harness-smoke] FAIL $name: trace path was not emitted" >&2
+    echo "--- stdout ---" >&2
+    cat "$stdout_file" >&2
+    echo "--- stderr ---" >&2
+    cat "$stderr_file" >&2
+    exit 1
+  fi
+  if [[ ! -f "$last_trace/iterations.md" ]]; then
+    echo "[harness-smoke] FAIL $name: missing $last_trace/iterations.md" >&2
+    echo "--- stdout ---" >&2
+    cat "$stdout_file" >&2
+    echo "--- stderr ---" >&2
+    cat "$stderr_file" >&2
+    exit 1
+  fi
+  if [[ ! -f "$last_trace/raw.md" ]]; then
+    echo "[harness-smoke] FAIL $name: missing $last_trace/raw.md" >&2
+    echo "--- stdout ---" >&2
+    cat "$stdout_file" >&2
     echo "--- stderr ---" >&2
     cat "$stderr_file" >&2
     exit 1
