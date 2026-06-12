@@ -148,26 +148,80 @@ static std::string toolFsWrite(const Json::Value& p) {
 
 // ─── Tool: json ───────────────────────────────────────────────────────
 static std::string toolJson(const Json::Value& p) {
-    std::string action = p.get("action", "").asString();
-    if (action.empty()) return jsonErr("action is required");
-    if (action == "validate") {
-        std::string data = p.get("data", "").asString();
-        Json::Value v; Json::CharReaderBuilder r; std::string e;
-        std::istringstream ss(data);
-        bool ok = Json::parseFromStream(r, ss, &v, &e);
-        Json::Value out; out["valid"] = ok; if (!ok) out["errors"] = e; out["success"] = true;
+    // Accept both names: the prompt/schema advertises `op`, older callers used
+    // `action`. Keep both so manifests and existing prompts don't drift.
+    std::string op = p.get("op", "").asString();
+    if (op.empty()) op = p.get("action", "").asString();
+    if (op.empty()) return jsonErr("op is required (parse|query|validate|pretty|minify)");
+
+    auto parse = [&](Json::Value& v, std::string& err) -> bool {
+        if (!p.isMember("data")) {
+            err = "data is required";
+            return false;
+        }
+        // Parser::resolveVars intentionally promotes strings that look like JSON
+        // into Json::Value objects. Accept both raw JSON strings and already-
+        // parsed object/array/scalar values.
+        const Json::Value& dataVal = p["data"];
+        if (!dataVal.isString()) {
+            v = dataVal;
+            return true;
+        }
+        Json::CharReaderBuilder r;
+        std::istringstream ss(dataVal.asString());
+        return Json::parseFromStream(r, ss, &v, &err);
+    };
+
+    if (op == "parse") {
+        Json::Value v; std::string err;
+        if (!parse(v, err)) return jsonErr("Invalid JSON: " + err);
+        Json::Value out; out["success"] = true; out["value"] = v;
         return jsonStr(out);
     }
-    if (action == "pretty" || action == "minify") {
-        std::string data = p.get("data", "").asString();
-        Json::Value v; Json::CharReaderBuilder r; std::string e;
-        std::istringstream ss(data);
-        if (!Json::parseFromStream(r, ss, &v, &e)) return jsonErr("Invalid JSON: " + e);
-        Json::StreamWriterBuilder w; w["indentation"] = action=="pretty"?"  ":"";
+
+    if (op == "query") {
+        Json::Value cur; std::string err;
+        if (!parse(cur, err)) return jsonErr("Invalid JSON: " + err);
+        std::string path = p.get("path", "").asString();
+        if (path.empty()) path = p.get("query", "").asString();
+        if (path.empty()) return jsonErr("query path is required");
+
+        std::istringstream parts(path);
+        std::string seg;
+        while (std::getline(parts, seg, '.')) {
+            if (seg.empty()) continue;
+            if (cur.isObject()) {
+                if (!cur.isMember(seg)) return jsonErr("query: key not found: " + seg);
+                cur = cur[seg];
+            } else if (cur.isArray()) {
+                char* end = nullptr;
+                long idx = std::strtol(seg.c_str(), &end, 10);
+                if (!end || *end != '\0' || idx < 0 || idx >= (long)cur.size())
+                    return jsonErr("query: invalid array index: " + seg);
+                cur = cur[(Json::ArrayIndex)idx];
+            } else {
+                return jsonErr("query: cannot descend into scalar at: " + seg);
+            }
+        }
+        Json::Value out; out["success"] = true; out["value"] = cur;
+        return jsonStr(out);
+    }
+
+    if (op == "validate") {
+        Json::Value v; std::string err;
+        bool ok = parse(v, err);
+        Json::Value out; out["valid"] = ok; if (!ok) out["errors"] = err; out["success"] = true;
+        return jsonStr(out);
+    }
+
+    if (op == "pretty" || op == "minify") {
+        Json::Value v; std::string err;
+        if (!parse(v, err)) return jsonErr("Invalid JSON: " + err);
+        Json::StreamWriterBuilder w; w["indentation"] = op=="pretty"?"  ":"";
         Json::Value out; out["success"] = true; out["formatted"] = Json::writeString(w, v);
         return jsonStr(out);
     }
-    return jsonErr("Unknown json action: " + action);
+    return jsonErr("Unknown json op: " + op);
 }
 
 // ─── Tool: web_fetch ──────────────────────────────────────────────────

@@ -2,9 +2,7 @@ kind: Tool
 name: json
 version: "2.0"
 summary: "Parse, query, and transform JSON"
-description: "See input_schema for parameters"
-  JSON utility tool. Validates, pretty-prints, minifies, and queries
-  JSON data using jq-style dot notation. Can read from a string or file.
+description: "JSON utility tool. Parses, validates, pretty-prints, minifies, and queries JSON data using dot notation."
 category: data
 tags: [json, parse, query, jq, transform]
 input_schema:
@@ -12,7 +10,7 @@ input_schema:
   properties:
     op:
       type: string
-      enum: [parse, query, extract, validate, pretty, minify]
+      enum: [parse, query, validate, pretty, minify]
       description: "Operation to perform"
       default: parse
     data:
@@ -20,15 +18,10 @@ input_schema:
       description: "JSON string input"
     path:
       type: string
-      description: "Path to JSON file (alternative to data)"
+      description: "Dot query path for query op (e.g. users.0.name)"
     query:
       type: string
-      description: "jq-style dot-notation query (e.g. '.users[0].name')"
-    keys:
-      type: array
-      items:
-        type: string
-      description: "Keys to extract (for extract op)"
+      description: "Legacy alias for path"
 implementation:
   type: script
   runtime: python3

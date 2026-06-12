@@ -160,11 +160,16 @@ static std::string buildResultTag(const std::string& id, const Json::Value& resu
 
     // Extract primary output body
     std::string body;
-    for (const char* key : {"content", "output", "stdout", "result", "results", "data"}) {
-        if (result.isMember(key) && result[key].isString()) {
+    for (const char* key : {"content", "output", "stdout", "result", "results", "data", "value"}) {
+        if (!result.isMember(key)) continue;
+        if (result[key].isString()) {
             body = result[key].asString();
-            break;
+        } else {
+            Json::StreamWriterBuilder w;
+            w["indentation"] = "";
+            body = Json::writeString(w, result[key]);
         }
+        break;
     }
     if (body.empty() && result.isMember("error") && result["error"].isString())
         body = "error: " + result["error"].asString();
