@@ -1,6 +1,7 @@
 // Minimal streaming parser debug
-#include "src/protocol/parser.hpp"
 #include <iostream>
+
+#include "src/protocol/parser.hpp"
 using namespace cortex::mk3::protocol;
 
 int main() {
@@ -8,22 +9,37 @@ int main() {
     bool responseFinal = false;
 
     Parser parser([](const ParsedAction& a) -> Json::Value {
-        Json::Value r; r["ok"] = true; return r;
+        Json::Value r;
+        r["ok"] = true;
+        return r;
     });
     parser.onEvent([&](const TokenEvent& ev) {
         std::cerr << "[EVENT] type=";
         switch (ev.type) {
-            case TokenEvent::TEXT: std::cerr << "TEXT"; break;
-            case TokenEvent::THOUGHT: std::cerr << "THOUGHT"; break;
-            case TokenEvent::ACTION_START: std::cerr << "ACTION_START"; break;
-            case TokenEvent::ACTION_RESULT: std::cerr << "ACTION_RESULT"; break;
-            case TokenEvent::RESPONSE: std::cerr << "RESPONSE"; break;
-            case TokenEvent::ERROR: std::cerr << "ERROR"; break;
+            case TokenEvent::TEXT:
+                std::cerr << "TEXT";
+                break;
+            case TokenEvent::THOUGHT:
+                std::cerr << "THOUGHT";
+                break;
+            case TokenEvent::ACTION_START:
+                std::cerr << "ACTION_START";
+                break;
+            case TokenEvent::ACTION_RESULT:
+                std::cerr << "ACTION_RESULT";
+                break;
+            case TokenEvent::RESPONSE:
+                std::cerr << "RESPONSE";
+                break;
+            case TokenEvent::ERROR:
+                std::cerr << "ERROR";
+                break;
         }
         std::cerr << " content='" << ev.content.substr(0, 50) << "'";
         if (!ev.metadata.empty()) {
             std::cerr << " meta={";
-            for (auto& [k,v] : ev.metadata) std::cerr << k << "=" << v << " ";
+            for (auto& [k, v] : ev.metadata)
+                std::cerr << k << "=" << v << " ";
             std::cerr << "}";
         }
         std::cerr << "\n";
@@ -40,7 +56,9 @@ int main() {
     parser.feed("", true);
 
     std::cerr << "responseText='" << responseText << "' final=" << responseFinal << "\n";
-    parser.reset(); responseText.clear(); responseFinal = false;
+    parser.reset();
+    responseText.clear();
+    responseFinal = false;
 
     std::cerr << "\n=== Test: character-by-character response ===\n";
     const char* chars = "<response final=\"true\">Hi</response>";

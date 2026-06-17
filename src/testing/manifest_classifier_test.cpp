@@ -4,18 +4,36 @@
 // into the path branch.
 // =============================================================================
 
-#include "src/core/manifest_loader.hpp"
 #include <iostream>
 #include <string>
+
+#include "src/core/manifest_loader.hpp"
 
 using cortex::mk3::ManifestLoader;
 
 static int passed = 0, failed = 0;
 
-#define TEST(name)  do { std::cout << "  " << name << "... "; } while (0)
-#define PASS()      do { passed++; std::cout << "PASS\n"; } while (0)
-#define FAIL(msg)   do { failed++; std::cout << "FAIL: " << msg << "\n"; return; } while (0)
-#define CHECK(cond, msg) do { if (!(cond)) { FAIL(msg); } } while (0)
+#define TEST(name)                           \
+    do {                                     \
+        std::cout << "  " << name << "... "; \
+    } while (0)
+#define PASS()                 \
+    do {                       \
+        passed++;              \
+        std::cout << "PASS\n"; \
+    } while (0)
+#define FAIL(msg)                             \
+    do {                                      \
+        failed++;                             \
+        std::cout << "FAIL: " << msg << "\n"; \
+        return;                               \
+    } while (0)
+#define CHECK(cond, msg) \
+    do {                 \
+        if (!(cond)) {   \
+            FAIL(msg);   \
+        }                \
+    } while (0)
 
 void test_isPath_bare_name() {
     TEST("bare name (`exec`) classified as built-in");
@@ -56,7 +74,8 @@ void test_stripPrefix() {
     TEST("stripBuiltinPrefix removes only `builtin/`");
     CHECK(ManifestLoader::stripBuiltinPrefix("builtin/exec") == "exec", "strip builtin/");
     CHECK(ManifestLoader::stripBuiltinPrefix("exec") == "exec", "no prefix → unchanged");
-    CHECK(ManifestLoader::stripBuiltinPrefix("builtin/") == "builtin/", "size <= prefix → unchanged");
+    CHECK(ManifestLoader::stripBuiltinPrefix("builtin/") == "builtin/",
+          "size <= prefix → unchanged");
     CHECK(ManifestLoader::stripBuiltinPrefix("builtin/fs_read") == "fs_read", "strip fs_read");
     PASS();
 }

@@ -4,12 +4,13 @@
 // Lean, single-source-of-truth types shared across all modules.
 // =============================================================================
 
-#include <string>
-#include <vector>
+#include <json/json.h>
+
+#include <functional>
 #include <map>
 #include <memory>
-#include <functional>
-#include <json/json.h>
+#include <string>
+#include <vector>
 
 namespace cortex::mk3 {
 
@@ -21,22 +22,32 @@ enum class ChatRole { SYSTEM, USER, ASSISTANT, TOOL };
 struct ChatMessage {
     ChatRole role;
     std::string content;
-    std::string name;       // tool name (for TOOL role)
-    std::string toolCallId; // for TOOL role
+    std::string name;        // tool name (for TOOL role)
+    std::string toolCallId;  // for TOOL role
 
-    static ChatMessage system(const std::string& c)    { return {ChatRole::SYSTEM, c, {}, {}}; }
-    static ChatMessage user(const std::string& c)      { return {ChatRole::USER, c, {}, {}}; }
-    static ChatMessage assistant(const std::string& c) { return {ChatRole::ASSISTANT, c, {}, {}}; }
+    static ChatMessage system(const std::string& c) {
+        return {ChatRole::SYSTEM, c, {}, {}};
+    }
+    static ChatMessage user(const std::string& c) {
+        return {ChatRole::USER, c, {}, {}};
+    }
+    static ChatMessage assistant(const std::string& c) {
+        return {ChatRole::ASSISTANT, c, {}, {}};
+    }
     static ChatMessage tool(const std::string& id, const std::string& name, const std::string& c) {
         return {ChatRole::TOOL, c, name, id};
     }
 
     static const char* roleName(ChatRole r) {
         switch (r) {
-            case ChatRole::SYSTEM:    return "system";
-            case ChatRole::USER:      return "user";
-            case ChatRole::ASSISTANT: return "assistant";
-            case ChatRole::TOOL:      return "tool";
+            case ChatRole::SYSTEM:
+                return "system";
+            case ChatRole::USER:
+                return "user";
+            case ChatRole::ASSISTANT:
+                return "assistant";
+            case ChatRole::TOOL:
+                return "tool";
         }
         return "unknown";
     }
@@ -54,7 +65,7 @@ using StreamCallback = std::function<void(const std::string& token, bool isFinal
 // ---------------------------------------------------------------------------
 struct ToolParam {
     std::string name;
-    std::string type;        // "string", "number", "boolean", "object", "array"
+    std::string type;  // "string", "number", "boolean", "object", "array"
     std::string description;
     bool required = false;
     Json::Value defaultVal;
@@ -68,11 +79,11 @@ struct ToolDef {
     std::string name;
     std::string description;
     std::vector<ToolParam> params;
-    bool isNative = true;                // true = C++ callback, false = script
-    std::string scriptPath;              // for script tools
-    std::string scriptRuntime;           // "python3", "bash", etc.
-    std::string inputType = "json";      // action body mode: json | text
-    std::string textParam;               // for text body mode: content/input/instruction
+    bool isNative = true;            // true = C++ callback, false = script
+    std::string scriptPath;          // for script tools
+    std::string scriptRuntime;       // "python3", "bash", etc.
+    std::string inputType = "json";  // action body mode: json | text
+    std::string textParam;           // for text body mode: content/input/instruction
 
     // Generate OpenAI function-calling schema
     Json::Value toOpenAISchema() const;
@@ -93,9 +104,12 @@ struct ToolResult {
     Json::Value toJson() const {
         Json::Value r;
         r["success"] = success;
-        if (!output.empty()) r["output"] = output;
-        if (!error.empty()) r["error"] = error;
-        if (!data.isNull()) r["data"] = data;
+        if (!output.empty())
+            r["output"] = output;
+        if (!error.empty())
+            r["error"] = error;
+        if (!data.isNull())
+            r["data"] = data;
         return r;
     }
 
@@ -129,7 +143,8 @@ struct AgentConfig {
     double presencePenalty = 0.0;
     double frequencyPenalty = 0.0;
     int maxTokens = 65536;
-    int iterationCap = 50;   // agent turns before forced response (override via manifest max_iterations)
+    int iterationCap =
+        50;  // agent turns before forced response (override via manifest max_iterations)
     int actionTimeoutSec = 30;  // max seconds to wait for dispatched actions
     int historyCap = 40;
 
@@ -141,9 +156,9 @@ struct AgentConfig {
 
     // Sandbox
     std::string sandboxMode = "process";    // process, docker, chroot
-    std::string sandboxRuntime = "";         // docker image name
-    std::string sandboxImage = "";           // docker image
-    std::vector<std::string> sandboxFiles;   // files to mount/copy
+    std::string sandboxRuntime = "";        // docker image name
+    std::string sandboxImage = "";          // docker image
+    std::vector<std::string> sandboxFiles;  // files to mount/copy
 
     // Sub-agent runtime behavior
     // memory  = keep sub-agent history in-process only
@@ -195,4 +210,4 @@ struct Session {
     std::vector<std::string> contextFeeds;
 };
 
-} // namespace cortex::mk3
+}  // namespace cortex::mk3

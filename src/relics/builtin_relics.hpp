@@ -3,20 +3,22 @@
 // Now subclass the abstract Relic base (src/relics/relic.hpp).
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
-#include "relic.hpp"
+#include <curl/curl.h>
+#include <json/json.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
-#include <json/json.h>
 #include <map>
 #include <memory>
 #include <sstream>
 #include <string>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <curl/curl.h>
 #include <vector>
+
+#include "relic.hpp"
 
 namespace cortex::mk3::relics {
 
@@ -24,7 +26,7 @@ namespace fs = std::filesystem;
 
 // ── Base path resolution ──
 inline fs::path relicBase() {
-    const char *home = getenv("HOME");
+    const char* home = getenv("HOME");
     return home ? fs::path(home) / ".cortex" : fs::path("/tmp/.cortex");
 }
 
@@ -32,8 +34,8 @@ inline fs::path relicBase() {
 // SessionJournal — session event recording and querying
 // ═══════════════════════════════════════════════════════════════════════════
 class SessionJournal : public Relic {
-public:
-    static SessionJournal &instance() {
+   public:
+    static SessionJournal& instance() {
         static SessionJournal j;
         return j;
     }
@@ -52,8 +54,7 @@ public:
         return {"record", "query", "export", "prune"};
     }
 
-    RelicResult handle(const std::string& endpoint,
-                       const Json::Value& params) override {
+    RelicResult handle(const std::string& endpoint, const Json::Value& params) override {
         std::string ns = params.get("namespace", "default").asString();
 
         if (endpoint == "record") {
@@ -81,25 +82,22 @@ public:
     // ── Business logic (unchanged) ──
 
     // POST /journal/{namespace}/record
-    RelicResult record(const std::string &ns, const std::string &eventType,
-                       const Json::Value &content,
-                       const std::string &sessionId = "") {
+    RelicResult record(const std::string& ns, const std::string& eventType,
+                       const Json::Value& content, const std::string& sessionId = "") {
         auto dir = relicBase() / "sessions" / ns;
         std::error_code ec;
         fs::create_directories(dir, ec);
 
         Json::Value entry;
-        entry["timestamp"] = (Json::Int64)std::chrono::system_clock::now()
-                                 .time_since_epoch()
-                                 .count();
+        entry["timestamp"] =
+            (Json::Int64)std::chrono::system_clock::now().time_since_epoch().count();
         entry["event_type"] = eventType;
         entry["content"] = content;
         if (!sessionId.empty())
             entry["session_id"] = sessionId;
 
         // Append to journal file (one file per namespace per day)
-        auto t = std::chrono::system_clock::to_time_t(
-            std::chrono::system_clock::now());
+        auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
         std::tm tm;
         localtime_r(&t, &tm);
         char date[16];
@@ -121,8 +119,8 @@ public:
     }
 
     // GET /journal/{namespace} — query events
-    RelicResult query(const std::string &ns, const std::string &sessionId = "",
-                      const std::string &eventType = "", int limit = 100) {
+    RelicResult query(const std::string& ns, const std::string& sessionId = "",
+                      const std::string& eventType = "", int limit = 100) {
         auto dir = relicBase() / "sessions" / ns;
         if (!fs::exists(dir))
             return {true, "", Json::Value(Json::arrayValue)};
@@ -130,7 +128,7 @@ public:
         Json::Value results(Json::arrayValue);
         int count = 0;
 
-        for (auto &entry : fs::directory_iterator(dir)) {
+        for (auto& entry : fs::directory_iterator(dir)) {
             if (!entry.is_regular_file())
                 continue;
             std::ifstream f(entry.path());
@@ -146,11 +144,9 @@ public:
                     continue;
 
                 // Filter
-                if (!sessionId.empty() &&
-                    ev.get("session_id", "").asString() != sessionId)
+                if (!sessionId.empty() && ev.get("session_id", "").asString() != sessionId)
                     continue;
-                if (!eventType.empty() &&
-                    ev.get("event_type", "").asString() != eventType)
+                if (!eventType.empty() && ev.get("event_type", "").asString() != eventType)
                     continue;
 
                 results.append(ev);
@@ -165,8 +161,7 @@ public:
     }
 
     // GET /journal/{namespace}/export
-    RelicResult exportSession(const std::string &ns,
-                              const std::string &sessionId) {
+    RelicResult exportSession(const std::string& ns, const std::string& sessionId) {
         auto result = query(ns, sessionId, "", 10000);
         if (!result.success)
             return result;
@@ -174,9 +169,8 @@ public:
         Json::Value exportDoc;
         exportDoc["namespace"] = ns;
         exportDoc["session_id"] = sessionId;
-        exportDoc["exported_at"] = (Json::Int64)std::chrono::system_clock::now()
-                                       .time_since_epoch()
-                                       .count();
+        exportDoc["exported_at"] =
+            (Json::Int64)std::chrono::system_clock::now().time_since_epoch().count();
         exportDoc["events"] = result.data;
 
         result.data = exportDoc;
@@ -184,25 +178,21 @@ public:
     }
 
     // DELETE /journal/{namespace}/prune
-    RelicResult prune(const std::string &ns, int maxAgeSecs = 2592000,
-                      int maxRecords = -1) {
-        (void)maxRecords; // unused
+    RelicResult prune(const std::string& ns, int maxAgeSecs = 2592000, int maxRecords = -1) {
+        (void)maxRecords;  // unused
         auto dir = relicBase() / "sessions" / ns;
         if (!fs::exists(dir))
             return {true, "Nothing to prune", {}};
 
-        auto cutoff =
-            std::chrono::system_clock::now() - std::chrono::seconds(maxAgeSecs);
+        auto cutoff = std::chrono::system_clock::now() - std::chrono::seconds(maxAgeSecs);
         int pruned = 0;
 
-        for (auto &entry : fs::directory_iterator(dir)) {
+        for (auto& entry : fs::directory_iterator(dir)) {
             if (!entry.is_regular_file())
                 continue;
             auto ftime = fs::last_write_time(entry);
-            auto sctp = std::chrono::time_point_cast<
-                std::chrono::system_clock::duration>(
-                ftime - fs::file_time_type::clock::now() +
-                std::chrono::system_clock::now());
+            auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
             if (sctp < cutoff) {
                 fs::remove(entry.path());
                 pruned++;
@@ -215,7 +205,7 @@ public:
         return r;
     }
 
-private:
+   private:
     // Singleton — private constructor
     SessionJournal() = default;
     friend class RelicDispatcher;
@@ -225,8 +215,8 @@ private:
 // StateCheckpoint — agent state serialization for crash recovery
 // ═══════════════════════════════════════════════════════════════════════════
 class StateCheckpoint : public Relic {
-public:
-    static StateCheckpoint &instance() {
+   public:
+    static StateCheckpoint& instance() {
         static StateCheckpoint c;
         return c;
     }
@@ -245,13 +235,12 @@ public:
         return {"save", "load", "latest", "list", "gc"};
     }
 
-    RelicResult handle(const std::string& endpoint,
-                       const Json::Value& params) override {
+    RelicResult handle(const std::string& endpoint, const Json::Value& params) override {
         std::string ns = params.get("namespace", "default").asString();
 
         if (endpoint == "save") {
-            return save(ns, params.get("agent_name", "agent").asString(),
-                        params["state"], params.get("label", "").asString());
+            return save(ns, params.get("agent_name", "agent").asString(), params["state"],
+                        params.get("label", "").asString());
         }
         if (endpoint == "load" || endpoint == "latest") {
             return load(ns, params.get("agent_name", "agent").asString());
@@ -270,8 +259,8 @@ public:
     // ── Business logic (unchanged) ──
 
     // POST /checkpoints/{namespace}/{agent_name}
-    RelicResult save(const std::string &ns, const std::string &agentName,
-                     const Json::Value &state, const std::string &label = "") {
+    RelicResult save(const std::string& ns, const std::string& agentName, const Json::Value& state,
+                     const std::string& label = "") {
         auto dir = relicBase() / "checkpoints" / ns / agentName;
         std::error_code ec;
         fs::create_directories(dir, ec);
@@ -279,15 +268,13 @@ public:
         Json::Value checkpoint;
         checkpoint["agent_name"] = agentName;
         checkpoint["namespace"] = ns;
-        checkpoint["timestamp"] = (Json::Int64)std::chrono::system_clock::now()
-                                      .time_since_epoch()
-                                      .count();
+        checkpoint["timestamp"] =
+            (Json::Int64)std::chrono::system_clock::now().time_since_epoch().count();
         checkpoint["state"] = state;
         if (!label.empty())
             checkpoint["label"] = label;
 
-        auto t = std::chrono::system_clock::to_time_t(
-            std::chrono::system_clock::now());
+        auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
         std::tm tm;
         localtime_r(&t, &tm);
         char ts[32];
@@ -309,7 +296,7 @@ public:
     }
 
     // GET /checkpoints/{namespace}/{agent_name}/latest
-    RelicResult load(const std::string &ns, const std::string &agentName) {
+    RelicResult load(const std::string& ns, const std::string& agentName) {
         auto dir = relicBase() / "checkpoints" / ns / agentName;
         if (!fs::exists(dir))
             return {false, "No checkpoints found", {}};
@@ -317,7 +304,7 @@ public:
         // Find newest checkpoint file
         fs::path newest;
         auto newestTime = fs::file_time_type::min();
-        for (auto &entry : fs::directory_iterator(dir)) {
+        for (auto& entry : fs::directory_iterator(dir)) {
             if (entry.path().extension() != ".json")
                 continue;
             auto t = fs::last_write_time(entry);
@@ -347,7 +334,7 @@ public:
     }
 
     // GET /checkpoints/{namespace} — list checkpoints
-    RelicResult list(const std::string &ns, const std::string &agentName = "") {
+    RelicResult list(const std::string& ns, const std::string& agentName = "") {
         auto base = relicBase() / "checkpoints" / ns;
         if (!fs::exists(base))
             return {true, "", Json::Value(Json::arrayValue)};
@@ -358,7 +345,7 @@ public:
             auto dir = base / agentName;
             if (!fs::exists(dir))
                 return {true, "", Json::Value(Json::arrayValue)};
-            for (auto &entry : fs::directory_iterator(dir)) {
+            for (auto& entry : fs::directory_iterator(dir)) {
                 if (entry.path().extension() != ".json")
                     continue;
                 Json::Value item;
@@ -367,10 +354,10 @@ public:
                 results.append(item);
             }
         } else {
-            for (auto &entry : fs::directory_iterator(base)) {
+            for (auto& entry : fs::directory_iterator(base)) {
                 if (!entry.is_directory())
                     continue;
-                for (auto &ckpt : fs::directory_iterator(entry.path())) {
+                for (auto& ckpt : fs::directory_iterator(entry.path())) {
                     if (ckpt.path().extension() != ".json")
                         continue;
                     Json::Value item;
@@ -388,34 +375,31 @@ public:
     }
 
     // DELETE /checkpoints/{namespace}/gc
-    RelicResult gc(const std::string &ns, int maxAgeSecs = 604800,
-                   int maxPerAgent = 5) {
+    RelicResult gc(const std::string& ns, int maxAgeSecs = 604800, int maxPerAgent = 5) {
         auto base = relicBase() / "checkpoints" / ns;
         if (!fs::exists(base))
             return {true, "Nothing to GC", {}};
 
-        auto cutoff =
-            std::chrono::system_clock::now() - std::chrono::seconds(maxAgeSecs);
+        auto cutoff = std::chrono::system_clock::now() - std::chrono::seconds(maxAgeSecs);
         int removed = 0;
 
-        for (auto &agentDir : fs::directory_iterator(base)) {
+        for (auto& agentDir : fs::directory_iterator(base)) {
             if (!agentDir.is_directory())
                 continue;
 
             // Collect checkpoints sorted by time
             std::vector<std::pair<fs::file_time_type, fs::path>> ckpts;
-            for (auto &ckpt : fs::directory_iterator(agentDir.path())) {
+            for (auto& ckpt : fs::directory_iterator(agentDir.path())) {
                 if (ckpt.path().extension() != ".json")
                     continue;
                 ckpts.push_back({fs::last_write_time(ckpt), ckpt.path()});
             }
             std::sort(ckpts.begin(), ckpts.end(),
-                      [](auto &a, auto &b) { return a.first > b.first; });
+                      [](auto& a, auto& b) { return a.first > b.first; });
 
             // Keep maxPerAgent most recent, remove rest + old ones
             for (size_t i = 0; i < ckpts.size(); i++) {
-                auto sctp = std::chrono::time_point_cast<
-                    std::chrono::system_clock::duration>(
+                auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
                     ckpts[i].first - fs::file_time_type::clock::now() +
                     std::chrono::system_clock::now());
                 if (i >= (size_t)maxPerAgent || sctp < cutoff) {
@@ -431,7 +415,7 @@ public:
         return r;
     }
 
-private:
+   private:
     StateCheckpoint() = default;
     friend class RelicDispatcher;
 };
@@ -440,8 +424,8 @@ private:
 // RelicDispatcher — routes <action type="relic"> calls using RelicPtr
 // ═══════════════════════════════════════════════════════════════════════════
 class RelicDispatcher {
-public:
-    static RelicDispatcher &instance() {
+   public:
+    static RelicDispatcher& instance() {
         static RelicDispatcher d;
         return d;
     }
@@ -450,13 +434,15 @@ public:
 
     /// Register a Relic by shared pointer (most common)
     void registerRelic(RelicPtr relic) {
-        if (!relic) return;
+        if (!relic)
+            return;
         relics_[relic->name()] = std::move(relic);
     }
 
     /// Register a Relic by unique pointer (converts to shared)
     void registerRelic(std::unique_ptr<Relic> relic) {
-        if (!relic) return;
+        if (!relic)
+            return;
         relics_[relic->name()] = std::move(relic);
     }
 
@@ -469,9 +455,8 @@ public:
 
     /// Dispatch to the right relic by name.
     /// Falls back to HTTP relics for unknown names.
-    RelicResult dispatch(const std::string &relicName,
-                         const std::string &endpoint,
-                         const Json::Value &params) {
+    RelicResult dispatch(const std::string& relicName, const std::string& endpoint,
+                         const Json::Value& params) {
         // Check registered relic objects first
         auto it = relics_.find(relicName);
         if (it != relics_.end()) {
@@ -499,14 +484,16 @@ public:
     /// Get a registered relic by name
     RelicPtr getRelic(const std::string& name) const {
         auto it = relics_.find(name);
-        if (it != relics_.end()) return it->second;
+        if (it != relics_.end())
+            return it->second;
         return nullptr;
     }
 
     /// List all registered relic names
     std::vector<std::string> listRelics() const {
         std::vector<std::string> names;
-        for (const auto& [name, _] : relics_) names.push_back(name);
+        for (const auto& [name, _] : relics_)
+            names.push_back(name);
         // Always include built-in relics
         names.push_back("session_journal");
         names.push_back("state_checkpoint");
@@ -520,31 +507,34 @@ public:
 
     /// Check if a relic is available
     bool hasRelic(const std::string& name) const {
-        if (relics_.find(name) != relics_.end()) return true;
-        if (name == "session_journal" || name == "state_checkpoint") return true;
+        if (relics_.find(name) != relics_.end())
+            return true;
+        if (name == "session_journal" || name == "state_checkpoint")
+            return true;
         return relicUrls_.find(name) != relicUrls_.end();
     }
 
-private:
+   private:
     std::map<std::string, RelicPtr> relics_;
     std::map<std::string, std::string> relicUrls_;  // name → base_url (legacy)
 
     // ── HTTP dispatch (legacy — for Docker-based relics) ──
 
-    RelicResult dispatchHttp(const std::string& baseUrl,
-                             const std::string& endpoint,
+    RelicResult dispatchHttp(const std::string& baseUrl, const std::string& endpoint,
                              const Json::Value& params) {
         std::string url = baseUrl + "/" + endpoint;
         CURL* curl = curl_easy_init();
-        if (!curl) return {false, "CURL init failed", {}};
+        if (!curl)
+            return {false, "CURL init failed", {}};
         std::string response;
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](void* p, size_t s, size_t n, void* u) -> size_t {
-            auto* b = static_cast<std::string*>(u);
-            b->append(static_cast<char*>(p), s * n);
-            return s * n;
-        });
+        curl_easy_setopt(
+            curl, CURLOPT_WRITEFUNCTION, +[](void* p, size_t s, size_t n, void* u) -> size_t {
+                auto* b = static_cast<std::string*>(u);
+                b->append(static_cast<char*>(p), s * n);
+                return s * n;
+            });
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
         if (!params.empty()) {
             Json::StreamWriterBuilder w;
@@ -558,9 +548,10 @@ private:
         }
         CURLcode res = curl_easy_perform(curl);
         curl_easy_cleanup(curl);
-        if (res != CURLE_OK) return {false, "Relic unreachable: " + url, {}};
+        if (res != CURLE_OK)
+            return {false, "Relic unreachable: " + url, {}};
         return {true, "", response};
     }
 };
 
-} // namespace cortex::mk3::relics
+}  // namespace cortex::mk3::relics

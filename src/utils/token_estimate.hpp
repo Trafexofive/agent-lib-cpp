@@ -7,27 +7,29 @@
 // This is approximate — NOT a BPE tokenizer. Good for context budgeting,
 // not precise enough for billing.
 
-#include <string>
 #include <cctype>
 #include <cstddef>
+#include <string>
 
 namespace cortex::mk3::utils {
 
 /// Estimate token count for a string. Returns >= 1 for any non-empty text.
 inline size_t estimateTokens(const std::string& text) {
-    if (text.empty()) return 0;
+    if (text.empty())
+        return 0;
 
     size_t cjk = 0;
     size_t ascii = 0;
 
-    for (size_t i = 0; i < text.size(); ) {
+    for (size_t i = 0; i < text.size();) {
         unsigned char c = static_cast<unsigned char>(text[i]);
         if (c < 0x80) {
             ascii++;
             i++;
         } else if ((c & 0xE0) == 0xC0) {
             // 2-byte UTF-8
-            if ((c & 0x1F) >= 0x0E && (c & 0x1F) <= 0x0F) cjk++; // CJK ranges
+            if ((c & 0x1F) >= 0x0E && (c & 0x1F) <= 0x0F)
+                cjk++;  // CJK ranges
             i += 2;
         } else if ((c & 0xF0) == 0xE0) {
             // 3-byte UTF-8 — likely CJK
@@ -56,9 +58,9 @@ inline size_t estimateTokens(const std::string& text) {
 
 /// Token budget for context window management.
 struct TokenBudget {
-    size_t windowSize = 128000;   // Total context window
-    size_t reserved = 4096;       // Reserved for response generation
-    size_t used = 0;              // Current prompt tokens used
+    size_t windowSize = 128000;  // Total context window
+    size_t reserved = 4096;      // Reserved for response generation
+    size_t used = 0;             // Current prompt tokens used
 
     /// Tokens remaining for prompt content.
     size_t available() const {
@@ -79,4 +81,4 @@ struct TokenBudget {
     }
 };
 
-} // namespace cortex::mk3::utils
+}  // namespace cortex::mk3::utils

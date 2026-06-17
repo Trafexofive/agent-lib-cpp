@@ -4,13 +4,15 @@
 // Wraps Agent instances behind a REST API (OpenAI-compatible /chat/completions)
 // =============================================================================
 
-#include "../core/agent.hpp"
 #include <httplib.h>
-#include <string>
+
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <atomic>
+#include <string>
+
+#include "../core/agent.hpp"
 
 namespace cortex::mk3::server {
 
@@ -23,7 +25,7 @@ struct ServerConfig {
 };
 
 class CortexServer {
-public:
+   public:
     explicit CortexServer(ServerConfig cfg);
     ~CortexServer();
 
@@ -39,7 +41,7 @@ public:
     std::vector<std::string> listAgents() const;
     Agent* getAgent(const std::string& id);
 
-private:
+   private:
     void setupRoutes();
 
     ServerConfig cfg_;
@@ -60,4 +62,4 @@ private:
     int agentCounter_ = 0;
 };
 
-} // namespace cortex::mk3::server
+}  // namespace cortex::mk3::server

@@ -4,9 +4,11 @@
 // Public API for tool execution.
 // =============================================================================
 
-#include "registry.hpp"
 #include <json/json.h>
+
 #include <string>
+
+#include "registry.hpp"
 
 namespace cortex::mk3::tools {
 
@@ -16,4 +18,4 @@ void registerDefaults();
 // Dispatch a tool call by name — resolves aliases automatically
 std::string dispatch(const std::string& toolName, const Json::Value& params);
 
-} // namespace cortex::mk3::tools
+}  // namespace cortex::mk3::tools

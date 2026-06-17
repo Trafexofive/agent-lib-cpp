@@ -6,11 +6,11 @@
 // access to the workspace, and prevents network calls outside the provider.
 // =============================================================================
 
+#include <algorithm>
+#include <filesystem>
+#include <iostream>
 #include <string>
 #include <vector>
-#include <filesystem>
-#include <algorithm>
-#include <iostream>
 
 namespace cortex::mk3::sandbox {
 
@@ -20,17 +20,16 @@ namespace fs = std::filesystem;
 
 struct SandboxPolicy {
     bool enabled = false;
-    bool readOnly = false;          // No fs_write at all
-    std::string workspace;          // Allowed root for reads/writes
-    std::string allowedApiHost;     // Only this host for web_fetch
+    bool readOnly = false;                     // No fs_write at all
+    std::string workspace;                     // Allowed root for reads/writes
+    std::string allowedApiHost;                // Only this host for web_fetch
     std::vector<std::string> allowedCommands;  // Whitelist for exec (empty = block all)
 
     // ── Validate a tool call before execution ────────────────────────
     // Returns "" if allowed, or an error message string if blocked.
-    std::string validate(const std::string& toolName,
-                         const std::string& paramsJson) const
-    {
-        if (!enabled) return "";
+    std::string validate(const std::string& toolName, const std::string& paramsJson) const {
+        if (!enabled)
+            return "";
 
         // Block exec unless whitelisted
         if (toolName == "exec") {
@@ -52,7 +51,10 @@ struct SandboxPolicy {
                 std::string prog = (space != std::string::npos) ? cmd.substr(0, space) : cmd;
                 bool allowed = false;
                 for (auto& a : allowedCommands) {
-                    if (prog == a || cmd.rfind(a, 0) == 0) { allowed = true; break; }
+                    if (prog == a || cmd.rfind(a, 0) == 0) {
+                        allowed = true;
+                        break;
+                    }
                 }
                 if (!allowed) {
                     return "sandbox: exec '" + prog + "' not in whitelist";
@@ -85,8 +87,7 @@ struct SandboxPolicy {
         if (toolName == "context_pin" || toolName == "context_peek") {
             auto path = extractPath(paramsJson);
             if (!path.empty() && !isWithinWorkspace(path)) {
-                return "sandbox: " + toolName + " path '" + path +
-                       "' outside workspace";
+                return "sandbox: " + toolName + " path '" + path + "' outside workspace";
             }
         }
 
@@ -100,10 +101,9 @@ struct SandboxPolicy {
                 auto start = paramsJson.find('"', urlPos + 6) + 1;
                 auto end = paramsJson.find('"', start);
                 std::string url = paramsJson.substr(start, end - start);
-                if (!allowedApiHost.empty() &&
-                    url.find(allowedApiHost) == std::string::npos) {
-                    return "sandbox: web_fetch to '" + url + "' blocked (only " +
-                           allowedApiHost + " allowed)";
+                if (!allowedApiHost.empty() && url.find(allowedApiHost) == std::string::npos) {
+                    return "sandbox: web_fetch to '" + url + "' blocked (only " + allowedApiHost +
+                           " allowed)";
                 }
             }
         }
@@ -118,7 +118,8 @@ struct SandboxPolicy {
                        "' blocked; use localhost or set allowedApiHost";
             }
             if (toolName == "dss_ingest" && !jsonBoolField(paramsJson, "allow_mutation")) {
-                return "sandbox: dss_ingest is mutating; pass allow_mutation=true or disable sandbox";
+                return "sandbox: dss_ingest is mutating; pass allow_mutation=true or disable "
+                       "sandbox";
             }
         }
 
@@ -126,14 +127,12 @@ struct SandboxPolicy {
     }
 
     // ── Rewrite a tool call's path to be workspace-relative ──────────
-    std::string rewritePath(const std::string& toolName,
-                            const std::string& paramsJson) const
-    {
-        if (!enabled || workspace.empty()) return paramsJson;
+    std::string rewritePath(const std::string& toolName, const std::string& paramsJson) const {
+        if (!enabled || workspace.empty())
+            return paramsJson;
 
-        if (toolName == "fs_read" || toolName == "fs_write" ||
-            toolName == "context_pin" || toolName == "context_peek" ||
-            toolName == "context_unpin") {
+        if (toolName == "fs_read" || toolName == "fs_write" || toolName == "context_pin" ||
+            toolName == "context_peek" || toolName == "context_unpin") {
             auto path = extractPath(paramsJson);
             if (!path.empty() && path[0] != '/') {
                 // Relative paths are resolved against workspace
@@ -145,13 +144,15 @@ struct SandboxPolicy {
         return paramsJson;
     }
 
-private:
+   private:
     static std::string jsonStringField(const std::string& json, const std::string& field) {
         std::string needle = "\"" + field + "\":";
         auto pos = json.find(needle);
-        if (pos == std::string::npos) return "";
+        if (pos == std::string::npos)
+            return "";
         auto start = json.find('"', pos + needle.size());
-        if (start == std::string::npos) return "";
+        if (start == std::string::npos)
+            return "";
         ++start;
         std::string out;
         bool escape = false;
@@ -174,13 +175,13 @@ private:
     static bool jsonBoolField(const std::string& json, const std::string& field) {
         std::string needle = "\"" + field + "\":";
         auto pos = json.find(needle);
-        if (pos == std::string::npos) return false;
+        if (pos == std::string::npos)
+            return false;
         return json.compare(pos + needle.size(), 4, "true") == 0;
     }
 
     static bool isLocalhostUrl(const std::string& url) {
-        return url.find("http://localhost") == 0 ||
-               url.find("http://127.0.0.1") == 0 ||
+        return url.find("http://localhost") == 0 || url.find("http://127.0.0.1") == 0 ||
                url.find("http://[::1]") == 0;
     }
 
@@ -198,11 +199,13 @@ private:
     }
 
     bool isWithinWorkspace(const std::string& path) const {
-        if (workspace.empty()) return true;
+        if (workspace.empty())
+            return true;
         // Relative paths are trusted to the OS-level sandbox (Docker sets
         // CWD = workspace inside the container). This keeps dev-mode ergonomics
         // intact while still defending against absolute-path escapes.
-        if (path.empty() || path[0] != '/') return true;
+        if (path.empty() || path[0] != '/')
+            return true;
 
         // SB02 — canonicalise the absolute path before prefix-comparing so
         // `workspace/../outside` is correctly rejected. lexically_normal handles
@@ -210,15 +213,18 @@ private:
         std::error_code ec;
         fs::path candidate = fs::path(path).lexically_normal();
         fs::path root = fs::path(workspace);
-        if (root.is_relative()) root = fs::current_path(ec) / root;
+        if (root.is_relative())
+            root = fs::current_path(ec) / root;
         root = root.lexically_normal();
 
         // Compare component-wise so `/a/b` isn't treated as a prefix of `/a/bb`.
         auto rIt = root.begin(), rEnd = root.end();
         auto cIt = candidate.begin(), cEnd = candidate.end();
         for (; rIt != rEnd; ++rIt, ++cIt) {
-            if (cIt == cEnd) return false;
-            if (*cIt != *rIt) return false;
+            if (cIt == cEnd)
+                return false;
+            if (*cIt != *rIt)
+                return false;
         }
         return true;
     }
@@ -233,10 +239,9 @@ inline SandboxPolicy makeHarnessSandbox(const std::string& workspacePath) {
     p.workspace = workspacePath;
     p.allowedApiHost = "";  // Allow provider API (not enforced at tool level)
     p.allowedCommands = {
-        "ls", "cat", "head", "tail", "grep", "find", "wc",
-        "echo", "date", "whoami", "pwd", "uname", "env",
-        "mkdir", "touch", "cp", "mv", "rm",  // Allowed in workspace
-        "make", "g++", "gcc", "python3", "node",
+        "ls",   "cat",   "head", "tail",    "grep",  "find", "wc", "echo", "date", "whoami",
+        "pwd",  "uname", "env",  "mkdir",   "touch", "cp",   "mv", "rm",  // Allowed in workspace
+        "make", "g++",   "gcc",  "python3", "node",
     };
     return p;
 }
@@ -246,10 +251,10 @@ inline SandboxPolicy makeReadOnlySandbox(const std::string& workspacePath) {
     p.readOnly = true;
     // Remove write-capable commands
     p.allowedCommands = {
-        "ls", "cat", "head", "tail", "grep", "find", "wc",
-        "echo", "date", "whoami", "pwd", "uname", "env",
+        "ls",   "cat",  "head",   "tail", "grep",  "find", "wc",
+        "echo", "date", "whoami", "pwd",  "uname", "env",
     };
     return p;
 }
 
-} // namespace cortex::mk3::sandbox
+}  // namespace cortex::mk3::sandbox

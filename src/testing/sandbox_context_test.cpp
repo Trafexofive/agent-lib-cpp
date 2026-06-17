@@ -10,26 +10,45 @@
 //          can't bypass the policy.
 // =============================================================================
 
-#include "src/core/agent.hpp"
-#include "src/sandbox/policy.hpp"
-#include "src/providers/factory.hpp"
-#include "src/protocol/parser.hpp"
+#include <unistd.h>
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
-#include <unistd.h>
+
+#include "src/core/agent.hpp"
+#include "src/protocol/parser.hpp"
+#include "src/providers/factory.hpp"
+#include "src/sandbox/policy.hpp"
 
 using namespace cortex::mk3;
 namespace fs = std::filesystem;
 
 static int passed = 0, failed = 0;
 
-#define TEST(name)  do { std::cout << "  " << name << "... "; } while (0)
-#define PASS()      do { passed++; std::cout << "PASS\n"; } while (0)
-#define FAIL(msg)   do { failed++; std::cout << "FAIL: " << msg << "\n"; return; } while (0)
-#define CHECK(cond, msg) do { if (!(cond)) { FAIL(msg); } } while (0)
+#define TEST(name)                           \
+    do {                                     \
+        std::cout << "  " << name << "... "; \
+    } while (0)
+#define PASS()                 \
+    do {                       \
+        passed++;              \
+        std::cout << "PASS\n"; \
+    } while (0)
+#define FAIL(msg)                             \
+    do {                                      \
+        failed++;                             \
+        std::cout << "FAIL: " << msg << "\n"; \
+        return;                               \
+    } while (0)
+#define CHECK(cond, msg) \
+    do {                 \
+        if (!(cond)) {   \
+            FAIL(msg);   \
+        }                \
+    } while (0)
 
 static fs::path g_tmpDir;
 static fs::path g_workspace;
@@ -47,9 +66,8 @@ static std::unique_ptr<Agent> makeSandboxedAgent() {
     return agent;
 }
 
-static protocol::ParsedAction makeAction(const std::string &name,
-                                          const std::string &path,
-                                          int cycles = 0) {
+static protocol::ParsedAction makeAction(const std::string& name, const std::string& path,
+                                         int cycles = 0) {
     protocol::ParsedAction a;
     a.type = protocol::ActionType::TOOL;
     a.mode = protocol::ExecutionMode::SYNC;
@@ -57,7 +75,8 @@ static protocol::ParsedAction makeAction(const std::string &name,
     a.id = "x1";
     a.params = Json::Value(Json::objectValue);
     a.params["path"] = path;
-    if (cycles > 0) a.params["cycles"] = cycles;
+    if (cycles > 0)
+        a.params["cycles"] = cycles;
     return a;
 }
 
@@ -72,8 +91,8 @@ void test_SB02_traversal_rejected() {
     TEST("SB02 workspace/../outside is rejected");
     sandbox::SandboxPolicy p = sandbox::makeHarnessSandbox(g_workspace.string());
 
-    std::string traversalAbs = (g_workspace / "subdir" / ".." / ".." /
-                                 g_outside.filename()).string();
+    std::string traversalAbs =
+        (g_workspace / "subdir" / ".." / ".." / g_outside.filename()).string();
     std::string params = "{\"path\":\"" + traversalAbs + "\"}";
     std::string err = p.validate("fs_read", params);
     CHECK(!err.empty(), "traversal path should have been rejected");
@@ -91,8 +110,7 @@ void test_SB07_context_pin_outside_workspace_blocked() {
     std::string params = "{\"path\":\"" + g_outside.string() + "/escape.txt\"}";
     std::string err = p.validate("context_pin", params);
     CHECK(!err.empty(), "context_pin outside workspace should be rejected");
-    CHECK(err.find("outside workspace") != std::string::npos,
-          "error mentions outside workspace");
+    CHECK(err.find("outside workspace") != std::string::npos, "error mentions outside workspace");
     PASS();
 }
 
@@ -111,8 +129,7 @@ void test_SB07_context_pin_inside_workspace_allowed() {
     std::string inside = (g_workspace / "ok.txt").string();
     std::string params = "{\"path\":\"" + inside + "\"}";
     std::string err = p.validate("context_pin", params);
-    CHECK(err.empty(),
-          (std::string("inside-workspace pin was blocked: '") + err + "'").c_str());
+    CHECK(err.empty(), (std::string("inside-workspace pin was blocked: '") + err + "'").c_str());
     PASS();
 }
 

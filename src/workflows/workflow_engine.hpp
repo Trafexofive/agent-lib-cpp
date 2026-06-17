@@ -3,18 +3,20 @@
 // Now delegates to sovereign Workflow objects (src/workflows/workflow.hpp).
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
-#include "workflow.hpp"
+#include <json/json.h>
+
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <future>
+#include <map>
+#include <mutex>
+#include <regex>
+#include <sstream>
 #include <string>
 #include <vector>
-#include <map>
-#include <regex>
-#include <fstream>
-#include <sstream>
-#include <filesystem>
-#include <functional>
-#include <json/json.h>
-#include <future>
-#include <mutex>
+
+#include "workflow.hpp"
 
 namespace cortex::mk3::workflows {
 
@@ -22,7 +24,7 @@ namespace fs = std::filesystem;
 
 // ── Simple YAML-ish parser ──
 class MiniYaml {
-public:
+   public:
     struct Node {
         std::string key;
         std::string value;
@@ -35,7 +37,8 @@ public:
         std::istringstream ss(yaml);
         std::string line;
         while (std::getline(ss, line)) {
-            if (line.empty() || line[0] == '#') continue;
+            if (line.empty() || line[0] == '#')
+                continue;
             lines.push_back(line);
         }
         Node root;
@@ -44,30 +47,37 @@ public:
         return root;
     }
 
-    static std::string get(const Node& parent, const std::string& key, const std::string& def = "") {
+    static std::string get(const Node& parent, const std::string& key,
+                           const std::string& def = "") {
         for (auto& c : parent.children)
-            if (c.key == key) return c.value.empty() ? "" : c.value;
+            if (c.key == key)
+                return c.value.empty() ? "" : c.value;
         return def;
     }
 
     static const Node* find(const Node& parent, const std::string& key) {
         for (auto& c : parent.children)
-            if (c.key == key) return &c;
+            if (c.key == key)
+                return &c;
         return nullptr;
     }
 
-private:
-    static size_t parseLines(Node& parent, const std::vector<std::string>& lines,
-                             size_t idx, int indent) {
+   private:
+    static size_t parseLines(Node& parent, const std::vector<std::string>& lines, size_t idx,
+                             int indent) {
         while (idx < lines.size()) {
             const auto& line = lines[idx];
             int lineIndent = 0;
-            while (lineIndent < (int)line.size() && line[lineIndent] == ' ') lineIndent++;
-            if (lineIndent < indent) return idx;
+            while (lineIndent < (int)line.size() && line[lineIndent] == ' ')
+                lineIndent++;
+            if (lineIndent < indent)
+                return idx;
 
             std::string trimmed = line.substr(lineIndent);
             if (trimmed.rfind("- ", 0) == 0) {
-                Node item; item.isList = true; item.value = trimmed.substr(2);
+                Node item;
+                item.isList = true;
+                item.value = trimmed.substr(2);
                 size_t colon = item.value.find(": ");
                 if (colon != std::string::npos) {
                     item.key = item.value.substr(0, colon);
@@ -86,7 +96,9 @@ private:
                 }
                 if (idx + 1 < lines.size()) {
                     int nextIndent = 0;
-                    while (nextIndent < (int)lines[idx+1].size() && lines[idx+1][nextIndent] == ' ') nextIndent++;
+                    while (nextIndent < (int)lines[idx + 1].size() &&
+                           lines[idx + 1][nextIndent] == ' ')
+                        nextIndent++;
                     if (nextIndent > lineIndent) {
                         idx = parseLines(kv, lines, idx + 1, nextIndent);
                         parent.children.push_back(kv);
@@ -95,14 +107,16 @@ private:
                 }
                 parent.children.push_back(kv);
                 idx++;
-            } else { idx++; }
+            } else {
+                idx++;
+            }
         }
         return idx;
     }
 
     static std::string trimQuotes(const std::string& s) {
-        if (s.size() >= 2 && ((s.front() == '"' && s.back() == '"') ||
-                               (s.front() == '\'' && s.back() == '\'')))
+        if (s.size() >= 2 &&
+            ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\'')))
             return s.substr(1, s.size() - 2);
         return s;
     }
@@ -112,7 +126,7 @@ private:
 // WorkflowEngine — orchestrates Workflow objects, parses YAML, executes steps
 // ═══════════════════════════════════════════════════════════════════════════
 class WorkflowEngine {
-public:
+   public:
     static WorkflowEngine& instance() {
         static WorkflowEngine e;
         return e;
@@ -122,14 +136,17 @@ public:
     Workflow& load(const std::string& path) {
         // Check cache first
         auto cacheIt = manifestCache_.find(path);
-        if (cacheIt != manifestCache_.end()) return cacheIt->second;
+        if (cacheIt != manifestCache_.end())
+            return cacheIt->second;
 
         WorkflowManifest wf;
         std::ifstream f(path);
-        if (!f) { static Workflow empty; return empty; }
+        if (!f) {
+            static Workflow empty;
+            return empty;
+        }
 
-        std::string yaml((std::istreambuf_iterator<char>(f)),
-                          std::istreambuf_iterator<char>());
+        std::string yaml((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         auto root = MiniYaml::parse(yaml);
         wf.name = MiniYaml::get(root, "name");
         wf.version = MiniYaml::get(root, "version");
@@ -137,17 +154,28 @@ public:
         wf.description = MiniYaml::get(root, "description");
 
         auto* stepsNode = MiniYaml::find(root, "steps");
-        if (stepsNode) for (auto& step : stepsNode->children) wf.steps.push_back(parseStep(step));
+        if (stepsNode)
+            for (auto& step : stepsNode->children)
+                wf.steps.push_back(parseStep(step));
 
         auto* importNode = MiniYaml::find(root, "import");
         if (importNode) {
             auto* toolsNode = MiniYaml::find(*importNode, "tools");
-            if (toolsNode) for (auto& t : toolsNode->children) if (!t.value.empty()) wf.importTools.push_back(t.value);
+            if (toolsNode)
+                for (auto& t : toolsNode->children)
+                    if (!t.value.empty())
+                        wf.importTools.push_back(t.value);
             auto* relicsNode = MiniYaml::find(*importNode, "relics");
-            if (relicsNode) for (auto& r : relicsNode->children) if (!r.value.empty()) wf.importRelics.push_back(r.value);
+            if (relicsNode)
+                for (auto& r : relicsNode->children)
+                    if (!r.value.empty())
+                        wf.importRelics.push_back(r.value);
         }
         auto* tagsNode = MiniYaml::find(root, "tags");
-        if (tagsNode) for (auto& t : tagsNode->children) if (!t.value.empty()) wf.tags.push_back(t.value);
+        if (tagsNode)
+            for (auto& t : tagsNode->children)
+                if (!t.value.empty())
+                    wf.tags.push_back(t.value);
 
         manifestCache_.emplace(path, Workflow(wf));
         nameIndex_[wf.name] = path;
@@ -155,8 +183,7 @@ public:
     }
 
     // ── Execute a loaded workflow ──
-    WorkflowResult execute(const WorkflowManifest& wf,
-                           const WorkflowRuntime& rt,
+    WorkflowResult execute(const WorkflowManifest& wf, const WorkflowRuntime& rt,
                            const Json::Value& inputParams = Json::Value()) {
         WorkflowResult result;
         result.workflowName = wf.name;
@@ -192,7 +219,8 @@ public:
                             return false;
                         }
                         res.diagnostics.push_back("step " + step.id + " failed: " + out.error);
-                        if (step.onError == "skip") continue;
+                        if (step.onError == "skip")
+                            continue;
                     }
                 } else if (step.type == "agent") {
                     auto out = executeAgentStep(step, resolvedParams, rt, symbols);
@@ -208,14 +236,17 @@ public:
                             return false;
                         }
                         res.diagnostics.push_back("step " + step.id + " failed: " + out.error);
-                        if (step.onError == "skip") continue;
+                        if (step.onError == "skip")
+                            continue;
                     }
                 } else if (step.type == "condition") {
                     bool condMet = evalCondition(step.condition, symbols);
                     if (condMet && !step.thenSteps.empty()) {
-                        if (!execSteps(step.thenSteps, res)) return false;
+                        if (!execSteps(step.thenSteps, res))
+                            return false;
                     } else if (!condMet && !step.elseSteps.empty()) {
-                        if (!execSteps(step.elseSteps, res)) return false;
+                        if (!execSteps(step.elseSteps, res))
+                            return false;
                     }
                 } else if (step.type == "parallel") {
                     auto out = executeParallelSteps(step.steps, rt, symbols);
@@ -249,8 +280,10 @@ public:
                 } else if (step.type == "loop") {
                     int iter = 0;
                     while (iter < 100) {
-                        if (!step.condition.empty() && evalCondition(step.condition, symbols)) break;
-                        if (!execSteps(step.body, res)) return false;
+                        if (!step.condition.empty() && evalCondition(step.condition, symbols))
+                            break;
+                        if (!execSteps(step.body, res))
+                            return false;
                         iter++;
                     }
                 }
@@ -261,14 +294,14 @@ public:
         execSteps(wf.steps, result);
 
         auto t1 = std::chrono::steady_clock::now();
-        result.elapsedMs = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0;
+        result.elapsedMs =
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0;
 
         return result;
     }
 
     // ── Execute by Workflow object (convenience) ──
-    WorkflowResult execute(const Workflow& workflow,
-                           const WorkflowRuntime& rt,
+    WorkflowResult execute(const Workflow& workflow, const WorkflowRuntime& rt,
                            const Json::Value& params = Json::Value()) {
         return execute(workflow.manifest(), rt, params);
     }
@@ -277,12 +310,14 @@ public:
     WorkflowManifest getCached(const std::string& pathOrName) {
         // Try exact path match first
         auto it = manifestCache_.find(pathOrName);
-        if (it != manifestCache_.end()) return it->second.manifest();
+        if (it != manifestCache_.end())
+            return it->second.manifest();
         // Try name-based lookup (for dispatch by workflow name)
         auto nameIt = nameIndex_.find(pathOrName);
         if (nameIt != nameIndex_.end()) {
             auto cacheIt = manifestCache_.find(nameIt->second);
-            if (cacheIt != manifestCache_.end()) return cacheIt->second.manifest();
+            if (cacheIt != manifestCache_.end())
+                return cacheIt->second.manifest();
         }
         return WorkflowManifest{};
     }
@@ -290,11 +325,13 @@ public:
     /// Get the Workflow object by path or name
     const Workflow* findWorkflow(const std::string& pathOrName) {
         auto it = manifestCache_.find(pathOrName);
-        if (it != manifestCache_.end()) return &it->second;
+        if (it != manifestCache_.end())
+            return &it->second;
         auto nameIt = nameIndex_.find(pathOrName);
         if (nameIt != nameIndex_.end()) {
             auto cacheIt = manifestCache_.find(nameIt->second);
-            if (cacheIt != manifestCache_.end()) return &cacheIt->second;
+            if (cacheIt != manifestCache_.end())
+                return &cacheIt->second;
         }
         return nullptr;
     }
@@ -308,8 +345,7 @@ public:
     }
 
     // ── Convenience: execute by name (load + run) ──
-    WorkflowResult run(const std::string& nameOrPath,
-                       const WorkflowRuntime& rt,
+    WorkflowResult run(const std::string& nameOrPath, const WorkflowRuntime& rt,
                        const Json::Value& params = Json::Value()) {
         WorkflowManifest wf = getCached(nameOrPath);
         if (wf.name.empty()) {
@@ -333,11 +369,15 @@ public:
         return Workflow(wf).toXml();
     }
 
-private:
-    struct StepOutcome { bool success = false; std::string error; };
+   private:
+    struct StepOutcome {
+        bool success = false;
+        std::string error;
+    };
 
     // ── Variable resolution: ${step_id.field} ──
-    static std::string resolveString(const std::string& s, const std::map<std::string, Json::Value>& symbols) {
+    static std::string resolveString(const std::string& s,
+                                     const std::map<std::string, Json::Value>& symbols) {
         static const std::regex varRe(R"(\$\{(\w+)\.?(\w*)\})");
         std::smatch m;
         std::string res = s;
@@ -351,11 +391,17 @@ private:
             if (it != symbols.end()) {
                 const Json::Value& val = it->second;
                 if (field.empty()) {
-                    Json::StreamWriterBuilder w; w["indentation"] = "";
+                    Json::StreamWriterBuilder w;
+                    w["indentation"] = "";
                     buf += Json::writeString(w, val);
                 } else if (val.isMember(field)) {
-                    if (val[field].isString()) buf += val[field].asString();
-                    else { Json::StreamWriterBuilder w; w["indentation"] = ""; buf += Json::writeString(w, val[field]); }
+                    if (val[field].isString())
+                        buf += val[field].asString();
+                    else {
+                        Json::StreamWriterBuilder w;
+                        w["indentation"] = "";
+                        buf += Json::writeString(w, val[field]);
+                    }
                 } else {
                     buf += "null";
                 }
@@ -368,8 +414,10 @@ private:
         return buf;
     }
 
-    static Json::Value resolveParams(const Json::Value& params, const std::map<std::string, Json::Value>& symbols) {
-        if (params.isNull() || params.empty()) return params;
+    static Json::Value resolveParams(const Json::Value& params,
+                                     const std::map<std::string, Json::Value>& symbols) {
+        if (params.isNull() || params.empty())
+            return params;
 
         Json::Value resolved;
         for (auto& key : params.getMemberNames()) {
@@ -397,8 +445,8 @@ private:
 
     // ── Execute a single tool step ──
     StepOutcome executeToolStep(const WorkflowStep& step, const Json::Value& params,
-                                 const WorkflowRuntime& rt,
-                                 std::map<std::string, Json::Value>& symbols) {
+                                const WorkflowRuntime& rt,
+                                std::map<std::string, Json::Value>& symbols) {
         int attempts = 1 + step.maxRetries;
         StepOutcome out;
         for (int attempt = 0; attempt < attempts; attempt++) {
@@ -422,8 +470,8 @@ private:
 
     // ── Execute a single agent step ──
     StepOutcome executeAgentStep(const WorkflowStep& step, const Json::Value& params,
-                                  const WorkflowRuntime& rt,
-                                  std::map<std::string, Json::Value>& symbols) {
+                                 const WorkflowRuntime& rt,
+                                 std::map<std::string, Json::Value>& symbols) {
         int attempts = 1 + step.maxRetries;
         StepOutcome out;
         for (int attempt = 0; attempt < attempts; attempt++) {
@@ -431,10 +479,10 @@ private:
                 out.error = "no agent executor configured";
                 return out;
             }
-            std::string instruction =
-                params.isMember("instruction") ? params["instruction"].asString() :
-                params.isMember("query") ? params["query"].asString() :
-                "Execute task";
+            std::string instruction = params.isMember("instruction")
+                                          ? params["instruction"].asString()
+                                      : params.isMember("query") ? params["query"].asString()
+                                                                 : "Execute task";
             Json::Value result = rt.executeAgent(step.agent, instruction);
             bool ok = result.get("success", false).asBool();
 
@@ -451,8 +499,7 @@ private:
 
     // ── Execute steps in parallel ──
     std::map<std::string, Json::Value> executeParallelSteps(
-        const std::vector<WorkflowStep>& steps,
-        const WorkflowRuntime& rt,
+        const std::vector<WorkflowStep>& steps, const WorkflowRuntime& rt,
         std::map<std::string, Json::Value>& symbols) {
         std::map<std::string, Json::Value> results;
         std::vector<std::future<std::pair<std::string, Json::Value>>> futures;
@@ -468,7 +515,9 @@ private:
                     Json::Value r = rt.executeAgent(step.agent, instr);
                     return std::make_pair(step.id, r);
                 }
-                Json::Value err; err["success"] = false; err["error"] = "unsupported parallel step type";
+                Json::Value err;
+                err["success"] = false;
+                err["error"] = "unsupported parallel step type";
                 return std::make_pair(step.id, err);
             }));
         }
@@ -483,7 +532,8 @@ private:
     // ── Condition evaluation ──
     bool evalCondition(const std::string& condition,
                        const std::map<std::string, Json::Value>& symbols) {
-        if (condition.empty()) return true;
+        if (condition.empty())
+            return true;
         std::string cond = resolveString(condition, symbols);
 
         static const std::regex condRe(R"((\w+\.?\w*)\s*(==|!=|>=|<=|>|<)\s*(.+))");
@@ -503,11 +553,14 @@ private:
                     resolved = it->second[field].asString();
             } else {
                 auto it = symbols.find(var);
-                if (it != symbols.end()) resolved = it->second.asString();
+                if (it != symbols.end())
+                    resolved = it->second.asString();
             }
 
-            if (op == "==") return resolved == val;
-            if (op == "!=") return resolved != val;
+            if (op == "==")
+                return resolved == val;
+            if (op == "!=")
+                return resolved != val;
             return !resolved.empty();
         }
 
@@ -521,7 +574,8 @@ private:
     WorkflowStep parseStep(const MiniYaml::Node& node) {
         WorkflowStep s;
         auto getAttr = [&](const std::string& key, const std::string& def = "") {
-            if (node.key == key) return node.value;
+            if (node.key == key)
+                return node.value;
             return MiniYaml::get(node, key, def);
         };
         s.id = getAttr("id");
@@ -532,27 +586,46 @@ private:
         s.condition = getAttr("condition");
         s.workflow = getAttr("workflow");
         s.onError = getAttr("on_error", "abort");
-        try { s.maxRetries = std::stoi(getAttr("max_retries", "0")); } catch (...) { s.maxRetries = 0; }
-        try { s.timeout = std::stoi(getAttr("timeout", "30")); } catch (...) { s.timeout = 30; }
+        try {
+            s.maxRetries = std::stoi(getAttr("max_retries", "0"));
+        } catch (...) {
+            s.maxRetries = 0;
+        }
+        try {
+            s.timeout = std::stoi(getAttr("timeout", "30"));
+        } catch (...) {
+            s.timeout = 30;
+        }
 
         auto* paramsNode = MiniYaml::find(node, "params");
-        if (paramsNode) for (auto& p : paramsNode->children) if (!p.key.empty()) s.params[p.key] = p.value;
+        if (paramsNode)
+            for (auto& p : paramsNode->children)
+                if (!p.key.empty())
+                    s.params[p.key] = p.value;
 
         auto* thenNode = MiniYaml::find(node, "then");
-        if (thenNode) for (auto& st : thenNode->children) s.thenSteps.push_back(parseStep(st));
+        if (thenNode)
+            for (auto& st : thenNode->children)
+                s.thenSteps.push_back(parseStep(st));
         auto* elseNode = MiniYaml::find(node, "else");
-        if (elseNode) for (auto& st : elseNode->children) s.elseSteps.push_back(parseStep(st));
+        if (elseNode)
+            for (auto& st : elseNode->children)
+                s.elseSteps.push_back(parseStep(st));
         auto* bodyNode = MiniYaml::find(node, "body");
-        if (bodyNode) for (auto& st : bodyNode->children) s.body.push_back(parseStep(st));
+        if (bodyNode)
+            for (auto& st : bodyNode->children)
+                s.body.push_back(parseStep(st));
         auto* stepsNode = MiniYaml::find(node, "steps");
-        if (stepsNode) for (auto& st : stepsNode->children) s.steps.push_back(parseStep(st));
+        if (stepsNode)
+            for (auto& st : stepsNode->children)
+                s.steps.push_back(parseStep(st));
 
         return s;
     }
 
     // ── Cache ──
     std::map<std::string, Workflow> manifestCache_;  // path → Workflow
-    std::map<std::string, std::string> nameIndex_;    // workflow name → path
+    std::map<std::string, std::string> nameIndex_;   // workflow name → path
 };
 
-} // namespace cortex::mk3::workflows
+}  // namespace cortex::mk3::workflows

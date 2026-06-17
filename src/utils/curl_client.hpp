@@ -4,10 +4,11 @@
 // Ported from MK2 (src/utils/CurlClient.hpp) — adapted for mk3 namespace.
 // =============================================================================
 #include <curl/curl.h>
-#include <string>
-#include <map>
+
 #include <functional>
+#include <map>
 #include <memory>
+#include <string>
 
 namespace cortex::mk3::utils {
 
@@ -18,15 +19,19 @@ struct CurlResponse {
     long statusCode = 0;
     std::string body;
     std::string error;
-    bool success() const { return statusCode >= 200 && statusCode < 300; }
-    bool aborted() const { return statusCode == 499; }  // our sentinel for interrupt
+    bool success() const {
+        return statusCode >= 200 && statusCode < 300;
+    }
+    bool aborted() const {
+        return statusCode == 499;
+    }  // our sentinel for interrupt
 };
 
 // ─────────────────────────────────────────────────────────────────────────
 // CurlClient — static methods, no instantiation needed
 // ─────────────────────────────────────────────────────────────────────────
 class CurlClient {
-public:
+   public:
     using StreamCallback = std::function<void(const std::string& chunk)>;
 
     struct Config {
@@ -37,11 +42,12 @@ public:
         std::string acceptEncoding;
 
         Config()
-            : timeoutSeconds(30)
-            , followRedirects(true)
-            , verifySsl(true)
-            , userAgent("Cortex-MK3/0.1.0")
-            , acceptEncoding() {}
+            : timeoutSeconds(30),
+              followRedirects(true),
+              verifySsl(true),
+              userAgent("Cortex-MK3/0.1.0"),
+              acceptEncoding() {
+        }
     };
 
     // ── Simple HTTP GET ─────────────────────────────────────────────────
@@ -50,27 +56,23 @@ public:
                             const Config& cfg = Config());
 
     // ── HTTP POST with string body ──────────────────────────────────────
-    static CurlResponse post(const std::string& url,
-                             const std::string& body,
+    static CurlResponse post(const std::string& url, const std::string& body,
                              const std::map<std::string, std::string>& headers = {},
                              const Config& cfg = Config());
 
     // ── HTTP POST with JSON body (auto-serializes + sets Content-Type) ──
-    static CurlResponse postJson(const std::string& url,
-                                 const std::string& jsonBody,
+    static CurlResponse postJson(const std::string& url, const std::string& jsonBody,
                                  const std::map<std::string, std::string>& extraHeaders = {},
                                  const Config& cfg = Config());
 
     // ── HTTP with arbitrary method ──────────────────────────────────────
-    static CurlResponse request(const std::string& method,
-                                const std::string& url,
+    static CurlResponse request(const std::string& method, const std::string& url,
                                 const std::string& body,
                                 const std::map<std::string, std::string>& headers = {},
                                 const Config& cfg = Config());
 
     // ── Streaming HTTP POST (for SSE) ───────────────────────────────────
-    static CurlResponse postStream(const std::string& url,
-                                   const std::string& body,
+    static CurlResponse postStream(const std::string& url, const std::string& body,
                                    StreamCallback callback,
                                    const std::map<std::string, std::string>& headers = {},
                                    const Config& cfg = Config());
@@ -79,7 +81,7 @@ public:
     static void setInterruptChecker(std::function<bool()> checker);
     static void clearInterruptChecker();
 
-private:
+   private:
     static std::function<bool()> s_interruptChecker;
 };
 
@@ -148,14 +150,15 @@ struct CurlGuard {
     CURL* handle = nullptr;
     struct curl_slist* headers = nullptr;
     ~CurlGuard() {
-        if (headers) curl_slist_free_all(headers);
-        if (handle) curl_easy_cleanup(handle);
+        if (headers)
+            curl_slist_free_all(headers);
+        if (handle)
+            curl_easy_cleanup(handle);
     }
 };
 
 // ── Core request ─────────────────────────────────────────────────────────
-inline CurlResponse CurlClient::request(const std::string& method,
-                                        const std::string& url,
+inline CurlResponse CurlClient::request(const std::string& method, const std::string& url,
                                         const std::string& body,
                                         const std::map<std::string, std::string>& headers,
                                         const Config& cfg) {
@@ -241,8 +244,7 @@ inline CurlResponse CurlClient::request(const std::string& method,
 }
 
 // ── Streaming POST (for SSE) ─────────────────────────────────────────────
-inline CurlResponse CurlClient::postStream(const std::string& url,
-                                           const std::string& body,
+inline CurlResponse CurlClient::postStream(const std::string& url, const std::string& body,
                                            StreamCallback callback,
                                            const std::map<std::string, std::string>& headers,
                                            const Config& cfg) {
@@ -310,15 +312,13 @@ inline CurlResponse CurlClient::get(const std::string& url,
     return request("GET", url, "", headers, cfg);
 }
 
-inline CurlResponse CurlClient::post(const std::string& url,
-                                     const std::string& body,
+inline CurlResponse CurlClient::post(const std::string& url, const std::string& body,
                                      const std::map<std::string, std::string>& headers,
                                      const Config& cfg) {
     return request("POST", url, body, headers, cfg);
 }
 
-inline CurlResponse CurlClient::postJson(const std::string& url,
-                                         const std::string& jsonBody,
+inline CurlResponse CurlClient::postJson(const std::string& url, const std::string& jsonBody,
                                          const std::map<std::string, std::string>& extraHeaders,
                                          const Config& cfg) {
     auto merged = extraHeaders;

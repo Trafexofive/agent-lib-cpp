@@ -3,12 +3,14 @@
 // Usage: call-tool <tool_name> '<json_params>'
 // Example: call-tool grep '{"pattern":"TODO","path":"src/"}'
 // =============================================================================
-#include "../tools/registry.hpp"
-#include "../tools/dispatch.hpp"
 #include <json/json.h>
+
+#include <cstdlib>
 #include <iostream>
 #include <sstream>
-#include <cstdlib>
+
+#include "../tools/dispatch.hpp"
+#include "../tools/registry.hpp"
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {

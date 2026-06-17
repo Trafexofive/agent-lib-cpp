@@ -3,12 +3,14 @@
 // Test: feeds/ directory with YAML + scripts, verify they're loaded and polled
 // =============================================================================
 #pragma once
-#include <string>
-#include <cassert>
-#include <iostream>
-#include <fstream>
-#include <filesystem>
 #include <json/json.h>
+
+#include <cassert>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <string>
+
 #include "../feeds/feed_engine.hpp"
 
 namespace cortex::mk3::tests {
@@ -19,8 +21,13 @@ struct FeedManifestTest {
     int passed = 0, failed = 0;
 
     void check(bool cond, const std::string& name) {
-        if (cond) { passed++; std::cout << "  PASS: " << name << "\n"; }
-        else      { failed++; std::cout << "  FAIL: " << name << "\n"; }
+        if (cond) {
+            passed++;
+            std::cout << "  PASS: " << name << "\n";
+        } else {
+            failed++;
+            std::cout << "  FAIL: " << name << "\n";
+        }
     }
 
     bool run() {
@@ -37,7 +44,7 @@ struct FeedManifestTest {
         return failed == 0;
     }
 
-private:
+   private:
     fs::path testDir;
 
     void setup() {
@@ -57,9 +64,12 @@ private:
         check(!results.empty(), "built-in feeds produce results");
         bool hasClock = false, hasStats = false, hasCwd = false;
         for (auto& r : results) {
-            if (r.name == "system_clock") hasClock = true;
-            if (r.name == "system_stats") hasStats = true;
-            if (r.name == "working_directory") hasCwd = true;
+            if (r.name == "system_clock")
+                hasClock = true;
+            if (r.name == "system_stats")
+                hasStats = true;
+            if (r.name == "working_directory")
+                hasCwd = true;
         }
         check(hasClock, "system_clock feed exists");
         check(hasStats, "system_stats feed exists");
@@ -103,12 +113,12 @@ private:
             f << "}))\n";
         }
         fs::permissions(feedDir / "feed.py",
-            fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
-            fs::perm_options::add);
+                        fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
+                        fs::perm_options::add);
 
         // Load and verify
-        auto result = feeds::FeedEngine::instance().loadFeedManifest(
-            (feedDir / "feed.yml").string());
+        auto result =
+            feeds::FeedEngine::instance().loadFeedManifest((feedDir / "feed.yml").string());
 
         check(result.success, "python feed manifest loads");
 
@@ -118,7 +128,8 @@ private:
         for (auto& r : all) {
             if (r.name == "test_clock" && r.ok) {
                 found = true;
-                check(r.summary.find("epoch") != std::string::npos, "python feed has epoch in poll output");
+                check(r.summary.find("epoch") != std::string::npos,
+                      "python feed has epoch in poll output");
                 check(!r.summary.empty(), "python feed produces summary on poll");
                 break;
             }
@@ -163,4 +174,4 @@ private:
     }
 };
 
-} // namespace cortex::mk3::tests
+}  // namespace cortex::mk3::tests

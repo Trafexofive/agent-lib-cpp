@@ -3,12 +3,13 @@
 // Test: mock relic endpoint → route → verify response
 // =============================================================================
 #pragma once
-#include <string>
+#include <json/json.h>
+
 #include <cassert>
-#include <iostream>
 #include <filesystem>
 #include <fstream>
-#include <json/json.h>
+#include <iostream>
+#include <string>
 
 namespace cortex::mk3::tests {
 namespace fs = std::filesystem;
@@ -17,8 +18,13 @@ struct DockerRelicTest {
     int passed = 0, failed = 0;
 
     void check(bool cond, const std::string& name) {
-        if (cond) { passed++; std::cout << "  PASS: " << name << "\n"; }
-        else      { failed++; std::cout << "  FAIL: " << name << "\n"; }
+        if (cond) {
+            passed++;
+            std::cout << "  PASS: " << name << "\n";
+        } else {
+            failed++;
+            std::cout << "  FAIL: " << name << "\n";
+        }
     }
 
     bool run() {
@@ -38,8 +44,7 @@ struct DockerRelicTest {
         check(f.good(), "artifact_store relic.yml exists");
 
         // Read and check for key fields
-        std::string yaml((std::istreambuf_iterator<char>(f)),
-                          std::istreambuf_iterator<char>());
+        std::string yaml((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         check(yaml.find("name:") != std::string::npos, "relic has name field");
         check(yaml.find("endpoints:") != std::string::npos, "relic has endpoints field");
         check(yaml.find("mode:") != std::string::npos, "relic has mode field");
@@ -59,8 +64,10 @@ struct DockerRelicTest {
         RelicDef remote = {"github_api", "remote"};
 
         auto classify = [](const RelicDef& r) -> std::string {
-            if (r.runtime == "managed") return "managed";
-            if (r.runtime == "remote") return "remote";
+            if (r.runtime == "managed")
+                return "managed";
+            if (r.runtime == "remote")
+                return "remote";
             return "builtin";
         };
 
@@ -106,9 +113,8 @@ struct DockerRelicTest {
         auto dispatch = [&](const std::string& name, const std::string& endpoint,
                             const Json::Value& params) -> DispatchResult {
             // Step 1: lookup
-            if (name != "artifact_store" && name != "secret_store" &&
-                name != "event_bus" && name != "process_manager" &&
-                name != "file_watcher") {
+            if (name != "artifact_store" && name != "secret_store" && name != "event_bus" &&
+                name != "process_manager" && name != "file_watcher") {
                 return {false, "", "Unknown relic: " + name};
             }
 
@@ -145,4 +151,4 @@ struct DockerRelicTest {
     }
 };
 
-} // namespace cortex::mk3::tests
+}  // namespace cortex::mk3::tests

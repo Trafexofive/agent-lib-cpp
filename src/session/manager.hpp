@@ -4,16 +4,18 @@
 // Ported from MK2. JSON session files in ~/.cortex/sessions/
 // =============================================================================
 
-#include "../core/types.hpp"
 #include <json/json.h>
+
+#include <filesystem>
 #include <string>
 #include <vector>
-#include <filesystem>
+
+#include "../core/types.hpp"
 
 namespace cortex::mk3::session {
 
 class SessionManager {
-public:
+   public:
     explicit SessionManager(const std::string& baseDir = "");
 
     Session load(const std::string& id) const;
@@ -27,8 +29,8 @@ public:
     };
     std::vector<SessionInfo> list() const;
 
-    Session create(const std::string& id, const std::string& agent,
-                   const std::string& model, const std::string& provider) const;
+    Session create(const std::string& id, const std::string& agent, const std::string& model,
+                   const std::string& provider) const;
     void appendRecord(const std::string& id, const SessionRecord& r) const;
     void prune(const std::string& id, size_t maxRecords = 100) const;
 
@@ -39,11 +41,13 @@ public:
     static std::vector<std::string> exportLegacyHistory(const std::vector<SessionRecord>& recs);
     static std::string iso8601();
 
-    const std::string& baseDir() const { return baseDir_; }
+    const std::string& baseDir() const {
+        return baseDir_;
+    }
 
-private:
+   private:
     std::string baseDir_;
     std::string sessionPath(const std::string& id) const;
 };
 
-} // namespace cortex::mk3::session
+}  // namespace cortex::mk3::session

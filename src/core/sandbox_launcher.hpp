@@ -3,13 +3,13 @@
 // Seamless: user just passes --manifest, gets dropped into container CLI
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
-#include <string>
-#include <vector>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <string>
+#include <vector>
 
 namespace cortex {
 namespace mk3 {
@@ -23,7 +23,7 @@ inline bool dockerAvailable() {
 
 // Build a Docker image for the agent and launch it interactively
 inline int launchDocker(const std::string& manifestPath, const AgentConfig& cfg,
-                         const std::vector<std::string>& files) {
+                        const std::vector<std::string>& files) {
     if (!dockerAvailable()) {
         std::cerr << "Docker is not available. Install Docker or use sandbox.mode: process\n";
         return 1;
@@ -40,7 +40,8 @@ inline int launchDocker(const std::string& manifestPath, const AgentConfig& cfg,
         df << "RUN apt-get update && apt-get install -y --no-install-recommends \\\n";
         df << "    libcurl4 libjsoncpp26 ca-certificates grep coreutils findutils \\\n";
         df << "    && rm -rf /var/lib/apt/lists/*\n";
-        df << "RUN useradd -ms /bin/bash agent && mkdir -p /workspace && chown agent:agent /workspace\n";
+        df << "RUN useradd -ms /bin/bash agent && mkdir -p /workspace && chown agent:agent "
+              "/workspace\n";
 
         // Copy agent binary
         df << "COPY cortex-mk3 /usr/local/bin/cortex-mk3\n";
@@ -71,14 +72,15 @@ inline int launchDocker(const std::string& manifestPath, const AgentConfig& cfg,
     }
 
     // Launch interactively
-    std::string runCmd = "docker run -it --rm "
+    std::string runCmd =
+        "docker run -it --rm "
         "-e DEEPSEEK_API_KEY "
         "-e OPENROUTER_API_KEY "
-        "-e GROQ_API_KEY "
-        + imageName;
+        "-e GROQ_API_KEY " +
+        imageName;
     return system(runCmd.c_str());
 }
 
-} // namespace sandbox
-} // namespace mk3
-} // namespace cortex
+}  // namespace sandbox
+}  // namespace mk3
+}  // namespace cortex

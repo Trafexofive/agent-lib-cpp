@@ -3,11 +3,14 @@
 // =============================================================================
 
 #include "server.hpp"
-#include "../providers/generic_openai.hpp"
-#include "../providers/factory.hpp"
+
 #include <json/json.h>
-#include <thread>
+
 #include <iostream>
+#include <thread>
+
+#include "../providers/factory.hpp"
+#include "../providers/generic_openai.hpp"
 
 namespace cortex::mk3::server {
 
@@ -15,7 +18,9 @@ CortexServer::CortexServer(ServerConfig cfg) : cfg_(std::move(cfg)) {
     setupRoutes();
 }
 
-CortexServer::~CortexServer() { stop(); }
+CortexServer::~CortexServer() {
+    stop();
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // Route Setup
@@ -34,9 +39,11 @@ void CortexServer::setupRoutes() {
 
     // Auth middleware (simple bearer token)
     auto checkAuth = [this](const httplib::Request& req, httplib::Response& res) -> bool {
-        if (cfg_.apiKey.empty()) return true;
+        if (cfg_.apiKey.empty())
+            return true;
         auto auth = req.get_header_value("Authorization");
-        if (auth == "Bearer " + cfg_.apiKey) return true;
+        if (auth == "Bearer " + cfg_.apiKey)
+            return true;
         res.status = 401;
         res.set_content("{\"error\":\"unauthorized\"}", "application/json");
         return false;
@@ -48,8 +55,10 @@ void CortexServer::setupRoutes() {
     });
 
     // ── Create agent ──
-    svr_.Post("/api/v1/agents", [this, checkAuth](const httplib::Request& req, httplib::Response& res) {
-        if (!checkAuth(req, res)) return;
+    svr_.Post("/api/v1/agents", [this, checkAuth](const httplib::Request& req,
+                                                  httplib::Response& res) {
+        if (!checkAuth(req, res))
+            return;
 
         Json::Value body;
         Json::CharReaderBuilder reader;
@@ -65,9 +74,12 @@ void CortexServer::setupRoutes() {
         acfg.name = body.get("name", "agent").asString();
         acfg.provider = body.get("provider", "deepseek").asString();
         acfg.model = body.get("model", "deepseek-chat").asString();
-        if (body.isMember("temperature")) acfg.temperature = body["temperature"].asDouble();
-        if (body.isMember("max_tokens")) acfg.maxTokens = body["maxTokens"].asInt();
-        if (body.isMember("system_prompt")) acfg.systemPromptPath = body["system_prompt"].asString();
+        if (body.isMember("temperature"))
+            acfg.temperature = body["temperature"].asDouble();
+        if (body.isMember("max_tokens"))
+            acfg.maxTokens = body["maxTokens"].asInt();
+        if (body.isMember("system_prompt"))
+            acfg.systemPromptPath = body["system_prompt"].asString();
 
         std::string id = createAgent(acfg.name, acfg);
 
@@ -81,16 +93,21 @@ void CortexServer::setupRoutes() {
     });
 
     // ── List agents ──
-    svr_.Get("/api/v1/agents", [this, checkAuth](const httplib::Request& req, httplib::Response& res) {
-        if (!checkAuth(req, res)) return;
+    svr_.Get("/api/v1/agents", [this, checkAuth](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        if (!checkAuth(req, res))
+            return;
         Json::Value arr(Json::arrayValue);
-        for (auto& id : listAgents()) arr.append(id);
+        for (auto& id : listAgents())
+            arr.append(id);
         res.set_content(Json::writeString(Json::StreamWriterBuilder(), arr), "application/json");
     });
 
     // ── Prompt (non-streaming) ──
-    svr_.Post("/api/v1/agents/([^/]+)/prompt", [this, checkAuth](const httplib::Request& req, httplib::Response& res) {
-        if (!checkAuth(req, res)) return;
+    svr_.Post("/api/v1/agents/([^/]+)/prompt", [this, checkAuth](const httplib::Request& req,
+                                                                 httplib::Response& res) {
+        if (!checkAuth(req, res))
+            return;
         std::string agentId = req.matches[1];
 
         Json::Value body;
@@ -130,8 +147,10 @@ void CortexServer::setupRoutes() {
     });
 
     // ── Prompt (streaming SSE) ──
-    svr_.Post("/api/v1/agents/([^/]+)/stream", [this, checkAuth](const httplib::Request& req, httplib::Response& res) {
-        if (!checkAuth(req, res)) return;
+    svr_.Post("/api/v1/agents/([^/]+)/stream", [this, checkAuth](const httplib::Request& req,
+                                                                 httplib::Response& res) {
+        if (!checkAuth(req, res))
+            return;
         std::string agentId = req.matches[1];
 
         Json::Value body;
@@ -166,16 +185,20 @@ void CortexServer::setupRoutes() {
         res.set_header("Connection", "keep-alive");
 
         std::string fullResponse;
-        agent->prompt(prompt, [&](const std::string& token, bool isFinal) {
-            if (isFinal) return;
-            fullResponse += token;
-            std::string ev = "data: {\"type\":\"token\",\"content\":\"" +
-                Json::valueToQuotedString(token.c_str()) + "\"}\n\n";
-            res.body += ev;
-        }, sessionId);
+        agent->prompt(
+            prompt,
+            [&](const std::string& token, bool isFinal) {
+                if (isFinal)
+                    return;
+                fullResponse += token;
+                std::string ev = "data: {\"type\":\"token\",\"content\":\"" +
+                                 Json::valueToQuotedString(token.c_str()) + "\"}\n\n";
+                res.body += ev;
+            },
+            sessionId);
 
         std::string done = "data: {\"type\":\"done\",\"response\":\"" +
-            Json::valueToQuotedString(fullResponse.c_str()) + "\"}\n\n";
+                           Json::valueToQuotedString(fullResponse.c_str()) + "\"}\n\n";
         res.body += done;
 
         inst->busy = false;
@@ -202,8 +225,10 @@ void CortexServer::setupRoutes() {
             if (agents_.find(agentId) == agents_.end()) {
                 AgentConfig acfg;
                 acfg.name = "openai-compat";
-                acfg.provider = body.get("model", "deepseek-chat").asString().find("deepseek") != std::string::npos
-                    ? "deepseek" : "openrouter";
+                acfg.provider = body.get("model", "deepseek-chat").asString().find("deepseek") !=
+                                        std::string::npos
+                                    ? "deepseek"
+                                    : "openrouter";
                 acfg.model = body.get("model", "deepseek-chat").asString();
 
                 auto provCfg = providers::deepseekConfig();
@@ -235,7 +260,8 @@ void CortexServer::setupRoutes() {
                 }
             }
         }
-        if (prompt.empty()) prompt = body.get("prompt", "Hello").asString();
+        if (prompt.empty())
+            prompt = body.get("prompt", "Hello").asString();
 
         bool stream = body.get("stream", false).asBool();
 
@@ -243,16 +269,20 @@ void CortexServer::setupRoutes() {
             res.set_header("Content-Type", "text/event-stream");
             std::string full;
             inst->agent->prompt(prompt, [&](const std::string& token, bool isFinal) {
-                if (isFinal) return;
+                if (isFinal)
+                    return;
                 full += token;
                 Json::Value chunk;
                 chunk["id"] = "chatcmpl-mk3";
                 chunk["object"] = "chat.completion.chunk";
-                Json::Value choice; choice["index"] = 0;
-                Json::Value delta; delta["content"] = token;
+                Json::Value choice;
+                choice["index"] = 0;
+                Json::Value delta;
+                delta["content"] = token;
                 choice["delta"] = delta;
                 chunk["choices"].append(choice);
-                res.body += "data: " + Json::writeString(Json::StreamWriterBuilder(), chunk) + "\n\n";
+                res.body +=
+                    "data: " + Json::writeString(Json::StreamWriterBuilder(), chunk) + "\n\n";
             });
             res.body += "data: [DONE]\n\n";
         } else {
@@ -262,7 +292,9 @@ void CortexServer::setupRoutes() {
             resp["object"] = "chat.completion";
             resp["model"] = inst->agent->config().model;
             Json::Value choice;
-            Json::Value msg; msg["role"] = "assistant"; msg["content"] = result;
+            Json::Value msg;
+            msg["role"] = "assistant";
+            msg["content"] = result;
             choice["message"] = msg;
             choice["index"] = 0;
             choice["finish_reason"] = "stop";
@@ -272,23 +304,26 @@ void CortexServer::setupRoutes() {
             usage["completion_tokens"] = 0;
             usage["total_tokens"] = 0;
             resp["usage"] = usage;
-            res.set_content(Json::writeString(Json::StreamWriterBuilder(), resp), "application/json");
+            res.set_content(Json::writeString(Json::StreamWriterBuilder(), resp),
+                            "application/json");
         }
 
         inst->busy = false;
     });
 
     // ── Delete agent ──
-    svr_.Delete("/api/v1/agents/([^/]+)", [this, checkAuth](const httplib::Request& req, httplib::Response& res) {
-        if (!checkAuth(req, res)) return;
-        std::string agentId = req.matches[1];
-        if (removeAgent(agentId)) {
-            res.set_content("{\"status\":\"deleted\"}", "application/json");
-        } else {
-            res.status = 404;
-            res.set_content("{\"error\":\"not found\"}", "application/json");
-        }
-    });
+    svr_.Delete("/api/v1/agents/([^/]+)",
+                [this, checkAuth](const httplib::Request& req, httplib::Response& res) {
+                    if (!checkAuth(req, res))
+                        return;
+                    std::string agentId = req.matches[1];
+                    if (removeAgent(agentId)) {
+                        res.set_content("{\"status\":\"deleted\"}", "application/json");
+                    } else {
+                        res.status = 404;
+                        res.set_content("{\"error\":\"not found\"}", "application/json");
+                    }
+                });
 
     // ── List providers ──
     svr_.Get("/api/v1/providers", [](const httplib::Request&, httplib::Response& res) {
@@ -337,7 +372,8 @@ bool CortexServer::removeAgent(const std::string& id) {
 std::vector<std::string> CortexServer::listAgents() const {
     std::lock_guard<std::mutex> lock(agentsMtx_);
     std::vector<std::string> ids;
-    for (auto& [id, _] : agents_) ids.push_back(id);
+    for (auto& [id, _] : agents_)
+        ids.push_back(id);
     return ids;
 }
 
@@ -362,4 +398,4 @@ void CortexServer::stop() {
     svr_.stop();
 }
 
-} // namespace cortex::mk3::server
+}  // namespace cortex::mk3::server

@@ -5,16 +5,18 @@
 // Leaner than MK2 but same protocol semantics.
 // =============================================================================
 
-#include "../core/types.hpp"
 #include <json/json.h>
-#include <string>
-#include <vector>
-#include <map>
-#include <memory>
+
 #include <functional>
 #include <future>
+#include <map>
+#include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_set>
+#include <vector>
+
+#include "../core/types.hpp"
 
 namespace cortex::mk3::protocol {
 
@@ -55,13 +57,13 @@ struct TokenEvent {
 // Action executor callback — runtime provides this
 // ---------------------------------------------------------------------------
 using ActionExecutor = std::function<Json::Value(const ParsedAction&)>;
-using EventCallback  = std::function<void(const TokenEvent&)>;
+using EventCallback = std::function<void(const TokenEvent&)>;
 
 // ---------------------------------------------------------------------------
 // Parser
 // ---------------------------------------------------------------------------
 class Parser {
-public:
+   public:
     explicit Parser(ActionExecutor executor = nullptr);
     ~Parser();
 
@@ -70,8 +72,12 @@ public:
     void flush();
 
     // Callbacks
-    void onEvent(EventCallback cb) { eventCb_ = std::move(cb); }
-    void setExecutor(ActionExecutor ex) { executor_ = std::move(ex); }
+    void onEvent(EventCallback cb) {
+        eventCb_ = std::move(cb);
+    }
+    void setExecutor(ActionExecutor ex) {
+        executor_ = std::move(ex);
+    }
 
     // Inject a result (called by runtime when action completes)
     void injectResult(const std::string& id, const Json::Value& result);
@@ -85,13 +91,17 @@ public:
     void clearResults();  // clear accumulated results (call between iterations)
 
     // Context feeds (for prompt injection)
-    std::vector<std::string> contextFeeds() const { return contextFeeds_; }
-    void clearContextFeeds() { contextFeeds_.clear(); }
+    std::vector<std::string> contextFeeds() const {
+        return contextFeeds_;
+    }
+    void clearContextFeeds() {
+        contextFeeds_.clear();
+    }
 
     // Reset for new iteration
     void reset();
 
-private:
+   private:
     // Core parse loop — processes buffer looking for tags
     void processBuffer();
 
@@ -105,15 +115,18 @@ private:
     // Handlers
     void handleThought(const std::string& content);
     void handleAction(const std::string& content, const std::map<std::string, std::string>& attrs);
-    void handleResponse(const std::string& content, const std::map<std::string, std::string>& attrs);
+    void handleResponse(const std::string& content,
+                        const std::map<std::string, std::string>& attrs);
     void handleResult(const std::string& content, const std::map<std::string, std::string>& attrs);
-    void handleContextFeed(const std::string& content, const std::map<std::string, std::string>& attrs);
+    void handleContextFeed(const std::string& content,
+                           const std::map<std::string, std::string>& attrs);
 
     // Action execution
     void executeAction(std::shared_ptr<ParsedAction> action);
     bool canExecute(const ParsedAction& action) const;
     void dispatchPending();
-    std::shared_ptr<ParsedAction> buildAction(const std::string& json, const std::map<std::string, std::string>& attrs);
+    std::shared_ptr<ParsedAction> buildAction(const std::string& json,
+                                              const std::map<std::string, std::string>& attrs);
 
     // Variable resolution — ${id} and ${id.field}
     std::string resolveVars(const std::string& input) const;
@@ -138,16 +151,18 @@ private:
     std::string buffer_;
     size_t readPos_ = 0;
     bool inResponse_ = false;  // true between <response> and </response> for streaming
-    size_t responseContentStart_ = 0;  // start of active response body for code-span-aware close scans
+    size_t responseContentStart_ =
+        0;  // start of active response body for code-span-aware close scans
     bool finalResponseSeen_ = false;  // true after first <response final="true">
-    std::map<std::string, std::string> responseAttrs_;  // attrs from opening <response>, applied when streaming closes
+    std::map<std::string, std::string>
+        responseAttrs_;  // attrs from opening <response>, applied when streaming closes
 
     // Results
     std::map<std::string, Json::Value> results_;
     std::map<std::string, bool> completed_;
 
-        // Protocol enforcement — track used action IDs
-        std::unordered_set<std::string> usedActionIds_;
+    // Protocol enforcement — track used action IDs
+    std::unordered_set<std::string> usedActionIds_;
 
     // Context feeds (accumulated for prompt injection)
     std::vector<std::string> contextFeeds_;
@@ -162,4 +177,4 @@ private:
     int idCounter_ = 0;
 };
 
-} // namespace cortex::mk3::protocol
+}  // namespace cortex::mk3::protocol

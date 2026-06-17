@@ -3,19 +3,44 @@
 // Captures the parser bugs the audit named Y01-Y05.
 // =============================================================================
 
-#include "src/core/mini_yaml.hpp"
 #include <iostream>
 #include <string>
+
+#include "src/core/mini_yaml.hpp"
 
 using cortex::mk3::ManifestYaml;
 
 static int passed = 0, failed = 0;
 
-#define TEST(name) do { std::cout << "  " << name << "... "; } while(0)
-#define PASS() do { passed++; std::cout << "PASS\n"; } while(0)
-#define FAIL(msg) do { failed++; std::cout << "FAIL: " << msg << "\n"; return; } while(0)
-#define EXPECT_EQ(a, b, msg) do { if (!((a) == (b))) { std::cout << "    got=" << (a) << "\n    want=" << (b) << "\n"; FAIL(msg); } } while(0)
-#define EXPECT_NE_STR(a, b, msg) do { if ((a) == (b)) { std::cout << "    got=" << (a) << " (unexpected)\n"; FAIL(msg); } } while(0)
+#define TEST(name)                           \
+    do {                                     \
+        std::cout << "  " << name << "... "; \
+    } while (0)
+#define PASS()                 \
+    do {                       \
+        passed++;              \
+        std::cout << "PASS\n"; \
+    } while (0)
+#define FAIL(msg)                             \
+    do {                                      \
+        failed++;                             \
+        std::cout << "FAIL: " << msg << "\n"; \
+        return;                               \
+    } while (0)
+#define EXPECT_EQ(a, b, msg)                                                \
+    do {                                                                    \
+        if (!((a) == (b))) {                                                \
+            std::cout << "    got=" << (a) << "\n    want=" << (b) << "\n"; \
+            FAIL(msg);                                                      \
+        }                                                                   \
+    } while (0)
+#define EXPECT_NE_STR(a, b, msg)                                 \
+    do {                                                         \
+        if ((a) == (b)) {                                        \
+            std::cout << "    got=" << (a) << " (unexpected)\n"; \
+            FAIL(msg);                                           \
+        }                                                        \
+    } while (0)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Y01 — inline flow maps: `primary: { provider: x, model: y }`
@@ -30,9 +55,11 @@ void test_Y01_inline_flow_map() {
 
     auto root = ManifestYaml::parse(yaml);
     auto* ce = ManifestYaml::find(root, "cognitive_engine");
-    if (!ce) FAIL("cognitive_engine not found");
+    if (!ce)
+        FAIL("cognitive_engine not found");
     auto* primary = ManifestYaml::find(*ce, "primary");
-    if (!primary) FAIL("primary not found");
+    if (!primary)
+        FAIL("primary not found");
 
     std::string provider = ManifestYaml::get(*primary, "provider");
     std::string model = ManifestYaml::get(*primary, "model");
@@ -141,9 +168,11 @@ void test_block_style_still_works() {
 
     auto root = ManifestYaml::parse(yaml);
     auto* ce = ManifestYaml::find(root, "cognitive_engine");
-    if (!ce) FAIL("cognitive_engine missing");
+    if (!ce)
+        FAIL("cognitive_engine missing");
     auto* primary = ManifestYaml::find(*ce, "primary");
-    if (!primary) FAIL("primary missing");
+    if (!primary)
+        FAIL("primary missing");
     EXPECT_EQ(ManifestYaml::get(*primary, "provider"), std::string("deepseek"), "provider");
     EXPECT_EQ(ManifestYaml::get(*primary, "model"), std::string("deepseek-chat"), "model");
     PASS();
@@ -160,7 +189,8 @@ void test_list_items_still_work() {
 
     auto root = ManifestYaml::parse(yaml);
     auto* imp = ManifestYaml::find(root, "import");
-    if (!imp) FAIL("import missing");
+    if (!imp)
+        FAIL("import missing");
     auto tools = ManifestYaml::getList(*imp, "tools");
     if (tools.size() != 3) {
         std::cout << "    got " << tools.size() << " items, want 3\n";

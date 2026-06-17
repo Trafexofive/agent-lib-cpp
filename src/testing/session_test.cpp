@@ -7,56 +7,92 @@
 //   AC18 — contextFeeds_ must round-trip through save→load
 // =============================================================================
 
-#include "src/core/agent.hpp"
-#include "src/session/manager.hpp"
-#include "src/providers/factory.hpp"
+#include <unistd.h>
+
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string>
 #include <thread>
-#include <chrono>
-#include <unistd.h>
+
+#include "src/core/agent.hpp"
+#include "src/providers/factory.hpp"
+#include "src/session/manager.hpp"
 
 using namespace cortex::mk3;
 namespace fs = std::filesystem;
 
 static int passed = 0, failed = 0;
 
-#define TEST(name)  do { std::cout << "  " << name << "... "; } while (0)
-#define PASS()      do { passed++; std::cout << "PASS\n"; } while (0)
-#define FAIL(msg)   do { failed++; std::cout << "FAIL: " << msg << "\n"; return; } while (0)
-#define CHECK(cond, msg) do { if (!(cond)) { FAIL(msg); } } while (0)
+#define TEST(name)                           \
+    do {                                     \
+        std::cout << "  " << name << "... "; \
+    } while (0)
+#define PASS()                 \
+    do {                       \
+        passed++;              \
+        std::cout << "PASS\n"; \
+    } while (0)
+#define FAIL(msg)                             \
+    do {                                      \
+        failed++;                             \
+        std::cout << "FAIL: " << msg << "\n"; \
+        return;                               \
+    } while (0)
+#define CHECK(cond, msg) \
+    do {                 \
+        if (!(cond)) {   \
+            FAIL(msg);   \
+        }                \
+    } while (0)
 
 static fs::path g_tmpDir;
 
 class NoopProvider : public ILlmProvider {
-public:
+   public:
     std::string generate(const ChatMessages&) override {
         return "<response final=\"true\">OK</response>";
     }
     void generateStream(const ChatMessages&, StreamCallback cb) override {
         cb("<response final=\"true\">OK</response>", true);
     }
-    void setModel(const std::string& model) override { model_ = model; }
-    void setTemperature(double t) override { temperature_ = t; }
-    void setMaxTokens(int n) override { maxTokens_ = n; }
-    void setTopP(double p) override { topP_ = p; }
-    std::string getModel() const override { return model_; }
-    double getTemperature() const override { return temperature_; }
-    int getMaxTokens() const override { return maxTokens_; }
-    std::vector<ModelInfo> listModels() override { return {}; }
-    std::string providerName() const override { return "noop"; }
+    void setModel(const std::string& model) override {
+        model_ = model;
+    }
+    void setTemperature(double t) override {
+        temperature_ = t;
+    }
+    void setMaxTokens(int n) override {
+        maxTokens_ = n;
+    }
+    void setTopP(double p) override {
+        topP_ = p;
+    }
+    std::string getModel() const override {
+        return model_;
+    }
+    double getTemperature() const override {
+        return temperature_;
+    }
+    int getMaxTokens() const override {
+        return maxTokens_;
+    }
+    std::vector<ModelInfo> listModels() override {
+        return {};
+    }
+    std::string providerName() const override {
+        return "noop";
+    }
 
-private:
+   private:
     std::string model_ = "noop";
     double temperature_ = 0.7;
     int maxTokens_ = 65536;
     double topP_ = 0.95;
 };
 
-static std::unique_ptr<Agent> makeAgent(const std::string &provider,
-                                       const std::string &model) {
+static std::unique_ptr<Agent> makeAgent(const std::string& provider, const std::string& model) {
     AgentConfig cfg;
     cfg.name = "session-test-agent";
     cfg.provider = provider;
@@ -108,8 +144,9 @@ void test_AC04_created_preserved() {
     agent->saveSession("ac04-test");
     auto secondSave = agent->sessionMgr().load("ac04-test");
     CHECK(secondSave.created == originalCreated,
-          (std::string("`created` was overwritten: orig='") + originalCreated +
-           "' new='" + secondSave.created + "'").c_str());
+          (std::string("`created` was overwritten: orig='") + originalCreated + "' new='" +
+           secondSave.created + "'")
+              .c_str());
     PASS();
 }
 
@@ -122,16 +159,14 @@ void test_AC18_context_feeds_roundtrip() {
     setenv("HOME", g_tmpDir.string().c_str(), 1);
     session::SessionManager sm;
     Session s = sm.create("ac18-test", "test-agent", "deepseek-chat", "deepseek");
-    s.contextFeeds = {
-        "<feed name=\"git\">branch=master</feed>",
-        "<feed name=\"clock\">2026-06-11T22:00Z</feed>"
-    };
+    s.contextFeeds = {"<feed name=\"git\">branch=master</feed>",
+                      "<feed name=\"clock\">2026-06-11T22:00Z</feed>"};
     sm.save(s);
 
     Session loaded = sm.load("ac18-test");
     CHECK(loaded.contextFeeds.size() == 2,
-          (std::string("expected 2 feeds, got ") +
-           std::to_string(loaded.contextFeeds.size())).c_str());
+          (std::string("expected 2 feeds, got ") + std::to_string(loaded.contextFeeds.size()))
+              .c_str());
     CHECK(loaded.contextFeeds[0].find("branch=master") != std::string::npos,
           "feed 0 content not preserved");
     CHECK(loaded.contextFeeds[1].find("2026-06-11T22:00Z") != std::string::npos,

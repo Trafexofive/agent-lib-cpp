@@ -3,15 +3,17 @@
 // Modular: each dispatch target is self-contained.
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
+#include <json/json.h>
+
+#include <map>
+#include <sstream>
+#include <string>
+
 #include "../protocol/parser.hpp"
-#include "../tools/registry.hpp"
 #include "../relics/builtin_relics.hpp"
 #include "../relics/docker_dispatcher.hpp"
+#include "../tools/registry.hpp"
 #include "../workflows/workflow_engine.hpp"
-#include <json/json.h>
-#include <sstream>
-#include <map>
-#include <string>
 
 namespace cortex {
 namespace mk3 {
@@ -27,7 +29,8 @@ inline Json::Value dispatchTool(const protocol::ParsedAction& action) {
         Json::CharReaderBuilder r;
         std::string errs;
         std::istringstream ss(result);
-        if (Json::parseFromStream(r, ss, &parsed, &errs)) return parsed;
+        if (Json::parseFromStream(r, ss, &parsed, &errs))
+            return parsed;
         Json::Value fallback;
         fallback["output"] = result;
         fallback["success"] = true;
@@ -49,7 +52,8 @@ inline Json::Value dispatchRelic(const protocol::ParsedAction& action) {
         if (endpoint == action.name && !action.content.empty()) {
             endpoint = action.content;
         }
-        if (relicParams.isMember("body") && relicParams["body"].isObject()) relicParams = relicParams["body"];
+        if (relicParams.isMember("body") && relicParams["body"].isObject())
+            relicParams = relicParams["body"];
         relicParams.removeMember("endpoint");
         relicParams.removeMember("method");
         auto rr = drd.dispatch(action.name, endpoint, relicParams);
@@ -77,24 +81,26 @@ inline Json::Value dispatchRelic(const protocol::ParsedAction& action) {
     if (endpoint == action.name && !action.content.empty()) {
         endpoint = action.content;
     }
-    if (relicParams.isMember("body") && relicParams["body"].isObject()) relicParams = relicParams["body"];
+    if (relicParams.isMember("body") && relicParams["body"].isObject())
+        relicParams = relicParams["body"];
     relicParams.removeMember("endpoint");
     relicParams.removeMember("method");
     auto rr = relics::RelicDispatcher::instance().dispatch(action.name, endpoint, relicParams);
     Json::Value result;
     result["success"] = rr.success;
-    if (rr.success) result["data"] = rr.data;
-    else result["error"] = rr.error;
+    if (rr.success)
+        result["data"] = rr.data;
+    else
+        result["error"] = rr.error;
     return result;
 }
 
 // ── Agent dispatcher (placeholder — sub-agent delegation) ──
 // Called with a callback to the parent agent for sub-agent execution
-using AgentDispatchFn = std::function<Json::Value(const std::string& agentName,
-                                                    const std::string& instruction)>;
+using AgentDispatchFn =
+    std::function<Json::Value(const std::string& agentName, const std::string& instruction)>;
 
-inline Json::Value dispatchAgent(const protocol::ParsedAction& action,
-                                  AgentDispatchFn delegate) {
+inline Json::Value dispatchAgent(const protocol::ParsedAction& action, AgentDispatchFn delegate) {
     if (!delegate) {
         Json::Value err;
         err["success"] = false;
@@ -109,9 +115,13 @@ inline Json::Value dispatchAgent(const protocol::ParsedAction& action,
     } else {
         for (const char* key : {"instruction", "query", "task", "prompt", "input", "message"}) {
             std::string v = action.params.get(key, "").asString();
-            if (!v.empty()) { instruction = v; break; }
+            if (!v.empty()) {
+                instruction = v;
+                break;
+            }
         }
-        if (instruction.empty()) instruction = "Execute task";
+        if (instruction.empty())
+            instruction = "Execute task";
     }
     Json::Value subResult = delegate(action.name, instruction);
     Json::Value result;
@@ -124,7 +134,8 @@ inline Json::Value dispatchAgent(const protocol::ParsedAction& action,
         // Sub returned a structured result; honour its own success field if present.
         result["success"] = subResult.get("success", true).asBool();
         result["output"] = subResult.get("output", Json::Value("")).asString();
-        if (subResult.isMember("error")) result["error"] = subResult["error"];
+        if (subResult.isMember("error"))
+            result["error"] = subResult["error"];
     } else {
         result["success"] = false;
         result["error"] = "sub-agent returned unexpected type";
@@ -168,11 +179,11 @@ inline Json::Value dispatchFeed(const protocol::ParsedAction& action) {
 }
 
 // ── Workflow dispatcher — executes a named workflow through the WorkflowEngine ──
-using WorkflowDispatchFn = std::function<workflows::WorkflowResult(
-    const std::string& workflowName, const Json::Value& params)>;
+using WorkflowDispatchFn = std::function<workflows::WorkflowResult(const std::string& workflowName,
+                                                                   const Json::Value& params)>;
 
 inline Json::Value dispatchWorkflow(const protocol::ParsedAction& action,
-                                      WorkflowDispatchFn executor) {
+                                    WorkflowDispatchFn executor) {
     if (!executor) {
         Json::Value err;
         err["success"] = false;
@@ -186,28 +197,32 @@ inline Json::Value dispatchWorkflow(const protocol::ParsedAction& action,
     result["elapsed_ms"] = wfResult.elapsedMs;
     result["step_count"] = (int)wfResult.stepIds.size();
     Json::Value outputs(Json::objectValue);
-    for (auto& [id, val] : wfResult.outputs) outputs[id] = val;
+    for (auto& [id, val] : wfResult.outputs)
+        outputs[id] = val;
     result["outputs"] = outputs;
 
     // Build a compact output string so the model sees what happened
     std::ostringstream summary;
     summary << "workflow=" << wfResult.workflowName
-            << " success=" << (wfResult.success ? "ok" : "fail")
-            << " steps=[";
+            << " success=" << (wfResult.success ? "ok" : "fail") << " steps=[";
     for (size_t i = 0; i < wfResult.stepIds.size(); ++i) {
-        if (i > 0) summary << ", ";
+        if (i > 0)
+            summary << ", ";
         summary << wfResult.stepIds[i];
         auto it = wfResult.outputs.find(wfResult.stepIds[i]);
         if (it != wfResult.outputs.end() && it->second.isMember("success"))
             summary << (it->second["success"].asBool() ? ":ok" : ":fail");
     }
     summary << "]";
-    if (!wfResult.error.empty()) summary << " error=" << wfResult.error;
+    if (!wfResult.error.empty())
+        summary << " error=" << wfResult.error;
     result["output"] = summary.str();
-    if (!wfResult.error.empty()) result["error"] = wfResult.error;
+    if (!wfResult.error.empty())
+        result["error"] = wfResult.error;
     if (!wfResult.diagnostics.empty()) {
         Json::Value diags(Json::arrayValue);
-        for (auto& d : wfResult.diagnostics) diags.append(d);
+        for (auto& d : wfResult.diagnostics)
+            diags.append(d);
         result["diagnostics"] = diags;
     }
     return result;
@@ -241,11 +256,10 @@ struct ActionDispatcher {
 
 // ── Dedup helper ──
 inline std::string dedupKey(const protocol::ParsedAction& action) {
-    return action.name + ":"
-         + Json::writeString(Json::StreamWriterBuilder(), action.params)
-         + ":" + action.content;
+    return action.name + ":" + Json::writeString(Json::StreamWriterBuilder(), action.params) + ":" +
+           action.content;
 }
 
-} // namespace dispatch
-} // namespace mk3
-} // namespace cortex
+}  // namespace dispatch
+}  // namespace mk3
+}  // namespace cortex

@@ -5,13 +5,14 @@
 // Ported from MK2, stripped of bloat.
 // =============================================================================
 
-#include "src/protocol/parser.hpp"
-#include <iostream>
+#include <algorithm>
+#include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <vector>
-#include <filesystem>
-#include <algorithm>
+
+#include "src/protocol/parser.hpp"
 
 using namespace cortex::mk3::protocol;
 
@@ -27,8 +28,12 @@ TestResult runProtocolTest(const std::string& filePath) {
 
     // Read file
     std::ifstream f(filePath);
-    if (!f) { r.error = "cannot open file"; return r; }
-    std::stringstream buf; buf << f.rdbuf();
+    if (!f) {
+        r.error = "cannot open file";
+        return r;
+    }
+    std::stringstream buf;
+    buf << f.rdbuf();
     std::string content = buf.str();
 
     // Extract test name from "# Test N: description"
@@ -48,16 +53,17 @@ TestResult runProtocolTest(const std::string& filePath) {
 
     // Extract XML section (before ---EXPECTATIONS---)
     size_t expPos = content.find("---EXPECTATIONS---");
-    std::string xmlSection = (expPos != std::string::npos)
-        ? content.substr(0, expPos) : content;
+    std::string xmlSection = (expPos != std::string::npos) ? content.substr(0, expPos) : content;
 
     std::string xml;
     std::istringstream xss(xmlSection);
     std::string line;
     while (std::getline(xss, line)) {
-        if (!line.empty() && line[0] == '#') continue;  // skip comments
+        if (!line.empty() && line[0] == '#')
+            continue;  // skip comments
         size_t s = line.find_first_not_of(" \t");
-        if (s == std::string::npos) continue;
+        if (s == std::string::npos)
+            continue;
         xml += line + "\n";
     }
 
@@ -81,28 +87,38 @@ TestResult runProtocolTest(const std::string& filePath) {
     parser.onEvent([&](const TokenEvent& ev) {
         std::string label;
         switch (ev.type) {
-        case TokenEvent::TEXT:
-            if (!sawText) { r.events.push_back("TEXT"); sawText = true; }
-            break;
-        case TokenEvent::THOUGHT:
-            if (!sawThought) { r.events.push_back("THOUGHT"); sawThought = true; }
-            break;
-        case TokenEvent::ACTION_START:
-            r.events.push_back("ACTION_START");
-            break;
-        case TokenEvent::ACTION_RESULT:
-            r.events.push_back("ACTION_RESULT");
-            break;
-        case TokenEvent::RESPONSE:
-            if (!sawResponse) { r.events.push_back("RESPONSE"); sawResponse = true; }
-            break;
-        case TokenEvent::CONTEXT_FEED:
-            r.events.push_back("CONTEXT_FEED");
-            break;
-        case TokenEvent::ERROR:
-            r.events.push_back("ERROR");
-            break;
-        default: break;
+            case TokenEvent::TEXT:
+                if (!sawText) {
+                    r.events.push_back("TEXT");
+                    sawText = true;
+                }
+                break;
+            case TokenEvent::THOUGHT:
+                if (!sawThought) {
+                    r.events.push_back("THOUGHT");
+                    sawThought = true;
+                }
+                break;
+            case TokenEvent::ACTION_START:
+                r.events.push_back("ACTION_START");
+                break;
+            case TokenEvent::ACTION_RESULT:
+                r.events.push_back("ACTION_RESULT");
+                break;
+            case TokenEvent::RESPONSE:
+                if (!sawResponse) {
+                    r.events.push_back("RESPONSE");
+                    sawResponse = true;
+                }
+                break;
+            case TokenEvent::CONTEXT_FEED:
+                r.events.push_back("CONTEXT_FEED");
+                break;
+            case TokenEvent::ERROR:
+                r.events.push_back("ERROR");
+                break;
+            default:
+                break;
         }
     });
 
@@ -112,14 +128,16 @@ TestResult runProtocolTest(const std::string& filePath) {
     bool inTag = false;
     for (char c : xml) {
         token += c;
-        if (c == '<') inTag = true;
+        if (c == '<')
+            inTag = true;
         if (c == '>' && inTag) {
             parser.feed(token, false);
             token.clear();
             inTag = false;
         }
     }
-    if (!token.empty()) parser.feed(token, false);
+    if (!token.empty())
+        parser.feed(token, false);
     parser.feed("", true);  // final flush
     parser.waitForActions();
 
@@ -155,12 +173,14 @@ TestResult runProtocolTest(const std::string& filePath) {
             for (const auto& expEv : expected) {
                 bool found = false;
                 for (const auto& actEv : r.events) {
-                    if (expEv == actEv ||
-                        (expEv.find("ACTION") != std::string::npos && actEv.find("ACTION") != std::string::npos)) {
-                        found = true; break;
+                    if (expEv == actEv || (expEv.find("ACTION") != std::string::npos &&
+                                           actEv.find("ACTION") != std::string::npos)) {
+                        found = true;
+                        break;
                     }
                 }
-                if (!found) errors.push_back("Missing event: " + expEv);
+                if (!found)
+                    errors.push_back("Missing event: " + expEv);
             }
         }
 
@@ -169,13 +189,16 @@ TestResult runProtocolTest(const std::string& filePath) {
 
         // complete: true
         if (exp.find("complete: true") != std::string::npos) {
-            bool hasResponse = std::find(r.events.begin(), r.events.end(), "RESPONSE") != r.events.end();
-            if (!hasResponse) errors.push_back("Missing final response");
+            bool hasResponse =
+                std::find(r.events.begin(), r.events.end(), "RESPONSE") != r.events.end();
+            if (!hasResponse)
+                errors.push_back("Missing final response");
         }
     }
 
     r.passed = errors.empty();
-    if (!errors.empty()) r.error = errors[0];
+    if (!errors.empty())
+        r.error = errors[0];
 
     return r;
 }
@@ -189,8 +212,10 @@ int main(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if (arg == "-d" || arg == "--dir") protocolDir = argv[++i];
-        else if (arg == "-p") specificProtocol = argv[++i];
+        if (arg == "-d" || arg == "--dir")
+            protocolDir = argv[++i];
+        else if (arg == "-p")
+            specificProtocol = argv[++i];
         else if (arg == "--list" || arg == "-l") {
             for (auto& e : std::filesystem::directory_iterator(protocolDir)) {
                 if (e.path().extension() == ".protocol")
@@ -216,13 +241,15 @@ int main(int argc, char* argv[]) {
 
     int passed = 0;
     for (auto& r : results) {
-        std::cout << "  " << r.id << " — " << r.name << " ... "
-                  << (r.passed ? "PASS" : "FAIL");
-        if (!r.error.empty()) std::cout << " (" << r.error << ")";
+        std::cout << "  " << r.id << " — " << r.name << " ... " << (r.passed ? "PASS" : "FAIL");
+        if (!r.error.empty())
+            std::cout << " (" << r.error << ")";
         std::cout << "  [" << r.events.size() << " events";
-        if (!r.actions.empty()) std::cout << ", " << r.actions.size() << " actions";
+        if (!r.actions.empty())
+            std::cout << ", " << r.actions.size() << " actions";
         std::cout << "]\n";
-        if (r.passed) passed++;
+        if (r.passed)
+            passed++;
     }
 
     std::cout << "\n  " << passed << "/" << results.size() << " passed\n";

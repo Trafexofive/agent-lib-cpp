@@ -4,10 +4,11 @@
 // =============================================================================
 
 #include "src/protocol/parser.hpp"
-#include <iostream>
+
 #include <cassert>
-#include <vector>
+#include <iostream>
 #include <string>
+#include <vector>
 
 using namespace cortex::mk3::protocol;
 
@@ -41,10 +42,27 @@ struct TestHarness {
 
 static int passed = 0, failed = 0;
 
-#define TEST(name) do { std::cout << "  " << name << "... "; } while(0)
-#define PASS() do { passed++; std::cout << "PASS\n"; } while(0)
-#define FAIL(msg) do { failed++; std::cout << "FAIL: " << msg << "\n"; } while(0)
-#define CHECK(cond, msg) do { if (!(cond)) { FAIL(msg); return; } } while(0)
+#define TEST(name)                           \
+    do {                                     \
+        std::cout << "  " << name << "... "; \
+    } while (0)
+#define PASS()                 \
+    do {                       \
+        passed++;              \
+        std::cout << "PASS\n"; \
+    } while (0)
+#define FAIL(msg)                             \
+    do {                                      \
+        failed++;                             \
+        std::cout << "FAIL: " << msg << "\n"; \
+    } while (0)
+#define CHECK(cond, msg) \
+    do {                 \
+        if (!(cond)) {   \
+            FAIL(msg);   \
+            return;      \
+        }                \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════════════════
 // Test 1: Simple text passthrough (no tags)
@@ -125,10 +143,14 @@ void test_response_literal_protocol_tags() {
 
     CHECK(h.responseFinal, "expected final=true despite literal tags");
     CHECK(h.actions.empty(), "literal <action> example must not dispatch");
-    CHECK(h.responseText.find("`<response>`") != std::string::npos, "should preserve literal response tag");
-    CHECK(h.responseText.find("`<action type=\"tool\">`") != std::string::npos, "should preserve literal action tag");
-    CHECK(h.responseText.find("`<response final=\"true\">ok</response>`") != std::string::npos, "should preserve literal closing response tag");
-    CHECK(h.responseText.find("`<result>`") != std::string::npos, "should preserve literal result tag");
+    CHECK(h.responseText.find("`<response>`") != std::string::npos,
+          "should preserve literal response tag");
+    CHECK(h.responseText.find("`<action type=\"tool\">`") != std::string::npos,
+          "should preserve literal action tag");
+    CHECK(h.responseText.find("`<response final=\"true\">ok</response>`") != std::string::npos,
+          "should preserve literal closing response tag");
+    CHECK(h.responseText.find("`<result>`") != std::string::npos,
+          "should preserve literal result tag");
     PASS();
 }
 
@@ -150,8 +172,10 @@ void test_action_single_token() {
     // Should have: ACTION_START event + ACTION_RESULT event
     bool hasStart = false, hasResult = false;
     for (auto& ev : h.events) {
-        if (ev.type == TokenEvent::ACTION_START) hasStart = true;
-        if (ev.type == TokenEvent::ACTION_RESULT) hasResult = true;
+        if (ev.type == TokenEvent::ACTION_START)
+            hasStart = true;
+        if (ev.type == TokenEvent::ACTION_RESULT)
+            hasResult = true;
     }
     CHECK(hasStart, "expected ACTION_START event");
     CHECK(hasResult, "expected ACTION_RESULT event");
@@ -188,8 +212,10 @@ void test_action_streaming() {
 
     bool hasStart = false, hasResult = false;
     for (auto& ev : h.events) {
-        if (ev.type == TokenEvent::ACTION_START) hasStart = true;
-        if (ev.type == TokenEvent::ACTION_RESULT) hasResult = true;
+        if (ev.type == TokenEvent::ACTION_START)
+            hasStart = true;
+        if (ev.type == TokenEvent::ACTION_RESULT)
+            hasResult = true;
     }
     CHECK(hasStart, "expected ACTION_START event");
     CHECK(hasResult, "expected ACTION_RESULT event");
@@ -208,12 +234,15 @@ void test_action_then_response() {
     Parser parser([&](const ParsedAction& a) { return h.executeAction(a); });
     parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
 
-    parser.feed("<action type=\"tool\" name=\"list\" id=\"s1\" mode=\"sync\">{\"path\":\".\"}</action>", false);
+    parser.feed(
+        "<action type=\"tool\" name=\"list\" id=\"s1\" mode=\"sync\">{\"path\":\".\"}</action>",
+        false);
     parser.feed("<response final=\"true\">Files listed.</response>", true);
 
     bool hasResult = false;
     for (auto& ev : h.events) {
-        if (ev.type == TokenEvent::ACTION_RESULT) hasResult = true;
+        if (ev.type == TokenEvent::ACTION_RESULT)
+            hasResult = true;
     }
     CHECK(hasResult, "expected ACTION_RESULT");
     CHECK(h.responseFinal, "expected final response");
@@ -234,7 +263,8 @@ void test_thought_tag() {
 
     bool hasThought = false;
     for (auto& ev : h.events) {
-        if (ev.type == TokenEvent::THOUGHT) hasThought = true;
+        if (ev.type == TokenEvent::THOUGHT)
+            hasThought = true;
     }
     CHECK(hasThought, "expected THOUGHT event");
     CHECK(h.responseText == "Here is the answer.", "response should not include thought");
@@ -251,12 +281,16 @@ void test_variable_resolution() {
     parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
 
     // First action produces a result with ID "step1"
-    parser.feed("<action type=\"tool\" name=\"exec\" id=\"step1\" mode=\"sync\">"
-                "{\"command\":\"echo hello\"}</action>", false);
+    parser.feed(
+        "<action type=\"tool\" name=\"exec\" id=\"step1\" mode=\"sync\">"
+        "{\"command\":\"echo hello\"}</action>",
+        false);
 
     // Second action references ${step1} — should be resolved
-    parser.feed("<action type=\"tool\" name=\"exec\" id=\"step2\" mode=\"sync\">"
-                "{\"command\":\"${step1.result}\"}</action>", true);
+    parser.feed(
+        "<action type=\"tool\" name=\"exec\" id=\"step2\" mode=\"sync\">"
+        "{\"command\":\"${step1.result}\"}</action>",
+        true);
 
     CHECK(parser.getResult("step1").isObject(), "step1 should have result");
     CHECK(parser.getResult("step2").isObject(), "step2 should have result");
@@ -273,16 +307,20 @@ void test_text_between_tags() {
     parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
 
     parser.feed("Before ", false);
-    parser.feed("<action type=\"tool\" name=\"list\" id=\"s1\" mode=\"sync\">{\"path\":\".\"}</action>", false);
+    parser.feed(
+        "<action type=\"tool\" name=\"list\" id=\"s1\" mode=\"sync\">{\"path\":\".\"}</action>",
+        false);
     parser.feed(" between ", false);
     parser.feed("<response final=\"true\">After</response>", true);
 
     bool hasText = false, hasResponse = false;
     for (auto& ev : h.events) {
         if (ev.type == TokenEvent::TEXT) {
-            if (ev.content.find("Before") != std::string::npos) hasText = true;
+            if (ev.content.find("Before") != std::string::npos)
+                hasText = true;
         }
-        if (ev.type == TokenEvent::RESPONSE) hasResponse = true;
+        if (ev.type == TokenEvent::RESPONSE)
+            hasResponse = true;
     }
     CHECK(hasText, "expected TEXT events between tags");
     CHECK(hasResponse, "expected RESPONSE event");
@@ -301,8 +339,12 @@ void test_PP01_nested_action_substring() {
     TestHarness h;
     std::string snippetCaptured;
     Parser parser([&](const ParsedAction& a) -> Json::Value {
-        if (a.params.isMember("snippet")) snippetCaptured = a.params["snippet"].asString();
-        Json::Value r; r["success"] = true; r["id"] = a.id; return r;
+        if (a.params.isMember("snippet"))
+            snippetCaptured = a.params["snippet"].asString();
+        Json::Value r;
+        r["success"] = true;
+        r["id"] = a.id;
+        return r;
     });
     parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
 
@@ -313,8 +355,9 @@ void test_PP01_nested_action_substring() {
         true);
 
     CHECK(!snippetCaptured.empty(), "snippet should be parsed from JSON body");
-    CHECK(snippetCaptured == "<action></action>",
-          (std::string("snippet truncated by inner closer: got '") + snippetCaptured + "'").c_str());
+    CHECK(
+        snippetCaptured == "<action></action>",
+        (std::string("snippet truncated by inner closer: got '") + snippetCaptured + "'").c_str());
     PASS();
 }
 
@@ -339,15 +382,18 @@ void test_PP02_closing_tag_boundary() {
 // ═══════════════════════════════════════════════════════════════════════
 // PP03 — injectResult must not self-deadlock. Run with a timeout watchdog.
 // ═══════════════════════════════════════════════════════════════════════
-#include <future>
-#include <chrono>
-#include <thread>
 #include <atomic>
+#include <chrono>
+#include <future>
+#include <thread>
 void test_PP03_injectResult_no_deadlock() {
     TEST("PP03 injectResult does not deadlock");
     // Heap-allocate parser so we can leak it cleanly if the worker deadlocks.
     auto parser = std::make_shared<Parser>([](const ParsedAction& a) -> Json::Value {
-        Json::Value r; r["success"] = true; r["id"] = a.id; return r;
+        Json::Value r;
+        r["success"] = true;
+        r["id"] = a.id;
+        return r;
     });
 
     // Seed a pending action so dispatchPending() walks the queue.
@@ -358,7 +404,8 @@ void test_PP03_injectResult_no_deadlock() {
 
     std::atomic<bool> done{false};
     std::thread worker([parser, &done] {
-        Json::Value v; v["success"] = true;
+        Json::Value v;
+        v["success"] = true;
         parser->injectResult("injected", v);
         done.store(true);
     });
@@ -368,7 +415,7 @@ void test_PP03_injectResult_no_deadlock() {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
     if (!done.load()) {
-        worker.detach();   // leak; otherwise we'd block program exit
+        worker.detach();  // leak; otherwise we'd block program exit
         FAIL("injectResult deadlocked (timed out after 2s)");
         return;
     }
@@ -385,15 +432,17 @@ void test_PP04_async_race_smoke() {
     std::atomic<int> count{0};
     Parser parser([&](const ParsedAction& a) -> Json::Value {
         count++;
-        Json::Value r; r["success"] = true; r["id"] = a.id;
+        Json::Value r;
+        r["success"] = true;
+        r["id"] = a.id;
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
         return r;
     });
 
     for (int i = 0; i < 50; ++i) {
         std::string id = "a" + std::to_string(i);
-        std::string xml = "<action type=\"tool\" name=\"x\" id=\"" + id +
-                          "\" mode=\"async\">{}</action>";
+        std::string xml =
+            "<action type=\"tool\" name=\"x\" id=\"" + id + "\" mode=\"async\">{}</action>";
         parser.feed(xml, false);
     }
     parser.feed("", true);
@@ -412,8 +461,12 @@ void test_PP05_unresolved_refs_preserved() {
     TEST("PP05 unresolved refs preserved");
     std::string captured;
     Parser parser([&](const ParsedAction& a) -> Json::Value {
-        if (a.params.isMember("sources")) captured = a.params["sources"].asString();
-        Json::Value r; r["success"] = true; r["id"] = a.id; return r;
+        if (a.params.isMember("sources"))
+            captured = a.params["sources"].asString();
+        Json::Value r;
+        r["success"] = true;
+        r["id"] = a.id;
+        return r;
     });
 
     parser.feed(
@@ -436,7 +489,10 @@ void test_PP06_action_attrs_and_text_body() {
     Parser parser([&](const ParsedAction& a) { return h.executeAction(a); });
     parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
 
-    parser.feed("<action type=\"tool\" name=\"simple_fs_write\" id=\"w1\" path=\"tmp_2.py\" append=\"false\" offset=\"1\" mode=\"sync\">hello world</action>", true);
+    parser.feed(
+        "<action type=\"tool\" name=\"simple_fs_write\" id=\"w1\" path=\"tmp_2.py\" "
+        "append=\"false\" offset=\"1\" mode=\"sync\">hello world</action>",
+        true);
 
     CHECK(!h.actions.empty(), "expected captured action");
     const auto& a = h.actions.front();
@@ -444,8 +500,10 @@ void test_PP06_action_attrs_and_text_body() {
     CHECK(a.id == "w1", "expected id w1");
     CHECK(a.params.isObject(), "expected attrs as params object");
     CHECK(a.params["path"].asString() == "tmp_2.py", "expected path attr in params");
-    CHECK(a.params["append"].isBool() && !a.params["append"].asBool(), "expected bool attr coercion");
-    CHECK(a.params["offset"].isInt() && a.params["offset"].asInt() == 1, "expected int attr coercion");
+    CHECK(a.params["append"].isBool() && !a.params["append"].asBool(),
+          "expected bool attr coercion");
+    CHECK(a.params["offset"].isInt() && a.params["offset"].asInt() == 1,
+          "expected int attr coercion");
     CHECK(a.content == "hello world", "expected text body in content");
     PASS();
 }

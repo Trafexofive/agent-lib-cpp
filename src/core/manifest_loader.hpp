@@ -3,21 +3,23 @@
 // Supports: sandbox mode, file imports, schema injection, config.yml overrides
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
-#include "../core/types.hpp"
+#include <json/json.h>
+
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <sstream>
+#include <string>
+#include <vector>
+
 #include "../core/agent.hpp"
+#include "../core/types.hpp"
 #include "../feeds/feed_engine.hpp"
+#include "../providers/factory.hpp"
 #include "../relics/builtin_relics.hpp"
 #include "../relics/docker_dispatcher.hpp"
 #include "../workflows/workflow_engine.hpp"
-#include "../providers/factory.hpp"
-#include <string>
-#include <vector>
-#include <map>
-#include <fstream>
-#include <sstream>
-#include <filesystem>
-#include <json/json.h>
-#include <iostream>
 #include "mini_yaml.hpp"
 
 namespace cortex {
@@ -29,18 +31,18 @@ namespace fs = std::filesystem;
 struct ToolSchema {
     std::string name;
     std::string description;
-    std::string inputSchema;   // JSON string
-    std::string outputSchema;  // JSON string
-    std::string examples;      // JSON string
-    std::string runtime;       // python3, builtin, etc.
-    std::string entrypoint;    // script path
-    std::string inputType = "json"; // action body mode: json | text
-    std::string textParam;     // where text body lands for text mode
+    std::string inputSchema;         // JSON string
+    std::string outputSchema;        // JSON string
+    std::string examples;            // JSON string
+    std::string runtime;             // python3, builtin, etc.
+    std::string entrypoint;          // script path
+    std::string inputType = "json";  // action body mode: json | text
+    std::string textParam;           // where text body lands for text mode
 };
 
 // ── Manifest loader ──
 class ManifestLoader {
-public:
+   public:
     // ML01: classify an import-list entry.
     //   - Names ending in .yml → path
     //   - Names starting with ./, ../, or / → path
@@ -49,10 +51,14 @@ public:
     // The legacy `name.find('/')` test broke `builtin/exec` because it routed
     // a documentation-style prefix into the path branch.
     static bool isPathImport(const std::string& raw) {
-        if (raw.empty()) return false;
-        if (raw.size() >= 4 && raw.substr(raw.size() - 4) == ".yml") return true;
-        if (raw[0] == '/') return true;
-        if (raw.size() >= 2 && raw[0] == '.' && (raw[1] == '/' || raw[1] == '.')) return true;
+        if (raw.empty())
+            return false;
+        if (raw.size() >= 4 && raw.substr(raw.size() - 4) == ".yml")
+            return true;
+        if (raw[0] == '/')
+            return true;
+        if (raw.size() >= 2 && raw[0] == '.' && (raw[1] == '/' || raw[1] == '.'))
+            return true;
         return false;
     }
 
@@ -60,8 +66,7 @@ public:
     // `builtin/exec` becomes the same as `exec`.
     static std::string stripBuiltinPrefix(const std::string& raw) {
         const std::string prefix = "builtin/";
-        if (raw.size() > prefix.size() &&
-            raw.compare(0, prefix.size(), prefix) == 0)
+        if (raw.size() > prefix.size() && raw.compare(0, prefix.size(), prefix) == 0)
             return raw.substr(prefix.size());
         return raw;
     }
@@ -70,11 +75,13 @@ public:
     static AgentConfig loadAgentConfig(const std::string& manifestPath) {
         AgentConfig cfg;
         auto yaml = readFile(manifestPath);
-        if (yaml.empty()) return cfg;
+        if (yaml.empty())
+            return cfg;
 
         auto root = ManifestYaml::parse(yaml);
         auto* kind = ManifestYaml::find(root, "kind");
-        if (!kind || kind->value != "Agent") return cfg;
+        if (!kind || kind->value != "Agent")
+            return cfg;
 
         cfg.name = ManifestYaml::get(root, "name", "agent");
         cfg.version = ManifestYaml::get(root, "version", "1.0");
@@ -90,17 +97,23 @@ public:
                 auto* params = ManifestYaml::find(*primary, "parameters");
                 if (params) {
                     std::string temp = ManifestYaml::get(*params, "temperature");
-                    if (!temp.empty()) cfg.temperature = std::stod(temp);
+                    if (!temp.empty())
+                        cfg.temperature = std::stod(temp);
                     std::string mt = ManifestYaml::get(*params, "max_tokens");
-                    if (!mt.empty()) cfg.maxTokens = std::stoi(mt);
+                    if (!mt.empty())
+                        cfg.maxTokens = std::stoi(mt);
                     std::string tp = ManifestYaml::get(*params, "top_p");
-                    if (!tp.empty()) cfg.topP = std::stod(tp);
+                    if (!tp.empty())
+                        cfg.topP = std::stod(tp);
                     std::string tk = ManifestYaml::get(*params, "top_k");
-                    if (!tk.empty()) cfg.topK = std::stoi(tk);
+                    if (!tk.empty())
+                        cfg.topK = std::stoi(tk);
                     std::string pp = ManifestYaml::get(*params, "presence_penalty");
-                    if (!pp.empty()) cfg.presencePenalty = std::stod(pp);
+                    if (!pp.empty())
+                        cfg.presencePenalty = std::stod(pp);
                     std::string fp = ManifestYaml::get(*params, "frequency_penalty");
-                    if (!fp.empty()) cfg.frequencyPenalty = std::stod(fp);
+                    if (!fp.empty())
+                        cfg.frequencyPenalty = std::stod(fp);
                 }
             }
             auto* fallback = ManifestYaml::find(*engine, "fallback");
@@ -124,13 +137,16 @@ public:
         auto* runtime = ManifestYaml::find(root, "runtime");
         if (runtime) {
             std::string ic = ManifestYaml::get(*runtime, "max_iterations");
-            if (!ic.empty()) cfg.iterationCap = std::stoi(ic);
+            if (!ic.empty())
+                cfg.iterationCap = std::stoi(ic);
             std::string hc = ManifestYaml::get(*runtime, "history_cap");
-            if (!hc.empty()) cfg.historyCap = std::stoi(hc);
+            if (!hc.empty())
+                cfg.historyCap = std::stoi(hc);
             auto* subagents = ManifestYaml::find(*runtime, "subagents");
             if (subagents) {
                 std::string persistence = ManifestYaml::get(*subagents, "persistence");
-                if (!persistence.empty()) cfg.subAgentPersistence = persistence;
+                if (!persistence.empty())
+                    cfg.subAgentPersistence = persistence;
             }
         }
 
@@ -139,11 +155,14 @@ public:
         auto* context = ManifestYaml::find(root, "context");
         if (context) {
             std::string ic = ManifestYaml::get(*context, "max_iterations");
-            if (!ic.empty()) cfg.iterationCap = std::stoi(ic);
+            if (!ic.empty())
+                cfg.iterationCap = std::stoi(ic);
             std::string hc = ManifestYaml::get(*context, "history_cap");
-            if (!hc.empty()) cfg.historyCap = std::stoi(hc);
+            if (!hc.empty())
+                cfg.historyCap = std::stoi(hc);
             std::string ats = ManifestYaml::get(*context, "action_timeout_sec");
-            if (!ats.empty()) cfg.actionTimeoutSec = std::stoi(ats);
+            if (!ats.empty())
+                cfg.actionTimeoutSec = std::stoi(ats);
         }
 
         // Sandbox
@@ -163,10 +182,12 @@ public:
     // Load tools from import list, resolve local paths, return loaded schemas
     static void loadFeeds(const std::string& manifestPath, Agent& agent) {
         auto yaml = readFile(manifestPath);
-        if (yaml.empty()) return;
+        if (yaml.empty())
+            return;
         auto root = ManifestYaml::parse(yaml);
         auto* importNode = ManifestYaml::find(root, "import");
-        if (!importNode) return;
+        if (!importNode)
+            return;
         auto feedNames = ManifestYaml::getList(*importNode, "feeds");
         for (auto& name : feedNames) {
             if (name.size() >= 2 && name.front() == '"' && name.back() == '"')
@@ -179,7 +200,8 @@ public:
                     continue;
                 }
                 auto mr = feeds::FeedEngine::instance().loadFeedManifest(feedPath.string());
-                if (mr.success && !mr.name.empty()) agent.addFeed(mr.name);
+                if (mr.success && !mr.name.empty())
+                    agent.addFeed(mr.name);
             } else {
                 agent.addFeed(stripBuiltinPrefix(name));
             }
@@ -188,10 +210,12 @@ public:
 
     static void loadRelics(const std::string& manifestPath, Agent& agent) {
         auto yaml = readFile(manifestPath);
-        if (yaml.empty()) return;
+        if (yaml.empty())
+            return;
         auto root = ManifestYaml::parse(yaml);
         auto* importNode = ManifestYaml::find(root, "import");
-        if (!importNode) return;
+        if (!importNode)
+            return;
         auto relicNames = ManifestYaml::getList(*importNode, "relics");
         for (auto& name : relicNames) {
             if (name.size() >= 2 && name.front() == '"' && name.back() == '"')
@@ -215,10 +239,12 @@ public:
 
     static void loadEnv(const std::string& manifestPath, AgentConfig& cfg) {
         auto yaml = readFile(manifestPath);
-        if (yaml.empty()) return;
+        if (yaml.empty())
+            return;
         auto root = ManifestYaml::parse(yaml);
         auto* importNode = ManifestYaml::find(root, "import");
-        if (!importNode) return;
+        if (!importNode)
+            return;
         auto envList = ManifestYaml::getList(*importNode, "env");
         for (auto& entry : envList) {
             if (entry.size() >= 2 && entry.front() == '"' && entry.back() == '"')
@@ -231,11 +257,13 @@ public:
 
     static std::vector<ToolSchema> loadTools(const std::string& manifestPath, Agent& agent) {
         auto yaml = readFile(manifestPath);
-        if (yaml.empty()) return {};
+        if (yaml.empty())
+            return {};
 
         auto root = ManifestYaml::parse(yaml);
         auto* importNode = ManifestYaml::find(root, "import");
-        if (!importNode) return {};
+        if (!importNode)
+            return {};
 
         auto toolNames = ManifestYaml::getList(*importNode, "tools");
         std::vector<ToolSchema> schemas;
@@ -291,13 +319,15 @@ public:
 
     // Load sub-agents from import list
     static void loadSubAgents(const std::string& manifestPath, Agent& agent,
-                               const std::string& providerName) {
+                              const std::string& providerName) {
         auto yaml = readFile(manifestPath);
-        if (yaml.empty()) return;
+        if (yaml.empty())
+            return;
 
         auto root = ManifestYaml::parse(yaml);
         auto* importNode = ManifestYaml::find(root, "import");
-        if (!importNode) return;
+        if (!importNode)
+            return;
 
         auto agentNames = ManifestYaml::getList(*importNode, "agents");
         for (auto& name : agentNames) {
@@ -333,14 +363,17 @@ public:
     // Load workflows from import section
     static std::string loadWorkflows(const std::string& manifestPath) {
         auto yaml = readFile(manifestPath);
-        if (yaml.empty()) return "";
+        if (yaml.empty())
+            return "";
 
         auto root = ManifestYaml::parse(yaml);
         auto* importNode = ManifestYaml::find(root, "import");
-        if (!importNode) return "";
+        if (!importNode)
+            return "";
 
         auto wfList = ManifestYaml::getList(*importNode, "workflows");
-        if (wfList.empty()) return "";
+        if (wfList.empty())
+            return "";
 
         std::ostringstream ss;
         for (auto& wfName : wfList) {
@@ -348,7 +381,8 @@ public:
             if (!fs::exists(wfPath)) {
                 // Try manifests/workflows/
                 wfPath = fs::path("manifests/workflows") / (wfName + ".yml");
-                if (!fs::exists(wfPath)) continue;
+                if (!fs::exists(wfPath))
+                    continue;
             }
             auto& wf = workflows::WorkflowEngine::instance().load(wfPath.string());
             if (wf.isValid()) {
@@ -361,11 +395,13 @@ public:
     // Load files from import section
     static std::vector<std::string> loadFiles(const std::string& manifestPath) {
         auto yaml = readFile(manifestPath);
-        if (yaml.empty()) return {};
+        if (yaml.empty())
+            return {};
 
         auto root = ManifestYaml::parse(yaml);
         auto* importNode = ManifestYaml::find(root, "import");
-        if (!importNode) return {};
+        if (!importNode)
+            return {};
 
         auto files = ManifestYaml::getList(*importNode, "files");
         std::vector<std::string> resolved;
@@ -382,34 +418,43 @@ public:
     // Load config.yml overrides
     static void loadConfigOverrides(const std::string& manifestPath, AgentConfig& cfg) {
         fs::path configPath = fs::path(manifestPath).parent_path() / "config.yml";
-        if (!fs::exists(configPath)) return;
+        if (!fs::exists(configPath))
+            return;
 
         auto yaml = readFile(configPath.string());
-        if (yaml.empty()) return;
+        if (yaml.empty())
+            return;
 
         auto root = ManifestYaml::parse(yaml);
         auto* runtime = ManifestYaml::find(root, "runtime");
         if (runtime) {
             std::string ic = ManifestYaml::get(*runtime, "max_iterations");
-            if (!ic.empty()) cfg.iterationCap = std::stoi(ic);
+            if (!ic.empty())
+                cfg.iterationCap = std::stoi(ic);
             std::string hc = ManifestYaml::get(*runtime, "history_cap");
-            if (!hc.empty()) cfg.historyCap = std::stoi(hc);
+            if (!hc.empty())
+                cfg.historyCap = std::stoi(hc);
         }
 
         auto* agentNode = ManifestYaml::find(root, "agent");
         if (agentNode) {
             std::string temp = ManifestYaml::get(*agentNode, "temperature");
-            if (!temp.empty()) cfg.temperature = std::stod(temp);
+            if (!temp.empty())
+                cfg.temperature = std::stod(temp);
             std::string mdl = ManifestYaml::get(*agentNode, "model");
-            if (!mdl.empty()) cfg.model = mdl;
+            if (!mdl.empty())
+                cfg.model = mdl;
             std::string prov = ManifestYaml::get(*agentNode, "provider");
-            if (!prov.empty()) cfg.provider = prov;
+            if (!prov.empty())
+                cfg.provider = prov;
         }
     }
 
     // Build tool schemas XML for prompt injection
-    static std::string toolSchemasToXml(const std::vector<ToolSchema>& schemas, int baseIndent = 8) {
-        if (schemas.empty()) return "";
+    static std::string toolSchemasToXml(const std::vector<ToolSchema>& schemas,
+                                        int baseIndent = 8) {
+        if (schemas.empty())
+            return "";
         std::ostringstream ss;
         std::string toolPad(baseIndent, ' ');
         std::string fieldPad(baseIndent + 4, ' ');
@@ -419,17 +464,25 @@ public:
                 ss << fieldPad << "<description>" << s.description << "</description>\n";
             if (s.inputType != "json" || !s.textParam.empty()) {
                 ss << fieldPad << "<input mode=\"" << s.inputType << "\"";
-                if (!s.textParam.empty()) ss << " text_param=\"" << s.textParam << "\"";
+                if (!s.textParam.empty())
+                    ss << " text_param=\"" << s.textParam << "\"";
                 ss << ">";
-                if (!s.textParam.empty()) ss << "Text action bodies are assigned to params." << s.textParam << ".";
+                if (!s.textParam.empty())
+                    ss << "Text action bodies are assigned to params." << s.textParam << ".";
                 ss << "</input>\n";
             }
             if (!s.inputSchema.empty())
-                ss << fieldPad << "<params>\n" << indentBlock(prettyJson(s.inputSchema), baseIndent + 8) << fieldPad << "</params>\n";
+                ss << fieldPad << "<params>\n"
+                   << indentBlock(prettyJson(s.inputSchema), baseIndent + 8) << fieldPad
+                   << "</params>\n";
             if (!s.outputSchema.empty())
-                ss << fieldPad << "<returns>\n" << indentBlock(prettyJson(s.outputSchema), baseIndent + 8) << fieldPad << "</returns>\n";
+                ss << fieldPad << "<returns>\n"
+                   << indentBlock(prettyJson(s.outputSchema), baseIndent + 8) << fieldPad
+                   << "</returns>\n";
             if (!s.examples.empty())
-                ss << fieldPad << "<examples>\n" << indentBlock(prettyJson(s.examples), baseIndent + 8) << fieldPad << "</examples>\n";
+                ss << fieldPad << "<examples>\n"
+                   << indentBlock(prettyJson(s.examples), baseIndent + 8) << fieldPad
+                   << "</examples>\n";
             ss << toolPad << "</tool>\n";
         }
         return ss.str();
@@ -441,7 +494,8 @@ public:
         std::string line;
         std::string pad(spaces, ' ');
         while (std::getline(in, line)) {
-            if (!line.empty()) out << pad << line;
+            if (!line.empty())
+                out << pad << line;
             out << '\n';
         }
         return out.str();
@@ -458,25 +512,29 @@ public:
         const std::string childPad((depth + 1) * 4, ' ');
         if (v.isObject()) {
             auto keys = v.getMemberNames();
-            if (keys.empty()) return "{}";
+            if (keys.empty())
+                return "{}";
             std::ostringstream out;
             out << "{\n";
             for (size_t i = 0; i < keys.size(); ++i) {
                 out << childPad << jsonScalarToString(Json::Value(keys[i])) << ": "
                     << prettyJsonValue(v[keys[i]], depth + 1);
-                if (i + 1 < keys.size()) out << ",";
+                if (i + 1 < keys.size())
+                    out << ",";
                 out << "\n";
             }
             out << pad << "}";
             return out.str();
         }
         if (v.isArray()) {
-            if (v.empty()) return "[]";
+            if (v.empty())
+                return "[]";
             std::ostringstream out;
             out << "[\n";
             for (Json::ArrayIndex i = 0; i < v.size(); ++i) {
                 out << childPad << prettyJsonValue(v[i], depth + 1);
-                if (i + 1 < v.size()) out << ",";
+                if (i + 1 < v.size())
+                    out << ",";
                 out << "\n";
             }
             out << pad << "]";
@@ -502,29 +560,34 @@ public:
         return loadToolSchema(toolYmlPath);
     }
 
-    struct RelicConfig { std::string baseUrl; };
+    struct RelicConfig {
+        std::string baseUrl;
+    };
     static RelicConfig loadRelicConfig(const std::string& path) {
         RelicConfig rc;
         auto yaml = readFile(path);
-        if (yaml.empty()) return rc;
+        if (yaml.empty())
+            return rc;
         auto root = ManifestYaml::parse(yaml);
         auto* iface = ManifestYaml::find(root, "interface");
-        if (iface) rc.baseUrl = ManifestYaml::get(*iface, "base_url");
+        if (iface)
+            rc.baseUrl = ManifestYaml::get(*iface, "base_url");
         return rc;
     }
 
-private:
+   private:
     static std::string readFile(const std::string& path) {
         std::ifstream f(path);
-        if (!f) return "";
-        return std::string((std::istreambuf_iterator<char>(f)),
-                            std::istreambuf_iterator<char>());
+        if (!f)
+            return "";
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     }
 
     static ToolSchema loadToolSchema(const std::string& toolYmlPath) {
         ToolSchema s;
         auto yaml = readFile(toolYmlPath);
-        if (yaml.empty()) return s;
+        if (yaml.empty())
+            return s;
 
         auto root = ManifestYaml::parse(yaml);
         s.name = ManifestYaml::get(root, "name");
@@ -532,10 +595,12 @@ private:
 
         // Parse input/output schemas as JSON strings
         auto* inputNode = ManifestYaml::find(root, "input_schema");
-        if (inputNode) s.inputSchema = nodeToJson(*inputNode);
+        if (inputNode)
+            s.inputSchema = nodeToJson(*inputNode);
 
         auto* outputNode = ManifestYaml::find(root, "output_schema");
-        if (outputNode) s.outputSchema = nodeToJson(*outputNode);
+        if (outputNode)
+            s.outputSchema = nodeToJson(*outputNode);
 
         auto* impl = ManifestYaml::find(root, "implementation");
         if (impl) {
@@ -545,9 +610,12 @@ private:
             s.textParam = ManifestYaml::get(*impl, "text_param", s.textParam);
         }
         // Fallback: some tool manifests use top-level runtime/entrypoint
-        if (s.runtime.empty()) s.runtime = ManifestYaml::get(root, "runtime");
-        if (s.entrypoint.empty()) s.entrypoint = ManifestYaml::get(root, "entrypoint");
-        s.inputType = ManifestYaml::get(root, "input_type", s.inputType.empty() ? "json" : s.inputType);
+        if (s.runtime.empty())
+            s.runtime = ManifestYaml::get(root, "runtime");
+        if (s.entrypoint.empty())
+            s.entrypoint = ManifestYaml::get(root, "entrypoint");
+        s.inputType =
+            ManifestYaml::get(root, "input_type", s.inputType.empty() ? "json" : s.inputType);
         s.textParam = ManifestYaml::get(root, "text_param", s.textParam);
 
         // Examples
@@ -558,7 +626,8 @@ private:
                 Json::Value entry;
                 entry["description"] = ManifestYaml::get(ex, "description");
                 auto* params = ManifestYaml::find(ex, "params");
-                if (params) entry["params"] = nodeToJsonValue(*params);
+                if (params)
+                    entry["params"] = nodeToJsonValue(*params);
                 examples.append(entry);
             }
             Json::StreamWriterBuilder w;
@@ -577,7 +646,8 @@ private:
             "config/agents/*/tools/" + name + "/tool.yml",
         };
         for (auto& p : searchPaths) {
-            if (fs::exists(p)) return loadToolSchema(p);
+            if (fs::exists(p))
+                return loadToolSchema(p);
         }
         return {};
     }
@@ -594,18 +664,29 @@ private:
             // Leaf value
             std::string v = node.value.empty() ? node.key : node.value;
             // Try as bool
-            if (v == "true") return true;
-            if (v == "false") return false;
+            if (v == "true")
+                return true;
+            if (v == "false")
+                return false;
             // Try as number
-            try { return std::stoi(v); } catch (...) {}
-            try { return std::stod(v); } catch (...) {}
+            try {
+                return std::stoi(v);
+            } catch (...) {
+            }
+            try {
+                return std::stod(v);
+            } catch (...) {
+            }
             return v;
         }
 
         // Check if it's an object or array
         bool isObj = false;
         for (auto& c : node.children) {
-            if (!c.key.empty()) { isObj = true; break; }
+            if (!c.key.empty()) {
+                isObj = true;
+                break;
+            }
         }
 
         if (isObj) {
@@ -626,5 +707,5 @@ private:
     }
 };
 
-} // namespace mk3
-} // namespace cortex
+}  // namespace mk3
+}  // namespace cortex

@@ -5,15 +5,16 @@
 // Builtin relics: delegated to RelicDispatcher (filesystem-based)
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
-#include <string>
-#include <map>
-#include <vector>
+#include <curl/curl.h>
+#include <json/json.h>
+
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
-#include <json/json.h>
-#include <curl/curl.h>
+#include <string>
+#include <vector>
 
 namespace cortex {
 namespace mk3 {
@@ -24,13 +25,13 @@ namespace fs = std::filesystem;
 // ── Relic definition (loaded from relic.yml) ──
 struct DockerRelicDef {
     std::string name;
-    std::string mode;      // managed | remote | builtin
+    std::string mode;  // managed | remote | builtin
     std::string summary;
     int port = 0;
-    std::string composeDir; // path to directory with docker-compose.yml
-    std::string composeFile; // optional explicit compose file
-    std::string envFile; // optional --env-file for compose
-    std::string projectName; // optional docker compose project name
+    std::string composeDir;   // path to directory with docker-compose.yml
+    std::string composeFile;  // optional explicit compose file
+    std::string envFile;      // optional --env-file for compose
+    std::string projectName;  // optional docker compose project name
     std::string healthPath = "/health";
     std::vector<std::string> endpoints;
 };
@@ -38,14 +39,14 @@ struct DockerRelicDef {
 // ── Dispatch result ──
 struct DockerRelicResult {
     bool success = false;
-    std::string data;   // JSON response body
+    std::string data;  // JSON response body
     std::string error;
     int httpStatus = 0;
 };
 
 // ── Docker Relic Dispatcher ──
 class DockerRelicDispatcher {
-public:
+   public:
     static DockerRelicDispatcher& instance() {
         static DockerRelicDispatcher d;
         return d;
@@ -55,7 +56,8 @@ public:
     bool loadRelic(const std::string& relicDir) {
         fs::path manifestPath = fs::path(relicDir) / "relic.yml";
         std::ifstream f(manifestPath);
-        if (!f) return false;
+        if (!f)
+            return false;
 
         DockerRelicDef def;
         def.composeDir = relicDir;
@@ -64,27 +66,38 @@ public:
         while (std::getline(f, line)) {
             // Simple YAML key: value parser
             size_t colon = line.find(": ");
-            if (colon == std::string::npos) continue;
+            if (colon == std::string::npos)
+                continue;
             std::string key = line.substr(0, colon);
             // trim left
             size_t start = key.find_first_not_of(" \t");
-            if (start != std::string::npos) key = key.substr(start);
+            if (start != std::string::npos)
+                key = key.substr(start);
             std::string val = line.substr(colon + 2);
             // trim quotes
             if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
                 val = val.substr(1, val.size() - 2);
 
-            if (key == "name") def.name = val;
-            else if (key == "mode") def.mode = val;
-            else if (key == "summary") def.summary = val;
-            else if (key == "port") def.port = std::stoi(val);
-            else if (key == "compose_file") def.composeFile = val;
-            else if (key == "env_file") def.envFile = val;
-            else if (key == "project_name") def.projectName = val;
-            else if (key == "health_path") def.healthPath = val;
+            if (key == "name")
+                def.name = val;
+            else if (key == "mode")
+                def.mode = val;
+            else if (key == "summary")
+                def.summary = val;
+            else if (key == "port")
+                def.port = std::stoi(val);
+            else if (key == "compose_file")
+                def.composeFile = val;
+            else if (key == "env_file")
+                def.envFile = val;
+            else if (key == "project_name")
+                def.projectName = val;
+            else if (key == "health_path")
+                def.healthPath = val;
         }
 
-        if (def.name.empty() || def.mode.empty()) return false;
+        if (def.name.empty() || def.mode.empty())
+            return false;
 
         // Auto-detect endpoints from comments or app directory
         if (def.port == 0) {
@@ -98,8 +111,11 @@ public:
                     size_t pp = cline.rfind(":");
                     if (pp != std::string::npos && p != std::string::npos) {
                         std::string portStr = cline.substr(pp + 1, p - pp - 1);
-                        try { def.port = std::stoi(portStr); break; }
-                        catch (...) {}
+                        try {
+                            def.port = std::stoi(portStr);
+                            break;
+                        } catch (...) {
+                        }
                     }
                 }
             }
@@ -111,7 +127,8 @@ public:
 
     // Load all relics from a manifests/relics/ directory
     void loadAllFrom(const std::string& relicsDir) {
-        if (!fs::exists(relicsDir)) return;
+        if (!fs::exists(relicsDir))
+            return;
         for (auto& entry : fs::directory_iterator(relicsDir)) {
             if (entry.is_directory()) {
                 loadRelic(entry.path().string());
@@ -120,9 +137,8 @@ public:
     }
 
     // Dispatch a relic action
-    DockerRelicResult dispatch(const std::string& relicName,
-                                const std::string& endpoint,
-                                const Json::Value& params) {
+    DockerRelicResult dispatch(const std::string& relicName, const std::string& endpoint,
+                               const Json::Value& params) {
         DockerRelicResult result;
         auto it = relics_.find(relicName);
         if (it == relics_.end()) {
@@ -143,7 +159,7 @@ public:
 
         // Remote relics: direct HTTP call
         if (def.mode == "remote") {
-            std::string url = endpoint; // endpoint IS the URL for remote relics
+            std::string url = endpoint;  // endpoint IS the URL for remote relics
             return httpCall(url, params);
         }
 
@@ -154,8 +170,7 @@ public:
                 return result;
             }
 
-            std::string url = "http://localhost:" + std::to_string(def.port)
-                            + "/" + endpoint;
+            std::string url = "http://localhost:" + std::to_string(def.port) + "/" + endpoint;
             return httpCall(url, params);
         }
 
@@ -167,9 +182,9 @@ public:
     std::map<std::string, bool> healthCheckAll() {
         std::map<std::string, bool> status;
         for (auto& [name, def] : relics_) {
-            if (def.mode != "managed") continue;
-            std::string url = "http://localhost:" + std::to_string(def.port)
-                            + def.healthPath;
+            if (def.mode != "managed")
+                continue;
+            std::string url = "http://localhost:" + std::to_string(def.port) + def.healthPath;
             auto r = httpCall(url, Json::Value());
             status[name] = r.success;
         }
@@ -179,7 +194,8 @@ public:
     // List loaded relics
     std::vector<std::string> listRelics() const {
         std::vector<std::string> names;
-        for (auto& [name, _] : relics_) names.push_back(name);
+        for (auto& [name, _] : relics_)
+            names.push_back(name);
         return names;
     }
 
@@ -188,14 +204,16 @@ public:
         return (it != relics_.end()) ? &it->second : nullptr;
     }
 
-private:
+   private:
     std::map<std::string, DockerRelicDef> relics_;
 
     static std::string shellQuote(const std::string& s) {
         std::string out = "'";
         for (char c : s) {
-            if (c == '\'') out += "'\"'\"'";
-            else out.push_back(c);
+            if (c == '\'')
+                out += "'\"'\"'";
+            else
+                out.push_back(c);
         }
         out.push_back('\'');
         return out;
@@ -204,47 +222,44 @@ private:
     // Ensure Docker container is running for a managed relic
     bool ensureContainerUp(const DockerRelicDef& def) {
         // Check if already running via health endpoint
-        std::string healthUrl = "http://localhost:" + std::to_string(def.port)
-                               + def.healthPath;
+        std::string healthUrl = "http://localhost:" + std::to_string(def.port) + def.healthPath;
         auto r = httpCall(healthUrl, Json::Value());
-        if (r.success) return true;
+        if (r.success)
+            return true;
 
         // Container not running — start it via docker compose/docker-compose
         std::string composeCmd = "docker compose";
-        std::string projectArg = def.projectName.empty()
-                               ? ""
-                               : " --project-name " + shellQuote(def.projectName);
-        std::string fileArg = def.composeFile.empty()
-                            ? ""
-                            : " -f " + shellQuote(def.composeFile);
-        std::string envArg = def.envFile.empty()
-                           ? ""
-                           : " --env-file " + shellQuote(def.envFile);
-        std::string cmd = "cd " + shellQuote(def.composeDir)
-                        + " && " + composeCmd + projectArg + envArg + fileArg
-                        + " up -d 2>&1";
+        std::string projectArg =
+            def.projectName.empty() ? "" : " --project-name " + shellQuote(def.projectName);
+        std::string fileArg = def.composeFile.empty() ? "" : " -f " + shellQuote(def.composeFile);
+        std::string envArg = def.envFile.empty() ? "" : " --env-file " + shellQuote(def.envFile);
+        std::string cmd = "cd " + shellQuote(def.composeDir) + " && " + composeCmd + projectArg +
+                          envArg + fileArg + " up -d 2>&1";
         FILE* p = popen(cmd.c_str(), "r");
-        if (!p) return false;
+        if (!p)
+            return false;
 
         char buf[1024];
         std::string output;
-        while (fgets(buf, sizeof(buf), p)) output += buf;
+        while (fgets(buf, sizeof(buf), p))
+            output += buf;
         int rc = pclose(p);
 
-        if (rc != 0) return false;
+        if (rc != 0)
+            return false;
 
         // Wait for health check (retry up to 10 times, 500ms apart)
         for (int i = 0; i < 10; i++) {
             usleep(500000);
             auto r = httpCall(healthUrl, Json::Value());
-            if (r.success) return true;
+            if (r.success)
+                return true;
         }
         return false;
     }
 
     // HTTP call helper
-    static DockerRelicResult httpCall(const std::string& url,
-                                       const Json::Value& body) {
+    static DockerRelicResult httpCall(const std::string& url, const Json::Value& body) {
         DockerRelicResult result;
 
         CURL* curl = curl_easy_init();
@@ -295,6 +310,6 @@ private:
     }
 };
 
-} // namespace relics
-} // namespace mk3
-} // namespace cortex
+}  // namespace relics
+}  // namespace mk3
+}  // namespace cortex

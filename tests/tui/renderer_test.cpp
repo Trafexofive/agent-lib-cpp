@@ -1,5 +1,6 @@
 // tests/tui/renderer_test.cpp — quick smoke test for TuiRenderer
 #include "../../src/tui/renderer.hpp"
+
 #include <cassert>
 #include <iostream>
 using namespace cortex::mk3::tui;
@@ -7,8 +8,11 @@ using namespace cortex::mk3::tui;
 int main() {
     int failures = 0;
     auto check = [&](bool c, const char* msg) {
-        if (!c) { std::cerr << "FAIL: " << msg << "\n"; failures++; }
-        else std::cout << "  OK: " << msg << "\n";
+        if (!c) {
+            std::cerr << "FAIL: " << msg << "\n";
+            failures++;
+        } else
+            std::cout << "  OK: " << msg << "\n";
     };
 
     std::cout << "═══ TuiRenderer Smoke ═══\n\n";
@@ -21,7 +25,8 @@ int main() {
     r.setResponse("Hello world");
     auto lines = r.render();
     check(!lines.empty(), "FULL: response produces lines");
-    if (!lines.empty()) check(lines[0].find("Hello") != std::string::npos, "FULL: response text visible");
+    if (!lines.empty())
+        check(lines[0].find("Hello") != std::string::npos, "FULL: response text visible");
 
     // SEMI mode
     r.setMode(RenderMode::SEMI);
@@ -50,7 +55,8 @@ int main() {
     check(lines.size() >= 3, "SEMI with actions: >= 3 lines");
     if (lines.size() >= 3) {
         check(lines[0].find("│") != std::string::npos, "SEMI: line 0 has separator");
-        check(lines[1].find("3 files") != std::string::npos || lines[2].find("3 files") != std::string::npos,
+        check(lines[1].find("3 files") != std::string::npos ||
+                  lines[2].find("3 files") != std::string::npos,
               "SEMI: result visible");
     }
 
@@ -58,7 +64,8 @@ int main() {
     r.setMode(RenderMode::RAW);
     lines = r.render();
     check(lines.size() >= 1, "RAW: produces lines");
-    check(lines[0] == "<action type=\"tool\" name=\"list\" id=\"ls1\">...</action>", "RAW: raw stream shown");
+    check(lines[0] == "<action type=\"tool\" name=\"list\" id=\"ls1\">...</action>",
+          "RAW: raw stream shown");
 
     // Mode cycle
     r.cycleMode();

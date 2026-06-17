@@ -1,5 +1,6 @@
 // tests/tui/history_test.cpp — InputHistory tests
 #include "../../src/tui/history.hpp"
+
 #include <cassert>
 #include <iostream>
 using namespace cortex::mk3::tui;
@@ -7,8 +8,11 @@ using namespace cortex::mk3::tui;
 int main() {
     int failures = 0;
     auto check = [&](bool c, const char* m) {
-        if (!c) { std::cerr << "FAIL: " << m << "\n"; failures++; }
-        else std::cout << "  OK: " << m << "\n";
+        if (!c) {
+            std::cerr << "FAIL: " << m << "\n";
+            failures++;
+        } else
+            std::cout << "  OK: " << m << "\n";
     };
 
     std::cout << "═══ InputHistory ═══\n\n";
@@ -44,6 +48,7 @@ int main() {
     check(h2.up("e") == "cmd3", "load + up → cmd3");
     check(h2.up("") == "cmd2", "load up → cmd2");
 
-    std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED") << " (" << failures << " fails) ═══\n";
+    std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED") << " (" << failures
+              << " fails) ═══\n";
     return failures;
 }

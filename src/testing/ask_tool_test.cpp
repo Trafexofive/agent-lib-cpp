@@ -1,17 +1,24 @@
 // =============================================================================
 // ask_tool built-in tool test
 // =============================================================================
+#include <json/json.h>
+
 #include <iostream>
 #include <sstream>
-#include <json/json.h>
+
 #include "../tools/registry.hpp"
 
 int main() {
     std::cout << "=== ask_tool built-in tool test ===\n";
     int passed = 0, failed = 0;
     auto check = [&](bool c, const std::string& n) {
-        if (c) { passed++; std::cout << "  PASS: " << n << "\n"; }
-        else   { failed++; std::cout << "  FAIL: " << n << "\n"; }
+        if (c) {
+            passed++;
+            std::cout << "  PASS: " << n << "\n";
+        } else {
+            failed++;
+            std::cout << "  FAIL: " << n << "\n";
+        }
     };
 
     cortex::mk3::tools::registerDefaults();

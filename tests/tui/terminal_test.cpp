@@ -1,6 +1,7 @@
 // tests/tui/terminal_test.cpp — T1: Terminal ANSI escape sequence tests
 
 #include "../../src/tui/terminal.hpp"
+
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -10,8 +11,12 @@ using namespace cortex::mk3::tui;
 int main() {
     int failures = 0;
     auto check = [&](bool cond, const std::string& test) {
-        if (!cond) { std::cerr << "FAIL: " << test << "\n"; failures++; }
-        else { std::cout << "  OK: " << test << "\n"; }
+        if (!cond) {
+            std::cerr << "FAIL: " << test << "\n";
+            failures++;
+        } else {
+            std::cout << "  OK: " << test << "\n";
+        }
     };
 
     std::cout << "═══ Terminal ANSI Tests ═══\n\n";
@@ -82,7 +87,7 @@ int main() {
         check(!s.empty() && s.find("999") != std::string::npos, "moveTo large values");
     }
 
-    std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED")
-              << " (" << failures << " failures) ═══\n";
+    std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED") << " (" << failures
+              << " failures) ═══\n";
     return failures ? 1 : 0;
 }

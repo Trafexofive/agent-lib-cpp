@@ -1,8 +1,8 @@
 // =============================================================================
 // Feed manifest test runner
 // =============================================================================
-#include "../testing/feed_manifest_test.hpp"
 #include "../feeds/feed_engine.hpp"
+#include "../testing/feed_manifest_test.hpp"
 
 int main() {
     std::cout << "feed-manifest-test\n";

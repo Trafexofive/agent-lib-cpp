@@ -6,23 +6,41 @@
 // provider settings.
 // =============================================================================
 
-#include "src/core/agent.hpp"
-#include "src/core/manifest_loader.hpp"
-#include "src/providers/factory.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+
+#include "src/core/agent.hpp"
+#include "src/core/manifest_loader.hpp"
+#include "src/providers/factory.hpp"
 
 using namespace cortex::mk3;
 namespace fs = std::filesystem;
 
 static int passed = 0, failed = 0;
 
-#define TEST(name)  do { std::cout << "  " << name << "... "; } while (0)
-#define PASS()      do { passed++; std::cout << "PASS\n"; } while (0)
-#define FAIL(msg)   do { failed++; std::cout << "FAIL: " << msg << "\n"; return; } while (0)
-#define CHECK(cond, msg) do { if (!(cond)) { FAIL(msg); } } while (0)
+#define TEST(name)                           \
+    do {                                     \
+        std::cout << "  " << name << "... "; \
+    } while (0)
+#define PASS()                 \
+    do {                       \
+        passed++;              \
+        std::cout << "PASS\n"; \
+    } while (0)
+#define FAIL(msg)                             \
+    do {                                      \
+        failed++;                             \
+        std::cout << "FAIL: " << msg << "\n"; \
+        return;                               \
+    } while (0)
+#define CHECK(cond, msg) \
+    do {                 \
+        if (!(cond)) {   \
+            FAIL(msg);   \
+        }                \
+    } while (0)
 
 static void writeFile(const fs::path& p, const std::string& s) {
     fs::create_directories(p.parent_path());
@@ -127,8 +145,10 @@ import:
     CHECK(agent.hasTool("context_peek"), "context_peek not registered");
     CHECK(agent.hasTool("context_unpin"), "context_unpin not registered");
     CHECK(agent.hasTool("simple_fs_write"), "simple_fs_write not registered");
-    CHECK(xml.find("<tool name=\"context_pin\">") != std::string::npos, "context_pin schema missing from XML");
-    CHECK(xml.find("<tool name=\"simple_fs_write\">") != std::string::npos, "simple_fs_write schema missing from XML");
+    CHECK(xml.find("<tool name=\"context_pin\">") != std::string::npos,
+          "context_pin schema missing from XML");
+    CHECK(xml.find("<tool name=\"simple_fs_write\">") != std::string::npos,
+          "simple_fs_write schema missing from XML");
     CHECK(xml.find("<input mode=\"text\" text_param=\"content\">") != std::string::npos,
           "simple_fs_write text input metadata missing");
     PASS();

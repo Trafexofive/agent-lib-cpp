@@ -1,11 +1,13 @@
 // tests/tui/markdown_test.cpp — T3: Markdown renderer tests
 
 #include "../../src/tui/components/markdown.hpp"
-#include "../../src/tui/terminal.hpp"
+
 #include <cassert>
 #include <iostream>
 #include <string>
 #include <vector>
+
+#include "../../src/tui/terminal.hpp"
 
 using namespace cortex::mk3::tui;
 
@@ -19,7 +21,8 @@ static std::string stripAnsi(const std::string& s) {
             continue;
         }
         if (inEscape) {
-            if (s[i] == 'm') inEscape = false;
+            if (s[i] == 'm')
+                inEscape = false;
             continue;
         }
         out += s[i];
@@ -35,8 +38,12 @@ static bool containsAnsi(const std::string& s) {
 int main() {
     int failures = 0;
     auto check = [&](bool cond, const std::string& test) {
-        if (!cond) { std::cerr << "FAIL: " << test << "\n"; failures++; }
-        else { std::cout << "  OK: " << test << "\n"; }
+        if (!cond) {
+            std::cerr << "FAIL: " << test << "\n";
+            failures++;
+        } else {
+            std::cout << "  OK: " << test << "\n";
+        }
     };
 
     std::cout << "═══ Markdown Renderer Tests ═══\n\n";
@@ -103,11 +110,13 @@ int main() {
         md.setWidth(20);
         md.setText("This is a very long sentence that should wrap across multiple lines.");
         auto lines = md.render();
-        check(lines.size() > 1, "narrow width causes wrapping (got " + std::to_string(lines.size()) + " lines)");
+        check(lines.size() > 1,
+              "narrow width causes wrapping (got " + std::to_string(lines.size()) + " lines)");
         for (auto& line : lines) {
             std::string stripped = stripAnsi(line);
             // Lines should not exceed width (accounting for ANSI codes)
-            check(stripped.size() <= 20 + 2, "line within width: " + std::to_string(stripped.size()) + " <= 22");
+            check(stripped.size() <= 20 + 2,
+                  "line within width: " + std::to_string(stripped.size()) + " <= 22");
         }
     }
 
@@ -133,20 +142,23 @@ int main() {
     {
         md.setText("");
         auto lines = md.render();
-        check(lines.empty() || (lines.size() == 1 && lines[0].empty()), "empty input produces no output");
+        check(lines.empty() || (lines.size() == 1 && lines[0].empty()),
+              "empty input produces no output");
     }
 
     // ── T3.9: Very long single line (stress test) ──
     {
         md.setWidth(40);
         std::string longText;
-        for (int i = 0; i < 100; i++) longText += "word ";
+        for (int i = 0; i < 100; i++)
+            longText += "word ";
         md.setText(longText);
         auto lines = md.render();
-        check(lines.size() > 5, "long text produces many lines (got " + std::to_string(lines.size()) + ")");
+        check(lines.size() > 5,
+              "long text produces many lines (got " + std::to_string(lines.size()) + ")");
     }
 
-    std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED")
-              << " (" << failures << " failures) ═══\n";
+    std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED") << " (" << failures
+              << " failures) ═══\n";
     return failures ? 1 : 0;
 }

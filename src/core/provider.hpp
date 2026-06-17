@@ -4,14 +4,15 @@
 // Single clean interface. All providers implement this.
 // =============================================================================
 
-#include "types.hpp"
-#include <string>
 #include <memory>
+#include <string>
+
+#include "types.hpp"
 
 namespace cortex::mk3 {
 
 class ILlmProvider {
-public:
+   public:
     virtual ~ILlmProvider() = default;
 
     // Generate a complete response (non-streaming)
@@ -25,10 +26,14 @@ public:
     virtual void setTemperature(double t) = 0;
     virtual void setMaxTokens(int n) = 0;
     virtual void setTopP(double p) = 0;
-    virtual void setTopK(int k) {}
-    virtual void setPresencePenalty(double p) {}
-    virtual void setFrequencyPenalty(double p) {}
-    virtual void setQuietLogs(bool) {}
+    virtual void setTopK(int k) {
+    }
+    virtual void setPresencePenalty(double p) {
+    }
+    virtual void setFrequencyPenalty(double p) {
+    }
+    virtual void setQuietLogs(bool) {
+    }
 
     // Getters
     virtual std::string getModel() const = 0;
@@ -43,9 +48,11 @@ public:
         int contextWindow = 272000;
         bool isFree = false;
     };
-    virtual std::vector<ModelInfo> listModels() { return {}; }
+    virtual std::vector<ModelInfo> listModels() {
+        return {};
+    }
 };
 
 using LlmProviderPtr = std::shared_ptr<ILlmProvider>;
 
-} // namespace cortex::mk3
+}  // namespace cortex::mk3

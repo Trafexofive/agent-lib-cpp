@@ -3,8 +3,8 @@
 #pragma once
 
 #include <string>
-#include <vector>
 #include <unordered_map>
+#include <vector>
 
 namespace cortex::mk3::tui {
 
@@ -23,33 +23,36 @@ enum class KeyAction {
     KILL_TO_START,
     KILL_TO_END,
     YANK,
-    WORD_LEFT,    // Alt-B / ESC b
-    WORD_RIGHT,   // Alt-F / ESC f
+    WORD_LEFT,   // Alt-B / ESC b
+    WORD_RIGHT,  // Alt-F / ESC f
     TAB,
-    CANCEL,       // Ctrl-C
-    EXIT,         // Ctrl-D on empty
-    SCROLL_UP,    // scroll history up
-    SCROLL_DOWN,  // scroll history down
-    SEARCH,       // Ctrl-R history search
-    CLEAR_SCREEN, // Ctrl-L
-    PASTE,        // special
-    CHAR,         // regular character
+    CANCEL,        // Ctrl-C
+    EXIT,          // Ctrl-D on empty
+    SCROLL_UP,     // scroll history up
+    SCROLL_DOWN,   // scroll history down
+    SEARCH,        // Ctrl-R history search
+    CLEAR_SCREEN,  // Ctrl-L
+    PASTE,         // special
+    CHAR,          // regular character
 };
 
 struct KeyBinding {
-    std::string seq;       // escape sequence or raw byte
+    std::string seq;  // escape sequence or raw byte
     KeyAction action;
     // For CHAR: set from the byte; for others: this is the action
 };
 
 class KeyMap {
-public:
-    KeyMap() { initDefaults(); }
+   public:
+    KeyMap() {
+        initDefaults();
+    }
 
     // Look up a single byte or escape sequence → action
     KeyAction resolve(const std::string& seq, char& outChar) const {
         auto it = bindings_.find(seq);
-        if (it != bindings_.end()) return it->second;
+        if (it != bindings_.end())
+            return it->second;
         // Single printable byte → CHAR
         if (seq.size() == 1 && (unsigned char)seq[0] >= 32 && (unsigned char)seq[0] < 127) {
             outChar = seq[0];
@@ -63,7 +66,7 @@ public:
         bindings_[seq] = action;
     }
 
-private:
+   private:
     std::unordered_map<std::string, KeyAction> bindings_;
 
     void initDefaults() {
@@ -84,7 +87,7 @@ private:
         bindings_["\x19"] = KeyAction::YANK;           // Ctrl-Y
         bindings_["\x0c"] = KeyAction::CLEAR_SCREEN;   // Ctrl-L
         bindings_["\x09"] = KeyAction::TAB;            // Tab
-        bindings_["\r"]   = KeyAction::ENTER;          // Enter
+        bindings_["\r"] = KeyAction::ENTER;            // Enter
 
         // Arrow keys (ANSI — both CSI and SS3 variants)
         bindings_["\x1b[A"] = KeyAction::HISTORY_UP;
@@ -99,13 +102,17 @@ private:
         bindings_["\x1bOC"] = KeyAction::CURSOR_RIGHT;
         bindings_["\x1bOD"] = KeyAction::CURSOR_LEFT;
         // Scroll (Ctrl-O — reliable raw byte)
-        bindings_["\x0f"] = KeyAction::SCROLL_UP;    // Ctrl-O
+        bindings_["\x0f"] = KeyAction::SCROLL_UP;  // Ctrl-O
         // Page keys
-        bindings_["\x1b[5~"] = KeyAction::SCROLL_UP;   // PageUp
-        bindings_["\x1b[6~"] = KeyAction::SCROLL_DOWN; // PageDown
-        bindings_["\x12"] = KeyAction::SEARCH;        // Ctrl-R
-        bindings_["\x1b" "b"] = KeyAction::WORD_LEFT;   // Alt-B
-        bindings_["\x1b" "f"] = KeyAction::WORD_RIGHT;  // Alt-F
+        bindings_["\x1b[5~"] = KeyAction::SCROLL_UP;    // PageUp
+        bindings_["\x1b[6~"] = KeyAction::SCROLL_DOWN;  // PageDown
+        bindings_["\x12"] = KeyAction::SEARCH;          // Ctrl-R
+        bindings_
+            ["\x1b"
+             "b"] = KeyAction::WORD_LEFT;  // Alt-B
+        bindings_
+            ["\x1b"
+             "f"] = KeyAction::WORD_RIGHT;               // Alt-F
         bindings_["\x1b[1;5D"] = KeyAction::WORD_LEFT;   // Ctrl+Left
         bindings_["\x1b[1;5C"] = KeyAction::WORD_RIGHT;  // Ctrl+Right
 
@@ -115,4 +122,4 @@ private:
     }
 };
 
-} // namespace cortex::mk3::tui
+}  // namespace cortex::mk3::tui

@@ -1,0 +1,16 @@
+---
+BasedOnStyle: Google
+IndentWidth: 4
+UseTab: Never
+ColumnLimit: 100
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+NamespaceIndentation: None
+FixNamespaceComments: true
+SortIncludes: true
+PointerAlignment: Left
+ReferenceAlignment: Left
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 4
+...

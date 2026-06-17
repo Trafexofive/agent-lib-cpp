@@ -6,12 +6,13 @@
 // objects — it doesn't duplicate workflow state.
 // =============================================================================
 
+#include <json/json.h>
+
+#include <chrono>
+#include <functional>
+#include <map>
 #include <string>
 #include <vector>
-#include <map>
-#include <functional>
-#include <chrono>
-#include <json/json.h>
 
 namespace cortex::mk3::workflows {
 
@@ -22,17 +23,17 @@ struct WorkflowResult;
 // ── Workflow step ──
 struct WorkflowStep {
     std::string id;
-    std::string type;      // tool, agent, condition, loop, parallel, workflow
-    std::string name;      // display name
-    std::string tool;      // tool name (for type: tool)
-    std::string agent;     // agent name (for type: agent)
-    std::string condition; // for type: condition
-    std::string workflow;  // for type: workflow
+    std::string type;       // tool, agent, condition, loop, parallel, workflow
+    std::string name;       // display name
+    std::string tool;       // tool name (for type: tool)
+    std::string agent;      // agent name (for type: agent)
+    std::string condition;  // for type: condition
+    std::string workflow;   // for type: workflow
     Json::Value params;
     std::vector<WorkflowStep> thenSteps;
     std::vector<WorkflowStep> elseSteps;
-    std::vector<WorkflowStep> body;      // loop body
-    std::vector<WorkflowStep> steps;     // parallel/workflow steps
+    std::vector<WorkflowStep> body;   // loop body
+    std::vector<WorkflowStep> steps;  // parallel/workflow steps
     std::string onError = "abort";
     int maxRetries = 0;
     int timeout = 30;
@@ -66,12 +67,15 @@ struct WorkflowResult {
         j["success"] = success;
         j["workflow"] = workflowName;
         j["elapsed_ms"] = elapsedMs;
-        if (!error.empty()) j["error"] = error;
+        if (!error.empty())
+            j["error"] = error;
         Json::Value steps(Json::arrayValue);
-        for (const auto& s : stepIds) steps.append(s);
+        for (const auto& s : stepIds)
+            steps.append(s);
         j["steps"] = steps;
         Json::Value outs(Json::objectValue);
-        for (const auto& [id, val] : outputs) outs[id] = val;
+        for (const auto& [id, val] : outputs)
+            outs[id] = val;
         j["outputs"] = outs;
         return j;
     }
@@ -81,8 +85,10 @@ struct WorkflowResult {
 // Wired by the agent at dispatch time — the Workflow doesn't own tools/agents.
 struct WorkflowRuntime {
     using ToolFn = std::function<Json::Value(const std::string& name, const Json::Value& params)>;
-    using AgentFn = std::function<Json::Value(const std::string& name, const std::string& instruction)>;
-    using WorkflowFn = std::function<WorkflowResult(const std::string& name, const Json::Value& params)>;
+    using AgentFn =
+        std::function<Json::Value(const std::string& name, const std::string& instruction)>;
+    using WorkflowFn =
+        std::function<WorkflowResult(const std::string& name, const Json::Value& params)>;
 
     ToolFn executeTool;
     AgentFn executeAgent;
@@ -93,19 +99,19 @@ struct WorkflowRuntime {
 // Workflow — sovereign class for one workflow definition
 // ═══════════════════════════════════════════════════════════════════════════
 class Workflow {
-public:
+   public:
     // ── Constructors ──
 
     /// Default — invalid workflow
     Workflow() = default;
 
     /// Construct from a manifest
-    explicit Workflow(const WorkflowManifest& manifest)
-        : manifest_(manifest) {}
+    explicit Workflow(const WorkflowManifest& manifest) : manifest_(manifest) {
+    }
 
     /// Construct with name only (for dynamic workflows)
-    explicit Workflow(const std::string& name)
-        : manifest_({name, "1.0", {}, {}, {}, {}, {}, {}}) {}
+    explicit Workflow(const std::string& name) : manifest_({name, "1.0", {}, {}, {}, {}, {}, {}}) {
+    }
 
     /// Move constructor/assignment
     Workflow(Workflow&&) = default;
@@ -117,40 +123,76 @@ public:
 
     // ── Accessors ──
 
-    const std::string& name() const noexcept { return manifest_.name; }
-    const std::string& version() const noexcept { return manifest_.version; }
-    const std::string& summary() const noexcept { return manifest_.summary; }
-    const std::string& description() const noexcept { return manifest_.description; }
-    const std::vector<WorkflowStep>& steps() const noexcept { return manifest_.steps; }
-    const std::vector<std::string>& importTools() const noexcept { return manifest_.importTools; }
-    const std::vector<std::string>& importRelics() const noexcept { return manifest_.importRelics; }
+    const std::string& name() const noexcept {
+        return manifest_.name;
+    }
+    const std::string& version() const noexcept {
+        return manifest_.version;
+    }
+    const std::string& summary() const noexcept {
+        return manifest_.summary;
+    }
+    const std::string& description() const noexcept {
+        return manifest_.description;
+    }
+    const std::vector<WorkflowStep>& steps() const noexcept {
+        return manifest_.steps;
+    }
+    const std::vector<std::string>& importTools() const noexcept {
+        return manifest_.importTools;
+    }
+    const std::vector<std::string>& importRelics() const noexcept {
+        return manifest_.importRelics;
+    }
 
-    bool isValid() const noexcept { return !manifest_.name.empty(); }
+    bool isValid() const noexcept {
+        return !manifest_.name.empty();
+    }
 
     // ── Mutation (for building workflows programmatically) ──
 
-    void setName(const std::string& n) { manifest_.name = n; }
-    void setVersion(const std::string& v) { manifest_.version = v; }
-    void setSummary(const std::string& s) { manifest_.summary = s; }
-    void setDescription(const std::string& d) { manifest_.description = d; }
+    void setName(const std::string& n) {
+        manifest_.name = n;
+    }
+    void setVersion(const std::string& v) {
+        manifest_.version = v;
+    }
+    void setSummary(const std::string& s) {
+        manifest_.summary = s;
+    }
+    void setDescription(const std::string& d) {
+        manifest_.description = d;
+    }
 
-    void addStep(const WorkflowStep& step) { manifest_.steps.push_back(step); }
-    void setSteps(const std::vector<WorkflowStep>& steps) { manifest_.steps = steps; }
-    void addImportTool(const std::string& tool) { manifest_.importTools.push_back(tool); }
-    void addImportRelic(const std::string& relic) { manifest_.importRelics.push_back(relic); }
+    void addStep(const WorkflowStep& step) {
+        manifest_.steps.push_back(step);
+    }
+    void setSteps(const std::vector<WorkflowStep>& steps) {
+        manifest_.steps = steps;
+    }
+    void addImportTool(const std::string& tool) {
+        manifest_.importTools.push_back(tool);
+    }
+    void addImportRelic(const std::string& relic) {
+        manifest_.importRelics.push_back(relic);
+    }
 
     // ── Manifest access ──
 
-    const WorkflowManifest& manifest() const noexcept { return manifest_; }
-    WorkflowManifest& manifest() noexcept { return manifest_; }
+    const WorkflowManifest& manifest() const noexcept {
+        return manifest_;
+    }
+    WorkflowManifest& manifest() noexcept {
+        return manifest_;
+    }
 
     // ── Serialization ──
 
     /// Convert to XML for prompt injection
     std::string toXml() const {
         std::ostringstream ss;
-        ss << "<workflow name=\"" << manifest_.name << "\" version=\""
-           << manifest_.version << "\">\n";
+        ss << "<workflow name=\"" << manifest_.name << "\" version=\"" << manifest_.version
+           << "\">\n";
         if (!manifest_.summary.empty())
             ss << "  <summary>" << manifest_.summary << "</summary>\n";
         if (!manifest_.description.empty())
@@ -174,27 +216,35 @@ public:
         j["description"] = manifest_.description;
         j["step_count"] = (int)manifest_.steps.size();
         Json::Value tools(Json::arrayValue);
-        for (const auto& t : manifest_.importTools) tools.append(t);
+        for (const auto& t : manifest_.importTools)
+            tools.append(t);
         j["import_tools"] = tools;
         Json::Value relics(Json::arrayValue);
-        for (const auto& r : manifest_.importRelics) relics.append(r);
+        for (const auto& r : manifest_.importRelics)
+            relics.append(r);
         j["import_relics"] = relics;
         return j;
     }
 
-private:
+   private:
     WorkflowManifest manifest_;
 
     // ── XML serialization helper ──
     static void stepToXml(std::ostringstream& ss, const WorkflowStep& s, int indent) {
         std::string pad(indent, ' ');
         ss << pad << "<step id=\"" << s.id << "\" type=\"" << s.type << "\"";
-        if (!s.name.empty()) ss << " name=\"" << s.name << "\"";
-        if (!s.tool.empty()) ss << " tool=\"" << s.tool << "\"";
-        if (!s.agent.empty()) ss << " agent=\"" << s.agent << "\"";
-        if (!s.condition.empty()) ss << " condition=\"" << s.condition << "\"";
-        if (!s.workflow.empty()) ss << " workflow=\"" << s.workflow << "\"";
-        if (s.onError != "abort") ss << " on_error=\"" << s.onError << "\"";
+        if (!s.name.empty())
+            ss << " name=\"" << s.name << "\"";
+        if (!s.tool.empty())
+            ss << " tool=\"" << s.tool << "\"";
+        if (!s.agent.empty())
+            ss << " agent=\"" << s.agent << "\"";
+        if (!s.condition.empty())
+            ss << " condition=\"" << s.condition << "\"";
+        if (!s.workflow.empty())
+            ss << " workflow=\"" << s.workflow << "\"";
+        if (s.onError != "abort")
+            ss << " on_error=\"" << s.onError << "\"";
         ss << ">\n";
 
         if (!s.params.empty()) {
@@ -204,23 +254,27 @@ private:
         }
         if (!s.thenSteps.empty()) {
             ss << pad << "  <then>\n";
-            for (const auto& st : s.thenSteps) stepToXml(ss, st, indent + 4);
+            for (const auto& st : s.thenSteps)
+                stepToXml(ss, st, indent + 4);
             ss << pad << "  </then>\n";
         }
         if (!s.elseSteps.empty()) {
             ss << pad << "  <else>\n";
-            for (const auto& st : s.elseSteps) stepToXml(ss, st, indent + 4);
+            for (const auto& st : s.elseSteps)
+                stepToXml(ss, st, indent + 4);
             ss << pad << "  </else>\n";
         }
         if (!s.body.empty()) {
             ss << pad << "  <body>\n";
-            for (const auto& st : s.body) stepToXml(ss, st, indent + 4);
+            for (const auto& st : s.body)
+                stepToXml(ss, st, indent + 4);
             ss << pad << "  </body>\n";
         }
         if (!s.steps.empty())
-            for (const auto& st : s.steps) stepToXml(ss, st, indent + 2);
+            for (const auto& st : s.steps)
+                stepToXml(ss, st, indent + 2);
         ss << pad << "</step>\n";
     }
 };
 
-} // namespace cortex::mk3::workflows
+}  // namespace cortex::mk3::workflows

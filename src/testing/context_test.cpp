@@ -11,28 +11,47 @@
 //   - size guard rejects oversized files unless force=true
 // =============================================================================
 
-#include "src/core/agent.hpp"
-#include "src/providers/factory.hpp"
+#include <unistd.h>
+
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
-#include <unistd.h>
+
+#include "src/core/agent.hpp"
+#include "src/providers/factory.hpp"
 
 using namespace cortex::mk3;
 namespace fs = std::filesystem;
 
 static int passed = 0, failed = 0;
 
-#define TEST(name)  do { std::cout << "  " << name << "... "; } while (0)
-#define PASS()      do { passed++; std::cout << "PASS\n"; } while (0)
-#define FAIL(msg)   do { failed++; std::cout << "FAIL: " << msg << "\n"; return; } while (0)
-#define CHECK(cond, msg) do { if (!(cond)) { FAIL(msg); } } while (0)
+#define TEST(name)                           \
+    do {                                     \
+        std::cout << "  " << name << "... "; \
+    } while (0)
+#define PASS()                 \
+    do {                       \
+        passed++;              \
+        std::cout << "PASS\n"; \
+    } while (0)
+#define FAIL(msg)                             \
+    do {                                      \
+        failed++;                             \
+        std::cout << "FAIL: " << msg << "\n"; \
+        return;                               \
+    } while (0)
+#define CHECK(cond, msg) \
+    do {                 \
+        if (!(cond)) {   \
+            FAIL(msg);   \
+        }                \
+    } while (0)
 
 static fs::path g_tmpDir;
 
-static fs::path writeTmpFile(const std::string &name, const std::string &content) {
+static fs::path writeTmpFile(const std::string& name, const std::string& content) {
     fs::path p = g_tmpDir / name;
     std::ofstream(p) << content;
     return p;
@@ -122,8 +141,7 @@ void test_size_guard_rejects() {
     auto path = writeTmpFile("big.txt", big);
     auto r = agent->contextPin(path.string(), false);
     CHECK(!r["success"].asBool(), "should reject without force");
-    CHECK(r["error"].asString().find("exceeds limit") != std::string::npos,
-          "error mentions limit");
+    CHECK(r["error"].asString().find("exceeds limit") != std::string::npos, "error mentions limit");
     PASS();
 }
 
@@ -193,14 +211,13 @@ void test_peek_disappears_after_eviction() {
     agent->contextPeek(path.string(), 1, false);
 
     std::string before = agent->renderSystemPrompt();
-    CHECK(before.find("<ephemeral_context>") != std::string::npos,
-          "missing <ephemeral_context>");
+    CHECK(before.find("<ephemeral_context>") != std::string::npos, "missing <ephemeral_context>");
     CHECK(before.find("UNIQUE_PEEK_MARKER_54321") != std::string::npos,
           "peek content not in prompt");
     CHECK(before.find("cycles_remaining=\"1\"") != std::string::npos,
           "cycles_remaining attribute missing");
 
-    agent->tickContextCycles();   // -> 0 -> evicted
+    agent->tickContextCycles();  // -> 0 -> evicted
     std::string after = agent->renderSystemPrompt();
     CHECK(after.find("UNIQUE_PEEK_MARKER_54321") == std::string::npos,
           "peek content still in prompt after eviction");
@@ -212,8 +229,7 @@ void test_missing_file() {
     auto agent = makeAgent();
     auto r = agent->contextPin("/definitely/not/a/file.xyz", false);
     CHECK(!r["success"].asBool(), "should fail");
-    CHECK(r["error"].asString().find("not found") != std::string::npos,
-          "error mentions not found");
+    CHECK(r["error"].asString().find("not found") != std::string::npos, "error mentions not found");
     PASS();
 }
 

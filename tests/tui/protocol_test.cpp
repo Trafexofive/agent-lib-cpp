@@ -1,11 +1,13 @@
 // tests/tui/protocol_test.cpp — T4: Protocol renderer tests
 
 #include "../../src/tui/components/protocol.hpp"
-#include "../../src/tui/terminal.hpp"
+
 #include <cassert>
 #include <iostream>
 #include <string>
 #include <vector>
+
+#include "../../src/tui/terminal.hpp"
 
 using namespace cortex::mk3::tui;
 
@@ -14,8 +16,15 @@ static std::string stripAnsi(const std::string& s) {
     std::string out;
     bool esc = false;
     for (size_t i = 0; i < s.size(); i++) {
-        if (s[i] == '\033') { esc = true; continue; }
-        if (esc) { if (s[i] == 'm') esc = false; continue; }
+        if (s[i] == '\033') {
+            esc = true;
+            continue;
+        }
+        if (esc) {
+            if (s[i] == 'm')
+                esc = false;
+            continue;
+        }
         out += s[i];
     }
     return out;
@@ -28,8 +37,12 @@ static bool contains(const std::string& haystack, const std::string& needle) {
 int main() {
     int failures = 0;
     auto check = [&](bool cond, const std::string& test) {
-        if (!cond) { std::cerr << "FAIL: " << test << "\n"; failures++; }
-        else { std::cout << "  OK: " << test << "\n"; }
+        if (!cond) {
+            std::cerr << "FAIL: " << test << "\n";
+            failures++;
+        } else {
+            std::cout << "  OK: " << test << "\n";
+        }
     };
 
     std::cout << "═══ Protocol Renderer Tests ═══\n\n";
@@ -119,12 +132,12 @@ int main() {
         check(lines.size() >= 5, "2 actions + 2 results + response = >= 5 lines");
         // Verify order via stripped content
         std::string all;
-        for (auto& l : lines) all += stripAnsi(l) + "\n";
+        for (auto& l : lines)
+            all += stripAnsi(l) + "\n";
         size_t listPos = all.find("list");
         size_t grepPos = all.find("grep");
         size_t donePos = all.find("Done.");
-        check(listPos < grepPos && grepPos < donePos,
-              "order: list → grep → Done");
+        check(listPos < grepPos && grepPos < donePos, "order: list → grep → Done");
     }
 
     // ── T4.9: Empty view produces nothing ──
@@ -176,7 +189,7 @@ int main() {
         check(again.size() == 2, "after reset, incremental returns all lines again");
     }
 
-    std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED")
-              << " (" << failures << " failures) ═══\n";
+    std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED") << " (" << failures
+              << " failures) ═══\n";
     return failures ? 1 : 0;
 }

@@ -3,9 +3,9 @@
 // No TUI dependency in core agent
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
-#include <functional>
 
 namespace cortex::mk3::core {
 
@@ -18,8 +18,7 @@ struct OutputSink {
                                const std::string& id, bool sync) = 0;
 
     // Called when an action result is ready
-    virtual void onActionResult(const std::string& id, bool ok,
-                                const std::string& summary) = 0;
+    virtual void onActionResult(const std::string& id, bool ok, const std::string& summary) = 0;
 
     // Called for each response text token (streaming)
     virtual void onResponseToken(const std::string& token) = 0;
@@ -46,17 +45,28 @@ struct OutputSink {
 
 // Null sink — discards all output (library default)
 struct NullSink : OutputSink {
-    void onActionStart(const std::string&, const std::string&,
-                       const std::string&, bool) override {}
-    void onActionResult(const std::string&, bool, const std::string&) override {}
-    void onResponseToken(const std::string&) override {}
-    void onResponseComplete() override {}
-    void onThought(const std::string&) override {}
-    void onRawToken(const std::string&) override {}
-    std::vector<std::string> flush() override { return {}; }
-    void reset() override {}
-    void setRaw(bool) override {}
-    bool raw() const override { return false; }
+    void onActionStart(const std::string&, const std::string&, const std::string&, bool) override {
+    }
+    void onActionResult(const std::string&, bool, const std::string&) override {
+    }
+    void onResponseToken(const std::string&) override {
+    }
+    void onResponseComplete() override {
+    }
+    void onThought(const std::string&) override {
+    }
+    void onRawToken(const std::string&) override {
+    }
+    std::vector<std::string> flush() override {
+        return {};
+    }
+    void reset() override {
+    }
+    void setRaw(bool) override {
+    }
+    bool raw() const override {
+        return false;
+    }
 };
 
-} // namespace cortex::mk3::core
+}  // namespace cortex::mk3::core

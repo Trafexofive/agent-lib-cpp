@@ -1,15 +1,20 @@
 // tests/tui/grid_test.cpp — GridLayout test suite
 #include "../../src/tui/grid.hpp"
-#include "../../src/tui/terminal.hpp"
+
 #include <cassert>
 #include <iostream>
+
+#include "../../src/tui/terminal.hpp"
 using namespace cortex::mk3::tui;
 
 int main() {
     int failures = 0;
     auto check = [&](bool c, const char* msg) {
-        if (!c) { std::cerr << "FAIL: " << msg << "\n"; failures++; }
-        else std::cout << "  OK: " << msg << "\n";
+        if (!c) {
+            std::cerr << "FAIL: " << msg << "\n";
+            failures++;
+        } else
+            std::cout << "  OK: " << msg << "\n";
     };
 
     std::cout << "═══ GridLayout ═══\n\n";
@@ -50,7 +55,7 @@ int main() {
         GridLayout g(80, 24);
         g.addCell("a", 0, 0, 40, 1);
         g.setContent("a", {"hello"});
-        g.renderDiff(); // first render
+        g.renderDiff();  // first render
         std::string out = g.renderDiff();
         check(out.empty(), "renderDiff: no output on unchanged cell");
     }
@@ -86,7 +91,8 @@ int main() {
         g.setContent("a", {"this is way too long text here"});
         std::string out = g.renderDiff();
         // The rendered content should be ~10 chars (cell width)
-        check(out.find("this is wa") != std::string::npos, "truncate: content truncated to cell width");
+        check(out.find("this is wa") != std::string::npos,
+              "truncate: content truncated to cell width");
     }
 
     // ── Cell height enforcement ──
@@ -98,7 +104,8 @@ int main() {
         // Content has 3 lines but cell height is 2
         std::string out = g.renderDiff();
         // Should only render 2 lines
-        check(out.find("line3") == std::string::npos, "height: line3 not rendered (exceeds height)");
+        check(out.find("line3") == std::string::npos,
+              "height: line3 not rendered (exceeds height)");
     }
 
     // ── Clear resets everything ──
@@ -152,6 +159,7 @@ int main() {
         check(out.find("right") == std::string::npos, "diff-multi: unchanged cell NOT rendered");
     }
 
-    std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED") << " (" << failures << " failures) ═══\n";
+    std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED") << " (" << failures
+              << " failures) ═══\n";
     return failures;
 }

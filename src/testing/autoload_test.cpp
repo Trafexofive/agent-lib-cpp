@@ -11,20 +11,38 @@
 // auto-registered built-ins). Post-fix: sub-agents own their declared set.
 // =============================================================================
 
+#include <iostream>
+#include <string>
+
 #include "src/core/agent.hpp"
 #include "src/core/manifest_autoload.hpp"
 #include "src/providers/factory.hpp"
-#include <iostream>
-#include <string>
 
 using namespace cortex::mk3;
 
 static int passed = 0, failed = 0;
 
-#define TEST(name)  do { std::cout << "  " << name << "... "; } while (0)
-#define PASS()      do { passed++; std::cout << "PASS\n"; } while (0)
-#define FAIL(msg)   do { failed++; std::cout << "FAIL: " << msg << "\n"; return; } while (0)
-#define CHECK(cond, msg) do { if (!(cond)) { FAIL(msg); } } while (0)
+#define TEST(name)                           \
+    do {                                     \
+        std::cout << "  " << name << "... "; \
+    } while (0)
+#define PASS()                 \
+    do {                       \
+        passed++;              \
+        std::cout << "PASS\n"; \
+    } while (0)
+#define FAIL(msg)                             \
+    do {                                      \
+        failed++;                             \
+        std::cout << "FAIL: " << msg << "\n"; \
+        return;                               \
+    } while (0)
+#define CHECK(cond, msg) \
+    do {                 \
+        if (!(cond)) {   \
+            FAIL(msg);   \
+        }                \
+    } while (0)
 
 void test_MA01_subagent_loads_own_tools() {
     TEST("MA01 sub-agent's import.tools resolved");

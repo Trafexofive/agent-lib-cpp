@@ -6,71 +6,106 @@
 // MK3 TUI Framework
 #pragma once
 
-#include "components/protocol.hpp"
-#include "components/markdown.hpp"
-#include "terminal.hpp"
 #include <string>
 #include <vector>
+
+#include "components/markdown.hpp"
+#include "components/protocol.hpp"
+#include "terminal.hpp"
 
 namespace cortex::mk3::tui {
 
 enum class RenderMode { FULL = 0, SEMI = 1, RAW = 2 };
 
 class TuiRenderer {
-public:
-    TuiRenderer(int width = 80) : width_(width) { md_.setWidth(width - 4); }
+   public:
+    TuiRenderer(int width = 80) : width_(width) {
+        md_.setWidth(width - 4);
+    }
 
     // ── Set content (called after each prompt) ──
-    void setRawStream(const std::string& raw)  { if (raw_ != raw) raw_ = raw; }
-    void setResponse(const std::string& text)  { if (response_ != text) response_ = text; }
-    void appendResponse(const std::string& text) { response_ += text; responseDirty_ = true; }  // streaming
-    void setThought(const std::string& text)   { if (thought_ != text) thought_ = text; }
+    void setRawStream(const std::string& raw) {
+        if (raw_ != raw)
+            raw_ = raw;
+    }
+    void setResponse(const std::string& text) {
+        if (response_ != text)
+            response_ = text;
+    }
+    void appendResponse(const std::string& text) {
+        response_ += text;
+        responseDirty_ = true;
+    }  // streaming
+    void setThought(const std::string& text) {
+        if (thought_ != text)
+            thought_ = text;
+    }
 
     // ── Box/border styling ──
 
     // Protocol actions/results (for FULL and SEMI modes)
-    void addProtocolAction(const std::string& type, const std::string& name,
-                           const std::string& id, const std::string& body, bool sync) {
+    void addProtocolAction(const std::string& type, const std::string& name, const std::string& id,
+                           const std::string& body, bool sync) {
         ActionType at = ActionType::TOOL;
-        if (type == "agent") at = ActionType::AGENT;
-        else if (type == "relic") at = ActionType::RELIC;
-        else if (type == "feed") at = ActionType::FEED;
+        if (type == "agent")
+            at = ActionType::AGENT;
+        else if (type == "relic")
+            at = ActionType::RELIC;
+        else if (type == "feed")
+            at = ActionType::FEED;
         pv_.addAction({at, name, id, body, sync});
     }
 
-    void addProtocolResult(const std::string& id, bool ok,
-                           const std::string& summary,
-                           const std::string& toolName = "",
-                           int exitCode = 0, double elapsedMs = 0,
+    void addProtocolResult(const std::string& id, bool ok, const std::string& summary,
+                           const std::string& toolName = "", int exitCode = 0, double elapsedMs = 0,
                            size_t outputBytes = 0) {
         pv_.addResult({id, ok, summary, toolName, exitCode, elapsedMs, outputBytes});
     }
 
     // ── Mode control ──
-    void setMode(RenderMode m) { mode_ = m; }
-    RenderMode mode() const { return mode_; }
+    void setMode(RenderMode m) {
+        mode_ = m;
+    }
+    RenderMode mode() const {
+        return mode_;
+    }
     static const char* modeName(RenderMode m) {
-        switch(m) { case RenderMode::FULL: return "FULL"; case RenderMode::SEMI: return "SEMI"; case RenderMode::RAW: return "RAW"; }
+        switch (m) {
+            case RenderMode::FULL:
+                return "FULL";
+            case RenderMode::SEMI:
+                return "SEMI";
+            case RenderMode::RAW:
+                return "RAW";
+        }
         return "?";
     }
 
     // ── Render based on mode ──
     std::vector<std::string> render() {
         switch (mode_) {
-            case RenderMode::RAW:  return renderRaw();
-            default:               return renderFull();
+            case RenderMode::RAW:
+                return renderRaw();
+            default:
+                return renderFull();
         }
     }
 
     void clear() {
-        raw_.clear(); response_.clear(); thought_.clear();
-        lastMarkdownText_.clear(); responseDirty_ = true;
+        raw_.clear();
+        response_.clear();
+        thought_.clear();
+        lastMarkdownText_.clear();
+        responseDirty_ = true;
         pv_.clear();
     }
 
-    void setWidth(int w) { width_ = w; md_.setWidth(w - 4); }
+    void setWidth(int w) {
+        width_ = w;
+        md_.setWidth(w - 4);
+    }
 
-private:
+   private:
     std::vector<std::string> renderFull() {
         std::vector<std::string> lines;
         // Model thinking (TTC) — stream dimmed, no header, appears first
@@ -78,12 +113,14 @@ private:
             std::istringstream ts(thought_);
             std::string tl;
             while (std::getline(ts, tl)) {
-                if (!tl.empty() && tl.back() == '\r') tl.pop_back();
+                if (!tl.empty() && tl.back() == '\r')
+                    tl.pop_back();
                 lines.push_back(ansi::dim() + tl + ansi::reset());
             }
         }
         // Protocol events (actions + results)
-        for (auto& l : pv_.render(width_)) lines.push_back(l);
+        for (auto& l : pv_.render(width_))
+            lines.push_back(l);
         // Response with live markdown rendering
         if (!response_.empty()) {
             if (responseDirty_ || lastMarkdownText_ != response_) {
@@ -93,7 +130,13 @@ private:
             }
             auto rendered = md_.render();
             bool hasContent = false;
-            for (auto& l : rendered) { for (auto c : l) if (c != ' ' && c != '\n' && c != '\r') { hasContent = true; break; } }
+            for (auto& l : rendered) {
+                for (auto c : l)
+                    if (c != ' ' && c != '\n' && c != '\r') {
+                        hasContent = true;
+                        break;
+                    }
+            }
             if (hasContent && !rendered.empty()) {
                 lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
                 lines.insert(lines.end(), rendered.begin(), rendered.end());
@@ -114,7 +157,8 @@ private:
         std::vector<std::string> lines;
         std::istringstream rs(raw_);
         std::string rl;
-        while (std::getline(rs, rl)) lines.push_back(ansi::dim() + rl + ansi::reset());
+        while (std::getline(rs, rl))
+            lines.push_back(ansi::dim() + rl + ansi::reset());
         if (lines.empty() && !raw_.empty())
             lines.push_back(ansi::dim() + raw_ + ansi::reset());
         return lines;
@@ -131,4 +175,4 @@ private:
     mutable bool responseDirty_ = true;
 };
 
-} // namespace cortex::mk3::tui
+}  // namespace cortex::mk3::tui

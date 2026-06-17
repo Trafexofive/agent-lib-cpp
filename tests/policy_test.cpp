@@ -1,5 +1,6 @@
 // sandbox_policy_test.cpp — validates SandboxPolicy without LLM calls
 #include "../src/sandbox/policy.hpp"
+
 #include <cassert>
 #include <iostream>
 
@@ -8,8 +9,12 @@ using namespace cortex::mk3::sandbox;
 int main() {
     int failures = 0;
     auto check = [&](bool cond, const char* test) {
-        if (!cond) { std::cerr << "FAIL: " << test << "\n"; failures++; }
-        else { std::cout << "  OK: " << test << "\n"; }
+        if (!cond) {
+            std::cerr << "FAIL: " << test << "\n";
+            failures++;
+        } else {
+            std::cout << "  OK: " << test << "\n";
+        }
     };
 
     std::cout << "═══ SandboxPolicy Tests ═══\n\n";
@@ -30,14 +35,12 @@ int main() {
         SandboxPolicy p = makeHarnessSandbox("/workspace");
         check(p.validate("exec", R"({"command":"rm -rf /"})").empty(),
               "harness sandbox allows 'rm'");
-        check(p.validate("exec", R"({"command":"ls -la"})").empty(),
-              "harness sandbox allows 'ls'");
+        check(p.validate("exec", R"({"command":"ls -la"})").empty(), "harness sandbox allows 'ls'");
         check(p.validate("exec", R"({"command":"grep foo *.cpp"})").empty(),
               "harness sandbox allows 'grep'");
         check(p.validate("exec", R"({"command":"cat /etc/passwd"})").empty(),
               "harness sandbox allows 'cat'");
-        check(p.validate("exec", R"({"command":"make"})").empty(),
-              "harness sandbox allows 'make'");
+        check(p.validate("exec", R"({"command":"make"})").empty(), "harness sandbox allows 'make'");
     }
 
     // ── Test 3: Harness sandbox — fs_write path restriction ──
@@ -75,13 +78,12 @@ int main() {
               "RO sandbox allows relative fs_read");
         check(p.validate("grep", R"({"pattern":"TODO"})").empty(),
               "RO sandbox allows grep (no path filter)");
-        check(p.validate("list", R"({"path":"."})").empty(),
-              "RO sandbox allows list");
+        check(p.validate("list", R"({"path":"."})").empty(), "RO sandbox allows list");
         check(p.validate("context_pin", R"({"path":"src/main.cpp"})").empty(),
               "RO sandbox allows context_pin (relative)");
     }
 
-    std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED")
-              << " (" << failures << " failures) ═══\n";
+    std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED") << " (" << failures
+              << " failures) ═══\n";
     return failures ? 1 : 0;
 }

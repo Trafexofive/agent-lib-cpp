@@ -3,9 +3,10 @@
 // =============================================================================
 
 #include "parser.hpp"
-#include <sstream>
+
 #include <iostream>
 #include <regex>
+#include <sstream>
 #include <thread>
 
 namespace cortex::mk3::protocol {
@@ -13,7 +14,8 @@ namespace cortex::mk3::protocol {
 // ---------------------------------------------------------------------------
 // Constructor / Destructor
 // ---------------------------------------------------------------------------
-Parser::Parser(ActionExecutor executor) : executor_(std::move(executor)) {}
+Parser::Parser(ActionExecutor executor) : executor_(std::move(executor)) {
+}
 
 Parser::~Parser() {
     waitForActions();
@@ -26,7 +28,8 @@ void Parser::feed(const std::string& token, bool isFinal) {
     buffer_ += token;
     processBuffer();
 
-    if (isFinal) flush();
+    if (isFinal)
+        flush();
 }
 
 void Parser::flush() {
@@ -80,7 +83,8 @@ void Parser::processBuffer() {
             inResponse_ = false;
             TokenEvent ev{TokenEvent::RESPONSE, "", {}, {}};
             auto fit = responseAttrs_.find("final");
-            if (fit != responseAttrs_.end()) ev.metadata["is_final"] = fit->second;
+            if (fit != responseAttrs_.end())
+                ev.metadata["is_final"] = fit->second;
             emit(ev);
             responseAttrs_.clear();
             continue;
@@ -112,7 +116,8 @@ void Parser::processBuffer() {
 
         // Wait until we have a complete opening tag (<...>)
         size_t gt = buffer_.find('>', readPos_);
-        if (gt == std::string::npos) return;
+        if (gt == std::string::npos)
+            return;
 
         // Identify the tag
         std::string tagName = identifyTag(readPos_);
@@ -144,7 +149,7 @@ void Parser::processBuffer() {
         }
 
         // Check for self-closing tag (/>)
-        bool selfClosing = (gt > readPos_ && buffer_[gt-1] == '/');
+        bool selfClosing = (gt > readPos_ && buffer_[gt - 1] == '/');
 
         std::string openingTag, content;
         size_t contentStart;
@@ -152,7 +157,7 @@ void Parser::processBuffer() {
 
         if (selfClosing) {
             // <tag ... /> — no content, tag ends at />
-            openingTag = buffer_.substr(readPos_ + 1, gt - readPos_ - 2); // between < and />
+            openingTag = buffer_.substr(readPos_ + 1, gt - readPos_ - 2);  // between < and />
             contentStart = gt + 1;
             content = "";
         } else if (tagName == "response") {
@@ -168,10 +173,12 @@ void Parser::processBuffer() {
             continue;
         } else {
             closingPos = findClosingTag(tagName, gt + 1);
-            if (closingPos == std::string::npos) return; // Tag not closed yet
+            if (closingPos == std::string::npos)
+                return;  // Tag not closed yet
 
             contentStart = gt + 1;
-            size_t closingTagStart = closingPos - (tagName.length() + 3); // back to < of </tagName>
+            size_t closingTagStart =
+                closingPos - (tagName.length() + 3);  // back to < of </tagName>
             openingTag = buffer_.substr(readPos_ + 1, contentStart - readPos_ - 2);
             content = buffer_.substr(contentStart, closingTagStart - contentStart);
         }
@@ -179,17 +186,22 @@ void Parser::processBuffer() {
         auto attrs = parseAttrs(openingTag);
 
         // Dispatch to handler
-        if (tagName == "thought")      handleThought(content);
-        else if (tagName == "action")  handleAction(content, attrs);
-        else if (tagName == "response") handleResponse(content, attrs);
-        else if (tagName == "result")  handleResult(content, attrs);
-        else if (tagName == "context_feed") handleContextFeed(content, attrs);
+        if (tagName == "thought")
+            handleThought(content);
+        else if (tagName == "action")
+            handleAction(content, attrs);
+        else if (tagName == "response")
+            handleResponse(content, attrs);
+        else if (tagName == "result")
+            handleResult(content, attrs);
+        else if (tagName == "context_feed")
+            handleContextFeed(content, attrs);
 
         // Advance past closing tag
         if (selfClosing) {
-            readPos_ = contentStart; // past />
+            readPos_ = contentStart;  // past />
         } else {
-            readPos_ = closingPos; // past </tagName>
+            readPos_ = closingPos;  // past </tagName>
         }
     }
 }
@@ -210,11 +222,11 @@ std::string Parser::identifyTag(size_t tagStart) {
     size_t nameEnd = buffer_.find_first_of(" >/", nameStart);
     std::string tagName = buffer_.substr(nameStart, nameEnd - nameStart);
 
-    static const std::vector<std::string> known = {
-        "thought", "action", "response", "result", "context_feed"
-    };
+    static const std::vector<std::string> known = {"thought", "action", "response", "result",
+                                                   "context_feed"};
     for (auto& k : known) {
-        if (tagName == k) return tagName;
+        if (tagName == k)
+            return tagName;
     }
     return "";
 }
@@ -227,7 +239,7 @@ std::string Parser::identifyTag(size_t tagStart) {
 // closes at the OUTER </action>, not the one inside the JSON body.
 // ---------------------------------------------------------------------------
 size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
-    const std::string openMarker  = "<"  + tagName;
+    const std::string openMarker = "<" + tagName;
     const std::string closeMarker = "</" + tagName + ">";
 
     int depth = 1;
@@ -237,20 +249,31 @@ size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
     size_t i = contentStart;
     while (i < buffer_.size()) {
         char c = buffer_[i];
-        if (escape) { escape = false; ++i; continue; }
-        if (inString) {
-            if (c == '\\')      escape = true;
-            else if (c == '"')  inString = false;
+        if (escape) {
+            escape = false;
             ++i;
             continue;
         }
-        if (c == '"') { inString = true; ++i; continue; }
+        if (inString) {
+            if (c == '\\')
+                escape = true;
+            else if (c == '"')
+                inString = false;
+            ++i;
+            continue;
+        }
+        if (c == '"') {
+            inString = true;
+            ++i;
+            continue;
+        }
 
         if (c == '<') {
             // Closing tag match
             if (i + closeMarker.size() <= buffer_.size() &&
                 buffer_.compare(i, closeMarker.size(), closeMarker) == 0) {
-                if (--depth == 0) return i + closeMarker.size();
+                if (--depth == 0)
+                    return i + closeMarker.size();
                 i += closeMarker.size();
                 continue;
             }
@@ -261,9 +284,11 @@ size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
                 char next = (after < buffer_.size()) ? buffer_[after] : '\0';
                 if (next == ' ' || next == '\t' || next == '>' || next == '/') {
                     size_t gt = buffer_.find('>', i);
-                    if (gt == std::string::npos) return std::string::npos;
+                    if (gt == std::string::npos)
+                        return std::string::npos;
                     bool selfClosingNested = (gt > i && buffer_[gt - 1] == '/');
-                    if (!selfClosingNested) ++depth;
+                    if (!selfClosingNested)
+                        ++depth;
                     i = gt + 1;
                     continue;
                 }
@@ -326,27 +351,31 @@ void Parser::handleThought(const std::string& content) {
 }
 
 void Parser::handleAction(const std::string& content,
-                           const std::map<std::string, std::string>& attrs) {
+                          const std::map<std::string, std::string>& attrs) {
     // Enforce: no actions after <response final="true">
     if (finalResponseSeen_) {
         emit({TokenEvent::THOUGHT, "[post-final action ignored]", {}, {}});
         return;
     }
     auto action = buildAction(content, attrs);
-    if (!action) return;
+    if (!action)
+        return;
 
     // Enforce: reject duplicate action IDs
     if (usedActionIds_.count(action->id)) {
         // Inject error result so model sees the failure
         Json::Value err;
-        err["error"] = "duplicate action id: " + action->id
-                        + " \u2014 each action must have a unique id";
+        err["error"] =
+            "duplicate action id: " + action->id + " \u2014 each action must have a unique id";
         results_[action->id] = err;
         completed_[action->id] = true;
         emit({TokenEvent::ACTION_RESULT,
               Json::writeString(Json::StreamWriterBuilder(), err),
-              nullptr, {{"id", action->id}}});
-        emit({TokenEvent::ERROR, "duplicate id: " + action->id, nullptr,
+              nullptr,
+              {{"id", action->id}}});
+        emit({TokenEvent::ERROR,
+              "duplicate id: " + action->id,
+              nullptr,
               {{"id", action->id}, {"reason", "duplicate_action_id"}}});
         return;
     }
@@ -359,7 +388,7 @@ void Parser::handleAction(const std::string& content,
 }
 
 void Parser::handleResponse(const std::string& content,
-                             const std::map<std::string, std::string>& attrs) {
+                            const std::map<std::string, std::string>& attrs) {
     // Enforce: no content after first <response final="true">
     if (finalResponseSeen_) {
         emit({TokenEvent::THOUGHT, "[post-final ignored] " + content, {}, {}});
@@ -377,7 +406,7 @@ void Parser::handleResponse(const std::string& content,
 }
 
 void Parser::handleResult(const std::string& content,
-                           const std::map<std::string, std::string>& attrs) {
+                          const std::map<std::string, std::string>& attrs) {
     // <result> is runtime-owned. LLM-emitted result tags are ignored so the
     // model cannot forge tool/sub-agent outcomes after a real failure.
     (void)content;
@@ -386,7 +415,7 @@ void Parser::handleResult(const std::string& content,
 }
 
 void Parser::handleContextFeed(const std::string& content,
-                                const std::map<std::string, std::string>& attrs) {
+                               const std::map<std::string, std::string>& attrs) {
     contextFeeds_.push_back(content);
     emit({TokenEvent::CONTEXT_FEED, content, {}, attrs});
 }
@@ -394,9 +423,8 @@ void Parser::handleContextFeed(const std::string& content,
 // ---------------------------------------------------------------------------
 // Build action from JSON body + attrs
 // ---------------------------------------------------------------------------
-std::shared_ptr<ParsedAction> Parser::buildAction(
-    const std::string& json, const std::map<std::string, std::string>& attrs) {
-
+std::shared_ptr<ParsedAction> Parser::buildAction(const std::string& json,
+                                                  const std::map<std::string, std::string>& attrs) {
     auto action = std::make_shared<ParsedAction>();
 
     // Parse type
@@ -409,7 +437,8 @@ std::shared_ptr<ParsedAction> Parser::buildAction(
 
     // Name
     auto nameIt = attrs.find("name");
-    if (nameIt != attrs.end()) action->name = nameIt->second;
+    if (nameIt != attrs.end())
+        action->name = nameIt->second;
 
     // ID
     auto idIt = attrs.find("id");
@@ -421,7 +450,8 @@ std::shared_ptr<ParsedAction> Parser::buildAction(
 
     // Timeout
     auto timeoutIt = attrs.find("timeout");
-    if (timeoutIt != attrs.end()) action->timeout = std::stoi(timeoutIt->second);
+    if (timeoutIt != attrs.end())
+        action->timeout = std::stoi(timeoutIt->second);
 
     // Depends on
     auto depIt = attrs.find("depends_on");
@@ -430,27 +460,33 @@ std::shared_ptr<ParsedAction> Parser::buildAction(
         std::regex commaRe(",\\s*");
         std::sregex_token_iterator it(deps.begin(), deps.end(), commaRe, -1);
         std::sregex_token_iterator end;
-        for (; it != end; ++it) action->dependsOn.push_back(*it);
+        for (; it != end; ++it)
+            action->dependsOn.push_back(*it);
     }
 
     // Extra XML attrs become scalar params. Reserved protocol attrs stay structural.
     Json::Value attrParams(Json::objectValue);
-    static const std::unordered_set<std::string> reservedAttrs = {
-        "type", "name", "id", "mode", "depends_on", "timeout"
-    };
+    static const std::unordered_set<std::string> reservedAttrs = {"type", "name",       "id",
+                                                                  "mode", "depends_on", "timeout"};
     auto attrScalar = [](const std::string& value) -> Json::Value {
-        if (value == "true") return Json::Value(true);
-        if (value == "false") return Json::Value(false);
+        if (value == "true")
+            return Json::Value(true);
+        if (value == "false")
+            return Json::Value(false);
         static const std::regex intRe(R"(^-?\d+$)");
         static const std::regex floatRe(R"(^-?(\d+\.\d*|\d*\.\d+)$)");
         try {
-            if (std::regex_match(value, intRe)) return Json::Value(static_cast<Json::Int64>(std::stoll(value)));
-            if (std::regex_match(value, floatRe)) return Json::Value(std::stod(value));
-        } catch (...) {}
+            if (std::regex_match(value, intRe))
+                return Json::Value(static_cast<Json::Int64>(std::stoll(value)));
+            if (std::regex_match(value, floatRe))
+                return Json::Value(std::stod(value));
+        } catch (...) {
+        }
         return Json::Value(value);
     };
     for (const auto& [key, value] : attrs) {
-        if (!reservedAttrs.count(key)) attrParams[key] = attrScalar(value);
+        if (!reservedAttrs.count(key))
+            attrParams[key] = attrScalar(value);
     }
 
     // Parse JSON body
@@ -463,7 +499,8 @@ std::shared_ptr<ParsedAction> Parser::buildAction(
         action->params = resolveVars(params);
         if (action->params.isObject()) {
             for (const auto& key : attrParams.getMemberNames()) {
-                if (!action->params.isMember(key)) action->params[key] = attrParams[key];
+                if (!action->params.isMember(key))
+                    action->params[key] = attrParams[key];
             }
         }
     } else {
@@ -481,7 +518,8 @@ std::shared_ptr<ParsedAction> Parser::buildAction(
 // Execute action
 // ---------------------------------------------------------------------------
 void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
-    if (!executor_) return;
+    if (!executor_)
+        return;
 
     if (!canExecute(*action)) {
         pending_.push_back(action);
@@ -495,22 +533,24 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
         results_[a->id] = result;
         completed_[a->id] = true;
 
-        emit({TokenEvent::ACTION_RESULT, Json::writeString(Json::StreamWriterBuilder(), result),
-              nullptr, {{"id", a->id}}});
+        emit({TokenEvent::ACTION_RESULT,
+              Json::writeString(Json::StreamWriterBuilder(), result),
+              nullptr,
+              {{"id", a->id}}});
     };
 
     switch (action->mode) {
-    case ExecutionMode::SYNC:
-        doExecute(action);
-        break;
-    case ExecutionMode::ASYNC: {
-        std::lock_guard<std::mutex> lock(mtx_);
-        futures_.push_back(std::async(std::launch::async, doExecute, action));
-        break;
-    }
-    case ExecutionMode::FIRE_AND_FORGET:
-        std::thread(doExecute, action).detach();
-        break;
+        case ExecutionMode::SYNC:
+            doExecute(action);
+            break;
+        case ExecutionMode::ASYNC: {
+            std::lock_guard<std::mutex> lock(mtx_);
+            futures_.push_back(std::async(std::launch::async, doExecute, action));
+            break;
+        }
+        case ExecutionMode::FIRE_AND_FORGET:
+            std::thread(doExecute, action).detach();
+            break;
     }
 
     dispatchPending();
@@ -522,7 +562,8 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
 bool Parser::canExecute(const ParsedAction& action) const {
     for (const auto& dep : action.dependsOn) {
         auto it = completed_.find(dep);
-        if (it == completed_.end() || !it->second) return false;
+        if (it == completed_.end() || !it->second)
+            return false;
     }
     return true;
 }
@@ -564,7 +605,8 @@ void Parser::injectResult(const std::string& id, const Json::Value& result) {
         completed_[id] = true;
         emit({TokenEvent::ACTION_RESULT,
               Json::writeString(Json::StreamWriterBuilder(), result),
-              nullptr, {{"id", id}}});
+              nullptr,
+              {{"id", id}}});
     }
     dispatchPending();
 }
@@ -579,10 +621,12 @@ bool Parser::waitForActions(std::chrono::seconds deadline) {
         futs = std::move(futures_);
     }
     for (auto& f : futs) {
-        if (!f.valid()) continue;
+        if (!f.valid())
+            continue;
         if (deadline.count() > 0) {
             auto status = f.wait_for(deadline);
-            if (status == std::future_status::timeout) return false;
+            if (status == std::future_status::timeout)
+                return false;
         } else {
             f.wait();
         }
@@ -642,7 +686,7 @@ std::string Parser::resolveVars(const std::string& input) const {
     while (std::regex_search(start, input.cend(), match, varRe)) {
         out += match.prefix().str();
         std::string path = match[1].str();
-        std::string replacement = match[0].str(); // preserve unresolved refs
+        std::string replacement = match[0].str();  // preserve unresolved refs
 
         // Split path by '.'
         size_t dot = path.find('.');
@@ -674,8 +718,10 @@ std::string Parser::resolveVars(const std::string& input) const {
                     }
                 }
             }
-            if (val.isString()) replacement = val.asString();
-            else if (!val.isNull()) replacement = Json::writeString(Json::StreamWriterBuilder(), val);
+            if (val.isString())
+                replacement = val.asString();
+            else if (!val.isNull())
+                replacement = Json::writeString(Json::StreamWriterBuilder(), val);
         }
 
         out += replacement;
@@ -701,7 +747,8 @@ Json::Value Parser::resolveVars(const Json::Value& input) const {
     }
     if (input.isArray()) {
         Json::Value arr(Json::arrayValue);
-        for (auto& v : input) arr.append(resolveVars(v));
+        for (auto& v : input)
+            arr.append(resolveVars(v));
         return arr;
     }
     if (input.isObject()) {
@@ -720,14 +767,17 @@ std::string Parser::cleanJson(const std::string& raw) {
     // Trim whitespace
     size_t start = raw.find_first_not_of(" \t\n\r");
     size_t end = raw.find_last_not_of(" \t\n\r");
-    if (start == std::string::npos) return "{}";
+    if (start == std::string::npos)
+        return "{}";
     std::string s = raw.substr(start, end - start + 1);
     return completeJson(s);
 }
 
 std::string Parser::completeJson(const std::string& raw) {
-    if (raw.empty()) return "{}";
-    if (isCompleteJson(raw)) return raw;
+    if (raw.empty())
+        return "{}";
+    if (isCompleteJson(raw))
+        return raw;
 
     // Count braces to auto-close
     int braceCount = 0;
@@ -736,19 +786,35 @@ std::string Parser::completeJson(const std::string& raw) {
     bool escaped = false;
 
     for (char c : raw) {
-        if (escaped) { escaped = false; continue; }
-        if (c == '\\') { escaped = true; continue; }
-        if (c == '"') { inString = !inString; continue; }
-        if (inString) continue;
-        if (c == '{') braceCount++;
-        if (c == '}') braceCount--;
-        if (c == '[') bracketCount++;
-        if (c == ']') bracketCount--;
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (c == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (c == '"') {
+            inString = !inString;
+            continue;
+        }
+        if (inString)
+            continue;
+        if (c == '{')
+            braceCount++;
+        if (c == '}')
+            braceCount--;
+        if (c == '[')
+            bracketCount++;
+        if (c == ']')
+            bracketCount--;
     }
 
     std::string result = raw;
-    for (int i = 0; i < bracketCount; i++) result += "]";
-    for (int i = 0; i < braceCount; i++) result += "}";
+    for (int i = 0; i < bracketCount; i++)
+        result += "]";
+    for (int i = 0; i < braceCount; i++)
+        result += "}";
 
     return result;
 }
@@ -765,18 +831,26 @@ bool Parser::isCompleteJson(const std::string& s) {
 // Enum parsers
 // ---------------------------------------------------------------------------
 ExecutionMode Parser::parseMode(const std::string& s) {
-    if (s == "async") return ExecutionMode::ASYNC;
-    if (s == "fire_and_forget" || s == "detached") return ExecutionMode::FIRE_AND_FORGET;
+    if (s == "async")
+        return ExecutionMode::ASYNC;
+    if (s == "fire_and_forget" || s == "detached")
+        return ExecutionMode::FIRE_AND_FORGET;
     return ExecutionMode::SYNC;
 }
 
 ActionType Parser::parseType(const std::string& s) {
-    if (s == "agent") return ActionType::AGENT;
-    if (s == "relic") return ActionType::RELIC;
-    if (s == "feed") return ActionType::FEED;
-    if (s == "workflow") return ActionType::WORKFLOW;
-    if (s == "llm" || s == "llm_call") return ActionType::LLM_CALL;
-    if (s == "internal") return ActionType::INTERNAL;
+    if (s == "agent")
+        return ActionType::AGENT;
+    if (s == "relic")
+        return ActionType::RELIC;
+    if (s == "feed")
+        return ActionType::FEED;
+    if (s == "workflow")
+        return ActionType::WORKFLOW;
+    if (s == "llm" || s == "llm_call")
+        return ActionType::LLM_CALL;
+    if (s == "internal")
+        return ActionType::INTERNAL;
     return ActionType::TOOL;
 }
 
@@ -784,7 +858,8 @@ ActionType Parser::parseType(const std::string& s) {
 // Emit event
 // ---------------------------------------------------------------------------
 void Parser::emit(const TokenEvent& ev) {
-    if (eventCb_) eventCb_(ev);
+    if (eventCb_)
+        eventCb_(ev);
 }
 
-} // namespace cortex::mk3::protocol
+}  // namespace cortex::mk3::protocol

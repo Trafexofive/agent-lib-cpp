@@ -6,16 +6,18 @@
 // with logic in faraway dispatch code.
 // =============================================================================
 
-#include "../core/types.hpp"
 #include <json/json.h>
-#include <string>
+
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <map>
 #include <memory>
 #include <sstream>
-#include <fstream>
-#include <cstdio>
-#include <filesystem>
+#include <string>
+
+#include "../core/types.hpp"
 
 namespace cortex::mk3::tools {
 
@@ -26,15 +28,15 @@ using ToolCallback = std::function<std::string(const Json::Value&)>;
 // Tool — sovereign class for one tool definition and execution
 // ═══════════════════════════════════════════════════════════════════════════
 class Tool {
-public:
+   public:
     // ── Constructors ──
 
     /// Default constructor — creates an invalid tool
     Tool() = default;
 
     /// Construct from ToolDef + native C++ callback
-    Tool(const ToolDef& def, ToolCallback cb)
-        : def_(def), cb_(std::move(cb)) {}
+    Tool(const ToolDef& def, ToolCallback cb) : def_(def), cb_(std::move(cb)) {
+    }
 
     /// Construct from ToolDef + script execution
     Tool(const ToolDef& def, const std::string& scriptPath, const std::string& runtime)
@@ -45,23 +47,43 @@ public:
     }
 
     /// Construct from ToolDef only (for script tools defined elsewhere)
-    explicit Tool(const ToolDef& def)
-        : def_(def) {}
+    explicit Tool(const ToolDef& def) : def_(def) {
+    }
 
     // ── Accessors ──
 
-    const std::string& name() const noexcept { return def_.name; }
-    const std::string& description() const noexcept { return def_.description; }
-    const std::vector<ToolParam>& params() const noexcept { return def_.params; }
-    bool isNative() const noexcept { return def_.isNative; }
-    bool isScript() const noexcept { return !def_.isNative; }
-    const std::string& scriptPath() const noexcept { return def_.scriptPath; }
-    const std::string& scriptRuntime() const noexcept { return def_.scriptRuntime; }
-    const std::string& inputType() const noexcept { return def_.inputType; }
-    const std::string& textParam() const noexcept { return def_.textParam; }
+    const std::string& name() const noexcept {
+        return def_.name;
+    }
+    const std::string& description() const noexcept {
+        return def_.description;
+    }
+    const std::vector<ToolParam>& params() const noexcept {
+        return def_.params;
+    }
+    bool isNative() const noexcept {
+        return def_.isNative;
+    }
+    bool isScript() const noexcept {
+        return !def_.isNative;
+    }
+    const std::string& scriptPath() const noexcept {
+        return def_.scriptPath;
+    }
+    const std::string& scriptRuntime() const noexcept {
+        return def_.scriptRuntime;
+    }
+    const std::string& inputType() const noexcept {
+        return def_.inputType;
+    }
+    const std::string& textParam() const noexcept {
+        return def_.textParam;
+    }
 
     /// Full definition (for introspection / serialization)
-    const ToolDef& definition() const noexcept { return def_; }
+    const ToolDef& definition() const noexcept {
+        return def_;
+    }
 
     /// Whether the tool has been fully initialized
     bool isValid() const noexcept {
@@ -96,8 +118,10 @@ public:
             res.success = parsed.get("success", false).asBool();
             res.output = parsed.get("output", "").asString();
             res.error = parsed.get("error", "").asString();
-            if (parsed.isMember("result")) res.data = parsed["result"];
-            if (parsed.isMember("data")) res.data = parsed["data"];
+            if (parsed.isMember("result"))
+                res.data = parsed["result"];
+            if (parsed.isMember("data"))
+                res.data = parsed["data"];
             return res;
         }
         // Non-JSON output — treat as success with output text
@@ -121,7 +145,8 @@ public:
     /// Validate that required params are present
     std::string validateParams(const Json::Value& args) const {
         for (const auto& param : def_.params) {
-            if (!param.required) continue;
+            if (!param.required)
+                continue;
             if (!args.isMember(param.name) || args[param.name].isNull()) {
                 return "Missing required parameter: " + param.name;
             }
@@ -136,7 +161,8 @@ public:
         j["description"] = def_.description;
         j["is_native"] = def_.isNative;
         j["input_type"] = def_.inputType;
-        if (!def_.scriptRuntime.empty()) j["runtime"] = def_.scriptRuntime;
+        if (!def_.scriptRuntime.empty())
+            j["runtime"] = def_.scriptRuntime;
         Json::Value paramArray(Json::arrayValue);
         for (const auto& p : def_.params) {
             Json::Value pj;
@@ -150,7 +176,7 @@ public:
         return j;
     }
 
-private:
+   private:
     ToolDef def_;
     ToolCallback cb_;
     std::string scriptPath_;
@@ -222,8 +248,12 @@ private:
     static std::string shellEscape(const std::string& input) {
         std::string out(1, '\'');
         for (char c : input) {
-            if (c == '\'') { out += "'\\"; out += '\''; out += '\''; }
-            else out += c;
+            if (c == '\'') {
+                out += "'\\";
+                out += '\'';
+                out += '\'';
+            } else
+                out += c;
         }
         out += '\'';
         return out;
@@ -231,10 +261,12 @@ private:
 
     static std::string runShell(const std::string& cmd) {
         FILE* p = popen(cmd.c_str(), "r");
-        if (!p) return "";
+        if (!p)
+            return "";
         std::string output;
         char buf[4096];
-        while (fgets(buf, sizeof(buf), p)) output += buf;
+        while (fgets(buf, sizeof(buf), p))
+            output += buf;
         pclose(p);
         while (!output.empty() && (output.back() == '\n' || output.back() == '\r'))
             output.pop_back();
@@ -243,11 +275,9 @@ private:
 };
 
 // ── Utility: build a ToolCallback from a function pointer ──
-template<typename Fn>
+template <typename Fn>
 inline ToolCallback makeToolCallback(Fn fn) {
-    return [fn](const Json::Value& args) -> std::string {
-        return fn(args).toJson();
-    };
+    return [fn](const Json::Value& args) -> std::string { return fn(args).toJson(); };
 }
 
-} // namespace cortex::mk3::tools
+}  // namespace cortex::mk3::tools

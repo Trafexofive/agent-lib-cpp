@@ -4,21 +4,23 @@
 // The core agent loop: prompt → LLM → parse → dispatch → loop
 // =============================================================================
 
-#include "../core/types.hpp"
-#include "../core/provider.hpp"
-#include "../protocol/parser.hpp"
-#include "../session/manager.hpp"
-#include <set>
-#include "../tools/registry.hpp"
-#include "../sandbox/policy.hpp"
 #include <json/json.h>
-#include <string>
-#include <vector>
+
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
+#include <string>
 #include <thread>
-#include <atomic>
+#include <vector>
+
+#include "../core/provider.hpp"
+#include "../core/types.hpp"
+#include "../protocol/parser.hpp"
+#include "../sandbox/policy.hpp"
+#include "../session/manager.hpp"
+#include "../tools/registry.hpp"
 
 namespace cortex::mk3 {
 
@@ -41,7 +43,7 @@ struct ProtocolResult {
 
 // ── Pending tool execution (threaded popen, streams output live) ──
 class Agent {
-public:
+   public:
     Agent(AgentConfig cfg, LlmProviderPtr provider);
     ~Agent() = default;
 
@@ -52,18 +54,38 @@ public:
                        const std::string& sessionId = "", bool ephemeral = false);
 
     // ---- Modes ----
-    void setRaw(bool v) { raw_ = v; }
-    void setVerbose(bool v) { verbose_ = v; }
+    void setRaw(bool v) {
+        raw_ = v;
+    }
+    void setVerbose(bool v) {
+        verbose_ = v;
+    }
 
     // ---- Output ────
-    const std::string& rawLlOutput() const { return rawLlOutput_; }
-    const std::string& responseOutput() const { return responseOutput_; }
-    const std::string& thoughtOutput() const { return thoughtOutput_; }
-    const std::string& lastPrompt() const { return lastPrompt_; }
-    const std::vector<std::string>& iterationPrompts() const { return iterationPrompts_; }
-    const std::vector<std::string>& iterationOutputs() const { return iterationOutputs_; }
-    const std::vector<ProtocolAction>& protocolActions() const { return protocolActions_; }
-    const std::vector<ProtocolResult>& protocolResults() const { return protocolResults_; }
+    const std::string& rawLlOutput() const {
+        return rawLlOutput_;
+    }
+    const std::string& responseOutput() const {
+        return responseOutput_;
+    }
+    const std::string& thoughtOutput() const {
+        return thoughtOutput_;
+    }
+    const std::string& lastPrompt() const {
+        return lastPrompt_;
+    }
+    const std::vector<std::string>& iterationPrompts() const {
+        return iterationPrompts_;
+    }
+    const std::vector<std::string>& iterationOutputs() const {
+        return iterationOutputs_;
+    }
+    const std::vector<ProtocolAction>& protocolActions() const {
+        return protocolActions_;
+    }
+    const std::vector<ProtocolResult>& protocolResults() const {
+        return protocolResults_;
+    }
 
     // Threaded tool execution: harvest completed tools, push results to protocolResults_
 
@@ -75,10 +97,18 @@ public:
 
     // ---- Tool management ----
     void addTool(ToolDef tool);
-    void addFeed(const std::string& name) { feeds_.insert(name); }
-    std::vector<std::string> feedNames() const { return std::vector<std::string>(feeds_.begin(), feeds_.end()); }
-    void addRelic(const std::string& name) { relics_.insert(name); }
-    std::vector<std::string> relicNames() const { return std::vector<std::string>(relics_.begin(), relics_.end()); }
+    void addFeed(const std::string& name) {
+        feeds_.insert(name);
+    }
+    std::vector<std::string> feedNames() const {
+        return std::vector<std::string>(feeds_.begin(), feeds_.end());
+    }
+    void addRelic(const std::string& name) {
+        relics_.insert(name);
+    }
+    std::vector<std::string> relicNames() const {
+        return std::vector<std::string>(relics_.begin(), relics_.end());
+    }
 
     // ---- Context management (pin / peek / unpin) ----
     // A pinned file lives in the system prompt indefinitely until unpin.
@@ -87,10 +117,10 @@ public:
     Json::Value contextPin(const std::string& path, bool force = false);
     Json::Value contextPeek(const std::string& path, int cycles = 1, bool force = false);
     Json::Value contextUnpin(const std::string& path);
-    void tickContextCycles();                       // called at end of each iteration
-    Json::Value contextSnapshot() const;            // for debugging / introspection
-    std::string renderSystemPrompt() const;         // testing hook — no LLM call
-    static constexpr size_t kContextSizeLimit = 65536; // 64 KB per entry; override via force=true
+    void tickContextCycles();                           // called at end of each iteration
+    Json::Value contextSnapshot() const;                // for debugging / introspection
+    std::string renderSystemPrompt() const;             // testing hook — no LLM call
+    static constexpr size_t kContextSizeLimit = 65536;  // 64 KB per entry; override via force=true
 
     void removeTool(const std::string& name);
     Json::Value toggleBuiltin(const Json::Value& params, bool enable);
@@ -107,25 +137,38 @@ public:
     Agent* getSubAgent(const std::string& name) const;
     std::vector<std::string> subAgentNames() const {
         std::vector<std::string> names;
-        for (const auto& [name, _] : subAgents_) names.push_back(name);
+        for (const auto& [name, _] : subAgents_)
+            names.push_back(name);
         return names;
     }
 
     // ---- Sandbox ----
-    void setSandboxPolicy(const sandbox::SandboxPolicy& policy) { sandboxPolicy_ = policy; }
-    const sandbox::SandboxPolicy& sandboxPolicy() const { return sandboxPolicy_; }
+    void setSandboxPolicy(const sandbox::SandboxPolicy& policy) {
+        sandboxPolicy_ = policy;
+    }
+    const sandbox::SandboxPolicy& sandboxPolicy() const {
+        return sandboxPolicy_;
+    }
 
     // ---- Environment ----
     void setEnv(const std::string& key, const std::string& val);
     std::string getEnv(const std::string& key, const std::string& def = "") const;
 
     // ---- Accessors ----
-    const AgentConfig& config() const { return config_; }
-    void setIterationCap(int cap) { config_.iterationCap = cap; }
-    const std::string& name() const { return config_.name; }
-    session::SessionManager& sessionMgr() { return sessionMgr_; }
+    const AgentConfig& config() const {
+        return config_;
+    }
+    void setIterationCap(int cap) {
+        config_.iterationCap = cap;
+    }
+    const std::string& name() const {
+        return config_.name;
+    }
+    session::SessionManager& sessionMgr() {
+        return sessionMgr_;
+    }
 
-private:
+   private:
     // Core loop
     std::string runLoop(AgentContext& ctx);
 
@@ -148,16 +191,16 @@ private:
     session::SessionManager sessionMgr_;
     std::vector<std::string> history_;
     std::string systemPrompt_;
-    std::vector<std::string> contextFeeds_;  // accumulated from <context_feed> tags
+    std::vector<std::string> contextFeeds_;               // accumulated from <context_feed> tags
     std::map<std::string, std::string> executedActions_;  // dedup: key → cached result JSON string
     std::map<std::string, ToolDef> tools_;
-    std::set<std::string> feeds_;   // enabled feed names (from manifest import)
+    std::set<std::string> feeds_;  // enabled feed names (from manifest import)
     std::set<std::string> disabledBuiltins_;
     std::set<std::string> relics_;  // enabled relic names (from manifest import)
 
     // ── Context entries (live in <pinned_context>/<ephemeral_context>) ──
     struct PinnedEntry {
-        std::string displayPath;   // original path as requested by the LLM
+        std::string displayPath;  // original path as requested by the LLM
         std::string content;
         size_t bytes = 0;
     };
@@ -168,21 +211,23 @@ private:
         int cyclesRemaining = 0;
     };
     std::map<std::string, PinnedEntry> pinned_;
-    std::map<std::string, PeekEntry>   peeking_;
+    std::map<std::string, PeekEntry> peeking_;
     bool raw_ = false;
     bool verbose_ = false;
     bool bareTextReminded_ = false;  // one-time bare-text warning, persists across turns
-    std::string rawLlOutput_;      // raw LLM stream (all tokens)
-    std::string responseOutput_;   // sanitized response text
-    std::string thoughtOutput_;    // thought content (hidden in FULL)
-    std::string lastPrompt_;       // last built prompt for /prompts
-    std::vector<std::string> iterationPrompts_;     // full system prompt per iteration (for /prompts toggle)
-    std::vector<std::string> iterationOutputs_;     // LLM response + results per iteration
-    std::vector<std::string> subAgentTraces_;        // delegated agent traces for parent dumps
+    std::string rawLlOutput_;        // raw LLM stream (all tokens)
+    std::string responseOutput_;     // sanitized response text
+    std::string thoughtOutput_;      // thought content (hidden in FULL)
+    std::string lastPrompt_;         // last built prompt for /prompts
+    std::vector<std::string>
+        iterationPrompts_;  // full system prompt per iteration (for /prompts toggle)
+    std::vector<std::string> iterationOutputs_;  // LLM response + results per iteration
+    std::vector<std::string> subAgentTraces_;    // delegated agent traces for parent dumps
     std::vector<ProtocolAction> protocolActions_;
     std::vector<ProtocolResult> protocolResults_;
     std::map<std::string, std::shared_ptr<Agent>> subAgents_;
-    std::map<std::string, Json::Value> actionResults_;  // persistent results table for ${id.field} expansion
+    std::map<std::string, Json::Value>
+        actionResults_;  // persistent results table for ${id.field} expansion
     std::map<std::string, std::string> env_;
     sandbox::SandboxPolicy sandboxPolicy_;
 
@@ -190,4 +235,4 @@ private:
     mutable std::string harnessText_;
 };
 
-} // namespace cortex::mk3
+}  // namespace cortex::mk3

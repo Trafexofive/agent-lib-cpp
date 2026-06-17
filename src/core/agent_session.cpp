@@ -1,10 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // agent-lib-MK3 — Session lifecycle: save, load, dump, clear, undo
 // ─────────────────────────────────────────────────────────────────────────────
-#include "agent.hpp"
-#include <fstream>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+
+#include "agent.hpp"
 
 namespace fs = std::filesystem;
 
@@ -15,12 +16,14 @@ void Agent::dumpSessionArtifacts() const {
     // so live harness work can find `iterations.md` and `raw.md` next to the
     // run. Skip entirely when the run is not opted into trace dumping.
     bool debugEnabled = env_.count("__DEBUG_MODE__") && env_.at("__DEBUG_MODE__") == "true";
-    if (!verbose_ && !raw_ && !debugEnabled) return;
+    if (!verbose_ && !raw_ && !debugEnabled)
+        return;
 
     fs::path cwd = fs::current_path();
     std::error_code ec;
     fs::create_directories(cwd, ec);
-    if (ec) return;
+    if (ec)
+        return;
 
     if (!iterationPrompts_.empty()) {
         std::ofstream f(cwd / "iterations.md");
@@ -33,7 +36,8 @@ void Agent::dumpSessionArtifacts() const {
                 f << line << "\n";
             f << "\n";
             if (i < iterationOutputs_.size()) {
-                f << "\n--- model/runtime output after this prompt (not part of the prompt above) ---\n\n";
+                f << "\n--- model/runtime output after this prompt (not part of the prompt above) "
+                     "---\n\n";
                 f << iterationOutputs_[i] << "\n\n";
             }
         }
@@ -58,23 +62,23 @@ void Agent::dumpSessionArtifacts() const {
 // Session Management
 // ═══════════════════════════════════════════════════════════════════════
 
-void Agent::loadSession(const std::string &id) {
+void Agent::loadSession(const std::string& id) {
     history_.clear();
     contextFeeds_.clear();
     actionResults_.clear();
     auto session = sessionMgr_.load(id);
-    for (auto &rec : session.records) {
+    for (auto& rec : session.records) {
         std::string prefix;
         switch (rec.role) {
-        case SessionRecord::USER:
-            prefix = "User: ";
-            break;
-        case SessionRecord::AGENT:
-            prefix = "Agent: ";
-            break;
-        default:
-            prefix = "System: ";
-            break;
+            case SessionRecord::USER:
+                prefix = "User: ";
+                break;
+            case SessionRecord::AGENT:
+                prefix = "Agent: ";
+                break;
+            default:
+                prefix = "System: ";
+                break;
         }
         history_.push_back(prefix + rec.content);
     }
@@ -82,7 +86,7 @@ void Agent::loadSession(const std::string &id) {
     contextFeeds_ = session.contextFeeds;
 }
 
-void Agent::saveSession(const std::string &id) {
+void Agent::saveSession(const std::string& id) {
     // AC04 — preserve `created` timestamp across saves by loading-then-merging
     //        instead of unconditionally calling create().
     // AC14 — use the agent's actual provider rather than hardcoded "deepseek".
@@ -98,7 +102,7 @@ void Agent::saveSession(const std::string &id) {
     } else {
         session = sessionMgr_.create(id, config_.name, config_.model, config_.provider);
     }
-    for (auto &h : history_) {
+    for (auto& h : history_) {
         SessionRecord rec;
         rec.timestamp = session::SessionManager::iso8601();
         if (h.rfind("User: ", 0) == 0) {
@@ -141,7 +145,4 @@ void Agent::undoLastInteraction() {
 // Tool Management
 // ═══════════════════════════════════════════════════════════════════════
 
-
-
-
-} // namespace cortex::mk3
+}  // namespace cortex::mk3

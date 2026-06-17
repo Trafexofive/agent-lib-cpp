@@ -4,18 +4,20 @@
 // Holds sovereign Tool objects. Backward-compatible with raw callback API.
 // =============================================================================
 
-#include "tool.hpp"
 #include <json/json.h>
-#include <string>
+
 #include <functional>
 #include <map>
-#include <vector>
 #include <memory>
+#include <string>
+#include <vector>
+
+#include "tool.hpp"
 
 namespace cortex::mk3::tools {
 
 // ── Convenience macro for static auto-registration ───────────────────────
-#define REGISTER_TOOL(identifier, func_ptr) \
+#define REGISTER_TOOL(identifier, func_ptr)               \
     static bool ANONYMOUS_VAR(auto_register_##func_ptr) = \
         cortex::mk3::tools::ToolRegistry::instance().registerFunction(identifier, func_ptr)
 
@@ -27,7 +29,7 @@ namespace cortex::mk3::tools {
 // ToolRegistry — singleton registry of sovereign Tool objects
 // ═══════════════════════════════════════════════════════════════════════════
 class ToolRegistry {
-public:
+   public:
     // ── Singleton ──
     static ToolRegistry& instance() {
         static ToolRegistry reg;
@@ -39,25 +41,30 @@ public:
     /// Register a sovereign Tool object.
     /// Returns true on success, false if a tool with this name already exists.
     bool registerTool(const Tool& tool) {
-        if (tool.name().empty()) return false;
+        if (tool.name().empty())
+            return false;
         auto it = tools_.find(tool.name());
-        if (it != tools_.end()) return false;  // already registered
+        if (it != tools_.end())
+            return false;  // already registered
         tools_[tool.name()] = tool;
         return true;
     }
 
     /// Register a Tool by moving it in.
     bool registerTool(Tool&& tool) {
-        if (tool.name().empty()) return false;
+        if (tool.name().empty())
+            return false;
         auto it = tools_.find(tool.name());
-        if (it != tools_.end()) return false;
+        if (it != tools_.end())
+            return false;
         tools_[tool.name()] = std::move(tool);
         return true;
     }
 
     /// Register or replace — overwrites if exists
     bool registerOrReplace(const Tool& tool) {
-        if (tool.name().empty()) return false;
+        if (tool.name().empty())
+            return false;
         tools_[tool.name()] = tool;
         return true;
     }
@@ -75,8 +82,10 @@ public:
             // Create a new Tool with updated callback but keep existing definition
             // (We can't easily swap the callback on an existing Tool, so re-register)
             ToolDef def = it->second.definition();
-            if (!description.empty()) def.description = description;
-            if (!params.empty()) def.params = params;
+            if (!description.empty())
+                def.description = description;
+            if (!params.empty())
+                def.params = params;
             tools_[name] = Tool(def, std::move(cb));
             return true;
         }
@@ -92,8 +101,7 @@ public:
     }
 
     /// Legacy alias
-    bool registerFn(const std::string& name, ToolCallback cb,
-                    const std::string& description = "",
+    bool registerFn(const std::string& name, ToolCallback cb, const std::string& description = "",
                     const std::vector<ToolParam>& params = {}) {
         return registerFunction(name, std::move(cb), description, params);
     }
@@ -116,19 +124,16 @@ public:
     /// Returns nullptr if not found or if the tool has no native callback.
     ToolCallback get(const std::string& name) const {
         auto it = tools_.find(name);
-        if (it == tools_.end()) return nullptr;
+        if (it == tools_.end())
+            return nullptr;
         // For backward compat, wrap execute() into a callback
         const Tool& tool = it->second;
         if (tool.isNative()) {
             // We can't extract the original callback, but we can delegate
-            return [&tool](const Json::Value& args) -> std::string {
-                return tool.execute(args);
-            };
+            return [&tool](const Json::Value& args) -> std::string { return tool.execute(args); };
         }
         // Script tools: wrap via execute
-        return [tool](const Json::Value& args) -> std::string {
-            return tool.execute(args);
-        };
+        return [tool](const Json::Value& args) -> std::string { return tool.execute(args); };
     }
 
     // ── Checks ──
@@ -143,14 +148,16 @@ public:
     /// List all registered tool names.
     std::vector<std::string> listRegistered() const {
         std::vector<std::string> names;
-        for (const auto& [name, _] : tools_) names.push_back(name);
+        for (const auto& [name, _] : tools_)
+            names.push_back(name);
         return names;
     }
 
     /// Get all registered tools
     std::vector<const Tool*> listTools() const {
         std::vector<const Tool*> tools;
-        for (const auto& [_, tool] : tools_) tools.push_back(&tool);
+        for (const auto& [_, tool] : tools_)
+            tools.push_back(&tool);
         return tools;
     }
 
@@ -160,7 +167,9 @@ public:
     }
 
     /// Get count of registered tools
-    size_t count() const { return tools_.size(); }
+    size_t count() const {
+        return tools_.size();
+    }
 
     // ── Delete copy/move ──
     ToolRegistry(const ToolRegistry&) = delete;
@@ -168,10 +177,10 @@ public:
     ToolRegistry(ToolRegistry&&) = delete;
     ToolRegistry& operator=(ToolRegistry&&) = delete;
 
-private:
+   private:
     ToolRegistry() = default;
     ~ToolRegistry() = default;
     std::map<std::string, Tool> tools_;
 };
 
-} // namespace cortex::mk3::tools
+}  // namespace cortex::mk3::tools

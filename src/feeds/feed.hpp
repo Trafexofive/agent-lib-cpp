@@ -5,15 +5,16 @@
 // manifest metadata, and result formatting.
 // =============================================================================
 
+#include <json/json.h>
+
+#include <chrono>
+#include <functional>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
-#include <map>
-#include <functional>
-#include <mutex>
-#include <chrono>
-#include <sstream>
-#include <optional>
-#include <json/json.h>
 
 namespace cortex::mk3::feeds {
 
@@ -32,15 +33,15 @@ using FeedFn = std::function<FeedResult()>;
 // Feed — sovereign class for one feed source
 // ═══════════════════════════════════════════════════════════════════════════
 class Feed {
-public:
+   public:
     // ── Constructors ──
 
     /// Default — creates an invalid feed
     Feed() = default;
 
     /// Construct with name + poll function
-    Feed(const std::string& name, FeedFn pollFn)
-        : name_(name), pollFn_(std::move(pollFn)) {}
+    Feed(const std::string& name, FeedFn pollFn) : name_(name), pollFn_(std::move(pollFn)) {
+    }
 
     /// Construct with name + poll function + initial poll
     Feed(const std::string& name, FeedFn pollFn, bool pollImmediate)
@@ -52,9 +53,10 @@ public:
 
     // ── Move constructor/assignment ──
     Feed(Feed&& other) noexcept
-        : name_(std::move(other.name_))
-        , pollFn_(std::move(other.pollFn_))
-        , latest_(std::move(other.latest_)) {}
+        : name_(std::move(other.name_)),
+          pollFn_(std::move(other.pollFn_)),
+          latest_(std::move(other.latest_)) {
+    }
 
     Feed& operator=(Feed&& other) noexcept {
         if (this != &other) {
@@ -71,9 +73,15 @@ public:
 
     // ── Accessors ──
 
-    const std::string& name() const noexcept { return name_; }
-    bool hasPollFn() const noexcept { return pollFn_ != nullptr; }
-    bool isValid() const noexcept { return !name_.empty() && pollFn_ != nullptr; }
+    const std::string& name() const noexcept {
+        return name_;
+    }
+    bool hasPollFn() const noexcept {
+        return pollFn_ != nullptr;
+    }
+    bool isValid() const noexcept {
+        return !name_.empty() && pollFn_ != nullptr;
+    }
 
     // ── Polling ──
 
@@ -123,14 +131,16 @@ public:
     /// Get cached result without polling (returns empty if never polled)
     FeedResult cached() const {
         std::lock_guard<std::mutex> lock(cacheMu_);
-        if (latest_.has_value()) return latest_.value();
+        if (latest_.has_value())
+            return latest_.value();
         return {name_, "", "{}", false};
     }
 
     /// Check if cache is fresh (polled within N seconds)
     bool isFresh(int maxAgeSecs = 5) const {
         std::lock_guard<std::mutex> lock(cacheMu_);
-        if (!latest_.has_value()) return false;
+        if (!latest_.has_value())
+            return false;
         auto age = std::chrono::steady_clock::now() - lastPoll_;
         return std::chrono::duration_cast<std::chrono::seconds>(age).count() < maxAgeSecs;
     }
@@ -146,10 +156,12 @@ public:
     /// Format feed result into a Markdown snippet for prompt injection
     std::string formatForPrompt() const {
         std::lock_guard<std::mutex> lock(cacheMu_);
-        if (!latest_.has_value() || !latest_->ok) return {};
+        if (!latest_.has_value() || !latest_->ok)
+            return {};
         std::ostringstream ss;
         ss << "### " << name_ << "\n";
-        if (!latest_->summary.empty()) ss << latest_->summary << "\n";
+        if (!latest_->summary.empty())
+            ss << latest_->summary << "\n";
         return ss.str();
     }
 
@@ -178,7 +190,7 @@ public:
         return j;
     }
 
-private:
+   private:
     std::string name_;
     FeedFn pollFn_;
 
@@ -187,4 +199,4 @@ private:
     std::chrono::steady_clock::time_point lastPoll_;
 };
 
-} // namespace cortex::mk3::feeds
+}  // namespace cortex::mk3::feeds
