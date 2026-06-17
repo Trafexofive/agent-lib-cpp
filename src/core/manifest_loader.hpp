@@ -5,6 +5,8 @@
 #pragma once
 #include <json/json.h>
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -130,18 +132,18 @@ class ManifestLoader {
 
         // Harness prompt (protocol spec)
         std::string harnessRel = context ? ManifestYaml::get(*context, "harness") : "";
-        cfg.harnessPath = harnessRel.empty() ? "manifests/harness/default.md"
-                                              : (base / harnessRel).string();
+        cfg.harnessPath =
+            harnessRel.empty() ? "manifests/harness/default.md" : (base / harnessRel).string();
 
         // System prompt (capabilities/tools/behavior)
         std::string systemRel = context ? ManifestYaml::get(*context, "system") : "";
-        cfg.systemPromptPath = systemRel.empty() ? "manifests/system/default.md"
-                                                  : (base / systemRel).string();
+        cfg.systemPromptPath =
+            systemRel.empty() ? "manifests/system/default.md" : (base / systemRel).string();
 
         // Persona prompt (identity/values)
         std::string personaRel = context ? ManifestYaml::get(*context, "persona") : "";
-        cfg.personaPath = personaRel.empty() ? "manifests/persona/default.md"
-                                              : (base / personaRel).string();
+        cfg.personaPath =
+            personaRel.empty() ? "manifests/persona/default.md" : (base / personaRel).string();
 
         // Runtime config knobs (max_iterations, history_cap, action_timeout_sec)
         if (context) {
@@ -154,6 +156,31 @@ class ManifestLoader {
             std::string ats = ManifestYaml::get(*context, "action_timeout_sec");
             if (!ats.empty())
                 cfg.actionTimeoutSec = std::stoi(ats);
+        }
+
+        // Prompt-building knobs
+        auto* promptBuilding = ManifestYaml::find(root, "prompt_building");
+        if (promptBuilding) {
+            auto* rc = ManifestYaml::find(*promptBuilding, "runtime_capabilities");
+            if (!rc)
+                rc = ManifestYaml::find(*promptBuilding, "available_actions");
+            if (rc) {
+                std::string inputSchemas = ManifestYaml::get(*rc, "input_schemas", "enable");
+                std::string returnSchemas = ManifestYaml::get(*rc, "return_schemas", "enable");
+                std::string examples = ManifestYaml::get(*rc, "usage_examples", "enable");
+
+                // Backward-compatible aliases for the old names.
+                if (ManifestYaml::find(*rc, "output_schema"))
+                    returnSchemas = ManifestYaml::get(*rc, "output_schema", returnSchemas);
+                if (ManifestYaml::find(*rc, "examples"))
+                    examples = ManifestYaml::get(*rc, "examples", examples);
+
+                cfg.promptBuilding.runtimeCapabilities.inputSchemas =
+                    promptFlagEnabled(inputSchemas);
+                cfg.promptBuilding.runtimeCapabilities.returnSchemas =
+                    promptFlagEnabled(returnSchemas);
+                cfg.promptBuilding.runtimeCapabilities.usageExamples = promptFlagEnabled(examples);
+            }
         }
 
         // Legacy fallback: persona.agent (old convention, no context: block)
@@ -341,8 +368,7 @@ class ManifestLoader {
     // working tool surface instead of an empty <action_available>.
     static std::vector<ToolSchema> loadBuiltinTools(Agent& agent) {
         static const std::vector<std::string> builtin = {
-            "exec",  "grep",  "list",          "context_pin",
-            "context_peek", "context_unpin", "ask_tool",
+            "exec", "grep", "list", "context_pin", "context_peek", "context_unpin", "ask_tool",
         };
         std::vector<ToolSchema> schemas;
         for (const auto& name : builtin) {
@@ -466,8 +492,10 @@ class ManifestLoader {
     }
 
     // Build tool schemas XML for prompt injection
-    static std::string toolSchemasToXml(const std::vector<ToolSchema>& schemas,
-                                        int baseIndent = 8) {
+    static std::string toolSchemasToXml(const std::vector<ToolSchema>& schemas, int baseIndent = 8,
+                                        bool includeInputSchemas = true,
+                                        bool includeReturnSchemas = true,
+                                        bool includeExamples = true) {
         if (schemas.empty())
             return "";
         std::ostringstream ss;
@@ -486,15 +514,15 @@ class ManifestLoader {
                     ss << "Text action bodies are assigned to params." << s.textParam << ".";
                 ss << "</input>\n";
             }
-            if (!s.inputSchema.empty())
+            if (includeInputSchemas && !s.inputSchema.empty())
                 ss << fieldPad << "<params>\n"
                    << indentBlock(prettyJson(s.inputSchema), baseIndent + 8) << fieldPad
                    << "</params>\n";
-            if (!s.outputSchema.empty())
+            if (includeReturnSchemas && !s.outputSchema.empty())
                 ss << fieldPad << "<returns>\n"
                    << indentBlock(prettyJson(s.outputSchema), baseIndent + 8) << fieldPad
                    << "</returns>\n";
-            if (!s.examples.empty())
+            if (includeExamples && !s.examples.empty())
                 ss << fieldPad << "<examples>\n"
                    << indentBlock(prettyJson(s.examples), baseIndent + 8) << fieldPad
                    << "</examples>\n";
@@ -591,6 +619,14 @@ class ManifestLoader {
     }
 
    private:
+    static bool promptFlagEnabled(const std::string& raw) {
+        std::string v = raw;
+        std::transform(v.begin(), v.end(), v.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        return !(v == "false" || v == "0" || v == "no" || v == "off" || v == "disable" ||
+                 v == "disabled" || v == "none");
+    }
+
     static std::string readFile(const std::string& path) {
         std::ifstream f(path);
         if (!f)

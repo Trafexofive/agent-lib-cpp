@@ -1020,7 +1020,9 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
                 auto recovered = ManifestLoader::loadToolManifest(candidate.string());
                 if (recovered.name.empty() || recovered.name != name)
                     continue;
-                ss << ManifestLoader::toolSchemasToXml({recovered}, 8);
+                const auto& rc = config_.promptBuilding.runtimeCapabilities;
+                ss << ManifestLoader::toolSchemasToXml({recovered}, 8, rc.inputSchemas,
+                                                       rc.returnSchemas, rc.usageExamples);
                 emittedRecoveredSchema = true;
                 break;
             }

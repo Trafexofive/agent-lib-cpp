@@ -19,6 +19,11 @@ context:
   system: ../../system/default.md
   persona: ../../persona/default.md
 
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
 import:
   tools:
     - exec
@@ -28,8 +33,8 @@ import:
     - context_peek
     - context_unpin
     - ask_tool
-  relics:
-    - session_journal
-    - state_checkpoint
+  # relics:
+  #   - session_journal
+  #   - state_checkpoint
   feeds: []
   env: []

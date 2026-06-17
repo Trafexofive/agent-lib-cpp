@@ -127,6 +127,16 @@ struct ToolResult {
 // ---------------------------------------------------------------------------
 // Agent configuration
 // ---------------------------------------------------------------------------
+struct PromptBuildingConfig {
+    struct RuntimeCapabilities {
+        bool inputSchemas = true;
+        bool returnSchemas = true;
+        bool usageExamples = true;
+    };
+
+    RuntimeCapabilities runtimeCapabilities;
+};
+
 struct AgentConfig {
     std::string name;
     std::string version = "1.0";
@@ -154,6 +164,9 @@ struct AgentConfig {
     std::string harnessPath;       // harness/protocol prompt (XML protocol spec)
     std::string personaPath;       // persona prompt (identity/values)
     std::string manifestDir;
+
+    // Prompt rendering
+    PromptBuildingConfig promptBuilding;
 
     // Sandbox
     std::string sandboxMode = "process";    // process, docker, chroot

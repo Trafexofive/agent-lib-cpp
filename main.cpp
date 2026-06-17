@@ -3,40 +3,37 @@
 // Subcommand-based CLI with getopt_long, config file, progress indicators.
 // =============================================================================
 
-#include <csignal>
-#include <cstdio>
-#include <cstring>
 #include <getopt.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+
+#include <algorithm>
 #include <atomic>
-
-#include "src/core/agent.hpp"
-#include "src/core/manifest_loader.hpp"
-#include "src/core/manifest_autoload.hpp"
-#include "src/core/sandbox_launcher.hpp"
-#include "src/sandbox/policy.hpp"
-#include "src/providers/factory.hpp"
-#include "src/utils/ansi.hpp"
-#include "src/tui/renderer.hpp"
-#include "src/tui/input.hpp"
-#include "src/tui/slash_commands.hpp"
-#include "src/session/manager.hpp"
-
-#include <iostream>
-#include <fstream>
-#include <sstream>
 #include <chrono>
+#include <csignal>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <mutex>
 #include <sstream>
 #include <string>
-#include <algorithm>
-#include <vector>
 #include <thread>
-#include <mutex>
-#include <atomic>
-#include <chrono>
-#include <filesystem>
-#include <map>
+#include <vector>
+
+#include "src/core/agent.hpp"
+#include "src/core/manifest_autoload.hpp"
+#include "src/core/manifest_loader.hpp"
+#include "src/core/sandbox_launcher.hpp"
+#include "src/providers/factory.hpp"
+#include "src/sandbox/policy.hpp"
+#include "src/session/manager.hpp"
+#include "src/tui/input.hpp"
+#include "src/tui/renderer.hpp"
+#include "src/tui/slash_commands.hpp"
+#include "src/utils/ansi.hpp"
 
 using namespace cortex::mk3;
 
@@ -118,9 +115,10 @@ struct CliConfig {
 // Progress spinner
 // ═══════════════════════════════════════════════════════════════════════
 class Spinner {
-public:
+   public:
     void start(const std::string& msg) {
-        if (running_) return;
+        if (running_)
+            return;
         running_ = true;
         thread_ = std::thread([this, msg]() {
             const char* frames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
@@ -135,10 +133,14 @@ public:
     }
     void stop() {
         running_ = false;
-        if (thread_.joinable()) thread_.join();
+        if (thread_.joinable())
+            thread_.join();
     }
-    ~Spinner() { stop(); }
-private:
+    ~Spinner() {
+        stop();
+    }
+
+   private:
     std::atomic<bool> running_{false};
     std::thread thread_;
 };
@@ -147,16 +149,17 @@ private:
 // Signal handler
 // ═══════════════════════════════════════════════════════════════════════
 void signalHandler(int sig) {
-    if (sig == SIGWINCH) g_resized = true;
-    else cortex::mk3::g_running = false;
+    if (sig == SIGWINCH)
+        g_resized = true;
+    else
+        cortex::mk3::g_running = false;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // Help
 // ═══════════════════════════════════════════════════════════════════════
 void printBanner() {
-    std::cout << ansi::bold << ansi::cyan
-              << "  Cortex MK3 " << VERSION << " — Agent Runtime\n"
+    std::cout << ansi::bold << ansi::cyan << "  Cortex MK3 " << VERSION << " — Agent Runtime\n"
               << ansi::reset;
 }
 
@@ -251,25 +254,31 @@ Flags:
 // ═══════════════════════════════════════════════════════════════════════
 static std::string defaultConfigPath() {
     const char* home = getenv("HOME");
-    if (!home) return "";
+    if (!home)
+        return "";
     return std::string(home) + "/.config/cortex-mk3/config";
 }
 
 static std::map<std::string, std::string> loadConfigFile(const std::string& path) {
     std::map<std::string, std::string> cfg;
     std::ifstream f(path);
-    if (!f.good()) return cfg;
+    if (!f.good())
+        return cfg;
     std::string line;
     while (std::getline(f, line)) {
         // Skip comments and blanks
-        if (line.empty() || line[0] == '#') continue;
+        if (line.empty() || line[0] == '#')
+            continue;
         auto eq = line.find('=');
-        if (eq == std::string::npos) continue;
+        if (eq == std::string::npos)
+            continue;
         std::string key = line.substr(0, eq);
         std::string val = line.substr(eq + 1);
         // Trim
-        while (!key.empty() && key.back() == ' ') key.pop_back();
-        while (!val.empty() && val.front() == ' ') val.erase(0, 1);
+        while (!key.empty() && key.back() == ' ')
+            key.pop_back();
+        while (!val.empty() && val.front() == ' ')
+            val.erase(0, 1);
         cfg[key] = val;
     }
     return cfg;
@@ -289,7 +298,8 @@ static void applyConfig(CliConfig& cli, const std::map<std::string, std::string>
         auto it = cfg.find(k);
         return it != cfg.end() ? it->second : d;
     };
-    if (!cli.providerSet) cli.provider = get("provider", cli.provider);
+    if (!cli.providerSet)
+        cli.provider = get("provider", cli.provider);
     // Only inherit model from config when provider was ALSO inherited (not
     // explicitly set). Otherwise `--provider zen` would drag in a stale
     // `model=gpt-5.5` from the config file and 401 on a model that provider
@@ -297,9 +307,12 @@ static void applyConfig(CliConfig& cli, const std::map<std::string, std::string>
     // own defaultModel.
     if (!cli.providerSet && !cli.modelSet)
         cli.model = get("model", cli.model);
-    if (cli.systemPromptPath.empty()) cli.systemPromptPath = get("system_prompt", cli.systemPromptPath);
-    if (cli.manifestDir.empty()) cli.manifestDir = get("manifest_dir", cli.manifestDir);
-    if (cli.configPath.empty()) cli.configPath = get("config_path", defaultConfigPath());
+    if (cli.systemPromptPath.empty())
+        cli.systemPromptPath = get("system_prompt", cli.systemPromptPath);
+    if (cli.manifestDir.empty())
+        cli.manifestDir = get("manifest_dir", cli.manifestDir);
+    if (cli.configPath.empty())
+        cli.configPath = get("config_path", defaultConfigPath());
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -309,123 +322,192 @@ static CliConfig parseArgs(int argc, char* argv[]) {
     CliConfig cli;
 
     // Long options
-    static struct option longOpts[] = {
-        // Global
-        {"config",       required_argument, 0, 'C'},
-        {"manifest-dir", required_argument, 0, 'G'},
-        {"iterations", required_argument, 0, 'X'},
-        {"provider",     required_argument, 0, 'P'},
-        {"model",        required_argument, 0, 'M'},
-        {"sandbox",      no_argument,       0, 'S'},
-        {"sandbox-ro",   no_argument,       0, 'R'},
-        {"verbose",      no_argument,       0, 'V'},
-        {"debug",        no_argument,       0, 'D'},
-        {"raw",          no_argument,       0, 'r'},
-        {"tui-debug-dump", required_argument, 0, 1001},
-        {"dry-run",      no_argument,       0, 'n'},
-        {"help",         no_argument,       0, 'h'},
+    static struct option longOpts[] = {// Global
+                                       {"config", required_argument, 0, 'C'},
+                                       {"manifest-dir", required_argument, 0, 'G'},
+                                       {"iterations", required_argument, 0, 'X'},
+                                       {"provider", required_argument, 0, 'P'},
+                                       {"model", required_argument, 0, 'M'},
+                                       {"sandbox", no_argument, 0, 'S'},
+                                       {"sandbox-ro", no_argument, 0, 'R'},
+                                       {"verbose", no_argument, 0, 'V'},
+                                       {"debug", no_argument, 0, 'D'},
+                                       {"raw", no_argument, 0, 'r'},
+                                       {"tui-debug-dump", required_argument, 0, 1001},
+                                       {"dry-run", no_argument, 0, 'n'},
+                                       {"help", no_argument, 0, 'h'},
 
-        // Run
-        {"prompt",       required_argument, 0, 'p'},
-        {"file",         required_argument, 0, 'f'},
-        {"manifest",     required_argument, 0, 'm'},
-        {"harness",      required_argument, 0, 'H'},
-        {"system",       required_argument, 0, 'y'},
-        {"session",      required_argument, 0, 's'},
-        {"ephemeral",    no_argument,       0, 'e'},
-        {"repl",         no_argument,       0, 'E'},
+                                       // Run
+                                       {"prompt", required_argument, 0, 'p'},
+                                       {"file", required_argument, 0, 'f'},
+                                       {"manifest", required_argument, 0, 'm'},
+                                       {"harness", required_argument, 0, 'H'},
+                                       {"system", required_argument, 0, 'y'},
+                                       {"session", required_argument, 0, 's'},
+                                       {"ephemeral", no_argument, 0, 'e'},
+                                       {"repl", no_argument, 0, 'E'},
 
-        // Serve
-        {"host",         required_argument, 0, 'o'},
-        {"port",         required_argument, 0, 'O'},
-        {"threads",      required_argument, 0, 'T'},
-        {"api-key",      required_argument, 0, 'K'},
-        {"no-cors",      no_argument,       0, 'N'},
+                                       // Serve
+                                       {"host", required_argument, 0, 'o'},
+                                       {"port", required_argument, 0, 'O'},
+                                       {"threads", required_argument, 0, 'T'},
+                                       {"api-key", required_argument, 0, 'K'},
+                                       {"no-cors", no_argument, 0, 'N'},
 
-        // List
-        {"providers",    no_argument,       0, 'L'},
-        {"models",       optional_argument, 0, 'l'},
-        {"tools",        no_argument,       0, 't'},
+                                       // List
+                                       {"providers", no_argument, 0, 'L'},
+                                       {"models", optional_argument, 0, 'l'},
+                                       {"tools", no_argument, 0, 't'},
 
-        // Config
-        {"show",         no_argument,       0, 'w'},
-        {"set",          required_argument, 0, 'W'},
-        {"init",         no_argument,       0, 'I'},
+                                       // Config
+                                       {"show", no_argument, 0, 'w'},
+                                       {"set", required_argument, 0, 'W'},
+                                       {"init", no_argument, 0, 'I'},
 
-        {0, 0, 0, 0}
-    };
+                                       {0, 0, 0, 0}};
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "C:G:P:M:p:f:m:H:y:s:VhrSReEDnX:", longOpts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "C:G:P:M:p:f:m:H:y:s:VhrSReEDnX:", longOpts, nullptr)) !=
+           -1) {
         switch (opt) {
-        // Global
-        case 'C': cli.configPath = optarg; break;
-        case 'G': cli.manifestDir = optarg; break;
-        case 'P': cli.provider = optarg; cli.providerSet = true; break;
-        case 'M': cli.model = optarg; cli.modelSet = true; break;
-        case 'S': cli.sandbox = true; break;
-        case 'R': cli.sandbox = true; cli.sandboxReadOnly = true; break;
-        case 'V': cli.verbose = true; break;
-        case 'D': cli.debug = true; break;
-        case 'X': cli.iterations = std::stoi(optarg); break;
-        case 'r': cli.raw = true; break;
-        case 1001: cli.tuiDebugDumpPath = optarg; break;
-        case 'n': cli.dryRun = true; break;
-        case 'h': cli.showHelp = true; break;
+            // Global
+            case 'C':
+                cli.configPath = optarg;
+                break;
+            case 'G':
+                cli.manifestDir = optarg;
+                break;
+            case 'P':
+                cli.provider = optarg;
+                cli.providerSet = true;
+                break;
+            case 'M':
+                cli.model = optarg;
+                cli.modelSet = true;
+                break;
+            case 'S':
+                cli.sandbox = true;
+                break;
+            case 'R':
+                cli.sandbox = true;
+                cli.sandboxReadOnly = true;
+                break;
+            case 'V':
+                cli.verbose = true;
+                break;
+            case 'D':
+                cli.debug = true;
+                break;
+            case 'X':
+                cli.iterations = std::stoi(optarg);
+                break;
+            case 'r':
+                cli.raw = true;
+                break;
+            case 1001:
+                cli.tuiDebugDumpPath = optarg;
+                break;
+            case 'n':
+                cli.dryRun = true;
+                break;
+            case 'h':
+                cli.showHelp = true;
+                break;
 
-        // Run
-        case 'p': cli.prompt = optarg; break;
-        case 'f': cli.promptFile = optarg; break;
-        case 'm': cli.manifestPath = optarg; break;
-        case 'H': cli.harnessPromptPath = optarg; break;
-        case 'y': cli.systemPromptPath = optarg; break;
-        case 's': cli.sessionId = optarg; break;
-        case 'e': cli.ephemeral = true; break;
-        case 'E': cli.replMode = true; break;
+            // Run
+            case 'p':
+                cli.prompt = optarg;
+                break;
+            case 'f':
+                cli.promptFile = optarg;
+                break;
+            case 'm':
+                cli.manifestPath = optarg;
+                break;
+            case 'H':
+                cli.harnessPromptPath = optarg;
+                break;
+            case 'y':
+                cli.systemPromptPath = optarg;
+                break;
+            case 's':
+                cli.sessionId = optarg;
+                break;
+            case 'e':
+                cli.ephemeral = true;
+                break;
+            case 'E':
+                cli.replMode = true;
+                break;
 
-        // Serve
-        case 'o': cli.serverHost = optarg; break;
-        case 'O': cli.serverPort = std::stoi(optarg); break;
-        case 'T': cli.serverThreads = std::stoi(optarg); break;
-        case 'K': cli.serverApiKey = optarg; break;
-        case 'N': cli.serverNoCors = true; break;
+            // Serve
+            case 'o':
+                cli.serverHost = optarg;
+                break;
+            case 'O':
+                cli.serverPort = std::stoi(optarg);
+                break;
+            case 'T':
+                cli.serverThreads = std::stoi(optarg);
+                break;
+            case 'K':
+                cli.serverApiKey = optarg;
+                break;
+            case 'N':
+                cli.serverNoCors = true;
+                break;
 
-        // List
-        case 'L': cli.listProviders = true; break;
-        case 'l': cli.listModels = true; if (optarg) cli.listModelsProvider = optarg; break;
-        case 't': cli.listTools = true; break;
+            // List
+            case 'L':
+                cli.listProviders = true;
+                break;
+            case 'l':
+                cli.listModels = true;
+                if (optarg)
+                    cli.listModelsProvider = optarg;
+                break;
+            case 't':
+                cli.listTools = true;
+                break;
 
-        // Config
-        case 'w': cli.configShow = true; break;
-        case 'W': cli.configSet = optarg; break;
-        case 'I': cli.configInit = true; break;
+            // Config
+            case 'w':
+                cli.configShow = true;
+                break;
+            case 'W':
+                cli.configSet = optarg;
+                break;
+            case 'I':
+                cli.configInit = true;
+                break;
 
-        default:
-            std::cerr << "Try 'cortex-mk3 --help'\n";
-            exit(1);
+            default:
+                std::cerr << "Try 'cortex-mk3 --help'\n";
+                exit(1);
         }
     }
 
     // Subcommand (first positional after flags)
     if (optind < argc) {
         std::string cmd = argv[optind];
-        if (cmd == "run" || cmd == "serve" || cmd == "list" ||
-            cmd == "config" || cmd == "completions" ||
-            cmd == "version" || cmd == "help") {
+        if (cmd == "run" || cmd == "serve" || cmd == "list" || cmd == "config" ||
+            cmd == "completions" || cmd == "version" || cmd == "help") {
             cli.command = cmd;
             optind++;
         } else {
             // Unknown command — treat as prompt for backward compat
             cli.prompt = cmd;
             for (int i = optind; i < argc; i++) {
-                if (!cli.prompt.empty()) cli.prompt += " ";
+                if (!cli.prompt.empty())
+                    cli.prompt += " ";
                 cli.prompt += argv[i];
             }
         }
     }
 
     // List --models accepts both `--models=provider` and `--models provider`.
-    if (cli.command == "list" && cli.listModels && cli.listModelsProvider.empty() && optind < argc) {
+    if (cli.command == "list" && cli.listModels && cli.listModelsProvider.empty() &&
+        optind < argc) {
         cli.listModelsProvider = argv[optind];
     }
 
@@ -440,7 +522,8 @@ static CliConfig parseArgs(int argc, char* argv[]) {
     }
 
     // Default command
-    if (cli.command.empty()) cli.command = "run";
+    if (cli.command.empty())
+        cli.command = "run";
 
     return cli;
 }
@@ -485,27 +568,28 @@ static int cmdList(const CliConfig& cli) {
         std::cout << "Available providers:\n\n";
         // Pull from the factory so the list stays in sync with availableProviders().
         static const std::vector<std::pair<std::string, std::string>> providerInfo = {
-            {"deepseek",    "DeepSeek API        (DEEPSEEK_API_KEY)"},
-            {"openrouter",  "OpenRouter          (OPENROUTER_API_KEY)"},
+            {"deepseek", "DeepSeek API        (DEEPSEEK_API_KEY)"},
+            {"openrouter", "OpenRouter          (OPENROUTER_API_KEY)"},
             {"openai-codex", "OpenAI Codex        (OPENAI_API_KEY or ~/.codex/auth.json)"},
-            {"groq",        "Groq                (GROQ_API_KEY)"},
-            {"zen",         "OpenCode Zen        (free tier)"},
+            {"groq", "Groq                (GROQ_API_KEY)"},
+            {"zen", "OpenCode Zen        (free tier)"},
             {"opencode-go", "OpenCode Go         (OPENCODE_API_KEY, $10/mo)"},
-            {"opencode",    "OpenCode (alias→zen)"},
-            {"together",    "Together AI         (TOGETHER_API_KEY)"},
-            {"fireworks",   "Fireworks AI        (FIREWORKS_API_KEY)"},
-            {"sambanova",   "SambaNova"},
-            {"cerebras",    "Cerebras"},
-            {"hyperbolic",  "Hyperbolic"},
-            {"llm7",        "LLM7"},
-            {"nvidia",      "NVIDIA"},
+            {"opencode", "OpenCode (alias→zen)"},
+            {"together", "Together AI         (TOGETHER_API_KEY)"},
+            {"fireworks", "Fireworks AI        (FIREWORKS_API_KEY)"},
+            {"sambanova", "SambaNova"},
+            {"cerebras", "Cerebras"},
+            {"hyperbolic", "Hyperbolic"},
+            {"llm7", "LLM7"},
+            {"nvidia", "NVIDIA"},
         };
         // Only show providers the factory actually knows about.
         auto avail = providers::availableProviders();
         for (const auto& [name, desc] : providerInfo) {
             if (std::find(avail.begin(), avail.end(), name) != avail.end()) {
                 std::cout << "  " << name;
-                for (size_t i = name.size(); i < 14; ++i) std::cout << ' ';
+                for (size_t i = name.size(); i < 14; ++i)
+                    std::cout << ' ';
                 std::cout << desc << "\n";
             }
         }
@@ -523,22 +607,28 @@ static int cmdList(const CliConfig& cli) {
             auto models = provider->listModels();
             if (p == "openrouter") {
                 std::vector<ILlmProvider::ModelInfo> freeOnly;
-                for (auto& m : models) if (m.isFree) freeOnly.push_back(m);
+                for (auto& m : models)
+                    if (m.isFree)
+                        freeOnly.push_back(m);
                 models = std::move(freeOnly);
             }
 
             std::cout << "Models for " << p << ":\n";
             for (auto& m : models) {
                 std::cout << "  " << m.id;
-                if (!m.name.empty() && m.name != m.id) std::cout << " (" << m.name << ")";
-                if (m.isFree) std::cout << " [free]";
+                if (!m.name.empty() && m.name != m.id)
+                    std::cout << " (" << m.name << ")";
+                if (m.isFree)
+                    std::cout << " [free]";
                 std::cout << " — " << (m.contextWindow / 1024) << "K ctx\n";
             }
             if (models.empty()) {
                 std::string fallback = providers::defaultProviderModel(p);
                 if (!fallback.empty()) {
                     std::cout << "  " << fallback << " (default)\n";
-                    if (p == "openrouter") std::cout << "  (OpenRouter listing is filtered to free models; specify paid model IDs in manifests.)\n";
+                    if (p == "openrouter")
+                        std::cout << "  (OpenRouter listing is filtered to free models; specify "
+                                     "paid model IDs in manifests.)\n";
                 } else {
                     std::cout << "  (model listing not supported by this provider)\n";
                 }
@@ -551,8 +641,10 @@ static int cmdList(const CliConfig& cli) {
         }
 
         std::cout << "Models for all providers. Use `--models <provider>` to filter.\n\n";
-        for (const auto& p : {"deepseek", "openrouter", "openai-codex", "groq", "zen", "together", "fireworks"}) {
-            if (!printModels(p)) return 1;
+        for (const auto& p :
+             {"deepseek", "openrouter", "openai-codex", "groq", "zen", "together", "fireworks"}) {
+            if (!printModels(p))
+                return 1;
             std::cout << "\n";
         }
         return 0;
@@ -753,7 +845,8 @@ static int cmdRun(CliConfig& cli) {
             std::cout << "  ✓ Manifest: " << cli.manifestPath << "\n";
         }
 
-        std::cout << "  sandbox:  " << (cli.sandbox ? (cli.sandboxReadOnly ? "read-only" : "on") : "off") << "\n";
+        std::cout << "  sandbox:  "
+                  << (cli.sandbox ? (cli.sandboxReadOnly ? "read-only" : "on") : "off") << "\n";
         std::cout << "  ✓ Configuration valid. Use without --dry-run to execute.\n";
         return 0;
     }
@@ -765,9 +858,12 @@ static int cmdRun(CliConfig& cli) {
     if (!cli.manifestPath.empty()) {
         acfg = ManifestLoader::loadAgentConfig(cli.manifestPath);
         ManifestLoader::loadEnv(cli.manifestPath, acfg);
-        if (cli.providerSet) acfg.provider = cli.provider;
-        if (cli.modelSet) acfg.model = cli.model;
-        if (!cli.harnessPromptPath.empty()) acfg.harnessPath = cli.harnessPromptPath;
+        if (cli.providerSet)
+            acfg.provider = cli.provider;
+        if (cli.modelSet)
+            acfg.model = cli.model;
+        if (!cli.harnessPromptPath.empty())
+            acfg.harnessPath = cli.harnessPromptPath;
 
         if (acfg.sandboxMode == "docker" && !fs::exists("/.dockerenv")) {
             auto files = ManifestLoader::loadFiles(cli.manifestPath);
@@ -800,7 +896,8 @@ static int cmdRun(CliConfig& cli) {
     provider->setQuietLogs(true);
 
     Agent agent(acfg, provider);
-    if (cli.iterations > 0) agent.setIterationCap(cli.iterations);
+    if (cli.iterations > 0)
+        agent.setIterationCap(cli.iterations);
     tui::TuiRenderer renderer(80);
 
     // Manifest catalog semantics: ./manifests is a lookup catalog, not an
@@ -826,23 +923,32 @@ static int cmdRun(CliConfig& cli) {
         allSchemas.insert(allSchemas.end(), schemas.begin(), schemas.end());
     }
 
-    std::string schemaXml = ManifestLoader::toolSchemasToXml(allSchemas);
-    if (!schemaXml.empty()) agent.setEnv("__TOOL_SCHEMAS__", schemaXml);
-    if (!workflowXml.empty()) agent.setEnv("__WORKFLOW_XML__", workflowXml);
+    const auto& rc = acfg.promptBuilding.runtimeCapabilities;
+    std::string schemaXml = ManifestLoader::toolSchemasToXml(allSchemas, 8, rc.inputSchemas,
+                                                             rc.returnSchemas, rc.usageExamples);
+    if (!schemaXml.empty())
+        agent.setEnv("__TOOL_SCHEMAS__", schemaXml);
+    if (!workflowXml.empty())
+        agent.setEnv("__WORKFLOW_XML__", workflowXml);
 
-    if (cli.debug) agent.setEnv("__DEBUG_MODE__", "true");
-    if (cli.raw) agent.setRaw(true);
-    if (cli.verbose) agent.setVerbose(true);
+    if (cli.debug)
+        agent.setEnv("__DEBUG_MODE__", "true");
+    if (cli.raw)
+        agent.setRaw(true);
+    if (cli.verbose)
+        agent.setVerbose(true);
 
     // Sandbox
     if (cli.sandbox) {
         std::string cwd = fs::current_path().string();
         if (cli.sandboxReadOnly) {
             agent.setSandboxPolicy(sandbox::makeReadOnlySandbox(cwd));
-            if (!cli.raw) std::cerr << "[sandbox] read-only — " << cwd << "\n";
+            if (!cli.raw)
+                std::cerr << "[sandbox] read-only — " << cwd << "\n";
         } else {
             agent.setSandboxPolicy(sandbox::makeHarnessSandbox(cwd));
-            if (!cli.raw) std::cerr << "[sandbox] enabled — " << cwd << "\n";
+            if (!cli.raw)
+                std::cerr << "[sandbox] enabled — " << cwd << "\n";
         }
     }
 
@@ -860,7 +966,8 @@ static int cmdRun(CliConfig& cli) {
         if (!cli.raw) {
             tui::Markdown md;
             md.setText(result);
-            for (auto& l : md.render()) std::cout << l << std::endl;
+            for (auto& l : md.render())
+                std::cout << l << std::endl;
         } else {
             std::cout << result << std::endl;
         }
@@ -870,37 +977,42 @@ static int cmdRun(CliConfig& cli) {
     if (cli.tuiDebugDumpPath.empty()) {
         const char* dumpEnv = getenv("MK3_TUI_DEBUG_DUMP");
         if (dumpEnv && *dumpEnv) {
-            cli.tuiDebugDumpPath = std::string(dumpEnv) == "1"
-                ? "/tmp/mk3-tui-debug-dump.txt"
-                : std::string(dumpEnv);
+            cli.tuiDebugDumpPath =
+                std::string(dumpEnv) == "1" ? "/tmp/mk3-tui-debug-dump.txt" : std::string(dumpEnv);
         }
     }
 
     // ── Enter alternate screen ──
     std::cout << "\033[?1049h\033[?25l" << std::flush;
-    atexit([]{ std::cout << "\033[?1049l\033[?25h" << std::flush; });
+    atexit([] { std::cout << "\033[?1049l\033[?25h" << std::flush; });
 
     int termW = 80, termH = 24;
-    struct winsize ws; if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
-        termW = ws.ws_col; termH = ws.ws_row;
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
+        termW = ws.ws_col;
+        termH = ws.ws_row;
     } else {
-        const char* ec = getenv("COLUMNS"); if (ec) termW = std::stoi(ec);
-        const char* er = getenv("LINES");   if (er) termH = std::stoi(er);
+        const char* ec = getenv("COLUMNS");
+        if (ec)
+            termW = std::stoi(ec);
+        const char* er = getenv("LINES");
+        if (er)
+            termH = std::stoi(er);
     }
     renderer.setWidth(termW);
 
     // Bottom-up layout: output anchors to bottom, above status/input bars
     tui::Input input;
     std::vector<std::string> historyLines;
-    int scrollOffset = 0;  // lines scrolled above viewport
+    int scrollOffset = 0;      // lines scrolled above viewport
     bool showPrompts = false;  // /prompts toggle
     auto lastRenderTime = std::chrono::steady_clock::now();
-    bool streaming = false;  // true during LLM call, false when idle
-    int spinnerFrame = 0;  // animated spinner
+    bool streaming = false;                              // true during LLM call, false when idle
+    int spinnerFrame = 0;                                // animated spinner
     std::chrono::steady_clock::time_point streamStart_;  // for TTC
-    static const char* spinnerFrames[] = {"⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"};
+    static const char* spinnerFrames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
     std::vector<std::string> prevDisplay;  // last rendered lines (for diff)
-    int prevDisplaySize_ = 0;  // total display size of last frame
+    int prevDisplaySize_ = 0;              // total display size of last frame
     bool renderDirty = true;
     std::vector<std::string> tuiFrameLog;
     std::vector<std::string> tuiAnsiFrames;
@@ -914,33 +1026,39 @@ static int cmdRun(CliConfig& cli) {
     size_t streamRawBytes = 0;
     auto statusBarText = [&](int displaySize) -> std::string {
         int visibleLines = termH - 2;
-        int scrollPct = displaySize > visibleLines ? (scrollOffset * 100 / (displaySize - visibleLines)) : 100;
-        std::string spinner = streaming ? std::string("\033[38;2;255;200;50m") + spinnerFrames[spinnerFrame] + " \033[0m" : "";
+        int scrollPct =
+            displaySize > visibleLines ? (scrollOffset * 100 / (displaySize - visibleLines)) : 100;
+        std::string spinner = streaming ? std::string("\033[38;2;255;200;50m") +
+                                              spinnerFrames[spinnerFrame] + " \033[0m"
+                                        : "";
         std::string ttc;
         if (streaming) {
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - streamStart_).count();
+                               std::chrono::steady_clock::now() - streamStart_)
+                               .count();
             if (elapsed >= 1000)
-                ttc = std::to_string(elapsed / 1000) + "." + std::to_string((elapsed % 1000) / 100) + "s ";
+                ttc = std::to_string(elapsed / 1000) + "." +
+                      std::to_string((elapsed % 1000) / 100) + "s ";
             else if (elapsed >= 100)
                 ttc = "0." + std::to_string(elapsed / 100) + "s ";
         }
         std::string telemetry;
         if (streaming) {
-            telemetry = " · " + streamPhase +
-                        " | actions=" + std::to_string(streamActionCount) +
+            telemetry = " · " + streamPhase + " | actions=" + std::to_string(streamActionCount) +
                         " complete=" + std::to_string(streamResultCount) +
                         " resp=" + std::to_string(streamRespBytes) + "b" +
                         " text=" + std::to_string(streamRawBytes) + "b";
         }
-        return spinner + ttc + ansi::dim + "─── Mode: " + tui::TuiRenderer::modeName(renderer.mode()) +
+        return spinner + ttc + ansi::dim +
+               "─── Mode: " + tui::TuiRenderer::modeName(renderer.mode()) +
                (showPrompts ? " + PROMPTS" : "") +
                (displaySize > visibleLines ? " · " + std::to_string(scrollPct) + "%" : "") +
                telemetry + " ───" + ansi::reset;
     };
     auto inputLineText = [&]() -> std::string {
         std::ostringstream out;
-        out << "\033[" << termH << ";1H\033[2K" << ansi::bold << "▸ " << ansi::reset << "\033[2m\033[3m";
+        out << "\033[" << termH << ";1H\033[2K" << ansi::bold << "▸ " << ansi::reset
+            << "\033[2m\033[3m";
         if (input.searching()) {
             out << tui::ansi::fg(255, 200, 0) << input.searchLine();
         } else {
@@ -948,41 +1066,53 @@ static int cmdRun(CliConfig& cli) {
             std::string l = input.line();
             out << l.substr(0, cp);
             out << "\033[7m" << (cp < l.size() ? std::string(1, l[cp]) : " ") << "\033[27m";
-            if (cp < l.size()) out << l.substr(cp + 1);
+            if (cp < l.size())
+                out << l.substr(cp + 1);
         }
         out << ansi::reset << " ";
         return out.str();
     };
     auto redrawStatusOnly = [&](bool force = false) {
-        if (!streaming) return;
+        if (!streaming)
+            return;
         auto now = std::chrono::steady_clock::now();
-        if (!force && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStatusTime).count() < 100) return;
+        if (!force &&
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStatusTime).count() <
+                100)
+            return;
         lastStatusTime = now;
         spinnerFrame = (spinnerFrame + 1) % 10;
-        std::cout << "\033[" << termH-1 << ";1H\033[2K" << statusBarText(lastDisplaySize)
+        std::cout << "\033[" << termH - 1 << ";1H\033[2K" << statusBarText(lastDisplaySize)
                   << inputLineText() << std::flush;
     };
-    auto captureAnsiFrame = [&](const std::vector<std::string>& visible, int startRow, int visibleCount, int displaySize) {
+    auto captureAnsiFrame = [&](const std::vector<std::string>& visible, int startRow,
+                                int visibleCount, int displaySize) {
         std::vector<std::string> frame(termH);
         for (int i = 0; i < visibleCount && i < (int)visible.size(); i++) {
             int row = startRow + i - 1;
-            if (row >= 0 && row < termH) frame[row] = visible[i];
+            if (row >= 0 && row < termH)
+                frame[row] = visible[i];
         }
         frame[termH - 2] = statusBarText(displaySize);
         frame[termH - 1] = inputLineText();
         std::ostringstream ss;
-        for (const auto& line : frame) ss << line << "\n";
+        for (const auto& line : frame)
+            ss << line << "\n";
         tuiAnsiFrames.push_back(ss.str());
-        while (tuiAnsiFrames.size() > 20) tuiAnsiFrames.erase(tuiAnsiFrames.begin());
+        while (tuiAnsiFrames.size() > 20)
+            tuiAnsiFrames.erase(tuiAnsiFrames.begin());
     };
     auto renderScreen = [&]() {
         // Event-driven redraw: do not rebuild/render the whole screen just to
         // animate a spinner. Repaint only when input/protocol/response changes.
         if (streaming) {
-            if (!renderDirty) return;
+            if (!renderDirty)
+                return;
             auto now = std::chrono::steady_clock::now();
-            auto sinceRender = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRenderTime).count();
-            if (sinceRender < 16) return;
+            auto sinceRender =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRenderTime).count();
+            if (sinceRender < 16)
+                return;
             spinnerFrame = (spinnerFrame + 1) % 10;
             lastRenderTime = now;
         }
@@ -994,7 +1124,8 @@ static int cmdRun(CliConfig& cli) {
                 display.push_back("\033[2m(no prompts captured — run a prompt first)\033[0m");
             } else {
                 for (size_t i = 0; i < prompts.size(); i++) {
-                    display.push_back(std::string("\033[1m") + tui::ansi::fg(200,200,100) + "─── Iter " + std::to_string(i+1) + " ───\033[0m");
+                    display.push_back(std::string("\033[1m") + tui::ansi::fg(200, 200, 100) +
+                                      "─── Iter " + std::to_string(i + 1) + " ───\033[0m");
                     std::istringstream ps(prompts[i]);
                     std::string pline;
                     while (std::getline(ps, pline)) {
@@ -1009,11 +1140,16 @@ static int cmdRun(CliConfig& cli) {
         }
         // Viewport: which lines should be visible
         int overflow = std::max(0, (int)display.size() - (termH - 2));
-        if (scrollOffset < 0) scrollOffset = 0;
-        if (scrollOffset > overflow) scrollOffset = overflow;
+        if (scrollOffset < 0)
+            scrollOffset = 0;
+        if (scrollOffset > overflow)
+            scrollOffset = overflow;
         int startRow = termH - 2 - (int)display.size() + 1 + scrollOffset;
         int skip = 0;
-        if (startRow < 1) { skip = 1 - startRow; startRow = 1; }
+        if (startRow < 1) {
+            skip = 1 - startRow;
+            startRow = 1;
+        }
         int visibleCount = std::min((int)display.size() - skip, termH - 2);
 
         // Extract visible slice for diff comparison
@@ -1030,7 +1166,8 @@ static int cmdRun(CliConfig& cli) {
             std::string oldLine = i < prevSize ? prevDisplay[i] : "";
             std::string newLine = i < visSize ? visible[i] : "";
             if (oldLine != newLine) {
-                if (firstChange == -1) firstChange = i;
+                if (firstChange == -1)
+                    firstChange = i;
                 lastChange = i;
             }
         }
@@ -1038,18 +1175,15 @@ static int cmdRun(CliConfig& cli) {
         bool needsFull = prevDisplay.empty() || (int)display.size() != prevDisplaySize_;
         if (!cli.tuiDebugDumpPath.empty()) {
             std::ostringstream fl;
-            fl << "frame=" << (++tuiFrameNo)
-               << " streaming=" << (streaming ? "true" : "false")
-               << " dirty=" << (renderDirty ? "true" : "false")
-               << " display=" << display.size()
-               << " visible=" << visible.size()
-               << " skip=" << skip
-               << " full=" << (needsFull ? "true" : "false")
-               << " first_change=" << firstChange
+            fl << "frame=" << (++tuiFrameNo) << " streaming=" << (streaming ? "true" : "false")
+               << " dirty=" << (renderDirty ? "true" : "false") << " display=" << display.size()
+               << " visible=" << visible.size() << " skip=" << skip
+               << " full=" << (needsFull ? "true" : "false") << " first_change=" << firstChange
                << " last_change=" << lastChange
                << " mode=" << tui::TuiRenderer::modeName(renderer.mode());
             tuiFrameLog.push_back(fl.str());
-            if (tuiFrameLog.size() > 500) tuiFrameLog.erase(tuiFrameLog.begin(), tuiFrameLog.begin() + 100);
+            if (tuiFrameLog.size() > 500)
+                tuiFrameLog.erase(tuiFrameLog.begin(), tuiFrameLog.begin() + 100);
         }
 
         std::ostringstream frameOut;
@@ -1061,14 +1195,13 @@ static int cmdRun(CliConfig& cli) {
             // Only redraw changed region — absolute cursor positioning, no bare \n
             int screenRow = startRow + firstChange;
             for (int vi = firstChange; vi <= lastChange && vi < visSize; vi++) {
-                frameOut << "\033[" << (screenRow + vi - firstChange)
-                         << ";1H\033[2K" << visible[vi];
+                frameOut << "\033[" << (screenRow + vi - firstChange) << ";1H\033[2K"
+                         << visible[vi];
             }
             // Clear trailing lines if new content is shorter
             if (visSize < prevSize) {
                 for (int vi = visSize; vi < prevSize; vi++) {
-                    frameOut << "\033[" << (screenRow + vi - firstChange)
-                             << ";1H\033[2K";
+                    frameOut << "\033[" << (screenRow + vi - firstChange) << ";1H\033[2K";
                 }
             }
         } else if (visSize != prevSize) {
@@ -1090,7 +1223,8 @@ static int cmdRun(CliConfig& cli) {
 
         int displaySize = (int)display.size() - skip;
         lastDisplaySize = displaySize;
-        std::string statusLine = "\033[" + std::to_string(termH-1) + ";1H\033[2K" + statusBarText(displaySize);
+        std::string statusLine =
+            "\033[" + std::to_string(termH - 1) + ";1H\033[2K" + statusBarText(displaySize);
         std::string inputLine = inputLineText();
         lastStatusTime = std::chrono::steady_clock::now();
         if (!cli.tuiDebugDumpPath.empty()) {
@@ -1106,17 +1240,28 @@ static int cmdRun(CliConfig& cli) {
     bool quit = false;
     session::SessionManager sm;
     std::string sessionId = cli.sessionId.empty() ? "default" : cli.sessionId;
-    auto sess = sm.exists(sessionId) ? sm.load(sessionId) : sm.create(sessionId, "mk3", cli.model, cli.provider);
+    auto sess = sm.exists(sessionId) ? sm.load(sessionId)
+                                     : sm.create(sessionId, "mk3", cli.model, cli.provider);
     input.start([&](const std::string& s) { cmd = s; });
 
     // Load history
     const char* home = getenv("HOME");
     std::string histPath = home ? std::string(home) + "/.mk3_history" : "/tmp/.mk3_history";
     input.history().load(histPath);
-    input.setCompleter([](const std::string& prefix) { return tui::SlashCommands::complete(prefix); });
-    input.scrollUp   = [&]{ scrollOffset += (termH - 2) / 2; renderScreen(); };
-    input.scrollDown = [&]{ scrollOffset -= (termH - 2) / 2; renderScreen(); };
-    input.clearScreen = [&]{ std::cout << "\033[2J\033[H" << std::flush; renderScreen(); };
+    input.setCompleter(
+        [](const std::string& prefix) { return tui::SlashCommands::complete(prefix); });
+    input.scrollUp = [&] {
+        scrollOffset += (termH - 2) / 2;
+        renderScreen();
+    };
+    input.scrollDown = [&] {
+        scrollOffset -= (termH - 2) / 2;
+        renderScreen();
+    };
+    input.clearScreen = [&] {
+        std::cout << "\033[2J\033[H" << std::flush;
+        renderScreen();
+    };
 
     auto pushTuiLine = [&](const std::string& line) {
         historyLines.push_back(std::string("\033[2m\033[3m") + line + ansi::reset);
@@ -1124,14 +1269,18 @@ static int cmdRun(CliConfig& cli) {
     };
     auto pushTuiSection = [&](const std::string& title, const std::vector<std::string>& items) {
         pushTuiLine("[" + title + "] " + (items.empty() ? "none" : std::to_string(items.size())));
-        for (const auto& item : items) pushTuiLine("  - " + item);
+        for (const auto& item : items)
+            pushTuiLine("  - " + item);
     };
-    auto dumpTuiState = [&](const std::string& path, const std::string& reason, bool notify) -> bool {
-        if (path.empty()) return false;
+    auto dumpTuiState = [&](const std::string& path, const std::string& reason,
+                            bool notify) -> bool {
+        if (path.empty())
+            return false;
         std::ofstream f(path);
         auto lines = renderer.render();
         if (!f) {
-            if (notify) pushTuiLine("Failed to write " + path);
+            if (notify)
+                pushTuiLine("Failed to write " + path);
             return false;
         }
         const auto& acts = agent.protocolActions();
@@ -1148,7 +1297,8 @@ static int cmdRun(CliConfig& cli) {
         f << "frame_log_lines: " << tuiFrameLog.size() << "\n";
         f << "ansi_snapshot_count: " << tuiAnsiFrames.size() << "\n\n";
         f << "## Frame log\n";
-        for (const auto& l : tuiFrameLog) f << l << "\n";
+        for (const auto& l : tuiFrameLog)
+            f << l << "\n";
         f << "\n## Raw ANSI snapshots\n";
         for (size_t i = 0; i < tuiAnsiFrames.size(); i++) {
             f << "--- ansi frame " << i << " ---\n";
@@ -1156,22 +1306,29 @@ static int cmdRun(CliConfig& cli) {
         }
         f << "\n## Protocol events\n";
         for (const auto& a : acts) {
-            f << "ACTION " << a.type << " " << a.name << "#" << a.id << " sync=" << (a.sync ? "true" : "false") << "\n";
-            if (!a.body.empty()) f << "  body: " << a.body.substr(0, 1200) << (a.body.size() > 1200 ? "..." : "") << "\n";
+            f << "ACTION " << a.type << " " << a.name << "#" << a.id
+              << " sync=" << (a.sync ? "true" : "false") << "\n";
+            if (!a.body.empty())
+                f << "  body: " << a.body.substr(0, 1200) << (a.body.size() > 1200 ? "..." : "")
+                  << "\n";
         }
         for (const auto& r : ress) {
-            f << "RESULT " << r.id << " ok=" << (r.ok ? "true" : "false") << " ms=" << r.elapsedMs << " bytes=" << r.outputBytes << "\n";
-            if (!r.summary.empty()) f << "  summary: " << r.summary.substr(0, 1200) << (r.summary.size() > 1200 ? "..." : "") << "\n";
+            f << "RESULT " << r.id << " ok=" << (r.ok ? "true" : "false") << " ms=" << r.elapsedMs
+              << " bytes=" << r.outputBytes << "\n";
+            if (!r.summary.empty())
+                f << "  summary: " << r.summary.substr(0, 1200)
+                  << (r.summary.size() > 1200 ? "..." : "") << "\n";
         }
         f << "\n## History\n";
-        for (const auto& l : historyLines) f << l << "\n";
+        for (const auto& l : historyLines)
+            f << l << "\n";
         f << "\n## Current Renderer\n";
-        for (const auto& l : lines) f << l << "\n";
+        for (const auto& l : lines)
+            f << l << "\n";
         if (notify) {
-            pushTuiLine("Wrote " + path + " (reason " + reason +
-                        ", history " + std::to_string(historyLines.size()) +
-                        ", current " + std::to_string(lines.size()) +
-                        ", actions " + std::to_string(acts.size()) +
+            pushTuiLine("Wrote " + path + " (reason " + reason + ", history " +
+                        std::to_string(historyLines.size()) + ", current " +
+                        std::to_string(lines.size()) + ", actions " + std::to_string(acts.size()) +
                         ", results " + std::to_string(ress.size()) + ")");
         }
         return true;
@@ -1181,10 +1338,16 @@ static int cmdRun(CliConfig& cli) {
         size_t pos = 0;
         while ((pos = workflowXml.find("<workflow", pos)) != std::string::npos) {
             size_t namePos = workflowXml.find("name=\"", pos);
-            if (namePos == std::string::npos) { pos += 9; continue; }
+            if (namePos == std::string::npos) {
+                pos += 9;
+                continue;
+            }
             namePos += 6;
             size_t end = workflowXml.find('"', namePos);
-            if (end == std::string::npos) { pos += 9; continue; }
+            if (end == std::string::npos) {
+                pos += 9;
+                continue;
+            }
             names.push_back(workflowXml.substr(namePos, end - namePos));
             pos = end + 1;
         }
@@ -1192,9 +1355,11 @@ static int cmdRun(CliConfig& cli) {
     };
     auto showManifests = [&]() {
         std::vector<std::string> tools;
-        for (const auto& s : allSchemas) tools.push_back(s.name + (s.description.empty() ? "" : " — " + s.description));
+        for (const auto& s : allSchemas)
+            tools.push_back(s.name + (s.description.empty() ? "" : " — " + s.description));
         pushTuiLine("─── Active Manifest Surface ───");
-        pushTuiLine("agent: " + agent.name() + "  provider: " + agent.config().provider + "  model: " + agent.config().model);
+        pushTuiLine("agent: " + agent.name() + "  provider: " + agent.config().provider +
+                    "  model: " + agent.config().model);
         pushTuiSection("tools", tools);
         pushTuiSection("feeds", agent.feedNames());
         pushTuiSection("relics", agent.relicNames());
@@ -1210,7 +1375,8 @@ static int cmdRun(CliConfig& cli) {
             g_resized = false;
             struct winsize ws;
             if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
-                termW = ws.ws_col; termH = ws.ws_row;
+                termW = ws.ws_col;
+                termH = ws.ws_row;
                 renderer.setWidth(termW);
             }
         }
@@ -1219,75 +1385,95 @@ static int cmdRun(CliConfig& cli) {
             std::string before = input.line();
             size_t beforeCp = input.cursorPos();
             input.poll();
-            if (input.line() != before || input.cursorPos() != beforeCp) { renderDirty = true; renderScreen(); }
+            if (input.line() != before || input.cursorPos() != beforeCp) {
+                renderDirty = true;
+                renderScreen();
+            }
         }
-        if (!cortex::mk3::g_running || cmd.empty()) continue;
+        if (!cortex::mk3::g_running || cmd.empty())
+            continue;
 
-        if (cmd == "/quit" || cmd == "/exit") { quit = true; break; }
+        if (cmd == "/quit" || cmd == "/exit") {
+            quit = true;
+            break;
+        }
         if (cmd[0] == '/') {
             if (cmd == "/help" || cmd == "/commands") {
                 for (auto& l : tui::SlashCommands::helpLines())
                     pushTuiLine(l);
-            }
-            else if (cmd == "/manifests") {
+            } else if (cmd == "/manifests") {
                 showManifests();
-            }
-            else if (cmd == "/prompts") {
+            } else if (cmd == "/prompts") {
                 showPrompts = !showPrompts;
                 historyLines.clear();
-            }
-            else if (tui::SlashCommands::isDynamic(cmd)) {
+            } else if (tui::SlashCommands::isDynamic(cmd)) {
                 for (auto& l : tui::SlashCommands::renderDynamic(cmd))
                     pushTuiLine(l);
-            }
-            else if (cmd == "/cp-all") {
+            } else if (cmd == "/cp-all") {
                 std::string all;
-                for (auto& l : historyLines) all += l + "\n";
+                for (auto& l : historyLines)
+                    all += l + "\n";
                 auto rl = renderer.render();
-                for (auto& l : rl) all += l + "\n";
+                for (auto& l : rl)
+                    all += l + "\n";
                 // Try both clipboard tools
                 int rc = system("which wl-copy >/dev/null 2>&1 && wl-copy");
-                if (rc != 0) rc = system("which xclip >/dev/null 2>&1 && xclip -selection clipboard");
+                if (rc != 0)
+                    rc = system("which xclip >/dev/null 2>&1 && xclip -selection clipboard");
                 if (rc != 0) {
                     // Fallback: write to temp file
                     std::ofstream f("/tmp/mk3-cp-all.txt");
-                    if (f) { f << all; f.close(); }
+                    if (f) {
+                        f << all;
+                        f.close();
+                    }
                 } else {
                     FILE* p = popen(rc == 0 ? "wl-copy" : "xclip -selection clipboard", "w");
-                    if (p) { fwrite(all.c_str(), 1, all.size(), p); pclose(p); }
+                    if (p) {
+                        fwrite(all.c_str(), 1, all.size(), p);
+                        pclose(p);
+                    }
                 }
-            }
-            else if (cmd == "/cp-raw") {
+            } else if (cmd == "/cp-raw") {
                 std::string raw = agent.rawLlOutput();
                 int rc = system("which wl-copy >/dev/null 2>&1");
                 FILE* p = popen(rc == 0 ? "wl-copy" : "xclip -selection clipboard", "w");
-                if (p) { fwrite(raw.c_str(), 1, raw.size(), p); pclose(p); }
-                else { std::ofstream f("/tmp/mk3-cp-raw.txt"); if (f) { f << raw; } }
-            }
-            else if (cmd == "/sessions") {
+                if (p) {
+                    fwrite(raw.c_str(), 1, raw.size(), p);
+                    pclose(p);
+                } else {
+                    std::ofstream f("/tmp/mk3-cp-raw.txt");
+                    if (f) {
+                        f << raw;
+                    }
+                }
+            } else if (cmd == "/sessions") {
                 auto list = sm.list();
-                historyLines.push_back(std::string("\033[2m\033[3m") + "─── Sessions ───" + ansi::reset);
+                historyLines.push_back(std::string("\033[2m\033[3m") + "─── Sessions ───" +
+                                       ansi::reset);
                 for (auto& s : list)
-                    historyLines.push_back(std::string("\033[2m\033[3m") + s.id + "  " + s.updated + "  " + std::to_string(s.turnCount) + " turns" + ansi::reset);
-            }
-            else if (cmd == "/dump-render" || cmd == "/dr") {
-                std::string path = cli.tuiDebugDumpPath.empty()
-                    ? "/tmp/mk3-render-dump.txt"
-                    : cli.tuiDebugDumpPath;
+                    historyLines.push_back(std::string("\033[2m\033[3m") + s.id + "  " + s.updated +
+                                           "  " + std::to_string(s.turnCount) + " turns" +
+                                           ansi::reset);
+            } else if (cmd == "/dump-render" || cmd == "/dr") {
+                std::string path = cli.tuiDebugDumpPath.empty() ? "/tmp/mk3-render-dump.txt"
+                                                                : cli.tuiDebugDumpPath;
                 dumpTuiState(path, "slash-command", true);
-            }
-            else if (cmd == "/dump-prompt" || cmd == "/dp") {
+            } else if (cmd == "/dump-prompt" || cmd == "/dp") {
                 // Export last prompt to /tmp/mk3-prompt-iterN.xml for inspection
                 auto& prompts = agent.iterationPrompts();
                 if (prompts.empty()) {
-                    historyLines.push_back("\033[2m(no prompts captured — run a prompt first)\033[0m");
+                    historyLines.push_back(
+                        "\033[2m(no prompts captured — run a prompt first)\033[0m");
                 } else {
                     for (size_t i = 0; i < prompts.size(); i++) {
-                        std::string path = "/tmp/mk3-prompt-iter" + std::to_string(i+1) + ".xml";
+                        std::string path = "/tmp/mk3-prompt-iter" + std::to_string(i + 1) + ".xml";
                         std::ofstream f(path);
-                        f << "<!-- Cortex MK3 Prompt — Iteration " << (i+1) << " -->\n";
+                        f << "<!-- Cortex MK3 Prompt — Iteration " << (i + 1) << " -->\n";
                         f << prompts[i];
-                        historyLines.push_back(std::string("\033[2m\033[3m") + "Wrote " + path + " (" + std::to_string(prompts[i].size()) + " bytes)" + ansi::reset);
+                        historyLines.push_back(std::string("\033[2m\033[3m") + "Wrote " + path +
+                                               " (" + std::to_string(prompts[i].size()) +
+                                               " bytes)" + ansi::reset);
                     }
                 }
             }
@@ -1296,7 +1482,7 @@ static int cmdRun(CliConfig& cli) {
         }
 
         // ── Prompt (threaded — allows concurrent input + Escape cancel) ──
-        std::string promptText = cmd; // stable copy; input callback may mutate cmd while streaming
+        std::string promptText = cmd;  // stable copy; input callback may mutate cmd while streaming
         cmd.clear();
         cortex::mk3::g_running = true;
         streaming = true;
@@ -1331,7 +1517,8 @@ static int cmdRun(CliConfig& cli) {
             bool clearRenderer = false;
             {
                 std::lock_guard<std::mutex> lk(streamMtx);
-                if (!snapDirty) return;
+                if (!snapDirty)
+                    return;
                 acts = snapActions;
                 ress = snapResults;
                 response = snapResponse;
@@ -1343,7 +1530,8 @@ static int cmdRun(CliConfig& cli) {
                 snapDirty = false;
             }
 
-            if (clearRenderer) renderer.clear();
+            if (clearRenderer)
+                renderer.clear();
             streamActionCount = acts.size();
             streamResultCount = ress.size();
             streamRespBytes = response.size();
@@ -1359,46 +1547,63 @@ static int cmdRun(CliConfig& cli) {
                 const auto& r = ress[lastRes++];
                 std::string tn = r.toolName;
                 if (tn.empty()) {
-                    for (const auto& a : acts) if (a.id == r.id) { tn = a.name; break; }
+                    for (const auto& a : acts)
+                        if (a.id == r.id) {
+                            tn = a.name;
+                            break;
+                        }
                 }
-                renderer.addProtocolResult(r.id, r.ok, r.summary, tn, r.exitCode, r.elapsedMs, r.outputBytes);
+                renderer.addProtocolResult(r.id, r.ok, r.summary, tn, r.exitCode, r.elapsedMs,
+                                           r.outputBytes);
                 renderDirty = true;
             }
             if (renderer.mode() != tui::RenderMode::FULL)
                 renderer.setRawStream(raw);
             renderer.setResponse(response);
-            if (!response.empty()) renderDirty = true;
+            if (!response.empty())
+                renderDirty = true;
             if (phase == "waiting provider" || phase == "parsing protocol") {
                 renderer.setThought(thought);
-                if (!thought.empty()) renderDirty = true;
+                if (!thought.empty())
+                    renderDirty = true;
             }
         };
 
         // Run agent in background thread. The provider callback must never render
         // or wait on terminal I/O; it only snapshots agent state for the TUI loop.
         std::thread agentThread([&]() {
-            agent.prompt(promptText, [&](const std::string& /*token*/, bool) {
-                if (!cortex::mk3::g_running) return;
-                auto& acts = agent.protocolActions();
-                auto& ress = agent.protocolResults();
-                const std::string& response = agent.responseOutput();
-                const std::string& raw = agent.rawLlOutput();
-                std::string phase = "waiting provider";
-                if (!acts.empty() && ress.size() < acts.size()) phase = "running tools";
-                else if (!response.empty()) phase = "streaming response";
-                else if (!raw.empty()) phase = "parsing protocol";
-                {
-                    std::lock_guard<std::mutex> lk(streamMtx);
-                    if (firstToken) { snapClearRenderer = true; firstToken = false; }
-                    snapActions = acts;
-                    snapResults = ress;
-                    snapResponse = response;
-                    snapRaw = raw;
-                    snapThought = agent.thoughtOutput();
-                    snapPhase = phase;
-                    snapDirty = true;
-                }
-            }, cli.sessionId, cli.ephemeral);
+            agent.prompt(
+                promptText,
+                [&](const std::string& /*token*/, bool) {
+                    if (!cortex::mk3::g_running)
+                        return;
+                    auto& acts = agent.protocolActions();
+                    auto& ress = agent.protocolResults();
+                    const std::string& response = agent.responseOutput();
+                    const std::string& raw = agent.rawLlOutput();
+                    std::string phase = "waiting provider";
+                    if (!acts.empty() && ress.size() < acts.size())
+                        phase = "running tools";
+                    else if (!response.empty())
+                        phase = "streaming response";
+                    else if (!raw.empty())
+                        phase = "parsing protocol";
+                    {
+                        std::lock_guard<std::mutex> lk(streamMtx);
+                        if (firstToken) {
+                            snapClearRenderer = true;
+                            firstToken = false;
+                        }
+                        snapActions = acts;
+                        snapResults = ress;
+                        snapResponse = response;
+                        snapRaw = raw;
+                        snapThought = agent.thoughtOutput();
+                        snapPhase = phase;
+                        snapDirty = true;
+                    }
+                },
+                cli.sessionId, cli.ephemeral);
             {
                 std::lock_guard<std::mutex> lk(streamMtx);
                 snapActions = agent.protocolActions();
@@ -1420,7 +1625,8 @@ static int cmdRun(CliConfig& cli) {
             size_t beforeCursor = input.cursorPos();
             bool hadInput = input.poll();
             bool inputChanged = (input.line() != beforeInput || input.cursorPos() != beforeCursor);
-            if (inputChanged) renderDirty = true;
+            if (inputChanged)
+                renderDirty = true;
 
             // Escape → cancel agent
             if (input.escapePressed()) {
@@ -1439,7 +1645,8 @@ static int cmdRun(CliConfig& cli) {
                 g_resized = false;
                 struct winsize ws;
                 if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
-                    termW = ws.ws_col; termH = ws.ws_row;
+                    termW = ws.ws_col;
+                    termH = ws.ws_row;
                     renderer.setWidth(termW);
                     renderDirty = true;
                 }
@@ -1450,13 +1657,15 @@ static int cmdRun(CliConfig& cli) {
             redrawStatusOnly(inputChanged);
 
             // Small sleep to avoid busy-wait CPU spin; skip on any input activity.
-            if (!hadInput && !inputChanged) usleep(2000);
+            if (!hadInput && !inputChanged)
+                usleep(2000);
         }
 
         applyStreamSnapshot();
 
         // Wait for agent thread to finish
-        if (agentThread.joinable()) agentThread.join();
+        if (agentThread.joinable())
+            agentThread.join();
 
         // Flush final render state
         applyStreamSnapshot();
@@ -1464,12 +1673,16 @@ static int cmdRun(CliConfig& cli) {
 
         if (!cortex::mk3::g_running) {
             streaming = false;
-            std::cout << "\033[" << termH-1 << ";1H\033[2K" << ansi::red << "Cancelled" << ansi::reset;
-            std::cout << "\033[" << termH << ";1H\033[2K" << ansi::bold << "▸ " << ansi::reset << "\033[2m\033[3m";
-            size_t cp = input.cursorPos(); std::string l = input.line();
+            std::cout << "\033[" << termH - 1 << ";1H\033[2K" << ansi::red << "Cancelled"
+                      << ansi::reset;
+            std::cout << "\033[" << termH << ";1H\033[2K" << ansi::bold << "▸ " << ansi::reset
+                      << "\033[2m\033[3m";
+            size_t cp = input.cursorPos();
+            std::string l = input.line();
             std::cout << l.substr(0, cp);
             std::cout << "\033[7m" << (cp < l.size() ? std::string(1, l[cp]) : " ") << "\033[27m";
-            if (cp < l.size()) std::cout << l.substr(cp + 1);
+            if (cp < l.size())
+                std::cout << l.substr(cp + 1);
             std::cout << ansi::reset << " ";
             std::cout << std::flush;
             continue;
@@ -1479,7 +1692,8 @@ static int cmdRun(CliConfig& cli) {
         auto turnLines = renderer.render();
         // User prompt already in historyLines (added before streaming started)
         historyLines.insert(historyLines.end(), turnLines.begin(), turnLines.end());
-        if (historyLines.empty()) historyLines.push_back("");
+        if (historyLines.empty())
+            historyLines.push_back("");
         streaming = false;
         if (!cli.tuiDebugDumpPath.empty()) {
             dumpTuiState(cli.tuiDebugDumpPath, "turn-complete", false);
@@ -1506,11 +1720,12 @@ static int cmdRun(CliConfig& cli) {
 // ═══════════════════════════════════════════════════════════════════════
 static int cmdServe(const CliConfig& cli) {
     std::cout << "Server mode — use cortex-mk3-server binary instead.\n";
-    std::cout << "  cortex-mk3-server --host " << cli.serverHost
-              << " --port " << cli.serverPort
+    std::cout << "  cortex-mk3-server --host " << cli.serverHost << " --port " << cli.serverPort
               << " --threads " << cli.serverThreads;
-    if (!cli.serverApiKey.empty()) std::cout << " --api-key " << cli.serverApiKey;
-    if (cli.serverNoCors) std::cout << " --no-cors";
+    if (!cli.serverApiKey.empty())
+        std::cout << " --api-key " << cli.serverApiKey;
+    if (cli.serverNoCors)
+        std::cout << " --no-cors";
     std::cout << "\n";
     return 1;
 }
@@ -1525,18 +1740,26 @@ int main(int argc, char* argv[]) {
     CliConfig cli = parseArgs(argc, argv);
 
     // Load config file
-    if (cli.configPath.empty()) cli.configPath = defaultConfigPath();
+    if (cli.configPath.empty())
+        cli.configPath = defaultConfigPath();
     auto cfg = loadConfigFile(cli.configPath);
     applyConfig(cli, cfg);
 
     // Dispatch
-    if (cli.showHelp) return cmdHelp(cli);
-    if (cli.command == "version") return cmdVersion();
-    if (cli.command == "help") return cmdHelp(cli);
-    if (cli.command == "list") return cmdList(cli);
-    if (cli.command == "config") return cmdConfig(cli);
-    if (cli.command == "completions") return cmdCompletions(cli);
-    if (cli.command == "serve") return cmdServe(cli);
+    if (cli.showHelp)
+        return cmdHelp(cli);
+    if (cli.command == "version")
+        return cmdVersion();
+    if (cli.command == "help")
+        return cmdHelp(cli);
+    if (cli.command == "list")
+        return cmdList(cli);
+    if (cli.command == "config")
+        return cmdConfig(cli);
+    if (cli.command == "completions")
+        return cmdCompletions(cli);
+    if (cli.command == "serve")
+        return cmdServe(cli);
 
     // Default: run
     return cmdRun(cli);

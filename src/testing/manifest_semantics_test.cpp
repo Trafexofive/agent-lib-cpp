@@ -72,6 +72,60 @@ context:
     PASS();
 }
 
+void test_prompt_building_runtime_capabilities_parse() {
+    TEST("prompt_building.runtime_capabilities parses");
+    fs::path root = fs::temp_directory_path() / "mk3-manifest-semantics-prompt-building";
+    fs::remove_all(root);
+    writeFile(root / "agent.yml", R"YAML(kind: Agent
+name: prompt-building-agent
+version: "1.0"
+cognitive_engine:
+  primary:
+    provider: openai-codex
+    model: gpt-5.5
+prompt_building:
+  runtime_capabilities:
+    input_schemas: false
+    return_schemas: disable
+    usage_examples: false
+)YAML");
+
+    auto cfg = ManifestLoader::loadAgentConfig((root / "agent.yml").string());
+    CHECK(!cfg.promptBuilding.runtimeCapabilities.inputSchemas, "input_schemas not parsed");
+    CHECK(!cfg.promptBuilding.runtimeCapabilities.returnSchemas, "return_schemas not parsed");
+    CHECK(!cfg.promptBuilding.runtimeCapabilities.usageExamples, "usage_examples not parsed");
+    PASS();
+}
+
+void test_tool_schema_xml_respects_prompt_building_flags() {
+    TEST("tool schema XML respects prompt_building flags");
+    fs::path root = fs::temp_directory_path() / "mk3-manifest-semantics-prompt-building-xml";
+    fs::remove_all(root);
+    writeFile(root / "agent.yml", R"YAML(kind: Agent
+name: prompt-building-xml-agent
+version: "1.0"
+cognitive_engine:
+  primary:
+    provider: openai-codex
+    model: gpt-5.5
+import:
+  tools:
+    - context_pin
+)YAML");
+
+    auto cfg = ManifestLoader::loadAgentConfig((root / "agent.yml").string());
+    auto provider = providers::createProvider(cfg.provider, cfg.model);
+    CHECK(provider, "could not create provider");
+    Agent agent(cfg, provider);
+    auto schemas = ManifestLoader::loadTools((root / "agent.yml").string(), agent);
+    CHECK(!schemas.empty(), "context_pin schema missing");
+    auto xml = ManifestLoader::toolSchemasToXml(schemas, 4, true, false, false);
+    CHECK(xml.find("<params>") != std::string::npos, "input params missing when included");
+    CHECK(xml.find("<returns>") == std::string::npos, "return schema not disabled");
+    CHECK(xml.find("<examples>") == std::string::npos, "usage examples not disabled");
+    PASS();
+}
+
 void test_runtime_subagent_persistence_parses() {
     TEST("runtime.subagents.persistence parses");
     fs::path root = fs::temp_directory_path() / "mk3-manifest-semantics-subagent-persistence";
@@ -225,6 +279,8 @@ int main() {
     std::cout << "╚══════════════════════════════════════════╝\n\n";
 
     test_context_section_wires_to_agent_config();
+    test_prompt_building_runtime_capabilities_parse();
+    test_tool_schema_xml_respects_prompt_building_flags();
     test_runtime_subagent_persistence_parses();
     test_tool_implementation_input_type_parses();
     test_builtin_tool_schemas_render_for_prompt_surface();
