@@ -16,13 +16,8 @@ persona:
 import:
   tools:
     - exec
-    - fs_read
-    - fs_write
-    - simple_fs_write
     - grep
     - list
-    - json
-    - web_fetch
     - context_pin
     - context_peek
     - context_unpin
