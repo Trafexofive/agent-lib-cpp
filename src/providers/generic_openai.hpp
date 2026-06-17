@@ -256,6 +256,28 @@ inline OpenAIProviderConfig zenConfig() {
             "chat-completions"};
 }
 
+// OpenCode Go (paid subscription tier — $10/mo)
+// Requires API key from https://opencode.ai/auth
+// Supports: deepseek-v4-flash, deepseek-v4-pro, qwen3.7-max, kimi-k2.7, glm-5.2, etc.
+inline OpenAIProviderConfig opencodeGoConfig() {
+    return {"opencode-go",
+            "https://opencode.ai/zen/go/v1",
+            "OPENCODE_API_KEY",
+            "",
+            "deepseek-v4-flash",
+            {
+                {"X-Title", "Cortex-MK3"},
+                {"HTTP-Referer", "https://github.com/Cortex-Prime-MK1"},
+            },
+            true,
+            true,
+            "/chat/completions",
+            "/models",
+            "",
+            65536,
+            "chat-completions"};
+}
+
 // Together AI
 inline OpenAIProviderConfig togetherConfig() {
     return {"together",

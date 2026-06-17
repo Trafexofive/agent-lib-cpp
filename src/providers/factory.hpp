@@ -28,6 +28,10 @@ inline std::shared_ptr<ILlmProvider> createProvider(const std::string& name,
         cfg = zenConfig();
     else if (name == "together")
         cfg = togetherConfig();
+    else if (name == "opencode-go")
+        cfg = opencodeGoConfig();
+    else if (name == "opencode")
+        cfg = zenConfig();  // opencode = zen (free tier)
     else if (name == "fireworks")
         cfg = fireworksConfig();
     else
@@ -40,9 +44,9 @@ inline std::shared_ptr<ILlmProvider> createProvider(const std::string& name,
 }
 
 inline std::vector<std::string> availableProviders() {
-    return {"deepseek",   "openrouter", "openai-codex", "codex-provider", "groq",
-            "zen",        "together",   "fireworks",    "sambanova",      "cerebras",
-            "hyperbolic", "llm7",       "nvidia"};
+    return {"deepseek",   "openrouter",  "openai-codex", "codex-provider", "groq",
+            "zen",        "opencode-go", "opencode",     "together",       "fireworks",
+            "sambanova",  "cerebras",    "hyperbolic",   "llm7",           "nvidia"};
 }
 
 inline std::string defaultProviderModel(const std::string& name) {
@@ -58,6 +62,10 @@ inline std::string defaultProviderModel(const std::string& name) {
         return "big-pickle";
     if (name == "together")
         return "meta-llama/Llama-3.3-70B-Instruct-Turbo";
+    if (name == "opencode-go")
+        return "deepseek-v4-flash";
+    if (name == "opencode")
+        return "deepseek-v4-flash-free";
     if (name == "fireworks")
         return "accounts/fireworks/models/llama-v3p1-70b-instruct";
     if (name == "sambanova")
