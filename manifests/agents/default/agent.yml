@@ -1,18 +1,19 @@
 kind: Agent
-name: assistant
+name: default
 version: "2.0"
-summary: General-purpose assistant with file and shell access
+summary: Primary agent — persona-driven, protocol in harness
 
 cognitive_engine:
   primary:
-    provider: openai-codex
-    model: gpt-5.5
+    provider: openrouter
+    model: nex-2
     parameters:
       temperature: 0.7
       max_tokens: 65536
 
 persona:
-  agent: ./system-prompts/assistant.md
+  agent: ./persona.md
+
 import:
   tools:
     - exec
@@ -22,10 +23,8 @@ import:
     - context_peek
     - context_unpin
     - ask_tool
-
   relics:
     - session_journal
     - state_checkpoint
   feeds: []
   env: []
-  # agent: [./architect/agent.yml]

@@ -17,7 +17,7 @@ Every module follows the same pattern:
 | `built-in/tools/` | C++ compiled tools (exec, list, grep, context) | ✅ stable |
 | `built-in/feeds/` | C++ compiled feeds (system_clock, stats, working_dir) | ✅ stable |
 | `built-in/relics/` | Filesystem relics (session_journal, state_checkpoint) | ✅ stable |
-| `agents/` | Agent manifests (assistant, orchestrator) | ✅ stable |
+| `agents/` | Agent manifests (default) | ✅ stable |
 | `workflows/` | Workflow definitions (code-review, workflow_spec) | 🟡 growing |
 | `prompts/` | Reusable task/persona prompts for bespoke agents | 🟡 seeded |
 | `skills/` | Reusable agent operating policies/skills | 🟡 seeded |

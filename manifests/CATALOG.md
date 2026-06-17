@@ -11,7 +11,7 @@ manifests/                    ← Global scope — auto-loaded, name-resolvable
   built-in/tools/             6 tools (exec, list, grep, context_pin/peek/unpin)
   built-in/feeds/             3 feeds (system_clock, system_stats, working_directory)
   built-in/relics/            2 relics (session_journal, state_checkpoint)
-  agents/                     2 agents (assistant, orchestrator)
+  agents/                     1 agent (default)
   workflows/                  2 workflows (code-review, workflow_spec)
   prompts/                    14 reusable prompt modules
   skills/                     2 MK3-native skills (mk3-manifest, harness-tuner)
@@ -49,12 +49,11 @@ poc/                          ← POC/archive, not auto-loaded
 | session_journal | Runtime-local session and context persistence |
 | state_checkpoint | Agent state serialization for crash recovery |
 
-## Agent Modules (2)
+## Agent Modules (1)
 
 | Agent | Model | Provider | Tools | Special |
 |-------|-------|----------|-------|---------|
-| assistant | gpt-5.5 | openai-codex | 7 | Default agent |
-| orchestrator | GLM-5.1-FP8 | zen | 7 + 4 sub-agents | Delegates via `<action type="agent">` |
+| default | nex-2 | openrouter | 7 | Primary agent, persona-driven |
 
 > More agents available in `staged-manifests/` — promoted here after battle-testing.
 
