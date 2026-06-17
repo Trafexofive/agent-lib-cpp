@@ -21,8 +21,8 @@ context:
 
 prompt_building:
   runtime_capabilities:
-    return_schemas: false
-    usage_examples: false
+    return_schemas: false  # controls <returns>
+    usage_examples: false  # controls <examples>
 
 import:
   tools:
