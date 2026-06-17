@@ -102,16 +102,23 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
     // Pre-indent every line so buildSystemPrompt doesn't redo O(n) work per
     // turn.
     {
-        // Use config harness path if set, otherwise default
-        std::string hp =
-            config_.harnessPath.empty() ? "config/harness/default.md" : config_.harnessPath;
-        std::ifstream hf(hp);
+        std::ifstream hf(config_.harnessPath);
         if (hf.is_open()) {
             std::ostringstream oss;
             std::string line;
             while (std::getline(hf, line))
                 oss << "    " << line << "\n";
             harnessText_ = oss.str();
+        }
+    }
+
+    // Load persona prompt (identity/values)
+    if (!config_.personaPath.empty()) {
+        std::ifstream pf(config_.personaPath);
+        if (pf) {
+            std::ostringstream ss;
+            ss << pf.rdbuf();
+            personaText_ = ss.str();
         }
     }
 
@@ -965,15 +972,21 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
        << "\"/>\n";
     ss << "</harness>\n\n";
 
-    // ═══ <system> — persona, tools, relics, context ═══
+    // ═══ <system> — persona, system, tools, relics, context ═══
     ss << "<system>\n";
 
-    // Skip persona block when empty — the harness already provides
-    // the agent's identity and behavioral contract (v6 IDENTITY section).
-    if (!systemPrompt_.empty()) {
+    // Persona block — identity/values (loaded from personaPath)
+    if (!personaText_.empty()) {
         ss << "  <persona>\n";
-        ss << systemPrompt_ << "\n";
+        ss << indentText(personaText_, 4) << "\n";
         ss << "  </persona>\n";
+    }
+
+    // System block — capabilities/tools/behavior (loaded from systemPromptPath)
+    if (!systemPrompt_.empty()) {
+        ss << "  <system>\n";
+        ss << indentText(systemPrompt_, 4) << "\n";
+        ss << "  </system>\n";
     }
 
     ss << "  <action_available>\n";

@@ -191,6 +191,7 @@ class Agent {
     session::SessionManager sessionMgr_;
     std::vector<std::string> history_;
     std::string systemPrompt_;
+    std::string personaText_;  // persona content (identity/values)
     std::vector<std::string> contextFeeds_;               // accumulated from <context_feed> tags
     std::map<std::string, std::string> executedActions_;  // dedup: key → cached result JSON string
     std::map<std::string, ToolDef> tools_;

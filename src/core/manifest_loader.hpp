@@ -123,13 +123,46 @@ class ManifestLoader {
             }
         }
 
-        // Persona
-        auto* persona = ManifestYaml::find(root, "persona");
-        if (persona) {
-            std::string agentPath = ManifestYaml::get(*persona, "agent");
-            if (!agentPath.empty()) {
-                fs::path base = fs::path(manifestPath).parent_path();
-                cfg.systemPromptPath = (base / agentPath).string();
+        // Context block — prompt paths + runtime config
+        // Each prompt path defaults to a global default when omitted.
+        auto* context = ManifestYaml::find(root, "context");
+        fs::path base = fs::path(manifestPath).parent_path();
+
+        // Harness prompt (protocol spec)
+        std::string harnessRel = context ? ManifestYaml::get(*context, "harness") : "";
+        cfg.harnessPath = harnessRel.empty() ? "manifests/harness/default.md"
+                                              : (base / harnessRel).string();
+
+        // System prompt (capabilities/tools/behavior)
+        std::string systemRel = context ? ManifestYaml::get(*context, "system") : "";
+        cfg.systemPromptPath = systemRel.empty() ? "manifests/system/default.md"
+                                                  : (base / systemRel).string();
+
+        // Persona prompt (identity/values)
+        std::string personaRel = context ? ManifestYaml::get(*context, "persona") : "";
+        cfg.personaPath = personaRel.empty() ? "manifests/persona/default.md"
+                                              : (base / personaRel).string();
+
+        // Runtime config knobs (max_iterations, history_cap, action_timeout_sec)
+        if (context) {
+            std::string ic = ManifestYaml::get(*context, "max_iterations");
+            if (!ic.empty())
+                cfg.iterationCap = std::stoi(ic);
+            std::string hc = ManifestYaml::get(*context, "history_cap");
+            if (!hc.empty())
+                cfg.historyCap = std::stoi(hc);
+            std::string ats = ManifestYaml::get(*context, "action_timeout_sec");
+            if (!ats.empty())
+                cfg.actionTimeoutSec = std::stoi(ats);
+        }
+
+        // Legacy fallback: persona.agent (old convention, no context: block)
+        if (!context) {
+            auto* persona = ManifestYaml::find(root, "persona");
+            if (persona) {
+                std::string agentPath = ManifestYaml::get(*persona, "agent");
+                if (!agentPath.empty())
+                    cfg.systemPromptPath = (base / agentPath).string();
             }
         }
 
@@ -148,21 +181,6 @@ class ManifestLoader {
                 if (!persistence.empty())
                     cfg.subAgentPersistence = persistence;
             }
-        }
-
-        // Context management: implemented knobs are wired directly to AgentConfig;
-        // unimplemented policy/budget knobs are intentionally commented in manifests.
-        auto* context = ManifestYaml::find(root, "context");
-        if (context) {
-            std::string ic = ManifestYaml::get(*context, "max_iterations");
-            if (!ic.empty())
-                cfg.iterationCap = std::stoi(ic);
-            std::string hc = ManifestYaml::get(*context, "history_cap");
-            if (!hc.empty())
-                cfg.historyCap = std::stoi(hc);
-            std::string ats = ManifestYaml::get(*context, "action_timeout_sec");
-            if (!ats.empty())
-                cfg.actionTimeoutSec = std::stoi(ats);
         }
 
         // Sandbox

@@ -152,6 +152,7 @@ struct AgentConfig {
     std::string systemPromptPath;
     std::string systemPromptText;  // if set, overrides systemPromptPath (inline prompt)
     std::string harnessPath;       // harness/protocol prompt (XML protocol spec)
+    std::string personaPath;       // persona prompt (identity/values)
     std::string manifestDir;
 
     // Sandbox

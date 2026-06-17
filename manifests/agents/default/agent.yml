@@ -1,18 +1,23 @@
 kind: Agent
 name: default
 version: "2.0"
-summary: Primary agent — persona-driven, protocol in harness
+summary: Primary agent — opencode-go primary, openrouter fallback
 
 cognitive_engine:
   primary:
-    provider: openrouter
-    model: nex-2
+    provider: opencode-go
+    model: deepseek-v4-flash
     parameters:
       temperature: 0.7
       max_tokens: 65536
+  fallback:
+    provider: openrouter
+    model: nex-2
 
-persona:
-  agent: ./persona.md
+context:
+  harness: ../../harness/default.md
+  system: ../../system/default.md
+  persona: ../../persona/default.md
 
 import:
   tools:
