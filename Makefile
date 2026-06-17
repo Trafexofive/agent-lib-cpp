@@ -232,11 +232,11 @@ run-server: $(BIN_SERVER)
 
 test: $(BIN_CLI)
 	@echo "=== Smoke test: provider listing ==="
-	./$(BIN_CLI) --list-providers
+	./$(BIN_CLI) list --providers
 	@echo "=== Smoke test: help ==="
 	./$(BIN_CLI) --help
 	@echo "=== Smoke test: version ==="
-	./$(BIN_CLI) --version
+	./$(BIN_CLI) version
 
 # ── Prompt tuning ──
 SUITE ?= basic-protocol

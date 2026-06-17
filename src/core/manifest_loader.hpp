@@ -335,6 +335,38 @@ class ManifestLoader {
         return schemas;
     }
 
+    // Grant the standard built-in tool set (exec, grep, list, context_pin,
+    // context_peek, context_unpin, ask_tool) to an agent and return their
+    // schemas. Used by the no-manifest CLI path so bare `run` still has a
+    // working tool surface instead of an empty <action_available>.
+    static std::vector<ToolSchema> loadBuiltinTools(Agent& agent) {
+        static const std::vector<std::string> builtin = {
+            "exec",  "grep",  "list",          "context_pin",
+            "context_peek", "context_unpin", "ask_tool",
+        };
+        std::vector<ToolSchema> schemas;
+        for (const auto& name : builtin) {
+            auto schema = loadBuiltinToolSchema(name);
+            if (!schema.name.empty()) {
+                schemas.push_back(schema);
+                ToolDef td;
+                td.name = schema.name;
+                td.description = schema.description;
+                td.inputType = schema.inputType.empty() ? "json" : schema.inputType;
+                td.textParam = schema.textParam;
+                agent.addTool(std::move(td));
+            } else {
+                // Schema missing — still grant so dispatch can run the
+                // backend-registered implementation; <action_available> will
+                // mark params unavailable.
+                ToolDef td;
+                td.name = name;
+                agent.addTool(std::move(td));
+            }
+        }
+        return schemas;
+    }
+
     // Load sub-agents from import list
     static void loadSubAgents(const std::string& manifestPath, Agent& agent,
                               const std::string& providerName) {

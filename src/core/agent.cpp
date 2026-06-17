@@ -1080,6 +1080,16 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
 
     ss << "  </action_available>\n";
 
+    // Capability counts — a compact at-a-glance summary of what the active
+    // manifest granted. Helps the model self-check before attempting an
+    // action: if tools c=0, no <action type="tool"> can succeed.
+    ss << "  <manifest_count>";
+    ss << "<tools c=" << tools_.size() << ">";
+    ss << "<relics c=" << relicNames().size() << ">";
+    ss << "<feeds c=" << feedNames().size() << ">";
+    ss << "<agents c=" << subAgentNames().size() << ">";
+    ss << "</manifest_count>\n";
+
     ss << "  <cwd>" << std::filesystem::current_path().string() << "</cwd>\n";
     ss << "</system>\n\n";
 

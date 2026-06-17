@@ -814,6 +814,13 @@ static int cmdRun(CliConfig& cli) {
         allSchemas.insert(allSchemas.end(), schemas.begin(), schemas.end());
         ManifestLoader::loadSubAgents(cli.manifestPath, agent, acfg.provider);
         workflowXml += ManifestLoader::loadWorkflows(cli.manifestPath);
+    } else {
+        // No manifest → grant the standard built-in tool set so bare `run`
+        // has a working surface. Without this, <action_available> renders
+        // empty and every <action type="tool"> fails with "not imported by
+        // active manifest". Feeds/relics/persona/harness stay manifest-only.
+        auto schemas = ManifestLoader::loadBuiltinTools(agent);
+        allSchemas.insert(allSchemas.end(), schemas.begin(), schemas.end());
     }
 
     std::string schemaXml = ManifestLoader::toolSchemasToXml(allSchemas);
