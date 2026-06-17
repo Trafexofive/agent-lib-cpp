@@ -66,7 +66,6 @@ A module works from **any path on the filesystem**. All internal references are 
 │       ├── tools/
 │       ├── feeds/
 │       └── agents/                 ← Can nest further
-└── config.yml                      ← OPTIONAL. Runtime overrides only.
 ```
 
 ## Iron Rules
@@ -77,7 +76,6 @@ A module works from **any path on the filesystem**. All internal references are 
 4. **kebab-case dirs** (`my-agent`, `plan-progress`). **snake_case YAML keys** (`output_schema`).
 5. **Relative paths.** Everything resolves relative to the YAML file containing the reference.
 6. **Narrow imports.** An agent imports only what it actually uses. 3 tools max for specialists.
-7. **config.yml is optional.** Only for overriding runtime defaults (`max_iterations`, `history_cap`, etc.).
 
 ## Agent Manifest — Full Schema
 
@@ -355,7 +353,7 @@ main.cpp
   ├── ManifestLoader::loadAgentConfig(manifestPath)
   │   └── Populates AgentConfig (name, provider, model, temperature, sandbox...)
   ├── ManifestLoader::loadConfigOverrides(manifestPath, cfg)
-  │   └── Reads config.yml → overrides iterationCap, historyCap, temperature
+  │   └── Manifest carries all config natively (no config.yml)
   ├── providers::createProvider(cfg.provider, cfg.model)
   ├── Agent(cfg, provider)
   ├── ManifestLoader::loadTools(manifestPath, agent)
@@ -463,5 +461,5 @@ make test-protocol     # Protocol parser tests
 | No README | README on every component |
 | God agent (does everything) | Specialized agent (one job) |
 | Flat files, no directories | Directory per module, `src/` per tool/feed |
-| `config.yml` with agent props | config.yml only for runtime overrides |
+| config.yml (deprecated) | All config lives in manifest.yml natively |
 | Hardcoded absolute paths | Relative paths from manifest location |

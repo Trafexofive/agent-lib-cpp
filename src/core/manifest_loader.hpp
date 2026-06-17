@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Manifest Loader — parses agent.yml, loads tools/agents/relics, populates config
-// Supports: sandbox mode, file imports, schema injection, config.yml overrides
+// Supports: sandbox mode, file imports, schema injection
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 #include <json/json.h>
@@ -413,41 +413,6 @@ class ManifestLoader {
             }
         }
         return resolved;
-    }
-
-    // Load config.yml overrides
-    static void loadConfigOverrides(const std::string& manifestPath, AgentConfig& cfg) {
-        fs::path configPath = fs::path(manifestPath).parent_path() / "config.yml";
-        if (!fs::exists(configPath))
-            return;
-
-        auto yaml = readFile(configPath.string());
-        if (yaml.empty())
-            return;
-
-        auto root = ManifestYaml::parse(yaml);
-        auto* runtime = ManifestYaml::find(root, "runtime");
-        if (runtime) {
-            std::string ic = ManifestYaml::get(*runtime, "max_iterations");
-            if (!ic.empty())
-                cfg.iterationCap = std::stoi(ic);
-            std::string hc = ManifestYaml::get(*runtime, "history_cap");
-            if (!hc.empty())
-                cfg.historyCap = std::stoi(hc);
-        }
-
-        auto* agentNode = ManifestYaml::find(root, "agent");
-        if (agentNode) {
-            std::string temp = ManifestYaml::get(*agentNode, "temperature");
-            if (!temp.empty())
-                cfg.temperature = std::stod(temp);
-            std::string mdl = ManifestYaml::get(*agentNode, "model");
-            if (!mdl.empty())
-                cfg.model = mdl;
-            std::string prov = ManifestYaml::get(*agentNode, "provider");
-            if (!prov.empty())
-                cfg.provider = prov;
-        }
     }
 
     // Build tool schemas XML for prompt injection

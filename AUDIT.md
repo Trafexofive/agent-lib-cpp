@@ -21,7 +21,7 @@ core/
     - [ ] system prompt rebuilds from scratch per iteration (tool schemas, harness, persona) — harness cached, tools not
     - [ ] model parameter overrides in manifest not validated against provider capabilities
     - [x] no rate-limit backoff for retryable LLM errors → iterative retry with exponential backoff
-    - [ ] config.yml model/provider overrides not validated — silent fallthrough on miss
+    - [x] config.yml convention removed — dead on arrival, purged 2026-06-17
 
   tools/
     - [ ] built-in tool dispatch is synchronous — blocks SSE stream for large `exec` outputs

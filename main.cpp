@@ -736,7 +736,6 @@ static int cmdRun(CliConfig& cli) {
 
     if (!cli.manifestPath.empty()) {
         acfg = ManifestLoader::loadAgentConfig(cli.manifestPath);
-        ManifestLoader::loadConfigOverrides(cli.manifestPath, acfg);
         ManifestLoader::loadEnv(cli.manifestPath, acfg);
         if (cli.providerSet) acfg.provider = cli.provider;
         if (cli.modelSet) acfg.model = cli.model;

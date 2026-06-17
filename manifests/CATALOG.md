@@ -121,10 +121,4 @@ manifests/                    ← Global scope — auto-loaded, name-resolvable
 | Relics | `RelicDispatcher` | `src/relics/builtin_relics.hpp` | Routes via `RelicPtr`, HTTP fallback |
 | Workflows | `WorkflowEngine` | `src/workflows/workflow_engine.hpp` | Loads/executes `Workflow` objects |
 
-## Module Config
 
-Every manifest module has a `config.yml` in its root for runtime behavior tuning:
-- `runtime.timeout` — default timeout in seconds
-- `runtime.max_retries` — retry count on failure
-- `limits.max_output_size` — truncation threshold
-- Module-specific keys (relic port, tool cache settings, agent temperature, etc.)

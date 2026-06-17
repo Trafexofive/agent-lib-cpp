@@ -87,7 +87,7 @@ class ManifestAutoload {
                 // Register relic URL for HTTP dispatch
                 auto relicCfg = ManifestLoader::loadRelicConfig(p.string());
                 if (!relicCfg.baseUrl.empty()) {
-                    relics::RelicDispatcher::instance().registerRelic(name, relicCfg.baseUrl);
+                    relics::RelicDispatcher::instance().registerHttpRelic(name, relicCfg.baseUrl);
                 }
             } else if (file == "agent.yml") {
                 if (!skipAgentManifest.empty() && samePath(p, fs::path(skipAgentManifest)))
@@ -113,12 +113,12 @@ class ManifestAutoload {
                 agent.addSubAgent(sub);
                 report.agents.push_back(cfg.name);
             } else if (isWorkflowCandidate(p, rootDir)) {
-                auto wf = workflows::WorkflowEngine::instance().load(p.string());
-                if (wf.name.empty() || seenWorkflows.count(wf.name))
+                auto& wf = workflows::WorkflowEngine::instance().load(p.string());
+                if (!wf.isValid() || seenWorkflows.count(wf.name()))
                     continue;
-                seenWorkflows.insert(wf.name);
-                report.workflows.push_back(wf.name);
-                report.workflowXml += workflows::WorkflowEngine::instance().toXml(wf);
+                seenWorkflows.insert(wf.name());
+                report.workflows.push_back(wf.name());
+                report.workflowXml += workflows::WorkflowEngine::instance().toXml(wf.manifest());
             }
         }
 
@@ -152,7 +152,7 @@ class ManifestAutoload {
             return false;
         if (p.filename() == "tool.yml" || p.filename() == "feed.yml" ||
             p.filename() == "relic.yml" || p.filename() == "agent.yml" ||
-            p.filename() == "config.yml")
+            p.filename() == "relic.yml" || p.filename() == "agent.yml")
             return false;
         auto rel = fs::relative(p, rootDir).string();
         return rel.find("workflows") != std::string::npos;

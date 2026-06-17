@@ -8,8 +8,7 @@ Every module follows the same pattern:
 <module>/
 ├── README.md      ← Purpose, usage, dependencies, edge cases
 ├── <manifest>.yml ← Schema, endpoints, input/output definitions
-├── <script>       ← Script file (if runtime != builtin)
-└── config.yml     ← Per-module runtime config
+└── <script>       ← Script file (if runtime != builtin)
 ```
 
 ## Layout
