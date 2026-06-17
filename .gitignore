@@ -37,3 +37,29 @@ raw.md
 
 # Runtime artifacts
 manifests/_session/
+
+# Temp/garbage files
+tmp*.py
+full_context.md
+iterations.xml
+context.jsonl
+manifest-semantics-test
+parser-test
+tests/bench.py
+
+# Experimental/scratch
+modules/
+docs/architecture/
+docs/design/
+docs/manifests/
+docs/TICKETS.md
+
+# Test results
+tests/results/
+
+# Staged manifests (config/ migration)
+staged-manifests/
+
+# Runtime logs
+*.log
+runs/
