@@ -2,13 +2,13 @@
 
 **Cortex-Prime MK3 Standard Library v3.1**
 
-Last updated: 2026-06-17 — sovereign C++ classes, prompts/skills consolidation, workflow fix
+Last updated: 2026-06-17 — sovereign C++ classes, prompt/skill consolidation, workflow fix, opencode-go provider
 
 ## Architecture
 
 ```
 manifests/                    ← Global scope — auto-loaded, name-resolvable
-  built-in/tools/             6 tools (exec, list, grep, context_pin/peek/unpin)
+  built-in/tools/             7 tools (exec, list, grep, context_pin/peek/unpin, ask_tool)
   built-in/feeds/             3 feeds (system_clock, system_stats, working_directory)
   built-in/relics/            2 relics (session_journal, state_checkpoint)
   agents/                     1 agent (default)
@@ -23,7 +23,7 @@ poc/                          ← POC/archive, not auto-loaded
   relics/                     artifact_store, secret_store, event_bus, process_manager, file_watcher
 ```
 
-## Built-in Tools (6)
+## Built-in Tools (7)
 
 | Name | Description |
 |------|-------------|
@@ -33,6 +33,7 @@ poc/                          ← POC/archive, not auto-loaded
 | context_pin | Pin file to persistent agent context |
 | context_peek | Peek at file for N cycles, then auto-evict |
 | context_unpin | Remove pinned file from context |
+| ask_tool | Ask the user structured clarification/confirmation questions |
 
 ## Built-in Feeds (3)
 
@@ -53,7 +54,7 @@ poc/                          ← POC/archive, not auto-loaded
 
 | Agent | Model | Provider | Tools | Special |
 |-------|-------|----------|-------|---------|
-| default | nex-2 | openrouter | 7 | Primary agent, persona-driven |
+| default | deepseek-v4-flash | opencode-go | 7 | Primary agent; openrouter/nex-2 fallback; persona + system + harness via context: block |
 
 > More agents available in `staged-manifests/` — promoted here after battle-testing.
 

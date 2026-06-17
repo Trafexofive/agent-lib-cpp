@@ -14,7 +14,7 @@ Every module follows the same pattern:
 ## Layout
 | Path | Content | Status |
 |------|---------|--------|
-| `built-in/tools/` | C++ compiled tools (exec, list, grep, context) | ✅ stable |
+| `built-in/tools/` | C++ compiled tools (exec, list, grep, context_pin/peek/unpin, ask_tool) | ✅ stable |
 | `built-in/feeds/` | C++ compiled feeds (system_clock, stats, working_dir) | ✅ stable |
 | `built-in/relics/` | Filesystem relics (session_journal, state_checkpoint) | ✅ stable |
 | `agents/` | Agent manifests (default) | ✅ stable |
