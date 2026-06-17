@@ -60,6 +60,9 @@ tests/results/
 # Staged manifests (config/ migration)
 staged-manifests/
 
+# POC/archive — graduated patterns only in manifests/
+poc/
+
 # Runtime logs
 *.log
 runs/

@@ -11,14 +11,16 @@ manifests/                    ← Global scope — auto-loaded, name-resolvable
   built-in/tools/             6 tools (exec, list, grep, context_pin/peek/unpin)
   built-in/feeds/             3 feeds (system_clock, system_stats, working_directory)
   built-in/relics/            2 relics (session_journal, state_checkpoint)
-  tools/                      5 tools (fs_read, fs_write, simple_fs_write, json, web_fetch)
-  relics/                     5 managed relics (artifact_store, secret_store, event_bus, process_manager, file_watcher)
   agents/                     2 agents (assistant, orchestrator)
   workflows/                  2 workflows (code-review, workflow_spec)
   prompts/                    14 reusable prompt modules
   skills/                     2 MK3-native skills (mk3-manifest, harness-tuner)
   README.md                   Manifest system overview
   CATALOG.md                  This file
+
+poc/                          ← POC/archive, not auto-loaded
+  tools/                      fs_read, fs_write, simple_fs_write, json, web_fetch
+  relics/                     artifact_store, secret_store, event_bus, process_manager, file_watcher
 ```
 
 ## Built-in Tools (6)
@@ -31,16 +33,6 @@ manifests/                    ← Global scope — auto-loaded, name-resolvable
 | context_pin | Pin file to persistent agent context |
 | context_peek | Peek at file for N cycles, then auto-evict |
 | context_unpin | Remove pinned file from context |
-
-## Global Tools (5)
-
-| Name | Runtime | Description |
-|------|---------|-------------|
-| fs_read | python3 | Read file contents with offset/limit |
-| fs_write | python3 | Structured JSON write/create files with append support |
-| simple_fs_write | native | Text-body convenience writer; attrs carry path/append, body carries content |
-| json | python3 | Parse, query, validate, transform JSON |
-| web_fetch | python3 | HTTP GET/POST with status and headers |
 
 ## Built-in Feeds (3)
 
@@ -56,16 +48,6 @@ manifests/                    ← Global scope — auto-loaded, name-resolvable
 |------|-------------|
 | session_journal | Runtime-local session and context persistence |
 | state_checkpoint | Agent state serialization for crash recovery |
-
-## Global Relics (5)
-
-| Name | Mode | Description |
-|------|------|-------------|
-| artifact_store | managed | Persistent file/data storage with versioning |
-| secret_store | managed | AES-256-GCM encrypted secret storage |
-| event_bus | managed | Pub/sub messaging for agent communication |
-| process_manager | managed | Track and manage long-running subprocesses |
-| file_watcher | managed | File change monitoring with event emission |
 
 ## Agent Modules (2)
 
