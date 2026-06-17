@@ -1,8 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Workflow Engine — loads manifest YAML, EXECUTES steps as a runtime sequence.
-// Workflows are now actual MK3 action types, not prompt augmentation.
+// Now delegates to sovereign Workflow objects (src/workflows/workflow.hpp).
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
+#include "workflow.hpp"
 #include <string>
 #include <vector>
 #include <map>
@@ -15,69 +16,11 @@
 #include <future>
 #include <mutex>
 
-namespace cortex {
-namespace mk3 {
-namespace workflows {
+namespace cortex::mk3::workflows {
 
 namespace fs = std::filesystem;
 
-// ── Workflow step (parsed from YAML) ──
-struct WorkflowStep {
-    std::string id;
-    std::string type;      // tool, agent, condition, loop, parallel, workflow
-    std::string name;      // display name
-    std::string tool;      // tool name (for type: tool)
-    std::string agent;     // agent name (for type: agent)
-    std::string condition; // for type: condition
-    std::string workflow;  // for type: workflow
-    Json::Value params;
-    std::vector<WorkflowStep> thenSteps;
-    std::vector<WorkflowStep> elseSteps;
-    std::vector<WorkflowStep> body;      // loop body
-    std::vector<WorkflowStep> steps;     // parallel/workflow steps
-    std::string onError = "abort";
-    int maxRetries = 0;
-    int timeout = 30;
-};
-
-// ── Workflow manifest ──
-struct WorkflowManifest {
-    std::string name;
-    std::string version;
-    std::string summary;
-    std::string description;
-    std::vector<WorkflowStep> steps;
-    std::vector<std::string> importTools;
-    std::vector<std::string> importRelics;
-    std::vector<std::string> tags;
-};
-
-// ── Workflow execution result ──
-struct WorkflowResult {
-    bool success = false;
-    std::string workflowName;
-    std::vector<std::string> stepIds;
-    std::vector<Json::Value> stepOutputs;
-    std::map<std::string, Json::Value> outputs;  // keyed by step id
-    std::vector<std::string> diagnostics;
-    double elapsedMs = 0.0;
-    std::string error;
-};
-
-// ── Workflow runtime: callbacks for tool and agent execution ──
-// These are wired by the Agent at workflow dispatch time so the engine
-// doesn't own tools or sub-agents directly.
-struct WorkflowRuntime {
-    using ToolFn = std::function<Json::Value(const std::string& name, const Json::Value& params)>;
-    using AgentFn = std::function<Json::Value(const std::string& name, const std::string& instruction)>;
-    using WorkflowFn = std::function<WorkflowResult(const std::string& name, const Json::Value& params)>;
-
-    ToolFn executeTool;
-    AgentFn executeAgent;
-    WorkflowFn executeWorkflow;
-};
-
-// ── Simple YAML-ish parser (same as before) ──
+// ── Simple YAML-ish parser ──
 class MiniYaml {
 public:
     struct Node {
@@ -165,7 +108,9 @@ private:
     }
 };
 
-// ── Workflow engine — loads YAML, executes steps at runtime ──
+// ═══════════════════════════════════════════════════════════════════════════
+// WorkflowEngine — orchestrates Workflow objects, parses YAML, executes steps
+// ═══════════════════════════════════════════════════════════════════════════
 class WorkflowEngine {
 public:
     static WorkflowEngine& instance() {
@@ -174,10 +119,14 @@ public:
     }
 
     // ── Load workflow manifest from YAML path ──
-    WorkflowManifest load(const std::string& path) {
+    Workflow& load(const std::string& path) {
+        // Check cache first
+        auto cacheIt = manifestCache_.find(path);
+        if (cacheIt != manifestCache_.end()) return cacheIt->second;
+
         WorkflowManifest wf;
         std::ifstream f(path);
-        if (!f) return wf;
+        if (!f) { static Workflow empty; return empty; }
 
         std::string yaml((std::istreambuf_iterator<char>(f)),
                           std::istreambuf_iterator<char>());
@@ -200,9 +149,9 @@ public:
         auto* tagsNode = MiniYaml::find(root, "tags");
         if (tagsNode) for (auto& t : tagsNode->children) if (!t.value.empty()) wf.tags.push_back(t.value);
 
-        manifestCache_[path] = wf;
+        manifestCache_.emplace(path, Workflow(wf));
         nameIndex_[wf.name] = path;
-        return wf;
+        return manifestCache_.at(path);
     }
 
     // ── Execute a loaded workflow ──
@@ -244,7 +193,6 @@ public:
                         }
                         res.diagnostics.push_back("step " + step.id + " failed: " + out.error);
                         if (step.onError == "skip") continue;
-                        // retry handled in executeToolStep
                     }
                 } else if (step.type == "agent") {
                     auto out = executeAgentStep(step, resolvedParams, rt, symbols);
@@ -300,7 +248,7 @@ public:
                     }
                 } else if (step.type == "loop") {
                     int iter = 0;
-                    while (iter < 100) { // safety cap
+                    while (iter < 100) {
                         if (!step.condition.empty() && evalCondition(step.condition, symbols)) break;
                         if (!execSteps(step.body, res)) return false;
                         iter++;
@@ -318,39 +266,77 @@ public:
         return result;
     }
 
+    // ── Execute by Workflow object (convenience) ──
+    WorkflowResult execute(const Workflow& workflow,
+                           const WorkflowRuntime& rt,
+                           const Json::Value& params = Json::Value()) {
+        return execute(workflow.manifest(), rt, params);
+    }
+
     // ── Cache access ──
     WorkflowManifest getCached(const std::string& pathOrName) {
         // Try exact path match first
         auto it = manifestCache_.find(pathOrName);
-        if (it != manifestCache_.end()) return it->second;
+        if (it != manifestCache_.end()) return it->second.manifest();
         // Try name-based lookup (for dispatch by workflow name)
         auto nameIt = nameIndex_.find(pathOrName);
         if (nameIt != nameIndex_.end()) {
             auto cacheIt = manifestCache_.find(nameIt->second);
-            if (cacheIt != manifestCache_.end()) return cacheIt->second;
+            if (cacheIt != manifestCache_.end()) return cacheIt->second.manifest();
         }
         return WorkflowManifest{};
     }
 
+    /// Get the Workflow object by path or name
+    const Workflow* findWorkflow(const std::string& pathOrName) {
+        auto it = manifestCache_.find(pathOrName);
+        if (it != manifestCache_.end()) return &it->second;
+        auto nameIt = nameIndex_.find(pathOrName);
+        if (nameIt != nameIndex_.end()) {
+            auto cacheIt = manifestCache_.find(nameIt->second);
+            if (cacheIt != manifestCache_.end()) return &cacheIt->second;
+        }
+        return nullptr;
+    }
+
+    /// List cached workflow names
+    std::vector<std::string> listWorkflows() const {
+        std::vector<std::string> names;
+        for (const auto& [path, wf] : manifestCache_)
+            names.push_back(wf.name());
+        return names;
+    }
+
+    // ── Convenience: execute by name (load + run) ──
+    WorkflowResult run(const std::string& nameOrPath,
+                       const WorkflowRuntime& rt,
+                       const Json::Value& params = Json::Value()) {
+        WorkflowManifest wf = getCached(nameOrPath);
+        if (wf.name.empty()) {
+            // Try to load from filesystem
+            if (fs::exists(nameOrPath)) {
+                auto& loaded = load(nameOrPath);
+                if (loaded.isValid()) {
+                    return execute(loaded.manifest(), rt, params);
+                }
+            }
+            WorkflowResult r;
+            r.success = false;
+            r.error = "Workflow not found: " + nameOrPath;
+            return r;
+        }
+        return execute(wf, rt, params);
+    }
+
     // ── Convert workflow to XML for prompt injection ──
     std::string toXml(const WorkflowManifest& wf) {
-        std::ostringstream ss;
-        ss << "<workflow name=\"" << wf.name << "\" version=\"" << wf.version << "\">\n";
-        if (!wf.summary.empty()) ss << "  <summary>" << wf.summary << "</summary>\n";
-        if (!wf.description.empty()) ss << "  <description>" << wf.description << "</description>\n";
-        if (!wf.steps.empty()) {
-            ss << "  <steps>\n";
-            for (auto& s : wf.steps) stepToXml(ss, s, 4);
-            ss << "  </steps>\n";
-        }
-        ss << "</workflow>\n";
-        return ss.str();
+        return Workflow(wf).toXml();
     }
 
 private:
     struct StepOutcome { bool success = false; std::string error; };
 
-    // ── Variable resolution: ${step_id.field} (static, no this needed) ──
+    // ── Variable resolution: ${step_id.field} ──
     static std::string resolveString(const std::string& s, const std::map<std::string, Json::Value>& symbols) {
         static const std::regex varRe(R"(\$\{(\w+)\.?(\w*)\})");
         std::smatch m;
@@ -390,7 +376,6 @@ private:
             const Json::Value& val = params[key];
             if (val.isString()) {
                 std::string expanded = resolveString(val.asString(), symbols);
-                // Try: if the expanded string looks like JSON object/array, parse it
                 if (!expanded.empty() && (expanded.front() == '{' || expanded.front() == '[')) {
                     Json::Value parsed;
                     Json::CharReaderBuilder r;
@@ -501,7 +486,6 @@ private:
         if (condition.empty()) return true;
         std::string cond = resolveString(condition, symbols);
 
-        // Simple condition: "step_id.field == value" or truthy/falsy
         static const std::regex condRe(R"((\w+\.?\w*)\s*(==|!=|>=|<=|>|<)\s*(.+))");
         std::smatch m;
         if (std::regex_match(cond, m, condRe)) {
@@ -509,7 +493,6 @@ private:
             std::string op = m[2];
             std::string val = m[3];
 
-            // Look up variable
             std::string resolved;
             size_t dot = var.find('.');
             if (dot != std::string::npos) {
@@ -523,13 +506,11 @@ private:
                 if (it != symbols.end()) resolved = it->second.asString();
             }
 
-            // String equality check
             if (op == "==") return resolved == val;
             if (op == "!=") return resolved != val;
-            return !resolved.empty(); // fallback truthy
+            return !resolved.empty();
         }
 
-        // Bare truthy check: non-empty, not "false", not "0"
         std::string trimmed = cond;
         trimmed.erase(0, trimmed.find_first_not_of(" \t\"'"));
         trimmed.erase(trimmed.find_last_not_of(" \t\"'") + 1);
@@ -569,43 +550,9 @@ private:
         return s;
     }
 
-    void stepToXml(std::ostringstream& ss, const WorkflowStep& s, int indent) {
-        std::string pad(indent, ' ');
-        ss << pad << "<step id=\"" << s.id << "\" type=\"" << s.type << "\"";
-        if (!s.name.empty()) ss << " name=\"" << s.name << "\"";
-        if (!s.tool.empty()) ss << " tool=\"" << s.tool << "\"";
-        if (!s.agent.empty()) ss << " agent=\"" << s.agent << "\"";
-        if (!s.condition.empty()) ss << " condition=\"" << s.condition << "\"";
-        if (s.onError != "abort") ss << " on_error=\"" << s.onError << "\"";
-        ss << ">\n";
-
-        if (!s.params.empty()) {
-            Json::StreamWriterBuilder w; w["indentation"] = std::string(indent + 4, ' ');
-            ss << Json::writeString(w, s.params) << "\n";
-        }
-        if (!s.thenSteps.empty()) {
-            ss << pad << "  <then>\n";
-            for (auto& st : s.thenSteps) stepToXml(ss, st, indent + 4);
-            ss << pad << "  </then>\n";
-        }
-        if (!s.elseSteps.empty()) {
-            ss << pad << "  <else>\n";
-            for (auto& st : s.elseSteps) stepToXml(ss, st, indent + 4);
-            ss << pad << "  </else>\n";
-        }
-        if (!s.body.empty()) {
-            ss << pad << "  <body>\n";
-            for (auto& st : s.body) stepToXml(ss, st, indent + 4);
-            ss << pad << "  </body>\n";
-        }
-        if (!s.steps.empty()) for (auto& st : s.steps) stepToXml(ss, st, indent + 2);
-        ss << pad << "</step>\n";
-    }
-
-    std::map<std::string, WorkflowManifest> manifestCache_;
-    std::map<std::string, std::string> nameIndex_;  // workflow name → path
+    // ── Cache ──
+    std::map<std::string, Workflow> manifestCache_;  // path → Workflow
+    std::map<std::string, std::string> nameIndex_;    // workflow name → path
 };
 
-} // namespace workflows
-} // namespace mk3
-} // namespace cortex
+} // namespace cortex::mk3::workflows

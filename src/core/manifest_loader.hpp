@@ -207,7 +207,7 @@ public:
                 auto rc = loadRelicConfig(relicYml.string());
                 relics::DockerRelicDispatcher::instance().loadRelic(relicPath.string());
                 if (!rc.baseUrl.empty())
-                    relics::RelicDispatcher::instance().registerRelic(name, rc.baseUrl);
+                    relics::RelicDispatcher::instance().registerHttpRelic(name, rc.baseUrl);
             }
             agent.addRelic(name);
         }
@@ -350,9 +350,9 @@ public:
                 wfPath = fs::path("manifests/workflows") / (wfName + ".yml");
                 if (!fs::exists(wfPath)) continue;
             }
-            auto wf = workflows::WorkflowEngine::instance().load(wfPath.string());
-            if (!wf.name.empty()) {
-                ss << workflows::WorkflowEngine::instance().toXml(wf);
+            auto& wf = workflows::WorkflowEngine::instance().load(wfPath.string());
+            if (wf.isValid()) {
+                ss << workflows::WorkflowEngine::instance().toXml(wf.manifest());
             }
         }
         return ss.str();

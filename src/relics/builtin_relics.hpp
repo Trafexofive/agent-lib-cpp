@@ -1,14 +1,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Built-in Relics — filesystem-backed persistence and checkpointing
-// No Docker, no network — direct filesystem from the runtime.
+// Now subclass the abstract Relic base (src/relics/relic.hpp).
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
+#include "relic.hpp"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <json/json.h>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
@@ -16,19 +18,9 @@
 #include <curl/curl.h>
 #include <vector>
 
-namespace cortex {
-namespace mk3 {
-namespace relics {
+namespace cortex::mk3::relics {
 
 namespace fs = std::filesystem;
-
-// ── Relic result ──
-struct RelicResult {
-    bool success = false;
-    std::string error;
-
-    Json::Value data;
-};
 
 // ── Base path resolution ──
 inline fs::path relicBase() {
@@ -37,14 +29,56 @@ inline fs::path relicBase() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// session_journal — session event recording and querying
+// SessionJournal — session event recording and querying
 // ═══════════════════════════════════════════════════════════════════════════
-class SessionJournal {
+class SessionJournal : public Relic {
 public:
     static SessionJournal &instance() {
         static SessionJournal j;
         return j;
     }
+
+    // ── Relic interface ──
+    const std::string& name() const override {
+        static const std::string kName = "session_journal";
+        return kName;
+    }
+
+    std::string description() const override {
+        return "Session event recording and querying — filesystem-backed JSONL journal";
+    }
+
+    std::vector<std::string> endpoints() const override {
+        return {"record", "query", "export", "prune"};
+    }
+
+    RelicResult handle(const std::string& endpoint,
+                       const Json::Value& params) override {
+        std::string ns = params.get("namespace", "default").asString();
+
+        if (endpoint == "record") {
+            std::string et = params.get("event_type", "unknown").asString();
+            std::string sid = params.get("session_id", "").asString();
+            return record(ns, et, params["content"], sid);
+        }
+        if (endpoint == "query") {
+            std::string sid = params.get("session_id", "").asString();
+            std::string et = params.get("event_type", "").asString();
+            int limit = params.get("limit", 100).asInt();
+            return query(ns, sid, et, limit);
+        }
+        if (endpoint == "export") {
+            return exportSession(ns, params.get("session_id", "").asString());
+        }
+        if (endpoint == "prune") {
+            int age = params.get("max_age_seconds", 2592000).asInt();
+            int maxRec = params.get("max_records", -1).asInt();
+            return prune(ns, age, maxRec);
+        }
+        return RelicResult::fail("Unknown endpoint: " + endpoint);
+    }
+
+    // ── Business logic (unchanged) ──
 
     // POST /journal/{namespace}/record
     RelicResult record(const std::string &ns, const std::string &eventType,
@@ -152,6 +186,7 @@ public:
     // DELETE /journal/{namespace}/prune
     RelicResult prune(const std::string &ns, int maxAgeSecs = 2592000,
                       int maxRecords = -1) {
+        (void)maxRecords; // unused
         auto dir = relicBase() / "sessions" / ns;
         if (!fs::exists(dir))
             return {true, "Nothing to prune", {}};
@@ -179,17 +214,60 @@ public:
         r.data["pruned"] = pruned;
         return r;
     }
+
+private:
+    // Singleton — private constructor
+    SessionJournal() = default;
+    friend class RelicDispatcher;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// state_checkpoint — agent state serialization for crash recovery
+// StateCheckpoint — agent state serialization for crash recovery
 // ═══════════════════════════════════════════════════════════════════════════
-class StateCheckpoint {
+class StateCheckpoint : public Relic {
 public:
     static StateCheckpoint &instance() {
         static StateCheckpoint c;
         return c;
     }
+
+    // ── Relic interface ──
+    const std::string& name() const override {
+        static const std::string kName = "state_checkpoint";
+        return kName;
+    }
+
+    std::string description() const override {
+        return "Agent state serialization for crash recovery — filesystem-backed JSON checkpoints";
+    }
+
+    std::vector<std::string> endpoints() const override {
+        return {"save", "load", "latest", "list", "gc"};
+    }
+
+    RelicResult handle(const std::string& endpoint,
+                       const Json::Value& params) override {
+        std::string ns = params.get("namespace", "default").asString();
+
+        if (endpoint == "save") {
+            return save(ns, params.get("agent_name", "agent").asString(),
+                        params["state"], params.get("label", "").asString());
+        }
+        if (endpoint == "load" || endpoint == "latest") {
+            return load(ns, params.get("agent_name", "agent").asString());
+        }
+        if (endpoint == "list") {
+            return list(ns, params.get("agent_name", "").asString());
+        }
+        if (endpoint == "gc") {
+            int age = params.get("max_age_seconds", 604800).asInt();
+            int maxPer = params.get("max_per_agent", 5).asInt();
+            return gc(ns, age, maxPer);
+        }
+        return RelicResult::fail("Unknown endpoint: " + endpoint);
+    }
+
+    // ── Business logic (unchanged) ──
 
     // POST /checkpoints/{namespace}/{agent_name}
     RelicResult save(const std::string &ns, const std::string &agentName,
@@ -352,10 +430,14 @@ public:
         r.data["removed"] = removed;
         return r;
     }
+
+private:
+    StateCheckpoint() = default;
+    friend class RelicDispatcher;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Relic Dispatcher — routes <action type="relic"> calls
+// RelicDispatcher — routes <action type="relic"> calls using RelicPtr
 // ═══════════════════════════════════════════════════════════════════════════
 class RelicDispatcher {
 public:
@@ -364,31 +446,90 @@ public:
         return d;
     }
 
-    RelicResult dispatch(const std::string &relicName,
-                         const std::string &endpoint,
-                         const Json::Value &params) {
-        // Built-in relics
-        if (relicName == "session_journal")
-            return dispatchJournal(endpoint, params);
-        if (relicName == "state_checkpoint")
-            return dispatchCheckpoint(endpoint, params);
+    // ── Registration ──
 
-        // Docker/HTTP relics — try to call via HTTP
-        auto it = relicUrls_.find(relicName);
-        if (it != relicUrls_.end()) {
-            return dispatchHttp(it->second, endpoint, params);
-        }
-
-        // Unknown
-        return {false, "Unknown relic: " + relicName, {}};
+    /// Register a Relic by shared pointer (most common)
+    void registerRelic(RelicPtr relic) {
+        if (!relic) return;
+        relics_[relic->name()] = std::move(relic);
     }
 
-    void registerRelic(const std::string& name, const std::string& baseUrl) {
+    /// Register a Relic by unique pointer (converts to shared)
+    void registerRelic(std::unique_ptr<Relic> relic) {
+        if (!relic) return;
+        relics_[relic->name()] = std::move(relic);
+    }
+
+    /// Register an HTTP relic by base URL (legacy compat)
+    void registerHttpRelic(const std::string& name, const std::string& baseUrl) {
         relicUrls_[name] = baseUrl;
     }
 
+    // ── Dispatch ──
+
+    /// Dispatch to the right relic by name.
+    /// Falls back to HTTP relics for unknown names.
+    RelicResult dispatch(const std::string &relicName,
+                         const std::string &endpoint,
+                         const Json::Value &params) {
+        // Check registered relic objects first
+        auto it = relics_.find(relicName);
+        if (it != relics_.end()) {
+            return it->second->handle(endpoint, params);
+        }
+
+        // Fallback to built-in singletons (legacy direct access)
+        if (relicName == "session_journal") {
+            return SessionJournal::instance().handle(endpoint, params);
+        }
+        if (relicName == "state_checkpoint") {
+            return StateCheckpoint::instance().handle(endpoint, params);
+        }
+
+        // Docker/HTTP relics — try to call via HTTP
+        auto urlIt = relicUrls_.find(relicName);
+        if (urlIt != relicUrls_.end()) {
+            return dispatchHttp(urlIt->second, endpoint, params);
+        }
+
+        // Unknown
+        return RelicResult::fail("Unknown relic: " + relicName);
+    }
+
+    /// Get a registered relic by name
+    RelicPtr getRelic(const std::string& name) const {
+        auto it = relics_.find(name);
+        if (it != relics_.end()) return it->second;
+        return nullptr;
+    }
+
+    /// List all registered relic names
+    std::vector<std::string> listRelics() const {
+        std::vector<std::string> names;
+        for (const auto& [name, _] : relics_) names.push_back(name);
+        // Always include built-in relics
+        names.push_back("session_journal");
+        names.push_back("state_checkpoint");
+        // Also list HTTP relics
+        for (const auto& [name, _] : relicUrls_) {
+            if (std::find(names.begin(), names.end(), name) == names.end())
+                names.push_back(name);
+        }
+        return names;
+    }
+
+    /// Check if a relic is available
+    bool hasRelic(const std::string& name) const {
+        if (relics_.find(name) != relics_.end()) return true;
+        if (name == "session_journal" || name == "state_checkpoint") return true;
+        return relicUrls_.find(name) != relicUrls_.end();
+    }
+
 private:
-    std::map<std::string, std::string> relicUrls_;  // name → base_url
+    std::map<std::string, RelicPtr> relics_;
+    std::map<std::string, std::string> relicUrls_;  // name → base_url (legacy)
+
+    // ── HTTP dispatch (legacy — for Docker-based relics) ──
 
     RelicResult dispatchHttp(const std::string& baseUrl,
                              const std::string& endpoint,
@@ -420,58 +561,6 @@ private:
         if (res != CURLE_OK) return {false, "Relic unreachable: " + url, {}};
         return {true, "", response};
     }
-
-    RelicResult dispatchJournal(const std::string &endpoint,
-                                const Json::Value &params) {
-        auto &j = SessionJournal::instance();
-        std::string ns = params.get("namespace", "default").asString();
-
-        if (endpoint == "record") {
-            std::string et = params.get("event_type", "unknown").asString();
-            std::string sid = params.get("session_id", "").asString();
-            return j.record(ns, et, params["content"], sid);
-        }
-        if (endpoint == "query") {
-            std::string sid = params.get("session_id", "").asString();
-            std::string et = params.get("event_type", "").asString();
-            int limit = params.get("limit", 100).asInt();
-            return j.query(ns, sid, et, limit);
-        }
-        if (endpoint == "export") {
-            return j.exportSession(ns, params.get("session_id", "").asString());
-        }
-        if (endpoint == "prune") {
-            int age = params.get("max_age_seconds", 2592000).asInt();
-            int maxRec = params.get("max_records", -1).asInt();
-            return j.prune(ns, age, maxRec);
-        }
-        return {false, "Unknown endpoint: " + endpoint, {}};
-    }
-
-    RelicResult dispatchCheckpoint(const std::string &endpoint,
-                                   const Json::Value &params) {
-        auto &c = StateCheckpoint::instance();
-        std::string ns = params.get("namespace", "default").asString();
-
-        if (endpoint == "save") {
-            return c.save(ns, params.get("agent_name", "agent").asString(),
-                          params["state"], params.get("label", "").asString());
-        }
-        if (endpoint == "load" || endpoint == "latest") {
-            return c.load(ns, params.get("agent_name", "agent").asString());
-        }
-        if (endpoint == "list") {
-            return c.list(ns, params.get("agent_name", "").asString());
-        }
-        if (endpoint == "gc") {
-            int age = params.get("max_age_seconds", 604800).asInt();
-            int maxPer = params.get("max_per_agent", 5).asInt();
-            return c.gc(ns, age, maxPer);
-        }
-        return {false, "Unknown endpoint: " + endpoint, {}};
-    }
 };
 
-} // namespace relics
-} // namespace mk3
-} // namespace cortex
+} // namespace cortex::mk3::relics

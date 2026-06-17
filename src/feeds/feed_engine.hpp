@@ -1,11 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Feed Engine — polls system feeds and injects context into agent prompts
+// Now delegates to sovereign Feed objects (src/feeds/feed.hpp).
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
+#include "feed.hpp"
 #include <string>
 #include <vector>
 #include <map>
-#include <functional>
 #include <mutex>
 #include <thread>
 #include <chrono>
@@ -19,21 +20,11 @@
 #include <filesystem>
 #include <json/json.h>
 
-namespace cortex {
-namespace mk3 {
-namespace feeds {
+namespace cortex::mk3::feeds {
 
-// ── Feed result ──
-struct FeedResult {
-    std::string name;
-    std::string summary;
-    std::string json;
-    bool ok = true;
-};
-
-using FeedFn = std::function<FeedResult()>;
-
-// ── Feed registry ──
+// ═══════════════════════════════════════════════════════════════════════════
+// FeedEngine — orchestrates Feed objects, provides manifest loading
+// ═══════════════════════════════════════════════════════════════════════════
 class FeedEngine {
 public:
     static FeedEngine& instance() {
@@ -45,67 +36,101 @@ public:
         if (refreshThread_.joinable()) refreshThread_.join();
     }
 
+    // ── Registration ──
+
+    /// Register a Feed object (sovereign)
+    bool registerFeed(Feed&& feed) {
+        if (!feed.isValid()) return false;
+        if (has(feed.name())) return false;  // dedup
+        feeds_[feed.name()] = std::move(feed);
+        return true;
+    }
+
+    /// Register a feed by name + poll function (backward-compat convenience)
     void registerFeed(const std::string& name, FeedFn fn) {
-        // Dedup: don't re-register if a feed with this name already exists
-        for (auto& [n, f] : feeds_)
-            if (n == name) return;
-        feeds_.push_back({name, fn});
-        cacheInitialPoll(name, fn);
+        if (has(name)) return;  // dedup
+        Feed feed(name, std::move(fn), true);  // poll immediate
+        feeds_[name] = std::move(feed);
+
+        // Async refresh (legacy behavior — keeps the refresh thread pattern)
         if (refreshThread_.joinable()) refreshThread_.join();
-        refreshThread_ = std::thread([this, name, fn]() {
-            try {
-                auto r = fn();
-                std::lock_guard<std::mutex> lock(mu_);
-                latest_[name] = r;
-            } catch (...) {
-                std::lock_guard<std::mutex> lock(mu_);
-                latest_[name] = {name, "", "{}", false};
+        refreshThread_ = std::thread([this, name]() {
+            auto it = feeds_.find(name);
+            if (it != feeds_.end()) {
+                it->second.poll();
             }
         });
     }
 
+    /// Check if a feed is registered
+    bool has(const std::string& name) const {
+        return feeds_.find(name) != feeds_.end();
+    }
+
+    /// Get a feed by name (returns nullptr if not found)
+    const Feed* getFeed(const std::string& name) const {
+        auto it = feeds_.find(name);
+        return (it != feeds_.end()) ? &it->second : nullptr;
+    }
+
+    // ── Polling ──
+
+    /// Poll all feeds and return their results
     std::vector<FeedResult> pollAll() {
         std::vector<FeedResult> results;
-        std::lock_guard<std::mutex> lock(mu_);
-        for (auto& [name, fn] : feeds_) {
-            auto it = latest_.find(name);
-            if (it != latest_.end()) {
-                results.push_back(it->second);
-                continue;
-            }
-            results.push_back(pollFeedLocked(name, fn));
+        for (auto& [name, feed] : feeds_) {
+            results.push_back(feed.poll());
         }
         return results;
     }
 
+    /// Poll a single feed by name. Returns empty result if not found.
     FeedResult pollOne(const std::string& name, bool forceFresh = false) {
-        std::lock_guard<std::mutex> lock(mu_);
-        if (!forceFresh) {
-            auto it = latest_.find(name);
-            if (it != latest_.end()) return it->second;
-        }
-        for (auto& [n, fn] : feeds_) {
-            if (n == name) return pollFeedLocked(name, fn);
-        }
-        return {name, "unknown feed", "{}", false};
+        auto it = feeds_.find(name);
+        if (it == feeds_.end()) return {name, "unknown feed", "{}", false};
+        if (forceFresh) return it->second.poll();
+        return it->second.get();
     }
 
+    /// Get all cached results without polling
+    std::vector<FeedResult> getAllCached() const {
+        std::vector<FeedResult> results;
+        for (const auto& [name, feed] : feeds_) {
+            results.push_back(feed.cached());
+        }
+        return results;
+    }
+
+    /// List registered feed names
+    std::vector<std::string> listFeeds() const {
+        std::vector<std::string> names;
+        for (const auto& [name, _] : feeds_) names.push_back(name);
+        return names;
+    }
+
+    /// Feed count
+    size_t count() const { return feeds_.size(); }
+
+    // ── Prompt injection ──
+
+    /// Format all feeds as a Markdown section for prompt injection
     std::string injectIntoPrompt() {
-        auto results = pollAll();
-        if (results.empty()) return "";
+        if (feeds_.empty()) return "";
         std::ostringstream ss;
         ss << "\n## System Feeds\n";
         bool wrote = false;
-        for (auto& r : results) {
+        for (auto& [name, feed] : feeds_) {
+            FeedResult r = feed.get();
             if (!r.ok) continue;
             wrote = true;
-            ss << "### " << r.name << "\n";
+            ss << "### " << name << "\n";
             if (!r.summary.empty()) ss << r.summary << "\n";
         }
         return wrote ? ss.str() : "";
     }
 
-    // Load feed from manifest YAML, execute script, register
+    // ── Manifest loading ──
+
     struct ManifestResult {
         bool success = false;
         std::string name;
@@ -229,32 +254,10 @@ public:
     }
 
 private:
-    std::vector<std::pair<std::string, FeedFn>> feeds_;
-    std::map<std::string, FeedResult> latest_;
-    std::mutex mu_;
+    std::map<std::string, Feed> feeds_;
     std::thread refreshThread_;
 
-    void cacheInitialPoll(const std::string& name, FeedFn fn) {
-        try {
-            std::lock_guard<std::mutex> lock(mu_);
-            latest_[name] = fn();
-        } catch (...) {
-            std::lock_guard<std::mutex> lock(mu_);
-            latest_[name] = {name, "", "{}", false};
-        }
-    }
-
-    FeedResult pollFeedLocked(const std::string& name, FeedFn fn) {
-        try {
-            auto r = fn();
-            latest_[name] = r;
-            return r;
-        } catch (...) {
-            FeedResult failed{name, "", "{}", false};
-            latest_[name] = failed;
-            return failed;
-        }
-    }
+    // ── Script execution helpers (kept for manifest loading) ──
 
     static std::string runScript(const std::string& runtime, const std::string& script) {
         return runScriptStatic(runtime, script);
@@ -300,7 +303,9 @@ private:
     }
 };
 
-// ── Feed: system_clock ──
+// ── Built-in feed functions ──
+
+/// Feed: system_clock
 inline FeedResult pollSystemClock() {
     auto now = std::chrono::system_clock::now();
     auto t = std::chrono::system_clock::to_time_t(now);
@@ -327,7 +332,7 @@ inline FeedResult pollSystemClock() {
     return r;
 }
 
-// ── Feed: system_stats ──
+/// Feed: system_stats
 inline FeedResult pollSystemStats() {
     FeedResult r;
     r.name = "system_stats";
@@ -369,7 +374,7 @@ inline FeedResult pollSystemStats() {
     return r;
 }
 
-// ── Feed: working_directory ──
+/// Feed: working_directory
 inline FeedResult pollWorkingDirectory() {
     FeedResult r;
     r.name = "working_directory";
@@ -387,7 +392,6 @@ inline FeedResult pollWorkingDirectory() {
     if (gp) {
         char gitRoot[4096] = {};
         if (fgets(gitRoot, sizeof(gitRoot), gp)) {
-            // strip newline
             std::string root(gitRoot);
             if (!root.empty() && root.back() == '\n') root.pop_back();
             ss << "\nGit repo: " << root;
@@ -439,7 +443,7 @@ inline FeedResult pollWorkingDirectory() {
     return r;
 }
 
-// ── Register all built-in feeds ──
+// ── Register all built-in feeds as sovereign Feed objects ──
 inline void registerFeeds() {
     auto& engine = FeedEngine::instance();
     engine.registerFeed("system_clock", pollSystemClock);
@@ -447,6 +451,4 @@ inline void registerFeeds() {
     engine.registerFeed("working_directory", pollWorkingDirectory);
 }
 
-} // namespace feeds
-} // namespace mk3
-} // namespace cortex
+} // namespace cortex::mk3::feeds
