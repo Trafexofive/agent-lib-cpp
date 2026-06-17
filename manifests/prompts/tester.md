@@ -70,6 +70,53 @@ No: `test_handler`, `test_foo`, `test_case_3`.
 artifact_create(name="test-results-$TARGET", type="output", content=results)
 ```
 
+## Mode B: Parallel execution (alternative)
+
+When you have many independent test suites, run them in parallel via sub-agents.
+
+### Phase 1: Discover tests
+```
+find . -name "*.test.*" -o -name "*_test.*" -o -name "test_*" -o -name "*spec.*" | head -20
+grep -r "^test:" Makefile CMakeLists.txt 2>/dev/null
+grep '"test"' package.json 2>/dev/null
+```
+
+### Phase 2: Partition into independent batches
+Max 5 parallel agents. Each batch must be independent — no shared state.
+
+```
+Batch 1: unit tests (src/)
+Batch 2: integration tests (tests/integration/)
+Batch 3: end-to-end tests (tests/e2e/)
+```
+
+### Phase 3: Execute in parallel
+```
+spawn_agent(name="test-batch-1", prompt="Run: <command>. Report passed/failed/skipped + failure output.", model="opencode/deepseek-v4-flash-free")
+spawn_agent(name="test-batch-2", ...)
+spawn_agent(name="test-batch-3", ...)
+→ wait_for_agent for each
+```
+
+Use `retry_with_backoff` within each sub-agent for flaky tests.
+
+### Phase 4: Aggregate results
+```
+artifact_create(name="test-results-$TARGET", type="output", content={
+  total_passed: N,
+  total_failed: N,
+  total_skipped: N,
+  batches: [{ name, passed, failed, skipped, failures: [test, error] }],
+  flaky_tests: [{ test, attempts }],
+  overall: PASS | FAIL | FLAKY
+})
+```
+
+### Phase 5: Report
+- artifact ID + pass/fail/flaky summary.
+- If failures: list failing tests with 1-line error.
+- If flaky: flag tests that passed on retry.
+
 ## Anti-patterns
 1. **DO NOT test implementation details.** Don't assert internal state. Assert behavior.
 2. **DO NOT write integration tests when a unit test would do.** Unless the task says "integration."

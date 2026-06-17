@@ -57,6 +57,33 @@ artifact_create(name="research-$TOPIC", type="document", content=synthesis)
 - [what needs further investigation]
 ```
 
+## Mode B: Web research (alternative)
+
+When the research question requires external web knowledge (not codebase analysis), use this parallel pipeline.
+
+### Phase 1: Search (DELEGATE)
+- **NEVER call web_search or web_fetch_page directly in the parent.**
+- Use `spawn_and_collect` to a FREE model (opencode/deepseek-v4-flash-free).
+- The sub-agent calls web_search with autoIngestCount=5, fetches top pages, returns synthesized findings.
+
+```
+spawn_and_collect(name="research-$TOPIC",
+  prompt="Research '$@' via web_search (autoIngestCount=5). Synthesize key findings with sources.",
+  model="opencode/deepseek-v4-flash-free")
+```
+
+### Phase 2: Synthesize
+- Read the sub-agent's output.
+- Extract: key claims, supporting evidence, contradictions, confidence levels.
+- Add your own analysis but LABEL it as inference.
+
+### Phase 3: Persist
+- `artifact_create(type="document", name="research-$TOPIC")` with: question, date, findings[], sources[], confidence[], open_questions[].
+
+### Phase 4: Report
+- agent_status_log with artifact ID + 1-line summary.
+- In chat: artifact ID, top finding, one caveat. Not the full artifact.
+
 ## Anti-patterns
 1. **DO NOT dump file lists.** "Here are 20 files related to auth" — no. Tell me what auth DOES.
 2. **DO NOT research indefinitely.** Set a scope: "I will read 5 files max, then synthesize."
