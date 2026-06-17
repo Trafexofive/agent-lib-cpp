@@ -58,7 +58,7 @@ struct CliConfig {
 
     // Provider
     std::string provider = "openai-codex";
-    std::string model = "gpt-5.5";
+    std::string model;  // empty → provider's defaultModel is used
     bool providerSet = false;
     bool modelSet = false;
 
@@ -290,7 +290,13 @@ static void applyConfig(CliConfig& cli, const std::map<std::string, std::string>
         return it != cfg.end() ? it->second : d;
     };
     if (!cli.providerSet) cli.provider = get("provider", cli.provider);
-    if (!cli.modelSet) cli.model = get("model", cli.model);
+    // Only inherit model from config when provider was ALSO inherited (not
+    // explicitly set). Otherwise `--provider zen` would drag in a stale
+    // `model=gpt-5.5` from the config file and 401 on a model that provider
+    // can't serve. When --model is omitted, fall through to the provider's
+    // own defaultModel.
+    if (!cli.providerSet && !cli.modelSet)
+        cli.model = get("model", cli.model);
     if (cli.systemPromptPath.empty()) cli.systemPromptPath = get("system_prompt", cli.systemPromptPath);
     if (cli.manifestDir.empty()) cli.manifestDir = get("manifest_dir", cli.manifestDir);
     if (cli.configPath.empty()) cli.configPath = get("config_path", defaultConfigPath());
@@ -777,7 +783,7 @@ static int cmdRun(CliConfig& cli) {
         if (!cli.systemPromptPath.empty()) {
             acfg.systemPromptPath = cli.systemPromptPath;
         } else {
-            acfg.systemPromptPath = "config/agents/assistant/system-prompts/assistant.md";
+            acfg.systemPromptPath = "manifests/system/default.md";
         }
     }
 

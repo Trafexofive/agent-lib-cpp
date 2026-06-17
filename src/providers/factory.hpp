@@ -58,14 +58,12 @@ inline std::string defaultProviderModel(const std::string& name) {
         return "gpt-5.5";
     if (name == "groq")
         return "llama-3.3-70b-versatile";
-    if (name == "zen")
-        return "big-pickle";
+    if (name == "zen" || name == "opencode")
+        return "deepseek-v4-flash-free";
     if (name == "together")
         return "meta-llama/Llama-3.3-70B-Instruct-Turbo";
     if (name == "opencode-go")
         return "deepseek-v4-flash";
-    if (name == "opencode")
-        return "deepseek-v4-flash-free";
     if (name == "fireworks")
         return "accounts/fireworks/models/llama-v3p1-70b-instruct";
     if (name == "sambanova")

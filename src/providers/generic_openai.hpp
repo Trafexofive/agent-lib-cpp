@@ -78,7 +78,11 @@ class GenericOpenAIClient : public ILlmProvider {
     void generateStream(const ChatMessages& msgs, StreamCallback cb) override;
 
     void setModel(const std::string& model) override {
-        model_ = model;
+        // Preserve the provider's configured default when an empty model is
+        // passed (happens when --model is omitted and no manifest sets one).
+        // Otherwise buildRequestBody would send "model":"" and the API 401s.
+        if (!model.empty())
+            model_ = model;
     }
     void setTemperature(double t) override {
         temperature_ = t;
@@ -237,12 +241,23 @@ inline OpenAIProviderConfig groqConfig() {
 }
 
 // OpenCode Zen (free tier)
+// OpenCode Zen — FREE tier (anonymous, Bearer "public")
+// Only the "-free"-suffixed models work here. Paid model IDs (kimi-k2.6,
+// deepseek-v4-flash, etc.) live on the /go/ paid-sub endpoint (opencode-go).
+// Verified working free models (2026-06-17):
+//   deepseek-v4-flash-free  (default — fast, matches go-sub default)
+//   mimo-v2.5-free
+//   north-mini-code-free
+// Promotions that have ended (401 "Free promotion has ended"):
+//   minimax-m3-free, qwen3.6-plus-free, nemotron-3-ultra-free (flaky)
+// Note: the no-auth /models listing is the only one that surfaces -free IDs;
+// the authenticated listing hides them.
 inline OpenAIProviderConfig zenConfig() {
     return {"zen",
             "https://opencode.ai/zen/v1",
             "",
             "public",
-            "big-pickle",
+            "deepseek-v4-flash-free",
             {
                 {"X-Title", "Cortex-MK3"},
                 {"HTTP-Referer", "https://github.com/Cortex-Prime-MK1"},
