@@ -29,6 +29,8 @@
 #include <chrono>
 #include <sstream>
 #include <string>
+#include <algorithm>
+#include <vector>
 #include <thread>
 #include <mutex>
 #include <atomic>
@@ -475,13 +477,32 @@ static int cmdHelp(const CliConfig& cli) {
 static int cmdList(const CliConfig& cli) {
     if (cli.listProviders) {
         std::cout << "Available providers:\n\n";
-        std::cout << "  deepseek    DeepSeek API        (DEEPSEEK_API_KEY)\n";
-        std::cout << "  openrouter     OpenRouter          (OPENROUTER_API_KEY)\n";
-        std::cout << "  openai-codex   OpenAI Codex        (OPENAI_API_KEY or ~/.codex/auth.json)\n";
-        std::cout << "  groq        Groq                (GROQ_API_KEY)\n";
-        std::cout << "  zen         OpenCode Zen        (free tier)\n";
-        std::cout << "  together    Together AI         (TOGETHER_API_KEY)\n";
-        std::cout << "  fireworks   Fireworks AI        (FIREWORKS_API_KEY)\n";
+        // Pull from the factory so the list stays in sync with availableProviders().
+        static const std::vector<std::pair<std::string, std::string>> providerInfo = {
+            {"deepseek",    "DeepSeek API        (DEEPSEEK_API_KEY)"},
+            {"openrouter",  "OpenRouter          (OPENROUTER_API_KEY)"},
+            {"openai-codex", "OpenAI Codex        (OPENAI_API_KEY or ~/.codex/auth.json)"},
+            {"groq",        "Groq                (GROQ_API_KEY)"},
+            {"zen",         "OpenCode Zen        (free tier)"},
+            {"opencode-go", "OpenCode Go         (OPENCODE_API_KEY, $10/mo)"},
+            {"opencode",    "OpenCode (alias→zen)"},
+            {"together",    "Together AI         (TOGETHER_API_KEY)"},
+            {"fireworks",   "Fireworks AI        (FIREWORKS_API_KEY)"},
+            {"sambanova",   "SambaNova"},
+            {"cerebras",    "Cerebras"},
+            {"hyperbolic",  "Hyperbolic"},
+            {"llm7",        "LLM7"},
+            {"nvidia",      "NVIDIA"},
+        };
+        // Only show providers the factory actually knows about.
+        auto avail = providers::availableProviders();
+        for (const auto& [name, desc] : providerInfo) {
+            if (std::find(avail.begin(), avail.end(), name) != avail.end()) {
+                std::cout << "  " << name;
+                for (size_t i = name.size(); i < 14; ++i) std::cout << ' ';
+                std::cout << desc << "\n";
+            }
+        }
         return 0;
     }
 
@@ -547,9 +568,10 @@ static int cmdList(const CliConfig& cli) {
         return 0;
     }
 
-    // Default: show everything
-    std::cout << "Use --providers, --models [name], or --tools\n";
-    return 0;
+    // Default: show providers (most useful; use --models/--tools for the rest)
+    CliConfig showProviders = cli;
+    showProviders.listProviders = true;
+    return cmdList(showProviders);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
