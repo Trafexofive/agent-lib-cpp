@@ -779,12 +779,15 @@ static int cmdRun(CliConfig& cli) {
         acfg.model = cli.model;
         if (!cli.harnessPromptPath.empty()) {
             acfg.harnessPath = cli.harnessPromptPath;
+        } else {
+            acfg.harnessPath = "manifests/harness/default.md";
         }
         if (!cli.systemPromptPath.empty()) {
             acfg.systemPromptPath = cli.systemPromptPath;
         } else {
             acfg.systemPromptPath = "manifests/system/default.md";
         }
+        acfg.personaPath = "manifests/persona/default.md";
     }
 
     auto provider = providers::createProvider(acfg.provider, acfg.model);
