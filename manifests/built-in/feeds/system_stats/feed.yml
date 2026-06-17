@@ -8,6 +8,7 @@ description: |
   the binary as a built-in feed.
 category: core
 tags: [system, stats, resources, platform]
+
 output_schema:
   type: object
   properties:

@@ -72,6 +72,7 @@ struct CliConfig {
     bool ephemeral = false;
     bool raw = false;
     bool replMode = false;
+    std::string tuiDebugDumpPath;
 
     // Debug
     bool debug = false;
@@ -171,6 +172,7 @@ Global flags:
   --verbose, -V        Verbose: dump full prompts each iteration
   --debug              Enable debug output
   --raw                Pipe-clean output (no formatting, no banner)
+  --tui-debug-dump <path> Auto-write TUI render/debug state (env: MK3_TUI_DEBUG_DUMP)
   --dry-run            Validate config + prompt without calling LLM
   --help               Show this help
 
@@ -206,6 +208,7 @@ Flags:
   --session <id>         Session ID for persistence
   --ephemeral            Don't save session
   --repl                 Force interactive mode even with --prompt
+  --tui-debug-dump <path> Auto-write TUI render/debug state
 )";
 }
 
@@ -310,6 +313,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
         {"verbose",      no_argument,       0, 'V'},
         {"debug",        no_argument,       0, 'D'},
         {"raw",          no_argument,       0, 'r'},
+        {"tui-debug-dump", required_argument, 0, 1001},
         {"dry-run",      no_argument,       0, 'n'},
         {"help",         no_argument,       0, 'h'},
 
@@ -357,6 +361,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
         case 'D': cli.debug = true; break;
         case 'X': cli.iterations = std::stoi(optarg); break;
         case 'r': cli.raw = true; break;
+        case 1001: cli.tuiDebugDumpPath = optarg; break;
         case 'n': cli.dryRun = true; break;
         case 'h': cli.showHelp = true; break;
 
@@ -742,7 +747,7 @@ static int cmdRun(CliConfig& cli) {
             return sandbox::launchDocker(cli.manifestPath, acfg, files);
         }
     } else {
-        acfg.name = "mk3-agent";
+        acfg.name = "cortext-builtin-agent";
         acfg.provider = cli.provider;
         acfg.model = cli.model;
         if (!cli.harnessPromptPath.empty()) {
@@ -761,6 +766,8 @@ static int cmdRun(CliConfig& cli) {
         std::cerr << "Run 'cortex-mk3 list --providers' to see available providers.\n";
         return 1;
     }
+    // TUI stderr is not a side channel; provider retry logs corrupt alternate-screen rendering.
+    provider->setQuietLogs(true);
 
     Agent agent(acfg, provider);
     if (cli.iterations > 0) agent.setIterationCap(cli.iterations);
@@ -823,6 +830,15 @@ static int cmdRun(CliConfig& cli) {
         return 0;
     }
 
+    if (cli.tuiDebugDumpPath.empty()) {
+        const char* dumpEnv = getenv("MK3_TUI_DEBUG_DUMP");
+        if (dumpEnv && *dumpEnv) {
+            cli.tuiDebugDumpPath = std::string(dumpEnv) == "1"
+                ? "/tmp/mk3-tui-debug-dump.txt"
+                : std::string(dumpEnv);
+        }
+    }
+
     // ── Enter alternate screen ──
     std::cout << "\033[?1049h\033[?25l" << std::flush;
     atexit([]{ std::cout << "\033[?1049l\033[?25h" << std::flush; });
@@ -848,14 +864,90 @@ static int cmdRun(CliConfig& cli) {
     static const char* spinnerFrames[] = {"⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"};
     std::vector<std::string> prevDisplay;  // last rendered lines (for diff)
     int prevDisplaySize_ = 0;  // total display size of last frame
-    auto renderScreen = [&]() {
-        // Throttle: max ~120fps during streaming. No throttle when idle.
+    bool renderDirty = true;
+    std::vector<std::string> tuiFrameLog;
+    std::vector<std::string> tuiAnsiFrames;
+    size_t tuiFrameNo = 0;
+    int lastDisplaySize = 0;
+    auto lastStatusTime = std::chrono::steady_clock::now();
+    std::string streamPhase = "idle";
+    size_t streamActionCount = 0;
+    size_t streamResultCount = 0;
+    size_t streamRespBytes = 0;
+    size_t streamRawBytes = 0;
+    auto statusBarText = [&](int displaySize) -> std::string {
+        int visibleLines = termH - 2;
+        int scrollPct = displaySize > visibleLines ? (scrollOffset * 100 / (displaySize - visibleLines)) : 100;
+        std::string spinner = streaming ? std::string("\033[38;2;255;200;50m") + spinnerFrames[spinnerFrame] + " \033[0m" : "";
+        std::string ttc;
         if (streaming) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - streamStart_).count();
+            if (elapsed >= 1000)
+                ttc = std::to_string(elapsed / 1000) + "." + std::to_string((elapsed % 1000) / 100) + "s ";
+            else if (elapsed >= 100)
+                ttc = "0." + std::to_string(elapsed / 100) + "s ";
+        }
+        std::string telemetry;
+        if (streaming) {
+            telemetry = " · " + streamPhase +
+                        " | actions=" + std::to_string(streamActionCount) +
+                        " complete=" + std::to_string(streamResultCount) +
+                        " resp=" + std::to_string(streamRespBytes) + "b" +
+                        " text=" + std::to_string(streamRawBytes) + "b";
+        }
+        return spinner + ttc + ansi::dim + "─── Mode: " + tui::TuiRenderer::modeName(renderer.mode()) +
+               (showPrompts ? " + PROMPTS" : "") +
+               (displaySize > visibleLines ? " · " + std::to_string(scrollPct) + "%" : "") +
+               telemetry + " ───" + ansi::reset;
+    };
+    auto inputLineText = [&]() -> std::string {
+        std::ostringstream out;
+        out << "\033[" << termH << ";1H\033[2K" << ansi::bold << "▸ " << ansi::reset << "\033[2m\033[3m";
+        if (input.searching()) {
+            out << tui::ansi::fg(255, 200, 0) << input.searchLine();
+        } else {
+            size_t cp = input.cursorPos();
+            std::string l = input.line();
+            out << l.substr(0, cp);
+            out << "\033[7m" << (cp < l.size() ? std::string(1, l[cp]) : " ") << "\033[27m";
+            if (cp < l.size()) out << l.substr(cp + 1);
+        }
+        out << ansi::reset << " ";
+        return out.str();
+    };
+    auto redrawStatusOnly = [&](bool force = false) {
+        if (!streaming) return;
+        auto now = std::chrono::steady_clock::now();
+        if (!force && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStatusTime).count() < 100) return;
+        lastStatusTime = now;
+        spinnerFrame = (spinnerFrame + 1) % 10;
+        std::cout << "\033[" << termH-1 << ";1H\033[2K" << statusBarText(lastDisplaySize)
+                  << inputLineText() << std::flush;
+    };
+    auto captureAnsiFrame = [&](const std::vector<std::string>& visible, int startRow, int visibleCount, int displaySize) {
+        std::vector<std::string> frame(termH);
+        for (int i = 0; i < visibleCount && i < (int)visible.size(); i++) {
+            int row = startRow + i - 1;
+            if (row >= 0 && row < termH) frame[row] = visible[i];
+        }
+        frame[termH - 2] = statusBarText(displaySize);
+        frame[termH - 1] = inputLineText();
+        std::ostringstream ss;
+        for (const auto& line : frame) ss << line << "\n";
+        tuiAnsiFrames.push_back(ss.str());
+        while (tuiAnsiFrames.size() > 20) tuiAnsiFrames.erase(tuiAnsiFrames.begin());
+    };
+    auto renderScreen = [&]() {
+        // Event-driven redraw: do not rebuild/render the whole screen just to
+        // animate a spinner. Repaint only when input/protocol/response changes.
+        if (streaming) {
+            if (!renderDirty) return;
             auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRenderTime).count();
-            if (elapsed < 8) return;
-            lastRenderTime = now;
+            auto sinceRender = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRenderTime).count();
+            if (sinceRender < 16) return;
             spinnerFrame = (spinnerFrame + 1) % 10;
+            lastRenderTime = now;
         }
 
         std::vector<std::string> display = historyLines;
@@ -907,23 +999,39 @@ static int cmdRun(CliConfig& cli) {
         }
 
         bool needsFull = prevDisplay.empty() || (int)display.size() != prevDisplaySize_;
+        if (!cli.tuiDebugDumpPath.empty()) {
+            std::ostringstream fl;
+            fl << "frame=" << (++tuiFrameNo)
+               << " streaming=" << (streaming ? "true" : "false")
+               << " dirty=" << (renderDirty ? "true" : "false")
+               << " display=" << display.size()
+               << " visible=" << visible.size()
+               << " skip=" << skip
+               << " full=" << (needsFull ? "true" : "false")
+               << " first_change=" << firstChange
+               << " last_change=" << lastChange
+               << " mode=" << tui::TuiRenderer::modeName(renderer.mode());
+            tuiFrameLog.push_back(fl.str());
+            if (tuiFrameLog.size() > 500) tuiFrameLog.erase(tuiFrameLog.begin(), tuiFrameLog.begin() + 100);
+        }
 
+        std::ostringstream frameOut;
         if (needsFull) {
-            std::cout << "\033[H\033[J";
+            frameOut << "\033[H\033[J";
             for (int i = skip; i < skip + visibleCount && i < (int)display.size(); i++)
-                std::cout << "\033[" << (startRow + i - skip) << ";1H\033[2K" << display[i];
+                frameOut << "\033[" << (startRow + i - skip) << ";1H\033[2K" << display[i];
         } else if (firstChange >= 0) {
             // Only redraw changed region — absolute cursor positioning, no bare \n
             int screenRow = startRow + firstChange;
             for (int vi = firstChange; vi <= lastChange && vi < visSize; vi++) {
-                std::cout << "\033[" << (screenRow + vi - firstChange)
-                          << ";1H\033[2K" << visible[vi];
+                frameOut << "\033[" << (screenRow + vi - firstChange)
+                         << ";1H\033[2K" << visible[vi];
             }
             // Clear trailing lines if new content is shorter
             if (visSize < prevSize) {
                 for (int vi = visSize; vi < prevSize; vi++) {
-                    std::cout << "\033[" << (screenRow + vi - firstChange)
-                              << ";1H\033[2K";
+                    frameOut << "\033[" << (screenRow + vi - firstChange)
+                             << ";1H\033[2K";
                 }
             }
         } else if (visSize != prevSize) {
@@ -931,51 +1039,30 @@ static int cmdRun(CliConfig& cli) {
             if (visSize > prevSize) {
                 // New lines added at bottom
                 for (int vi = prevSize; vi < visSize; vi++)
-                    std::cout << "\033[" << (startRow + vi) << ";1H\033[2K" << visible[vi];
+                    frameOut << "\033[" << (startRow + vi) << ";1H\033[2K" << visible[vi];
             } else {
                 // Lines removed — clear trailing area
                 for (int vi = visSize; vi < prevSize; vi++)
-                    std::cout << "\033[" << (startRow + vi) << ";1H\033[2K";
+                    frameOut << "\033[" << (startRow + vi) << ";1H\033[2K";
             }
         }
 
         prevDisplay = visible;
         prevDisplaySize_ = (int)display.size();
+        renderDirty = false;
+
+        int displaySize = (int)display.size() - skip;
+        lastDisplaySize = displaySize;
+        std::string statusLine = "\033[" + std::to_string(termH-1) + ";1H\033[2K" + statusBarText(displaySize);
+        std::string inputLine = inputLineText();
+        lastStatusTime = std::chrono::steady_clock::now();
+        if (!cli.tuiDebugDumpPath.empty()) {
+            captureAnsiFrame(visible, startRow, visibleCount, displaySize);
+        }
 
         // Status bar + input line (always redraw — cost is negligible)
-        int displaySize = (int)display.size() - skip;
-        int visibleLines = std::min(displaySize, termH - 2);
-        int scrollPct = displaySize > visibleLines ? (scrollOffset * 100 / (displaySize - visibleLines)) : 100;
-        std::string spinner = streaming ? std::string("\033[38;2;255;200;50m") + spinnerFrames[spinnerFrame] + " \033[0m" : "";
-        std::string ttc;
-        if (streaming) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - streamStart_).count();
-            if (elapsed >= 1000)
-                ttc = std::to_string(elapsed / 1000) + "." + std::to_string((elapsed % 1000) / 100) + "s ";
-            else if (elapsed >= 100)
-                ttc = "0." + std::to_string(elapsed / 100) + "s ";
-        }
-        std::cout << "\033[" << termH-1 << ";1H\033[2K"
-                  << spinner
-                  << ttc
-                  << ansi::dim << "─── Mode: " << tui::TuiRenderer::modeName(renderer.mode())
-                  << (showPrompts ? " + PROMPTS" : "")
-                  << (displaySize > visibleLines ? " · " + std::to_string(scrollPct) + "%" : "")
-                  << " ───" << ansi::reset;
-        std::cout << "\033[" << termH << ";1H\033[2K"
-                  << ansi::bold << "▸ " << ansi::reset << "\033[2m\033[3m";
-        if (input.searching()) {
-            std::cout << tui::ansi::fg(255, 200, 0) << input.searchLine();
-        } else {
-            size_t cp = input.cursorPos();
-            std::string l = input.line();
-            std::cout << l.substr(0, cp);
-            std::cout << "\033[7m" << (cp < l.size() ? std::string(1, l[cp]) : " ") << "\033[27m";
-            if (cp < l.size()) std::cout << l.substr(cp + 1);
-        }
-        std::cout << ansi::reset << " ";
-        std::cout << std::flush;
+        frameOut << statusLine << inputLine;
+        std::cout << frameOut.str() << std::flush;
     };
 
     std::string cmd;
@@ -994,6 +1081,90 @@ static int cmdRun(CliConfig& cli) {
     input.scrollDown = [&]{ scrollOffset -= (termH - 2) / 2; renderScreen(); };
     input.clearScreen = [&]{ std::cout << "\033[2J\033[H" << std::flush; renderScreen(); };
 
+    auto pushTuiLine = [&](const std::string& line) {
+        historyLines.push_back(std::string("\033[2m\033[3m") + line + ansi::reset);
+        renderDirty = true;
+    };
+    auto pushTuiSection = [&](const std::string& title, const std::vector<std::string>& items) {
+        pushTuiLine("[" + title + "] " + (items.empty() ? "none" : std::to_string(items.size())));
+        for (const auto& item : items) pushTuiLine("  - " + item);
+    };
+    auto dumpTuiState = [&](const std::string& path, const std::string& reason, bool notify) -> bool {
+        if (path.empty()) return false;
+        std::ofstream f(path);
+        auto lines = renderer.render();
+        if (!f) {
+            if (notify) pushTuiLine("Failed to write " + path);
+            return false;
+        }
+        const auto& acts = agent.protocolActions();
+        const auto& ress = agent.protocolResults();
+        f << "# Cortex MK3 TUI debug dump\n";
+        f << "reason: " << reason << "\n";
+        f << "mode: " << tui::TuiRenderer::modeName(renderer.mode()) << "\n";
+        f << "term: " << termW << "x" << termH << "\n";
+        f << "streaming: " << (streaming ? "true" : "false") << "\n";
+        f << "history_lines: " << historyLines.size() << "\n";
+        f << "render_lines: " << lines.size() << "\n";
+        f << "protocol_actions: " << acts.size() << "\n";
+        f << "protocol_results: " << ress.size() << "\n";
+        f << "frame_log_lines: " << tuiFrameLog.size() << "\n";
+        f << "ansi_snapshot_count: " << tuiAnsiFrames.size() << "\n\n";
+        f << "## Frame log\n";
+        for (const auto& l : tuiFrameLog) f << l << "\n";
+        f << "\n## Raw ANSI snapshots\n";
+        for (size_t i = 0; i < tuiAnsiFrames.size(); i++) {
+            f << "--- ansi frame " << i << " ---\n";
+            f << tuiAnsiFrames[i];
+        }
+        f << "\n## Protocol events\n";
+        for (const auto& a : acts) {
+            f << "ACTION " << a.type << " " << a.name << "#" << a.id << " sync=" << (a.sync ? "true" : "false") << "\n";
+            if (!a.body.empty()) f << "  body: " << a.body.substr(0, 1200) << (a.body.size() > 1200 ? "..." : "") << "\n";
+        }
+        for (const auto& r : ress) {
+            f << "RESULT " << r.id << " ok=" << (r.ok ? "true" : "false") << " ms=" << r.elapsedMs << " bytes=" << r.outputBytes << "\n";
+            if (!r.summary.empty()) f << "  summary: " << r.summary.substr(0, 1200) << (r.summary.size() > 1200 ? "..." : "") << "\n";
+        }
+        f << "\n## History\n";
+        for (const auto& l : historyLines) f << l << "\n";
+        f << "\n## Current Renderer\n";
+        for (const auto& l : lines) f << l << "\n";
+        if (notify) {
+            pushTuiLine("Wrote " + path + " (reason " + reason +
+                        ", history " + std::to_string(historyLines.size()) +
+                        ", current " + std::to_string(lines.size()) +
+                        ", actions " + std::to_string(acts.size()) +
+                        ", results " + std::to_string(ress.size()) + ")");
+        }
+        return true;
+    };
+    auto workflowNamesFromXml = [&]() {
+        std::vector<std::string> names;
+        size_t pos = 0;
+        while ((pos = workflowXml.find("<workflow", pos)) != std::string::npos) {
+            size_t namePos = workflowXml.find("name=\"", pos);
+            if (namePos == std::string::npos) { pos += 9; continue; }
+            namePos += 6;
+            size_t end = workflowXml.find('"', namePos);
+            if (end == std::string::npos) { pos += 9; continue; }
+            names.push_back(workflowXml.substr(namePos, end - namePos));
+            pos = end + 1;
+        }
+        return names;
+    };
+    auto showManifests = [&]() {
+        std::vector<std::string> tools;
+        for (const auto& s : allSchemas) tools.push_back(s.name + (s.description.empty() ? "" : " — " + s.description));
+        pushTuiLine("─── Active Manifest Surface ───");
+        pushTuiLine("agent: " + agent.name() + "  provider: " + agent.config().provider + "  model: " + agent.config().model);
+        pushTuiSection("tools", tools);
+        pushTuiSection("feeds", agent.feedNames());
+        pushTuiSection("relics", agent.relicNames());
+        pushTuiSection("agents", agent.subAgentNames());
+        pushTuiSection("workflows", workflowNamesFromXml());
+    };
+
     renderScreen();
 
     while (cortex::mk3::g_running && !quit) {
@@ -1011,19 +1182,26 @@ static int cmdRun(CliConfig& cli) {
             std::string before = input.line();
             size_t beforeCp = input.cursorPos();
             input.poll();
-            if (input.line() != before || input.cursorPos() != beforeCp) renderScreen();
+            if (input.line() != before || input.cursorPos() != beforeCp) { renderDirty = true; renderScreen(); }
         }
         if (!cortex::mk3::g_running || cmd.empty()) continue;
 
         if (cmd == "/quit" || cmd == "/exit") { quit = true; break; }
         if (cmd[0] == '/') {
-            if (cmd == "/help") {
+            if (cmd == "/help" || cmd == "/commands") {
                 for (auto& l : tui::SlashCommands::helpLines())
-                    historyLines.push_back(std::string("\033[2m\033[3m") + l + ansi::reset);
+                    pushTuiLine(l);
+            }
+            else if (cmd == "/manifests") {
+                showManifests();
             }
             else if (cmd == "/prompts") {
                 showPrompts = !showPrompts;
                 historyLines.clear();
+            }
+            else if (tui::SlashCommands::isDynamic(cmd)) {
+                for (auto& l : tui::SlashCommands::renderDynamic(cmd))
+                    pushTuiLine(l);
             }
             else if (cmd == "/cp-all") {
                 std::string all;
@@ -1055,6 +1233,12 @@ static int cmdRun(CliConfig& cli) {
                 for (auto& s : list)
                     historyLines.push_back(std::string("\033[2m\033[3m") + s.id + "  " + s.updated + "  " + std::to_string(s.turnCount) + " turns" + ansi::reset);
             }
+            else if (cmd == "/dump-render" || cmd == "/dr") {
+                std::string path = cli.tuiDebugDumpPath.empty()
+                    ? "/tmp/mk3-render-dump.txt"
+                    : cli.tuiDebugDumpPath;
+                dumpTuiState(path, "slash-command", true);
+            }
             else if (cmd == "/dump-prompt" || cmd == "/dp") {
                 // Export last prompt to /tmp/mk3-prompt-iterN.xml for inspection
                 auto& prompts = agent.iterationPrompts();
@@ -1075,54 +1259,131 @@ static int cmdRun(CliConfig& cli) {
         }
 
         // ── Prompt (threaded — allows concurrent input + Escape cancel) ──
+        std::string promptText = cmd; // stable copy; input callback may mutate cmd while streaming
+        cmd.clear();
         cortex::mk3::g_running = true;
         streaming = true;
+        streamPhase = "waiting provider";
+        streamActionCount = 0;
+        streamResultCount = 0;
+        streamRespBytes = 0;
+        streamRawBytes = 0;
         streamStart_ = std::chrono::steady_clock::now();
         input.clearEscape();
 
         // Echo user prompt in history BEFORE streaming (visible during response)
-        historyLines.push_back(std::string(ansi::bold) + "▸ " + cmd + ansi::reset);
+        historyLines.push_back(std::string(ansi::bold) + "▸ " + promptText + ansi::reset);
         scrollOffset = 0;
+        renderDirty = true;
         renderScreen();
 
         size_t lastAct = 0, lastRes = 0;
+        std::atomic<bool> agentDone{false};
+        std::mutex streamMtx;
+        std::vector<cortex::mk3::ProtocolAction> snapActions;
+        std::vector<cortex::mk3::ProtocolResult> snapResults;
+        std::string snapResponse, snapRaw, snapThought, snapPhase = "waiting provider";
+        bool snapDirty = false;
+        bool snapClearRenderer = false;
         bool firstToken = true;
-        bool agentDone = false;
-        std::mutex renderMtx;
 
-        // Run agent in background thread
+        auto applyStreamSnapshot = [&]() {
+            std::vector<cortex::mk3::ProtocolAction> acts;
+            std::vector<cortex::mk3::ProtocolResult> ress;
+            std::string response, raw, thought, phase;
+            bool clearRenderer = false;
+            {
+                std::lock_guard<std::mutex> lk(streamMtx);
+                if (!snapDirty) return;
+                acts = snapActions;
+                ress = snapResults;
+                response = snapResponse;
+                raw = snapRaw;
+                thought = snapThought;
+                phase = snapPhase;
+                clearRenderer = snapClearRenderer;
+                snapClearRenderer = false;
+                snapDirty = false;
+            }
+
+            if (clearRenderer) renderer.clear();
+            streamActionCount = acts.size();
+            streamResultCount = ress.size();
+            streamRespBytes = response.size();
+            streamRawBytes = raw.size();
+            streamPhase = phase;
+
+            while (lastAct < acts.size()) {
+                const auto& a = acts[lastAct++];
+                renderer.addProtocolAction(a.type, a.name, a.id, a.body, a.sync);
+                renderDirty = true;
+            }
+            while (lastRes < ress.size()) {
+                const auto& r = ress[lastRes++];
+                std::string tn = r.toolName;
+                if (tn.empty()) {
+                    for (const auto& a : acts) if (a.id == r.id) { tn = a.name; break; }
+                }
+                renderer.addProtocolResult(r.id, r.ok, r.summary, tn, r.exitCode, r.elapsedMs, r.outputBytes);
+                renderDirty = true;
+            }
+            if (renderer.mode() != tui::RenderMode::FULL)
+                renderer.setRawStream(raw);
+            renderer.setResponse(response);
+            if (!response.empty()) renderDirty = true;
+            if (phase == "waiting provider" || phase == "parsing protocol") {
+                renderer.setThought(thought);
+                if (!thought.empty()) renderDirty = true;
+            }
+        };
+
+        // Run agent in background thread. The provider callback must never render
+        // or wait on terminal I/O; it only snapshots agent state for the TUI loop.
         std::thread agentThread([&]() {
-            bool thinkingPhase = true;  // true until first action/response
-            agent.prompt(cmd, [&](const std::string& /*token*/, bool) {
+            agent.prompt(promptText, [&](const std::string& /*token*/, bool) {
                 if (!cortex::mk3::g_running) return;
-                std::lock_guard<std::mutex> lk(renderMtx);
-                if (firstToken) { renderer.clear(); firstToken = false; }
                 auto& acts = agent.protocolActions();
                 auto& ress = agent.protocolResults();
-                if (!acts.empty() || !agent.responseOutput().empty()) thinkingPhase = false;
-                while (lastAct < acts.size()) {
-                    auto& a = acts[lastAct++];
-                    renderer.addProtocolAction(a.type, a.name, a.id, a.body, a.sync);
+                const std::string& response = agent.responseOutput();
+                const std::string& raw = agent.rawLlOutput();
+                std::string phase = "waiting provider";
+                if (!acts.empty() && ress.size() < acts.size()) phase = "running tools";
+                else if (!response.empty()) phase = "streaming response";
+                else if (!raw.empty()) phase = "parsing protocol";
+                {
+                    std::lock_guard<std::mutex> lk(streamMtx);
+                    if (firstToken) { snapClearRenderer = true; firstToken = false; }
+                    snapActions = acts;
+                    snapResults = ress;
+                    snapResponse = response;
+                    snapRaw = raw;
+                    snapThought = agent.thoughtOutput();
+                    snapPhase = phase;
+                    snapDirty = true;
                 }
-                while (lastRes < ress.size()) {
-                    auto& r = ress[lastRes++];
-                    std::string tn;
-                    for (auto& a : agent.protocolActions())
-                        if (a.id == r.id) { tn = a.name; break; }
-                    renderer.addProtocolResult(r.id, r.ok, r.summary, tn, r.exitCode, r.elapsedMs, r.outputBytes);
-                }
-                renderer.setRawStream(agent.rawLlOutput());
-                renderer.setResponse(agent.responseOutput());
-                if (thinkingPhase) renderer.setThought(agent.thoughtOutput());
             }, cli.sessionId, cli.ephemeral);
-            std::lock_guard<std::mutex> lk(renderMtx);
-            agentDone = true;
+            {
+                std::lock_guard<std::mutex> lk(streamMtx);
+                snapActions = agent.protocolActions();
+                snapResults = agent.protocolResults();
+                snapResponse = agent.responseOutput();
+                snapRaw = agent.rawLlOutput();
+                snapThought = agent.thoughtOutput();
+                snapPhase = "complete";
+                snapDirty = true;
+            }
+            agentDone.store(true, std::memory_order_release);
         });
 
         // Main loop: poll input + render concurrently with agent
-        while (!agentDone && cortex::mk3::g_running && !quit) {
-            // Poll input (non-blocking: VMIN=0, VTIME=1 → ~100ms max wait)
+        while (!agentDone.load(std::memory_order_acquire) && cortex::mk3::g_running && !quit) {
+            // Poll input non-blocking. Keystrokes must redraw immediately even
+            // while the provider is waiting on first byte.
+            std::string beforeInput = input.line();
+            size_t beforeCursor = input.cursorPos();
             bool hadInput = input.poll();
+            bool inputChanged = (input.line() != beforeInput || input.cursorPos() != beforeCursor);
+            if (inputChanged) renderDirty = true;
 
             // Escape → cancel agent
             if (input.escapePressed()) {
@@ -1141,30 +1402,28 @@ static int cmdRun(CliConfig& cli) {
                 g_resized = false;
                 struct winsize ws;
                 if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
-                    std::lock_guard<std::mutex> lk(renderMtx);
                     termW = ws.ws_col; termH = ws.ws_row;
                     renderer.setWidth(termW);
+                    renderDirty = true;
                 }
             }
 
-            // Render at display rate (no artificial throttle — diff is cheap)
-            {
-                std::lock_guard<std::mutex> lk(renderMtx);
-                renderScreen();
-            }
+            applyStreamSnapshot();
+            renderScreen();
+            redrawStatusOnly(inputChanged);
 
-            // Small sleep to avoid busy-wait CPU spin (120Hz ceiling)
-            if (!hadInput) usleep(8000);
+            // Small sleep to avoid busy-wait CPU spin; skip on any input activity.
+            if (!hadInput && !inputChanged) usleep(2000);
         }
+
+        applyStreamSnapshot();
 
         // Wait for agent thread to finish
         if (agentThread.joinable()) agentThread.join();
 
         // Flush final render state
-        {
-            std::lock_guard<std::mutex> lk(renderMtx);
-            renderScreen();
-        }
+        applyStreamSnapshot();
+        renderScreen();
 
         if (!cortex::mk3::g_running) {
             streaming = false;
@@ -1184,8 +1443,13 @@ static int cmdRun(CliConfig& cli) {
         // User prompt already in historyLines (added before streaming started)
         historyLines.insert(historyLines.end(), turnLines.begin(), turnLines.end());
         if (historyLines.empty()) historyLines.push_back("");
-        renderer.clear();
         streaming = false;
+        if (!cli.tuiDebugDumpPath.empty()) {
+            dumpTuiState(cli.tuiDebugDumpPath, "turn-complete", false);
+        }
+        renderer.clear();
+        streamPhase = "idle";
+        renderDirty = true;
         // AC15 — agent.prompt() already persisted the turn via Agent::saveSession.
         // Writing here again with a separate `sess` clobbered tool-call records;
         // refresh the local copy from disk instead so display/list stays current.

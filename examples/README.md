@@ -8,7 +8,7 @@ Every example follows the same pattern as production manifests:
 <module>/
 ├── README.md      ← What it does, how to customize
 ├── <manifest>.yml ← Schema definition
-└── <script>       ← Implementation (if not builtin)
+└── <script/appropriate_name>       ← Implementation (if not builtin)
 ```
 
 ## Available Examples

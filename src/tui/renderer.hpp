@@ -21,10 +21,10 @@ public:
     TuiRenderer(int width = 80) : width_(width) { md_.setWidth(width - 4); }
 
     // ── Set content (called after each prompt) ──
-    void setRawStream(const std::string& raw)  { raw_ = raw; }
-    void setResponse(const std::string& text)  { response_ = text; }
-    void appendResponse(const std::string& text) { response_ += text; }  // streaming
-    void setThought(const std::string& text)   { thought_ = text; }
+    void setRawStream(const std::string& raw)  { if (raw_ != raw) raw_ = raw; }
+    void setResponse(const std::string& text)  { if (response_ != text) response_ = text; }
+    void appendResponse(const std::string& text) { response_ += text; responseDirty_ = true; }  // streaming
+    void setThought(const std::string& text)   { if (thought_ != text) thought_ = text; }
 
     // ── Box/border styling ──
 
@@ -64,6 +64,7 @@ public:
 
     void clear() {
         raw_.clear(); response_.clear(); thought_.clear();
+        lastMarkdownText_.clear(); responseDirty_ = true;
         pv_.clear();
     }
 
@@ -85,7 +86,11 @@ private:
         for (auto& l : pv_.render(width_)) lines.push_back(l);
         // Response with live markdown rendering
         if (!response_.empty()) {
-            md_.setText(response_);
+            if (responseDirty_ || lastMarkdownText_ != response_) {
+                md_.setText(response_);
+                lastMarkdownText_ = response_;
+                responseDirty_ = false;
+            }
             auto rendered = md_.render();
             bool hasContent = false;
             for (auto& l : rendered) { for (auto c : l) if (c != ' ' && c != '\n' && c != '\r') { hasContent = true; break; } }
@@ -122,6 +127,8 @@ private:
     std::string raw_;       // raw LLM output
     std::string response_;  // sanitized response
     std::string thought_;   // thought content
+    std::string lastMarkdownText_;
+    mutable bool responseDirty_ = true;
 };
 
 } // namespace cortex::mk3::tui

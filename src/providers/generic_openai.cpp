@@ -9,86 +9,83 @@
 #include <regex>
 #include <chrono>
 #include <thread>
-#include <filesystem>
-#include <unistd.h>
+#include <algorithm>
 
 namespace cortex::mk3::providers {
 
-CodexCliProvider::CodexCliProvider() = default;
-
-std::string CodexCliProvider::shellEscape(const std::string& input) {
-    std::string out(1, '\'');
-    for (char c : input) {
-        if (c == '\'') out += "'\\''";
-        else out += c;
+static bool sleepInterruptible(std::chrono::seconds total) {
+    auto deadline = std::chrono::steady_clock::now() + total;
+    while (g_running && std::chrono::steady_clock::now() < deadline) {
+        auto remaining = deadline - std::chrono::steady_clock::now();
+        auto step = std::min(std::chrono::duration_cast<std::chrono::milliseconds>(remaining),
+                             std::chrono::milliseconds(100));
+        if (step.count() > 0) std::this_thread::sleep_for(step);
     }
-    out += '\'';
+    return g_running;
+}
+
+static std::string base64UrlDecode(std::string input) {
+    for (char& c : input) {
+        if (c == '-') c = '+';
+        else if (c == '_') c = '/';
+    }
+    while (input.size() % 4) input.push_back('=');
+
+    static const std::string chars =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    int val = 0;
+    int valb = -8;
+    for (unsigned char c : input) {
+        if (c == '=') break;
+        int idx = chars.find(c);
+        if (idx == (int)std::string::npos) continue;
+        val = (val << 6) + idx;
+        valb += 6;
+        if (valb >= 0) {
+            out.push_back(char((val >> valb) & 0xFF));
+            valb -= 8;
+        }
+    }
     return out;
 }
 
-std::string CodexCliProvider::renderPrompt(const ChatMessages& msgs) {
-    std::ostringstream ss;
-    ss << "Complete the embedded Cortex MK3 transcript below. Treat it as the task content for this Codex exec run.\n"
-       << "Base answers about available tools or sub-agents only on the embedded MK3 [system] message.\n"
-       << "If the embedded MK3 [system] message has no <subagents> block, the correct answer is that no MK3 sub-agents are available.\n"
-       << "Return the MK3 XML protocol text requested by the embedded transcript. Do not add commentary about Codex or this wrapper.\n\n";
-    for (const auto& m : msgs) {
-        ss << "[" << ChatMessage::roleName(m.role) << "]\n" << m.content << "\n\n";
-    }
-    return ss.str();
-}
-
-std::string CodexCliProvider::generate(const ChatMessages& msgs) {
-    namespace fs = std::filesystem;
-    fs::path base = fs::temp_directory_path() /
-        ("cortex-codex-" + std::to_string(::getpid()) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::path inputPath = base.string() + ".in";
-    fs::path outputPath = base.string() + ".out";
-    fs::path jsonlPath = base.string() + ".jsonl";
-    fs::path errPath = base.string() + ".err";
-
-    {
-        std::ofstream in(inputPath);
-        in << renderPrompt(msgs);
+std::string GenericOpenAIClient::resolveCodexAccountId(const std::string& token) {
+    const char* home = std::getenv("HOME");
+    if (home && home[0]) {
+        std::ifstream f(std::string(home) + "/.codex/auth.json");
+        if (f.good()) {
+            Json::Value root;
+            Json::CharReaderBuilder reader;
+            std::string errs;
+            if (Json::parseFromStream(reader, f, &root, &errs) &&
+                root.isMember("tokens") && root["tokens"].isObject() &&
+                root["tokens"].isMember("account_id") && root["tokens"]["account_id"].isString()) {
+                return root["tokens"]["account_id"].asString();
+            }
+        }
     }
 
-    std::string cmd = "codex exec --json --model " + shellEscape(model_) +
-        " -c " + shellEscape("model_reasoning_effort=\"" + reasoningEffort_ + "\"") +
-        " --sandbox read-only --skip-git-repo-check --cd " + shellEscape(fs::current_path().string()) +
-        " --output-last-message " + shellEscape(outputPath.string()) +
-        " - < " + shellEscape(inputPath.string()) +
-        " > " + shellEscape(jsonlPath.string()) +
-        " 2> " + shellEscape(errPath.string());
-
-    int rc = std::system(cmd.c_str());
-    std::ifstream outFile(outputPath);
-    std::ostringstream out;
-    out << outFile.rdbuf();
-    std::string result = out.str();
-
-    std::ifstream errFile(errPath);
-    std::ostringstream err;
-    err << errFile.rdbuf();
-
-    std::error_code ec;
-    fs::remove(inputPath, ec);
-    fs::remove(outputPath, ec);
-    fs::remove(jsonlPath, ec);
-    fs::remove(errPath, ec);
-
-    if (rc != 0 || result.empty()) {
-        throw std::runtime_error("codex exec failed: " + err.str());
+    size_t first = token.find('.');
+    size_t second = first == std::string::npos ? std::string::npos : token.find('.', first + 1);
+    if (first == std::string::npos || second == std::string::npos || second <= first + 1) {
+        throw std::runtime_error("openai-codex auth token is not a JWT and no account_id was found in ~/.codex/auth.json");
     }
-    return result;
-}
 
-void CodexCliProvider::generateStream(const ChatMessages& msgs, StreamCallback cb) {
-    std::string result = generate(msgs);
-    cb(result, true);
-}
-
-std::vector<ILlmProvider::ModelInfo> CodexCliProvider::listModels() {
-    return {{"gpt-5.5", "GPT-5.5", 272000, false}};
+    std::string payload = base64UrlDecode(token.substr(first + 1, second - first - 1));
+    Json::Value root;
+    Json::CharReaderBuilder reader;
+    std::string errs;
+    std::istringstream ss(payload);
+    if (!Json::parseFromStream(reader, ss, &root, &errs)) {
+        throw std::runtime_error("failed to parse openai-codex JWT payload: " + errs);
+    }
+    const std::string claim = "https://api.openai.com/auth";
+    if (root.isMember(claim) && root[claim].isObject() &&
+        root[claim].isMember("chatgpt_account_id") && root[claim]["chatgpt_account_id"].isString()) {
+        return root[claim]["chatgpt_account_id"].asString();
+    }
+    throw std::runtime_error("failed to extract chatgpt_account_id from openai-codex token");
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +98,68 @@ GenericOpenAIClient::GenericOpenAIClient(const OpenAIProviderConfig& cfg)
 // Build OpenAI-compatible JSON request body
 // ---------------------------------------------------------------------------
 Json::Value GenericOpenAIClient::buildRequestBody(const ChatMessages& msgs, bool stream) const {
+    if (config_.apiMode == "openai-codex-responses") {
+        Json::Value body;
+        body["model"] = model_;
+        body["store"] = false;
+        body["stream"] = true;
+        body["text"]["verbosity"] = "low";
+        body["include"].append("reasoning.encrypted_content");
+        body["tool_choice"] = "auto";
+        body["parallel_tool_calls"] = true;
+        if (!config_.reasoningEffort.empty()) {
+            body["reasoning"]["effort"] = config_.reasoningEffort;
+            body["reasoning"]["summary"] = "auto";
+        }
+
+        std::string instructions;
+        Json::Value input(Json::arrayValue);
+        for (const auto& m : msgs) {
+            if (m.role == ChatRole::SYSTEM) {
+                if (!instructions.empty()) instructions += "\n\n";
+                instructions += m.content;
+                continue;
+            }
+
+            if (m.role == ChatRole::ASSISTANT) {
+                Json::Value item;
+                item["type"] = "message";
+                item["role"] = "assistant";
+                item["status"] = "completed";
+                Json::Value part;
+                part["type"] = "output_text";
+                part["text"] = m.content;
+                part["annotations"] = Json::arrayValue;
+                item["content"].append(part);
+                input.append(item);
+            } else if (m.role == ChatRole::TOOL) {
+                Json::Value item;
+                item["type"] = "function_call_output";
+                item["call_id"] = m.toolCallId;
+                item["output"] = m.content;
+                input.append(item);
+            } else {
+                Json::Value item;
+                item["role"] = "user";
+                Json::Value part;
+                part["type"] = "input_text";
+                part["text"] = m.content;
+                item["content"].append(part);
+                input.append(item);
+            }
+        }
+        body["instructions"] = instructions.empty() ? "You are a helpful assistant." : instructions;
+        if (input.empty()) {
+            Json::Value fallback;
+            fallback["role"] = "user";
+            fallback["content"][0]["type"] = "input_text";
+            fallback["content"][0]["text"] = "Continue from the embedded system/history prompt.";
+            input.append(fallback);
+        }
+        body["input"] = input;
+        return body;
+    }
+
     Json::Value body;
     body["model"] = model_;
     body["temperature"] = temperature_;
@@ -132,6 +191,14 @@ Json::Value GenericOpenAIClient::buildRequestBody(const ChatMessages& msgs, bool
 // Non-streaming generate
 // ---------------------------------------------------------------------------
 std::string GenericOpenAIClient::generate(const ChatMessages& msgs) {
+    if (config_.apiMode == "openai-codex-responses") {
+        std::string out;
+        generateStream(msgs, [&](const std::string& token, bool) {
+            out += token;
+        });
+        return out;
+    }
+
     Json::Value body = buildRequestBody(msgs, false);
     std::string response = httpPost(config_.baseUrl + config_.chatEndpoint, body);
 
@@ -184,7 +251,7 @@ std::string GenericOpenAIClient::httpPost(const std::string& url,
     if (!curl) throw std::runtime_error("Failed to initialize CURL");
 
     std::string responseBuffer;
-    StreamCtx ctx{cb, {}, {}};
+    StreamCtx ctx{cb, {}, {}, config_.apiMode == "openai-codex-responses", false};
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -197,6 +264,14 @@ std::string GenericOpenAIClient::httpPost(const std::string& url,
     headers = curl_slist_append(headers, "Content-Type: application/json");
     std::string authHeader = "Authorization: Bearer " + apiKey_;
     headers = curl_slist_append(headers, authHeader.c_str());
+    if (config_.apiMode == "openai-codex-responses") {
+        std::string accountHeader = "chatgpt-account-id: " + resolveCodexAccountId(apiKey_);
+        headers = curl_slist_append(headers, "Accept: text/event-stream");
+        headers = curl_slist_append(headers, "OpenAI-Beta: responses=experimental");
+        headers = curl_slist_append(headers, accountHeader.c_str());
+        headers = curl_slist_append(headers, "originator: pi");
+        headers = curl_slist_append(headers, "User-Agent: pi (linux; cortex-mk3)");
+    }
     for (const auto& [k, v] : config_.extraHeaders) {
         std::string h = k + ": " + v;
         headers = curl_slist_append(headers, h.c_str());
@@ -226,9 +301,12 @@ std::string GenericOpenAIClient::httpPost(const std::string& url,
                          || res == CURLE_OPERATION_TIMEDOUT);
         if (isRetryable && retry < maxRetries_) {
             int waitSec = std::min((1 << (retry + 1)) * 5, 120);
-            std::cerr << "[MK3:RETRY] CURL error " << res << " — retrying in "
-                      << waitSec << "s (attempt " << (retry + 1) << "/" << maxRetries_ << ")" << std::endl;
-            std::this_thread::sleep_for(std::chrono::seconds(waitSec));
+            if (!quietLogs_) {
+                std::cerr << "[MK3:RETRY] CURL error " << res << " — retrying in "
+                          << waitSec << "s (attempt " << (retry + 1) << "/" << maxRetries_ << ")" << std::endl;
+            }
+            if (!sleepInterruptible(std::chrono::seconds(waitSec)))
+                throw std::runtime_error("cancelled during retry backoff");
             continue;
         }
         throw std::runtime_error(std::string("CURL error: ") + curl_easy_strerror(res));
@@ -242,9 +320,12 @@ std::string GenericOpenAIClient::httpPost(const std::string& url,
 
         if (isRetryable && retry < maxRetries_) {
             int waitSec = std::min((1 << (retry + 1)) * 5, 120);
-            std::cerr << "[MK3:RETRY] HTTP " << httpCode << " — retrying in "
-                      << waitSec << "s (attempt " << (retry + 1) << "/" << maxRetries_ << ")" << std::endl;
-            std::this_thread::sleep_for(std::chrono::seconds(waitSec));
+            if (!quietLogs_) {
+                std::cerr << "[MK3:RETRY] HTTP " << httpCode << " — retrying in "
+                          << waitSec << "s (attempt " << (retry + 1) << "/" << maxRetries_ << ")" << std::endl;
+            }
+            if (!sleepInterruptible(std::chrono::seconds(waitSec)))
+                throw std::runtime_error("cancelled during retry backoff");
             continue;
         }
         throw std::runtime_error("HTTP " + std::to_string(httpCode) +
@@ -278,19 +359,49 @@ size_t GenericOpenAIClient::streamCb(void* ptr, size_t sz, size_t nmemb, void* u
     }
     ctx->buffer += chunk;
 
-    // Process complete SSE lines
-    size_t pos;
-    while ((pos = ctx->buffer.find('\n')) != std::string::npos) {
-        std::string line = ctx->buffer.substr(0, pos);
-        ctx->buffer.erase(0, pos + 1);
+    // Process complete SSE events. Responses API/Codex can emit multi-line
+    // `data:` JSON blocks, so join them before parsing.
+    auto findEventEnd = [](const std::string& b, size_t& pos, size_t& len) -> bool {
+        size_t lf = b.find("\n\n");
+        size_t crlf = b.find("\r\n\r\n");
+        if (lf == std::string::npos && crlf == std::string::npos) return false;
+        if (crlf == std::string::npos || (lf != std::string::npos && lf < crlf)) {
+            pos = lf; len = 2; return true;
+        }
+        pos = crlf; len = 4; return true;
+    };
+    while (true) {
+        size_t pos = 0, eventLen = 0;
+        if (!findEventEnd(ctx->buffer, pos, eventLen)) break;
+        std::string event = ctx->buffer.substr(0, pos);
+        ctx->buffer.erase(0, pos + eventLen);
 
-        // Trim trailing \r
-        if (!line.empty() && line.back() == '\r') line.pop_back();
+        std::vector<std::string> dataLines;
+        std::istringstream es(event);
+        std::string line;
+        while (std::getline(es, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.rfind("data:", 0) == 0) {
+                std::string data = line.substr(5);
+                if (!data.empty() && data[0] == ' ') data.erase(0, 1);
+                dataLines.push_back(data);
+            }
+        }
+        if (dataLines.empty()) continue;
 
-        // Skip empty lines and non-data lines
-        if (line.empty() || line.rfind("data: ", 0) != 0) continue;
-
-        std::string data = line.substr(6); // strip "data: "
+        std::string data;
+        for (size_t i = 0; i < dataLines.size(); ++i) {
+            if (i) data += "\n";
+            data += dataLines[i];
+        }
+        auto trimCopy = [](std::string v) {
+            while (!v.empty() && (v.back() == '\n' || v.back() == '\r' || v.back() == ' ' || v.back() == '\t')) v.pop_back();
+            size_t start = 0;
+            while (start < v.size() && (v[start] == '\n' || v[start] == '\r' || v[start] == ' ' || v[start] == '\t')) ++start;
+            return v.substr(start);
+        };
+        data = trimCopy(data);
+        if (data.empty()) continue;
 
         // Check for [DONE] signal
         if (data == "[DONE]") {
@@ -304,6 +415,71 @@ size_t GenericOpenAIClient::streamCb(void* ptr, size_t sz, size_t nmemb, void* u
         std::string errs;
         std::istringstream ss(data);
         if (!Json::parseFromStream(reader, ss, &root, &errs)) continue;
+
+        if (ctx->codexResponses) {
+            std::string type = root.isMember("type") && root["type"].isString() ? root["type"].asString() : "";
+            if (type == "response.created" && root.isMember("response") && root["response"].isObject() &&
+                root["response"].isMember("id") && root["response"]["id"].isString()) {
+                continue;
+            }
+
+            if ((type == "response.output_text.delta" || type == "response.refusal.delta") &&
+                root.isMember("delta") && root["delta"].isString()) {
+                std::string codexDelta = root["delta"].asString();
+                ctx->codexSawTextDelta = true;
+                ctx->cb(codexDelta, false);
+            } else if (type == "response.content_part.added" && root.isMember("part") && root["part"].isObject()) {
+                const Json::Value& part = root["part"];
+                std::string text;
+                if (part.isMember("type") && part["type"].asString() == "output_text" &&
+                    part.isMember("text") && part["text"].isString()) {
+                    text = part["text"].asString();
+                } else if (part.isMember("type") && part["type"].asString() == "refusal" &&
+                           part.isMember("refusal") && part["refusal"].isString()) {
+                    text = part["refusal"].asString();
+                }
+                if (!text.empty()) {
+                    ctx->codexSawTextDelta = true;
+                    ctx->cb(text, false);
+                }
+            } else if (!ctx->codexSawTextDelta && type == "response.output_text.done" &&
+                       root.isMember("text") && root["text"].isString() && !root["text"].asString().empty()) {
+                ctx->cb(root["text"].asString(), false);
+            } else if (!ctx->codexSawTextDelta && type == "response.content_part.done" &&
+                       root.isMember("part") && root["part"].isObject()) {
+                const Json::Value& part = root["part"];
+                std::string text;
+                if (part.isMember("type") && part["type"].asString() == "output_text" &&
+                    part.isMember("text") && part["text"].isString()) {
+                    text = part["text"].asString();
+                } else if (part.isMember("type") && part["type"].asString() == "refusal" &&
+                           part.isMember("refusal") && part["refusal"].isString()) {
+                    text = part["refusal"].asString();
+                }
+                if (!text.empty()) ctx->cb(text, false);
+            } else if (!ctx->codexSawTextDelta && type == "response.output_item.done" && root.isMember("item") && root["item"].isObject()) {
+                const Json::Value& item = root["item"];
+                if (item.isMember("type") && item["type"].asString() == "message" &&
+                    item.isMember("content") && item["content"].isArray()) {
+                    std::string text;
+                    for (const auto& p : item["content"]) {
+                        if (!p.isObject() || !p.isMember("type")) continue;
+                        std::string partType = p["type"].asString();
+                        if (partType == "output_text" && p.isMember("text") && p["text"].isString())
+                            text += p["text"].asString();
+                        else if (partType == "refusal" && p.isMember("refusal") && p["refusal"].isString())
+                            text += p["refusal"].asString();
+                    }
+                    if (!text.empty()) ctx->cb(text, false);
+                }
+            } else if (type == "response.completed" || type == "response.done" || type == "response.failed" ||
+                       type == "response.cancelled" || type == "response.incomplete") {
+                ctx->cb("", true);
+            } else if (type == "error" || root.isMember("error")) {
+                ctx->lastErrorBody += data;
+            }
+            continue;
+        }
 
         auto& choices = root["choices"];
         if (choices.size() == 0) continue;
@@ -332,7 +508,6 @@ size_t GenericOpenAIClient::streamCb(void* ptr, size_t sz, size_t nmemb, void* u
             ctx->cb(token, isFinal);
         }
     }
-
     return total;
 }
 
@@ -346,6 +521,11 @@ int GenericOpenAIClient::abortCheckCb(void*, curl_off_t, curl_off_t, curl_off_t,
 // ---------------------------------------------------------------------------
 std::vector<ILlmProvider::ModelInfo> GenericOpenAIClient::listModels() {
     if (modelsFetched_) return cachedModels_;
+    if (config_.apiMode == "openai-codex-responses") {
+        cachedModels_.push_back({"gpt-5.5", "GPT-5.5", 272000, false});
+        modelsFetched_ = true;
+        return cachedModels_;
+    }
 
     CURL* curl = curl_easy_init();
     if (!curl) return {};

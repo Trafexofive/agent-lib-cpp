@@ -23,6 +23,8 @@ Every module follows the same pattern:
 | `relics/` | Docker relics (artifact_store, secret_store, ...) | 🟡 dispatcher wired |
 | `agents/` | Agent manifests (assistant, cpp-analyzer, bootstrapper) | ✅ stable |
 | `workflows/` | Workflow definitions (full-audit, pr-review, code-review) | 🟡 growing |
+| `prompts/` | Reusable task/persona prompts for bespoke agents | 🟡 seeded |
+| `skills/` | Reusable agent operating policies/skills | 🟡 seeded |
 | `_session/` | Persisted dynamic tools (auto-created, survives restarts) | ✅ stable |
 | `modules/` | Reusable manifest modules (cpp-refactor-suite) | ✅ stable |
 | Runtime | Used by | Manifest field |
@@ -35,6 +37,7 @@ Every module follows the same pattern:
 - **Only production-ready manifests** live here. Staging → `config/staging/`
 - **`built-in/`** = compiled into binary, resolved by name. No source code.
 - **Root-level** (tools/, relics/) = script modules with source alongside manifest.
+- `prompts/` and `skills/` are stdlib building blocks for bespoke agents, not auto-loaded runtime manifests.
 - Each module is self-contained — imports reference sibling modules by relative path.
 - **CATALOG.md** is maintained manually.
 

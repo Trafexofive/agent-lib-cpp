@@ -61,6 +61,7 @@ public:
     const std::string& thoughtOutput() const { return thoughtOutput_; }
     const std::string& lastPrompt() const { return lastPrompt_; }
     const std::vector<std::string>& iterationPrompts() const { return iterationPrompts_; }
+    const std::vector<std::string>& iterationOutputs() const { return iterationOutputs_; }
     const std::vector<ProtocolAction>& protocolActions() const { return protocolActions_; }
     const std::vector<ProtocolResult>& protocolResults() const { return protocolResults_; }
 
@@ -75,7 +76,9 @@ public:
     // ---- Tool management ----
     void addTool(ToolDef tool);
     void addFeed(const std::string& name) { feeds_.insert(name); }
+    std::vector<std::string> feedNames() const { return std::vector<std::string>(feeds_.begin(), feeds_.end()); }
     void addRelic(const std::string& name) { relics_.insert(name); }
+    std::vector<std::string> relicNames() const { return std::vector<std::string>(relics_.begin(), relics_.end()); }
 
     // ---- Context management (pin / peek / unpin) ----
     // A pinned file lives in the system prompt indefinitely until unpin.
@@ -102,6 +105,11 @@ public:
     void removeSubAgent(const std::string& name);
     bool hasSubAgent(const std::string& name) const;
     Agent* getSubAgent(const std::string& name) const;
+    std::vector<std::string> subAgentNames() const {
+        std::vector<std::string> names;
+        for (const auto& [name, _] : subAgents_) names.push_back(name);
+        return names;
+    }
 
     // ---- Sandbox ----
     void setSandboxPolicy(const sandbox::SandboxPolicy& policy) { sandboxPolicy_ = policy; }
@@ -125,6 +133,7 @@ private:
     ChatMessages buildChatPrompt(const AgentContext& ctx) const;
     std::string buildSystemPrompt(const AgentContext& ctx) const;
     std::string buildUserPrompt(const AgentContext& ctx) const;
+    std::string buildDynamicContextPrompt() const;
     // Tool dispatch
     Json::Value dispatchTool(const protocol::ParsedAction& action);
     Json::Value executeScriptTool(const ToolDef& tool, const Json::Value& params);
@@ -169,9 +178,11 @@ private:
     std::string lastPrompt_;       // last built prompt for /prompts
     std::vector<std::string> iterationPrompts_;     // full system prompt per iteration (for /prompts toggle)
     std::vector<std::string> iterationOutputs_;     // LLM response + results per iteration
+    std::vector<std::string> subAgentTraces_;        // delegated agent traces for parent dumps
     std::vector<ProtocolAction> protocolActions_;
     std::vector<ProtocolResult> protocolResults_;
     std::map<std::string, std::shared_ptr<Agent>> subAgents_;
+    std::map<std::string, Json::Value> actionResults_;  // persistent results table for ${id.field} expansion
     std::map<std::string, std::string> env_;
     sandbox::SandboxPolicy sandboxPolicy_;
 

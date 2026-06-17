@@ -13,15 +13,37 @@
 #include <fstream>
 
 namespace cortex::mk3 {
+
+static bool isConfigStagingDir(const std::string& dir) {
+    std::error_code ec;
+    fs::path p = fs::weakly_canonical(dir, ec);
+    if (ec) p = fs::path(dir);
+    return p.filename() == "staging" &&
+           !p.parent_path().empty() &&
+           p.parent_path().filename() == "config";
+}
+
 Json::Value Agent::dispatchTool(const protocol::ParsedAction &action) {
+    protocol::ParsedAction normalized = action;
+    auto toolIt = tools_.find(action.name);
+    if (action.type == protocol::ActionType::TOOL && toolIt != tools_.end() &&
+        !action.content.empty()) {
+        if (!normalized.params.isObject()) normalized.params = Json::Value(Json::objectValue);
+        std::string textParam = toolIt->second.textParam;
+        if (textParam.empty() && toolIt->second.inputType == "text") textParam = "input";
+        if (!textParam.empty() && !normalized.params.isMember(textParam)) {
+            normalized.params[textParam] = action.content;
+        }
+    }
+
     // ── Sandbox validation (BT04, SB07) — runs FIRST so meta-tools and
     //    context_pin/peek/unpin can't bypass the policy.
     if (sandboxPolicy_.enabled) {
         Json::StreamWriterBuilder w;
         w["indentation"] = "";
-        std::string paramsStr = Json::writeString(w, action.params);
+        std::string paramsStr = Json::writeString(w, normalized.params);
         std::string blockReason =
-            sandboxPolicy_.validate(action.name, paramsStr);
+            sandboxPolicy_.validate(normalized.name, paramsStr);
         if (!blockReason.empty()) {
             Json::Value err;
             err["success"] = false;
@@ -32,45 +54,45 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction &action) {
 
     // Manifest opt-in gate: tool implementations may exist in the backend
     // registry, but the active agent can only call tools present in tools_.
-    if (action.type == protocol::ActionType::TOOL && !tools_.count(action.name)) {
+    if (normalized.type == protocol::ActionType::TOOL && !tools_.count(normalized.name)) {
         Json::Value err;
         err["success"] = false;
-        err["error"] = "tool not available: " + action.name + " (not imported by active manifest)";
+        err["error"] = "tool not available: " + normalized.name + " (not imported by active manifest)";
         return err;
     }
 
     // ── Meta-tools: reload manifests, toggle builtins ──
-    if (action.name == "disable_builtin" || action.name == "enable_builtin") {
-        return toggleBuiltin(action.params, action.name == "enable_builtin");
+    if (normalized.name == "disable_builtin" || normalized.name == "enable_builtin") {
+        return toggleBuiltin(normalized.params, normalized.name == "enable_builtin");
     }
-    if (action.name == "reload_manifests") {
+    if (normalized.name == "reload_manifests") {
         Json::Value r;
-        bool backup = action.params.get("backup", false).asBool();
+        bool backup = normalized.params.get("backup", false).asBool();
         r["loaded"] = reloadManifests(backup);
         r["success"] = true;
         return r;
     }
 
     // ── Meta-tools: context management (need Agent state, can't be in registry) ──
-    if (action.name == "context_pin") {
+    if (normalized.name == "context_pin") {
         return contextPin(
-            action.params.get("path", "").asString(),
-            action.params.get("force", false).asBool());
+            normalized.params.get("path", "").asString(),
+            normalized.params.get("force", false).asBool());
     }
-    if (action.name == "context_peek") {
+    if (normalized.name == "context_peek") {
         return contextPeek(
-            action.params.get("path", "").asString(),
-            action.params.get("cycles", 1).asInt(),
-            action.params.get("force", false).asBool());
+            normalized.params.get("path", "").asString(),
+            normalized.params.get("cycles", 1).asInt(),
+            normalized.params.get("force", false).asBool());
     }
-    if (action.name == "context_unpin") {
-        return contextUnpin(action.params.get("path", "").asString());
+    if (normalized.name == "context_unpin") {
+        return contextUnpin(normalized.params.get("path", "").asString());
     }
 
     // ── Relic dispatch ──
-    if (action.type == protocol::ActionType::RELIC) {
+    if (normalized.type == protocol::ActionType::RELIC) {
         auto result = relics::RelicDispatcher::instance().dispatch(
-            action.name, action.params.get("endpoint", "").asString(), action.params);
+            normalized.name, normalized.params.get("endpoint", "").asString(), normalized.params);
         Json::Value r;
         r["success"] = result.success;
         r["output"] = result.success ? result.data : result.error;
@@ -79,18 +101,27 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction &action) {
     }
 
     // Script tools (path-imported, not native)
-    auto it = tools_.find(action.name);
+    auto it = tools_.find(normalized.name);
     if (it != tools_.end() && !it->second.isNative &&
         !it->second.scriptPath.empty()) {
-        return executeScriptTool(it->second, action.params);
+        return executeScriptTool(it->second, normalized.params);
     }
 
-    return dispatch::dispatchTool(action);
+    return dispatch::dispatchTool(normalized);
 }
 
 Json::Value Agent::executeScriptTool(const ToolDef &tool,
                                      const Json::Value &params) {
     // Synchronous execution — blocks but returns actual output
+    std::string paramsJson = Json::writeString(Json::StreamWriterBuilder(), params);
+    std::string blockReason = sandboxPolicy_.validate(tool.name, paramsJson);
+    if (!blockReason.empty()) {
+        Json::Value err;
+        err["success"] = false;
+        err["error"] = blockReason;
+        return err;
+    }
+
     std::string cmd = tool.scriptRuntime + " " + tool.scriptPath;
 
     // Write params to tmpfile for script to read
@@ -220,6 +251,10 @@ std::string Agent::getEnv(const std::string &key,
 
 int Agent::reloadManifests(bool backup) {
     std::string dir = config_.manifestDir.empty() ? "./manifests" : config_.manifestDir;
+    if (isConfigStagingDir(dir)) {
+        std::cerr << "[manifest] skipping recursive reload for config/staging; use explicit manifest imports\n";
+        return 0;
+    }
     if (!std::filesystem::exists(dir)) return 0;
     if (backup) {
         auto ts = std::chrono::system_clock::now().time_since_epoch().count();
@@ -265,6 +300,7 @@ int Agent::reloadManifests(bool backup) {
 
 void Agent::saveSessionTools() {
     std::string dir = config_.manifestDir.empty() ? "./manifests" : config_.manifestDir;
+    if (isConfigStagingDir(dir)) return;
     std::string sessionDir = dir + "/_session";
     std::filesystem::create_directories(sessionDir);
     Json::Value arr(Json::arrayValue);
@@ -285,6 +321,7 @@ void Agent::saveSessionTools() {
 
 void Agent::loadSessionTools() {
     std::string dir = config_.manifestDir.empty() ? "./manifests" : config_.manifestDir;
+    if (isConfigStagingDir(dir)) return;
     std::string sessionFile = dir + "/_session/tools.json";
     if (!std::filesystem::exists(sessionFile)) return;
     std::ifstream f(sessionFile);

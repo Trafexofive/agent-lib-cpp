@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
 """json_tool — Parse, query, and transform JSON data."""
 import json
-import sys
 import re
+import sys
+
+def load_params():
+    if len(sys.argv) <= 1:
+        return {}
+    arg = sys.argv[1]
+    try:
+        with open(arg, "r", encoding="utf-8") as f:
+            return json.loads(f.read())
+    except OSError:
+        pass
+    return json.loads(arg)
 
 def resolve_query(data, query):
     """Resolve a jq-style dot-notation query against a dict/list."""
@@ -38,7 +49,7 @@ def resolve_query(data, query):
 
 def main():
     try:
-        params = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
+        params = load_params()
     except (json.JSONDecodeError, ValueError) as e:
         print(json.dumps({"error": f"invalid JSON input: {e}"}))
         sys.exit(1)

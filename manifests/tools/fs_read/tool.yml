@@ -20,6 +20,7 @@ description: "See input_schema for parameters"
   - Use for directory listing (use `list` instead)
   - Use for searching file contents (use `grep` instead)
   - Read very large files (>100KB) — they'll be truncated
+
 category: filesystem
 tags: [read, file, cat]
 input_schema:

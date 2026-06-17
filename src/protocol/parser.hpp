@@ -21,7 +21,7 @@ namespace cortex::mk3::protocol {
 // ---------------------------------------------------------------------------
 // Action types
 // ---------------------------------------------------------------------------
-enum class ActionType { TOOL, AGENT, RELIC, FEED, LLM_CALL, INTERNAL };
+enum class ActionType { TOOL, AGENT, RELIC, FEED, WORKFLOW, LLM_CALL, INTERNAL };
 enum class ExecutionMode { SYNC, ASYNC, FIRE_AND_FORGET };
 
 struct ParsedAction {
@@ -99,6 +99,7 @@ private:
     size_t findNextTag();
     std::string identifyTag(size_t tagStart);
     size_t findClosingTag(const std::string& tagName, size_t contentStart);
+    size_t findResponseClose(size_t contentStart) const;
     std::map<std::string, std::string> parseAttrs(const std::string& tagContent);
 
     // Handlers
@@ -137,6 +138,7 @@ private:
     std::string buffer_;
     size_t readPos_ = 0;
     bool inResponse_ = false;  // true between <response> and </response> for streaming
+    size_t responseContentStart_ = 0;  // start of active response body for code-span-aware close scans
     bool finalResponseSeen_ = false;  // true after first <response final="true">
     std::map<std::string, std::string> responseAttrs_;  // attrs from opening <response>, applied when streaming closes
 

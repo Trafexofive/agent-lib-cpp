@@ -28,6 +28,9 @@ struct DockerRelicDef {
     std::string summary;
     int port = 0;
     std::string composeDir; // path to directory with docker-compose.yml
+    std::string composeFile; // optional explicit compose file
+    std::string envFile; // optional --env-file for compose
+    std::string projectName; // optional docker compose project name
     std::string healthPath = "/health";
     std::vector<std::string> endpoints;
 };
@@ -75,6 +78,10 @@ public:
             else if (key == "mode") def.mode = val;
             else if (key == "summary") def.summary = val;
             else if (key == "port") def.port = std::stoi(val);
+            else if (key == "compose_file") def.composeFile = val;
+            else if (key == "env_file") def.envFile = val;
+            else if (key == "project_name") def.projectName = val;
+            else if (key == "health_path") def.healthPath = val;
         }
 
         if (def.name.empty() || def.mode.empty()) return false;
@@ -184,6 +191,16 @@ public:
 private:
     std::map<std::string, DockerRelicDef> relics_;
 
+    static std::string shellQuote(const std::string& s) {
+        std::string out = "'";
+        for (char c : s) {
+            if (c == '\'') out += "'\"'\"'";
+            else out.push_back(c);
+        }
+        out.push_back('\'');
+        return out;
+    }
+
     // Ensure Docker container is running for a managed relic
     bool ensureContainerUp(const DockerRelicDef& def) {
         // Check if already running via health endpoint
@@ -192,9 +209,20 @@ private:
         auto r = httpCall(healthUrl, Json::Value());
         if (r.success) return true;
 
-        // Container not running — start it via docker-compose
-        std::string cmd = "cd " + def.composeDir
-                        + " && docker-compose up -d 2>&1";
+        // Container not running — start it via docker compose/docker-compose
+        std::string composeCmd = "docker compose";
+        std::string projectArg = def.projectName.empty()
+                               ? ""
+                               : " --project-name " + shellQuote(def.projectName);
+        std::string fileArg = def.composeFile.empty()
+                            ? ""
+                            : " -f " + shellQuote(def.composeFile);
+        std::string envArg = def.envFile.empty()
+                           ? ""
+                           : " --env-file " + shellQuote(def.envFile);
+        std::string cmd = "cd " + shellQuote(def.composeDir)
+                        + " && " + composeCmd + projectArg + envArg + fileArg
+                        + " up -d 2>&1";
         FILE* p = popen(cmd.c_str(), "r");
         if (!p) return false;
 

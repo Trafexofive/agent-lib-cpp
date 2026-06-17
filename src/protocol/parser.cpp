@@ -48,6 +48,44 @@ void Parser::flush() {
 // ---------------------------------------------------------------------------
 void Parser::processBuffer() {
     while (true) {
+        // Once inside <response>, treat everything as user-visible text until
+        // the real closing </response>. Literal protocol examples like
+        // `<response>` or `<action ...>` inside markdown/code spans must not be
+        // parsed as nested runtime tags; otherwise streaming stalls waiting for
+        // fake closing tags.
+        if (inResponse_) {
+            const std::string closeMarker = "</response>";
+            size_t closePos = findResponseClose(responseContentStart_);
+            size_t emitEnd = (closePos == std::string::npos) ? buffer_.size() : closePos;
+            if (closePos == std::string::npos) {
+                // Do not emit a suffix that could be the start of a streamed
+                // closing tag, e.g. token boundary: "</response" then ">".
+                size_t maxKeep = std::min(closeMarker.size() - 1, emitEnd - readPos_);
+                for (size_t keep = maxKeep; keep > 0; --keep) {
+                    if (buffer_.compare(emitEnd - keep, keep, closeMarker, 0, keep) == 0) {
+                        emitEnd -= keep;
+                        break;
+                    }
+                }
+            }
+            if (emitEnd > readPos_) {
+                emit({TokenEvent::RESPONSE, buffer_.substr(readPos_, emitEnd - readPos_), {}, {}});
+            }
+            if (closePos == std::string::npos) {
+                readPos_ = emitEnd;
+                return;
+            }
+
+            readPos_ = closePos + closeMarker.size();
+            inResponse_ = false;
+            TokenEvent ev{TokenEvent::RESPONSE, "", {}, {}};
+            auto fit = responseAttrs_.find("final");
+            if (fit != responseAttrs_.end()) ev.metadata["is_final"] = fit->second;
+            emit(ev);
+            responseAttrs_.clear();
+            continue;
+        }
+
         size_t tagStart = findNextTag();
         if (tagStart == std::string::npos) {
             // No more tags — if inside <response>, emit remaining content as stream
@@ -118,27 +156,16 @@ void Parser::processBuffer() {
             contentStart = gt + 1;
             content = "";
         } else if (tagName == "response") {
-            // STREAMING: emit partial response content as it arrives
+            // STREAMING: enter response mode. From here until the real
+            // </response>, all text is user-visible response content, including
+            // literal examples such as `<response>` and `<action ...>`.
             contentStart = gt + 1;
-            closingPos = findClosingTag(tagName, contentStart);
-            // Save attrs from opening tag for final emission
             openingTag = buffer_.substr(readPos_ + 1, contentStart - readPos_ - 2);
             responseAttrs_ = parseAttrs(openingTag);
             inResponse_ = true;
-            if (closingPos == std::string::npos) {
-                // </response> not arrived yet — emit whatever content we have
-                std::string partial = buffer_.substr(contentStart);
-                readPos_ = buffer_.size();
-                if (!partial.empty()) {
-                    emit({TokenEvent::RESPONSE, partial, {}, responseAttrs_});
-                }
-                return; // Wait for more data
-            }
-            // </response> found — emit final chunk
-            inResponse_ = false;
-            size_t closingTagStart = closingPos - (tagName.length() + 3);
-            content = buffer_.substr(contentStart, closingTagStart - contentStart);
-            readPos_ = closingPos;  // skip past </response>
+            responseContentStart_ = contentStart;
+            readPos_ = contentStart;
+            continue;
         } else {
             closingPos = findClosingTag(tagName, gt + 1);
             if (closingPos == std::string::npos) return; // Tag not closed yet
@@ -258,6 +285,23 @@ size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
     return std::string::npos;
 }
 
+size_t Parser::findResponseClose(size_t contentStart) const {
+    const std::string closeMarker = "</response>";
+    size_t pos = contentStart;
+    while ((pos = buffer_.find(closeMarker, pos)) != std::string::npos) {
+        size_t after = pos + closeMarker.size();
+        // Literal markdown examples are normally written as `</response>`.
+        // Do not treat that as the protocol close; the real close is not
+        // followed by a markdown backtick.
+        if (after < buffer_.size() && buffer_[after] == '`') {
+            pos = after + 1;
+            continue;
+        }
+        return pos;
+    }
+    return std::string::npos;
+}
+
 // ---------------------------------------------------------------------------
 // Parse XML attributes
 // ---------------------------------------------------------------------------
@@ -334,20 +378,11 @@ void Parser::handleResponse(const std::string& content,
 
 void Parser::handleResult(const std::string& content,
                            const std::map<std::string, std::string>& attrs) {
-    // Results are injected by the runtime, not from LLM output.
-    // If the LLM emits <result> tags directly, parse them.
-    auto idIt = attrs.find("id");
-    if (idIt == attrs.end()) return;
-
-    Json::Value val;
-    Json::CharReaderBuilder reader;
-    std::string errs;
-    std::istringstream ss(content);
-    if (Json::parseFromStream(reader, ss, &val, &errs)) {
-        results_[idIt->second] = val;
-        completed_[idIt->second] = true;
-        emit({TokenEvent::ACTION_RESULT, content, nullptr, {{"id", idIt->second}}});
-    }
+    // <result> is runtime-owned. LLM-emitted result tags are ignored so the
+    // model cannot forge tool/sub-agent outcomes after a real failure.
+    (void)content;
+    (void)attrs;
+    return;
 }
 
 void Parser::handleContextFeed(const std::string& content,
@@ -398,6 +433,26 @@ std::shared_ptr<ParsedAction> Parser::buildAction(
         for (; it != end; ++it) action->dependsOn.push_back(*it);
     }
 
+    // Extra XML attrs become scalar params. Reserved protocol attrs stay structural.
+    Json::Value attrParams(Json::objectValue);
+    static const std::unordered_set<std::string> reservedAttrs = {
+        "type", "name", "id", "mode", "depends_on", "timeout"
+    };
+    auto attrScalar = [](const std::string& value) -> Json::Value {
+        if (value == "true") return Json::Value(true);
+        if (value == "false") return Json::Value(false);
+        static const std::regex intRe(R"(^-?\d+$)");
+        static const std::regex floatRe(R"(^-?(\d+\.\d*|\d*\.\d+)$)");
+        try {
+            if (std::regex_match(value, intRe)) return Json::Value(static_cast<Json::Int64>(std::stoll(value)));
+            if (std::regex_match(value, floatRe)) return Json::Value(std::stod(value));
+        } catch (...) {}
+        return Json::Value(value);
+    };
+    for (const auto& [key, value] : attrs) {
+        if (!reservedAttrs.count(key)) attrParams[key] = attrScalar(value);
+    }
+
     // Parse JSON body
     std::string cleaned = cleanJson(json);
     Json::Value params;
@@ -406,9 +461,17 @@ std::shared_ptr<ParsedAction> Parser::buildAction(
     std::istringstream ss(cleaned);
     if (Json::parseFromStream(reader, ss, &params, &errs)) {
         action->params = resolveVars(params);
-    } else if (!json.empty()) {
-        // Not JSON — treat as raw text content (used by agent/relic text-only calls)
-        action->content = json;
+        if (action->params.isObject()) {
+            for (const auto& key : attrParams.getMemberNames()) {
+                if (!action->params.isMember(key)) action->params[key] = attrParams[key];
+            }
+        }
+    } else {
+        action->params = attrParams;
+        if (!json.empty()) {
+            // Not JSON — treat as raw text content (used by agent/relic/tool text calls)
+            action->content = json;
+        }
     }
 
     return action;
@@ -561,6 +624,8 @@ void Parser::reset() {
     contextFeeds_.clear();
     idCounter_ = 0;
     finalResponseSeen_ = false;
+    inResponse_ = false;
+    responseContentStart_ = 0;
     usedActionIds_.clear();
     responseAttrs_.clear();
 }
@@ -569,14 +634,15 @@ void Parser::reset() {
 // Variable resolution — ${id} and ${id.field.subfield}
 // ---------------------------------------------------------------------------
 std::string Parser::resolveVars(const std::string& input) const {
-    std::string result = input;
     std::regex varRe(R"(\$\{(\w+(?:\.\w+)*)\})");
-
+    std::string out;
+    std::string::const_iterator start = input.cbegin();
     std::smatch match;
-    std::string temp = result;
-    while (std::regex_search(temp, match, varRe)) {
+
+    while (std::regex_search(start, input.cend(), match, varRe)) {
+        out += match.prefix().str();
         std::string path = match[1].str();
-        std::string replacement;
+        std::string replacement = match[0].str(); // preserve unresolved refs
 
         // Split path by '.'
         size_t dot = path.find('.');
@@ -612,11 +678,11 @@ std::string Parser::resolveVars(const std::string& input) const {
             else if (!val.isNull()) replacement = Json::writeString(Json::StreamWriterBuilder(), val);
         }
 
-        result.replace(match.position(), match.length(), replacement);
-        temp = result;
+        out += replacement;
+        start = match.suffix().first;
     }
-
-    return result;
+    out.append(start, input.cend());
+    return out;
 }
 
 Json::Value Parser::resolveVars(const Json::Value& input) const {
@@ -708,6 +774,7 @@ ActionType Parser::parseType(const std::string& s) {
     if (s == "agent") return ActionType::AGENT;
     if (s == "relic") return ActionType::RELIC;
     if (s == "feed") return ActionType::FEED;
+    if (s == "workflow") return ActionType::WORKFLOW;
     if (s == "llm" || s == "llm_call") return ActionType::LLM_CALL;
     if (s == "internal") return ActionType::INTERNAL;
     return ActionType::TOOL;

@@ -1,6 +1,6 @@
 kind: Agent
 name: assistant
-version: '2.0'
+version: "2.0"
 summary: General-purpose assistant with file and shell access
 
 cognitive_engine:
@@ -15,20 +15,22 @@ persona:
   agent: ./system-prompts/assistant.md
 import:
   tools:
-  - exec
-  - fs_read
-  - fs_write
-  - grep
-  - list
-  - json
-  - web_fetch
-  - context_pin
-  - context_peek
-  - context_unpin
-  - ask_tool
+    - exec
+    - fs_read
+    - fs_write
+    - simple_fs_write
+    - grep
+    - list
+    - json
+    - web_fetch
+    - context_pin
+    - context_peek
+    - context_unpin
+    - ask_tool
+
   relics:
-  - session_journal
-  - state_checkpoint
+    - session_journal
+    - state_checkpoint
   feeds: []
   env: []
-  agent: [./architect/agent.yml]
+  # agent: [./architect/agent.yml]

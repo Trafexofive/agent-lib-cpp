@@ -4,7 +4,10 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <map>
 #include <functional>
+#include <mutex>
+#include <thread>
 #include <chrono>
 #include <sstream>
 #include <iomanip>
@@ -38,35 +41,51 @@ public:
         return engine;
     }
 
+    ~FeedEngine() {
+        if (refreshThread_.joinable()) refreshThread_.join();
+    }
+
     void registerFeed(const std::string& name, FeedFn fn) {
         // Dedup: don't re-register if a feed with this name already exists
         for (auto& [n, f] : feeds_)
             if (n == name) return;
         feeds_.push_back({name, fn});
+        cacheInitialPoll(name, fn);
+        if (refreshThread_.joinable()) refreshThread_.join();
+        refreshThread_ = std::thread([this, name, fn]() {
+            try {
+                auto r = fn();
+                std::lock_guard<std::mutex> lock(mu_);
+                latest_[name] = r;
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(mu_);
+                latest_[name] = {name, "", "{}", false};
+            }
+        });
     }
 
     std::vector<FeedResult> pollAll() {
         std::vector<FeedResult> results;
+        std::lock_guard<std::mutex> lock(mu_);
         for (auto& [name, fn] : feeds_) {
-            try {
-                auto r = fn();
-                results.push_back(r);
-            } catch (...) {
-                results.push_back({name, "poll failed", "{}", false});
+            auto it = latest_.find(name);
+            if (it != latest_.end()) {
+                results.push_back(it->second);
+                continue;
             }
+            results.push_back(pollFeedLocked(name, fn));
         }
         return results;
     }
 
-    FeedResult pollOne(const std::string& name) {
+    FeedResult pollOne(const std::string& name, bool forceFresh = false) {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!forceFresh) {
+            auto it = latest_.find(name);
+            if (it != latest_.end()) return it->second;
+        }
         for (auto& [n, fn] : feeds_) {
-            if (n == name) {
-                try {
-                    return fn();
-                } catch (...) {
-                    return {name, "poll failed", "{}", false};
-                }
-            }
+            if (n == name) return pollFeedLocked(name, fn);
         }
         return {name, "unknown feed", "{}", false};
     }
@@ -76,11 +95,14 @@ public:
         if (results.empty()) return "";
         std::ostringstream ss;
         ss << "\n## System Feeds\n";
+        bool wrote = false;
         for (auto& r : results) {
+            if (!r.ok) continue;
+            wrote = true;
             ss << "### " << r.name << "\n";
             if (!r.summary.empty()) ss << r.summary << "\n";
         }
-        return ss.str();
+        return wrote ? ss.str() : "";
     }
 
     // Load feed from manifest YAML, execute script, register
@@ -188,7 +210,12 @@ public:
             std::ostringstream sum;
             for (auto& key : p.getMemberNames()) {
                 if (!sum.str().empty()) sum << "\n";
-                sum << key << ": " << p[key].asString();
+                if (p[key].isString()) sum << key << ": " << p[key].asString();
+                else {
+                    Json::StreamWriterBuilder wb;
+                    wb["indentation"] = "";
+                    sum << key << ": " << Json::writeString(wb, p[key]);
+                }
             }
             fr.summary = sum.str();
             fr.json = out;
@@ -203,6 +230,31 @@ public:
 
 private:
     std::vector<std::pair<std::string, FeedFn>> feeds_;
+    std::map<std::string, FeedResult> latest_;
+    std::mutex mu_;
+    std::thread refreshThread_;
+
+    void cacheInitialPoll(const std::string& name, FeedFn fn) {
+        try {
+            std::lock_guard<std::mutex> lock(mu_);
+            latest_[name] = fn();
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(mu_);
+            latest_[name] = {name, "", "{}", false};
+        }
+    }
+
+    FeedResult pollFeedLocked(const std::string& name, FeedFn fn) {
+        try {
+            auto r = fn();
+            latest_[name] = r;
+            return r;
+        } catch (...) {
+            FeedResult failed{name, "", "{}", false};
+            latest_[name] = failed;
+            return failed;
+        }
+    }
 
     static std::string runScript(const std::string& runtime, const std::string& script) {
         return runScriptStatic(runtime, script);

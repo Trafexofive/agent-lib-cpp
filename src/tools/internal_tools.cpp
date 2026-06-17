@@ -123,17 +123,21 @@ static std::string toolGrep(const Json::Value& p) {
 static std::string toolFsRead(const Json::Value& p) {
     std::string path = p.get("path", "").asString();
     if (path.empty()) return jsonErr("path is required");
-    int offset = p.get("offset", 0).asInt();
+    int offset = p.get("offset", 1).asInt(); // 1-indexed line number per schema
     int limit = p.get("limit", 0).asInt();
+    int startLine = offset <= 0 ? 1 : offset;
     std::ifstream f(path); if (!f) return jsonErr("file not found: " + path);
-    std::string content, line; int ln=0, total=0;
-    while (std::getline(f, line)) { total++;
-        if (offset>0 && ln<offset) { ln++; continue; }
-        if (limit>0 && ln-offset >= limit) { ln++; continue; }
-        content += line + "\n"; ln++;
+    std::string content, line; int lineNo = 0, total = 0, emitted = 0;
+    while (std::getline(f, line)) {
+        ++lineNo; ++total;
+        if (lineNo < startLine) continue;
+        if (limit > 0 && emitted >= limit) continue;
+        content += line + "\n";
+        ++emitted;
     }
     Json::Value r; r["success"] = true; r["content"] = content;
-    r["lines"] = total; r["truncated"] = (limit>0 && total>offset+limit);
+    r["lines"] = total; r["start_line"] = startLine;
+    r["truncated"] = (limit > 0 && total >= startLine + limit);
     return jsonStr(r);
 }
 
@@ -151,6 +155,9 @@ static std::string toolFsWrite(const Json::Value& p) {
     if (!f) return jsonErr("failed to write: " + path);
     f << content; f.close();
     Json::Value r; r["success"] = true; r["path"] = path;
+    r["bytes_written"] = static_cast<Json::UInt64>(content.size());
+    r["output"] = std::string(append ? "appended " : "wrote ") +
+                  std::to_string(content.size()) + " bytes to " + path;
     return jsonStr(r);
 }
 
@@ -399,6 +406,7 @@ void registerDefaults() {
     reg.registerFn("grep",          toolGrep);
     reg.registerFn("fs_read",       toolFsRead);
     reg.registerFn("fs_write",      toolFsWrite);
+    reg.registerFn("simple_fs_write", toolFsWrite);
     reg.registerFn("json",          toolJson);
     reg.registerFn("web_fetch",     toolWebFetch);
     // context_pin / peek / unpin are handled directly in Agent::dispatchTool

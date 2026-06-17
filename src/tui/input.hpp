@@ -31,7 +31,7 @@ public:
             struct termios raw = old_;
             cfmakeraw(&raw);
             raw.c_cc[VMIN] = 0;
-            raw.c_cc[VTIME] = 1;
+            raw.c_cc[VTIME] = 0;  // non-blocking; main loop handles sleep
             tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
         }
         running_ = true;
@@ -47,7 +47,7 @@ public:
         if (!running_) return false;
         // Flush bare ESC: if we ended last poll mid-escape with no continuation
         if (escBuf_.length() == 1 && escBuf_[0] == 27) {
-            struct timeval tv = {0, 50000};  // 50ms
+            struct timeval tv = {0, 5000};  // 5ms: keep bare ESC responsive without TUI lag
             fd_set fds; FD_ZERO(&fds); FD_SET(STDIN_FILENO, &fds);
             if (select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) == 0) {
                 escBuf_.clear();  // bare ESC — signal cancel

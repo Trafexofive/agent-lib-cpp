@@ -6,6 +6,8 @@
 #include "../core/types.hpp"
 #include "../core/agent.hpp"
 #include "../feeds/feed_engine.hpp"
+#include "../relics/builtin_relics.hpp"
+#include "../relics/docker_dispatcher.hpp"
 #include "../workflows/workflow_engine.hpp"
 #include "../providers/factory.hpp"
 #include <string>
@@ -32,6 +34,8 @@ struct ToolSchema {
     std::string examples;      // JSON string
     std::string runtime;       // python3, builtin, etc.
     std::string entrypoint;    // script path
+    std::string inputType = "json"; // action body mode: json | text
+    std::string textParam;     // where text body lands for text mode
 };
 
 // ── Manifest loader ──
@@ -123,6 +127,23 @@ public:
             if (!ic.empty()) cfg.iterationCap = std::stoi(ic);
             std::string hc = ManifestYaml::get(*runtime, "history_cap");
             if (!hc.empty()) cfg.historyCap = std::stoi(hc);
+            auto* subagents = ManifestYaml::find(*runtime, "subagents");
+            if (subagents) {
+                std::string persistence = ManifestYaml::get(*subagents, "persistence");
+                if (!persistence.empty()) cfg.subAgentPersistence = persistence;
+            }
+        }
+
+        // Context management: implemented knobs are wired directly to AgentConfig;
+        // unimplemented policy/budget knobs are intentionally commented in manifests.
+        auto* context = ManifestYaml::find(root, "context");
+        if (context) {
+            std::string ic = ManifestYaml::get(*context, "max_iterations");
+            if (!ic.empty()) cfg.iterationCap = std::stoi(ic);
+            std::string hc = ManifestYaml::get(*context, "history_cap");
+            if (!hc.empty()) cfg.historyCap = std::stoi(hc);
+            std::string ats = ManifestYaml::get(*context, "action_timeout_sec");
+            if (!ats.empty()) cfg.actionTimeoutSec = std::stoi(ats);
         }
 
         // Sandbox
@@ -175,6 +196,19 @@ public:
         for (auto& name : relicNames) {
             if (name.size() >= 2 && name.front() == '"' && name.back() == '"')
                 name = name.substr(1, name.size() - 2);
+            if (isPathImport(name)) {
+                fs::path relicPath = fs::path(manifestPath).parent_path() / name;
+                fs::path relicYml = relicPath / "relic.yml";
+                if (!fs::exists(relicYml)) {
+                    std::cerr << "[manifest] relic path not found: " << relicYml.string()
+                              << " (imported from " << manifestPath << ")\n";
+                    continue;
+                }
+                auto rc = loadRelicConfig(relicYml.string());
+                relics::DockerRelicDispatcher::instance().loadRelic(relicPath.string());
+                if (!rc.baseUrl.empty())
+                    relics::RelicDispatcher::instance().registerRelic(name, rc.baseUrl);
+            }
             agent.addRelic(name);
         }
     }
@@ -224,6 +258,8 @@ public:
                     ToolDef td;
                     td.name = schema.name;
                     td.description = schema.description;
+                    td.inputType = schema.inputType.empty() ? "json" : schema.inputType;
+                    td.textParam = schema.textParam;
                     if (!schema.runtime.empty() && !schema.entrypoint.empty()) {
                         td.isNative = false;
                         td.scriptRuntime = schema.runtime;
@@ -237,9 +273,16 @@ public:
                 auto schema = loadBuiltinToolSchema(bareName);
                 if (!schema.name.empty()) {
                     schemas.push_back(schema);
-                    agent.addTool({schema.name, schema.description});
+                    ToolDef td;
+                    td.name = schema.name;
+                    td.description = schema.description;
+                    td.inputType = schema.inputType.empty() ? "json" : schema.inputType;
+                    td.textParam = schema.textParam;
+                    agent.addTool(td);
                 } else {
-                    agent.addTool({bareName, ""});
+                    ToolDef td;
+                    td.name = bareName;
+                    agent.addTool(td);
                 }
             }
         }
@@ -269,8 +312,10 @@ public:
             }
 
             auto subCfg = loadAgentConfig(agentManifest.string());
-            subCfg.provider = providerName; // inherit parent's provider
-
+            // Sub-agents are explicit manifest scopes. Their cognitive_engine
+            // belongs to their own agent.yml and must not be overwritten by the
+            // parent provider/model.
+            (void)providerName;
 
             auto provider = providers::createProvider(subCfg.provider, subCfg.model);
             if (!provider) {
@@ -278,6 +323,9 @@ public:
             }
 
             auto subAgent = std::make_shared<Agent>(subCfg, provider);
+            loadTools(agentManifest.string(), *subAgent);
+            loadFeeds(agentManifest.string(), *subAgent);
+            loadRelics(agentManifest.string(), *subAgent);
             agent.addSubAgent(subAgent);
         }
     }
@@ -360,48 +408,93 @@ public:
     }
 
     // Build tool schemas XML for prompt injection
-    static std::string toolSchemasToXml(const std::vector<ToolSchema>& schemas) {
+    static std::string toolSchemasToXml(const std::vector<ToolSchema>& schemas, int baseIndent = 8) {
         if (schemas.empty()) return "";
         std::ostringstream ss;
+        std::string toolPad(baseIndent, ' ');
+        std::string fieldPad(baseIndent + 4, ' ');
         for (auto& s : schemas) {
-            ss << "    <tool name=\"" << s.name << "\">\n";
-            // Format JSON with indentation for LLM readability
+            ss << toolPad << "<tool name=\"" << s.name << "\">\n";
+            if (!s.description.empty())
+                ss << fieldPad << "<description>" << s.description << "</description>\n";
+            if (s.inputType != "json" || !s.textParam.empty()) {
+                ss << fieldPad << "<input mode=\"" << s.inputType << "\"";
+                if (!s.textParam.empty()) ss << " text_param=\"" << s.textParam << "\"";
+                ss << ">";
+                if (!s.textParam.empty()) ss << "Text action bodies are assigned to params." << s.textParam << ".";
+                ss << "</input>\n";
+            }
             if (!s.inputSchema.empty())
-                ss << "      <params>\n" << prettyJson(s.inputSchema) << "      </params>\n";
+                ss << fieldPad << "<params>\n" << indentBlock(prettyJson(s.inputSchema), baseIndent + 8) << fieldPad << "</params>\n";
             if (!s.outputSchema.empty())
-                ss << "      <returns>\n" << prettyJson(s.outputSchema) << "      </returns>\n";
-            ss << "    </tool>\n";
+                ss << fieldPad << "<returns>\n" << indentBlock(prettyJson(s.outputSchema), baseIndent + 8) << fieldPad << "</returns>\n";
+            if (!s.examples.empty())
+                ss << fieldPad << "<examples>\n" << indentBlock(prettyJson(s.examples), baseIndent + 8) << fieldPad << "</examples>\n";
+            ss << toolPad << "</tool>\n";
         }
         return ss.str();
     }
 
-    // Indent JSON for readability — LLMs read structured text better than single-line blobs
-    static std::string prettyJson(const std::string& raw) {
+    static std::string indentBlock(const std::string& text, int spaces) {
         std::ostringstream out;
-        int depth = 0;
-        bool inString = false;
-        for (size_t i = 0; i < raw.size(); i++) {
-            char c = raw[i];
-            if (c == '"' && (i == 0 || raw[i-1] != '\\')) inString = !inString;
-            if (inString) { out << c; continue; }
-            if (c == '{' || c == '[') {
-                out << c << '\n';
-                depth++;
-                out << std::string(depth * 2, ' ') << "        ";
-            } else if (c == '}' || c == ']') {
-                out << '\n';
-                depth--;
-                out << std::string(depth * 2, ' ') << "        " << c;
-            } else if (c == ',') {
-                out << ",\n" << std::string(depth * 2, ' ') << "        ";
-            } else if (c == ':') {
-                out << ": ";
-            } else if (c != ' ' && c != '\n' && c != '\t') {
-                out << c;
-            }
+        std::istringstream in(text);
+        std::string line;
+        std::string pad(spaces, ' ');
+        while (std::getline(in, line)) {
+            if (!line.empty()) out << pad << line;
+            out << '\n';
         }
-        out << '\n';
         return out.str();
+    }
+
+    static std::string jsonScalarToString(const Json::Value& v) {
+        Json::StreamWriterBuilder w;
+        w["indentation"] = "";
+        return Json::writeString(w, v);
+    }
+
+    static std::string prettyJsonValue(const Json::Value& v, int depth = 0) {
+        const std::string pad(depth * 4, ' ');
+        const std::string childPad((depth + 1) * 4, ' ');
+        if (v.isObject()) {
+            auto keys = v.getMemberNames();
+            if (keys.empty()) return "{}";
+            std::ostringstream out;
+            out << "{\n";
+            for (size_t i = 0; i < keys.size(); ++i) {
+                out << childPad << jsonScalarToString(Json::Value(keys[i])) << ": "
+                    << prettyJsonValue(v[keys[i]], depth + 1);
+                if (i + 1 < keys.size()) out << ",";
+                out << "\n";
+            }
+            out << pad << "}";
+            return out.str();
+        }
+        if (v.isArray()) {
+            if (v.empty()) return "[]";
+            std::ostringstream out;
+            out << "[\n";
+            for (Json::ArrayIndex i = 0; i < v.size(); ++i) {
+                out << childPad << prettyJsonValue(v[i], depth + 1);
+                if (i + 1 < v.size()) out << ",";
+                out << "\n";
+            }
+            out << pad << "]";
+            return out.str();
+        }
+        return jsonScalarToString(v);
+    }
+
+    // Indent JSON for readability — 4 spaces, standard JSON shape.
+    static std::string prettyJson(const std::string& raw) {
+        Json::Value parsed;
+        Json::CharReaderBuilder reader;
+        std::string errs;
+        std::istringstream ss(raw);
+        if (Json::parseFromStream(reader, ss, &parsed, &errs)) {
+            return prettyJsonValue(parsed) + "\n";
+        }
+        return raw + "\n";
     }
 
     // Public wrapper for global manifest autoloaders.
@@ -448,10 +541,14 @@ private:
         if (impl) {
             s.runtime = ManifestYaml::get(*impl, "runtime", s.runtime);
             s.entrypoint = ManifestYaml::get(*impl, "entrypoint", s.entrypoint);
+            s.inputType = ManifestYaml::get(*impl, "input_type", s.inputType);
+            s.textParam = ManifestYaml::get(*impl, "text_param", s.textParam);
         }
         // Fallback: some tool manifests use top-level runtime/entrypoint
         if (s.runtime.empty()) s.runtime = ManifestYaml::get(root, "runtime");
         if (s.entrypoint.empty()) s.entrypoint = ManifestYaml::get(root, "entrypoint");
+        s.inputType = ManifestYaml::get(root, "input_type", s.inputType.empty() ? "json" : s.inputType);
+        s.textParam = ManifestYaml::get(root, "text_param", s.textParam);
 
         // Examples
         auto* examplesNode = ManifestYaml::find(root, "examples");

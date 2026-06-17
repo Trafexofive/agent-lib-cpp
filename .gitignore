@@ -23,6 +23,17 @@ tests/tui/*_demo
 tests/tui/pipe_demo
 tests/sandbox/run.sh
 tests/scenario-runner
+yaml-test
+manifest-classifier-test
+autoload-test
+context-test
+session-test
+sandbox-context-test
+policy-test
+ask-tool-test
 iterations.md
 raw.md
 .pi/
+
+# Runtime artifacts
+manifests/_session/

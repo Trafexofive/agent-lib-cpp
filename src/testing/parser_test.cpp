@@ -14,6 +14,7 @@ using namespace cortex::mk3::protocol;
 // ── Test harness ──────────────────────────────────────────────────────
 struct TestHarness {
     std::vector<TokenEvent> events;
+    std::vector<ParsedAction> actions;
     std::map<std::string, Json::Value> results;
     bool responseFinal = false;
     std::string responseText;
@@ -28,6 +29,7 @@ struct TestHarness {
     }
 
     Json::Value executeAction(const ParsedAction& action) {
+        actions.push_back(action);
         Json::Value r;
         r["success"] = true;
         r["id"] = action.id;
@@ -106,6 +108,27 @@ void test_response_streaming() {
     CHECK(!h.responseText.empty(), "expected response text");
     CHECK(h.responseFinal, "expected final=true");
     CHECK(h.responseText == "Hello, world!", "expected exact response text");
+    PASS();
+}
+
+void test_response_literal_protocol_tags() {
+    TEST("response can contain literal protocol tag examples");
+    TestHarness h;
+    Parser parser([&](const ParsedAction& a) { return h.executeAction(a); });
+    parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
+
+    parser.feed("<response final=\"true\">", false);
+    parser.feed("Use `<response>`, `<action type=\"tool\">`, and `<thought>` examples.", false);
+    parser.feed(" Final answers look like `<response final=\"true\">ok</response>`.", false);
+    parser.feed(" Do not emit `<result>` yourself.", false);
+    parser.feed("</response>", true);
+
+    CHECK(h.responseFinal, "expected final=true despite literal tags");
+    CHECK(h.actions.empty(), "literal <action> example must not dispatch");
+    CHECK(h.responseText.find("`<response>`") != std::string::npos, "should preserve literal response tag");
+    CHECK(h.responseText.find("`<action type=\"tool\">`") != std::string::npos, "should preserve literal action tag");
+    CHECK(h.responseText.find("`<response final=\"true\">ok</response>`") != std::string::npos, "should preserve literal closing response tag");
+    CHECK(h.responseText.find("`<result>`") != std::string::npos, "should preserve literal result tag");
     PASS();
 }
 
@@ -382,6 +405,70 @@ void test_PP04_async_race_smoke() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// PP05 — unresolved ${id.path} refs must be preserved, not collapsed to empty.
+// Runtime-level expansion may resolve script-tool output fields later.
+// ═══════════════════════════════════════════════════════════════════════
+void test_PP05_unresolved_refs_preserved() {
+    TEST("PP05 unresolved refs preserved");
+    std::string captured;
+    Parser parser([&](const ParsedAction& a) -> Json::Value {
+        if (a.params.isMember("sources")) captured = a.params["sources"].asString();
+        Json::Value r; r["success"] = true; r["id"] = a.id; return r;
+    });
+
+    parser.feed(
+        "<action type=\"tool\" name=\"eval\" id=\"e1\" mode=\"sync\">"
+        "{\"sources\":\"${s1.hits}\"}"
+        "</action>",
+        true);
+
+    CHECK(captured == "${s1.hits}",
+          (std::string("unresolved ref was not preserved: '") + captured + "'").c_str());
+    PASS();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PP06 — action attrs become params and text body is preserved.
+// ═══════════════════════════════════════════════════════════════════════
+void test_PP06_action_attrs_and_text_body() {
+    TEST("PP06 action attrs + text body preserved");
+    TestHarness h;
+    Parser parser([&](const ParsedAction& a) { return h.executeAction(a); });
+    parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
+
+    parser.feed("<action type=\"tool\" name=\"simple_fs_write\" id=\"w1\" path=\"tmp_2.py\" append=\"false\" offset=\"1\" mode=\"sync\">hello world</action>", true);
+
+    CHECK(!h.actions.empty(), "expected captured action");
+    const auto& a = h.actions.front();
+    CHECK(a.name == "simple_fs_write", "expected simple_fs_write action");
+    CHECK(a.id == "w1", "expected id w1");
+    CHECK(a.params.isObject(), "expected attrs as params object");
+    CHECK(a.params["path"].asString() == "tmp_2.py", "expected path attr in params");
+    CHECK(a.params["append"].isBool() && !a.params["append"].asBool(), "expected bool attr coercion");
+    CHECK(a.params["offset"].isInt() && a.params["offset"].asInt() == 1, "expected int attr coercion");
+    CHECK(a.content == "hello world", "expected text body in content");
+    PASS();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Test: LLM-emitted result tags are ignored
+// ═══════════════════════════════════════════════════════════════════════
+void test_model_result_tags_ignored() {
+    TEST("model-emitted result tags ignored");
+    TestHarness h;
+    Parser parser([&](const ParsedAction& a) { return h.executeAction(a); });
+    parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
+
+    parser.feed("<result id=\"fake\" status=\"ok\">{\"success\":true}</result>", false);
+    parser.feed("<response final=\"true\">done</response>", true);
+
+    CHECK(parser.getResult("fake").isNull(), "LLM-emitted <result> must not enter result map");
+    CHECK(h.responseFinal, "expected final response");
+    CHECK(h.responseText == "done", "expected response text");
+    PASS();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // main
 // ═══════════════════════════════════════════════════════════════════════
 int main() {
@@ -393,6 +480,7 @@ int main() {
     test_simple_text();
     test_response_single_token();
     test_response_streaming();
+    test_response_literal_protocol_tags();
     test_action_single_token();
     test_action_streaming();
     test_action_then_response();
@@ -403,6 +491,9 @@ int main() {
     test_PP02_closing_tag_boundary();
     test_PP03_injectResult_no_deadlock();
     test_PP04_async_race_smoke();
+    test_PP05_unresolved_refs_preserved();
+    test_PP06_action_attrs_and_text_body();
+    test_model_result_tags_ignored();
 
     std::cout << "\n──────────────────────────────────────────\n";
     std::cout << "  " << passed << " passed, " << failed << " failed\n";

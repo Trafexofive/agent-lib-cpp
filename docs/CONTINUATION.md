@@ -115,24 +115,4 @@ sudo make install
 
 5. **AgentConfig iterationCap defaults to 20.** Override via `--iterations N` or manifest `max_iterations`.
 
-6. **The user prefers:** atomic commits, ask_cards for alignment, testing everything, never narrating, building aggressively.
-
-## WORKING WITH THE USER (mlamkadm)
-
-- Never ask open-ended questions — use ask_cards or just execute
-- Never stop organically — keep slamming or ask_cards to align
-- Test everything, verify with actual output, never assume
-- Commit each change atomically, push immediately
-- The user is self-sufficient — reports, reloads, operates independently
-- "10x the scale" — always push for bigger/badder tests
-- "child's play" — the user rejects surface-level testing
-- "The Great Work Never Ends" — more features, more scale, more stress
-
-## DEEPSEEK-CHAT COMPLIANCE CEILING
-
-The core challenge: the LLM ignores the protocol ~40% of turns. The harness
-(self-checks, failed-turn mirroring, closing reminders) raises compliance from
-~30% to ~60% but plateaus there. Runtime enforcement (bare-text detection,
-injecting error results) catches some cases. The remaining gap is model-level.
-
-deepseek-v4-pro achieves near-100% compliance but is slower and costs more.
+6. **deepseek-v4-pro** is near-100% compliant; `deepseek-chat` drifts out of protocol on roughly 1-in-3 simple Q&A turns and recovers when a result tag is injected. Use `chat` for cheap iteration, `v4-pro` for accuracy-sensitive work.

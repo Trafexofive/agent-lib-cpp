@@ -88,7 +88,8 @@ public:
     }
 
     void appendActionBlocks(int width) {
-        for (size_t ai = lastAction_; ai < actions_.size(); ai++) {
+        size_t start = lastAction_;
+        for (size_t ai = start; ai < actions_.size(); ai++) {
             appendActionBlock(actions_[ai], width);
             if (lastResult_ < results_.size()) {
                 appendResultBlock(results_[lastResult_++], width);
@@ -97,6 +98,7 @@ public:
                 appendSeparator();
             }
         }
+        lastAction_ = actions_.size();
     }
 
     void appendActionBlock(const ActionEvent& a, int width) {
@@ -117,10 +119,12 @@ public:
     }
 
     void appendStandaloneResults(int width) {
-        for (size_t ri = lastResult_; ri < results_.size(); ri++) {
+        size_t start = lastResult_;
+        for (size_t ri = start; ri < results_.size(); ri++) {
             appendResultBlock(results_[ri], width);
             appendSeparator();
         }
+        lastResult_ = results_.size();
     }
 
     void appendResultBlock(const ResultEvent& r, int width) {
@@ -184,8 +188,7 @@ private:
             std::istringstream js(body);
             if (Json::parseFromStream(b, js, &root, &errs) && root.isObject()) {
                 for (auto& key : root.getMemberNames()) {
-                    std::string val = root[key].isObject() || root[key].isArray() ? "{...}" : root[key].asString();
-                    if (val.size() > (size_t)(width - 20)) val = val.substr(0, width - 23) + "...";
+                    std::string val = summarizeParamValue(root[key], key, width);
                     lines.push_back(ansi::fg(50,200,200) + fgBold() + key + fgReset() +
                         fgDim() + ":  " + fgReset() + fgDim() + val + fgReset());
                 }
@@ -196,6 +199,35 @@ private:
         if (c.size() > (size_t)(width - 8)) c = c.substr(0, width - 11) + "...";
         lines.push_back(fgDim() + c + fgReset());
         return lines;
+    }
+
+    static std::string summarizeParamValue(const Json::Value& v, const std::string& key, int width) {
+        if (v.isObject()) return "{...}";
+        if (v.isArray()) return "[...]";
+        std::string val;
+        if (v.isString()) val = v.asString();
+        else {
+            Json::StreamWriterBuilder w;
+            w["indentation"] = "";
+            val = Json::writeString(w, v);
+        }
+        size_t newlineCount = std::count(val.begin(), val.end(), '\n');
+        bool multiline = newlineCount > 0;
+        if (multiline) {
+            std::string first = val.substr(0, val.find('\n'));
+            first.erase(std::remove(first.begin(), first.end(), '\r'), first.end());
+            if (first.empty()) first = "<blank first line>";
+            std::ostringstream ss;
+            ss << "<" << val.size() << " chars, " << (newlineCount + 1) << " lines> " << first;
+            val = ss.str();
+        }
+        for (char& c : val) {
+            if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+        }
+        int maxLen = std::max(12, width - 24);
+        if (key == "content") maxLen = std::max(12, width - 34);
+        if ((int)val.size() > maxLen) val = val.substr(0, maxLen - 3) + "...";
+        return val;
     }
 
     // ── Result lines ──

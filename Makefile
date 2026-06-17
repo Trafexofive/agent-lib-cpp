@@ -78,6 +78,101 @@ $(PARSER_TEST_BIN): $(OBJS) $(PARSER_TEST_OBJ)
 test-parser: $(PARSER_TEST_BIN)
 	./$(PARSER_TEST_BIN)
 
+# ── mini_yaml unit tests ──
+YAML_TEST_SRC := src/testing/yaml_test.cpp
+YAML_TEST_BIN := yaml-test
+
+$(YAML_TEST_BIN): $(YAML_TEST_SRC) src/core/mini_yaml.hpp
+	$(CXX) $(CXXFLAGS) $(YAML_TEST_SRC) -o $@
+
+test-yaml: $(YAML_TEST_BIN)
+	./$(YAML_TEST_BIN)
+
+# ── Manifest classifier tests (ML01) ──
+MCLASS_TEST_SRC := src/testing/manifest_classifier_test.cpp
+MCLASS_TEST_BIN := manifest-classifier-test
+
+$(MCLASS_TEST_BIN): $(MCLASS_TEST_SRC) src/core/manifest_loader.hpp src/core/mini_yaml.hpp
+	$(CXX) $(CXXFLAGS) $(MCLASS_TEST_SRC) -o $@ $(LDFLAGS)
+
+test-manifest-classifier: $(MCLASS_TEST_BIN)
+	./$(MCLASS_TEST_BIN)
+
+# ── Manifest semantics tests (agent.yml source-of-truth) ──
+MSEM_TEST_SRC := src/testing/manifest_semantics_test.cpp
+MSEM_TEST_OBJ := $(BUILD_DIR)/testing/manifest_semantics_test.o
+MSEM_TEST_BIN := manifest-semantics-test
+
+$(MSEM_TEST_OBJ): $(MSEM_TEST_SRC) src/core/manifest_loader.hpp src/core/agent.hpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(MSEM_TEST_BIN): $(OBJS) $(MSEM_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(MSEM_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-manifest-semantics: $(MSEM_TEST_BIN)
+	./$(MSEM_TEST_BIN)
+
+# ── Recursive autoload tests (MA01) ──
+AUTOLOAD_TEST_SRC := src/testing/autoload_test.cpp
+AUTOLOAD_TEST_OBJ := $(BUILD_DIR)/testing/autoload_test.o
+AUTOLOAD_TEST_BIN := autoload-test
+
+$(AUTOLOAD_TEST_OBJ): $(AUTOLOAD_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(AUTOLOAD_TEST_BIN): $(OBJS) $(AUTOLOAD_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(AUTOLOAD_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-autoload: $(AUTOLOAD_TEST_BIN)
+	./$(AUTOLOAD_TEST_BIN)
+
+# ── Context manager tests (pin / peek / unpin) ──
+CTX_TEST_SRC := src/testing/context_test.cpp
+CTX_TEST_OBJ := $(BUILD_DIR)/testing/context_test.o
+CTX_TEST_BIN := context-test
+
+$(CTX_TEST_OBJ): $(CTX_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(CTX_TEST_BIN): $(OBJS) $(CTX_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(CTX_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-context: $(CTX_TEST_BIN)
+	./$(CTX_TEST_BIN)
+
+# ── Session round-trip tests (AC14/04/17/18) ──
+SESS_TEST_SRC := src/testing/session_test.cpp
+SESS_TEST_OBJ := $(BUILD_DIR)/testing/session_test.o
+SESS_TEST_BIN := session-test
+
+$(SESS_TEST_OBJ): $(SESS_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(SESS_TEST_BIN): $(OBJS) $(SESS_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(SESS_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-session: $(SESS_TEST_BIN)
+	./$(SESS_TEST_BIN)
+
+# ── Sandbox + context_* integration tests (SB02/SB07/BT04) ──
+SBOX_TEST_SRC := src/testing/sandbox_context_test.cpp
+SBOX_TEST_OBJ := $(BUILD_DIR)/testing/sandbox_context_test.o
+SBOX_TEST_BIN := sandbox-context-test
+
+$(SBOX_TEST_OBJ): $(SBOX_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(SBOX_TEST_BIN): $(OBJS) $(SBOX_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(SBOX_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-sandbox-context: $(SBOX_TEST_BIN)
+	./$(SBOX_TEST_BIN)
+
 # ── Protocol test runner ──
 PROTOCOL_TEST_SRC := src/testing/protocol_test.cpp
 PROTOCOL_TEST_OBJ := $(BUILD_DIR)/testing/protocol_test.o
@@ -177,6 +272,10 @@ $(TUI_RENDER_TEST_BIN): $(TUI_RENDER_TEST_SRC)
 test-tui-render: $(TUI_RENDER_TEST_BIN)
 	@./$(TUI_RENDER_TEST_BIN)
 
+# ── DeepSearchStack staging module smoke ──
+test-dss-module: $(BIN_CLI)
+	@tests/deepsearch_stack_manifest_smoke.sh
+
 # ── Install / Uninstall ──
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
@@ -218,5 +317,30 @@ dev: clean all
 	@$(MAKE) -s test-protocol 2>/dev/null | tail -3
 	@echo "✓ dev build complete"
 
-all-tests: test-parser test-protocol test-feeds test-policy
+all-tests: test-yaml test-manifest-classifier test-autoload test-context test-session test-parser test-protocol test-feeds test-policy
 	@echo "✓ all tests passed"
+
+# ── Multi-turn compliance + latency benchmark ──
+BENCH_ARGS ?=
+bench:
+	python3 tests/bench.py $(BENCH_ARGS)
+
+bench-smoke:
+	python3 tests/bench.py --scenario smoke $(BENCH_ARGS)
+
+bench-baseline:
+	python3 tests/bench.py --baseline $(BENCH_ARGS)
+
+bench-list:
+	python3 tests/bench.py --list
+
+# ── Self-evolving agent loop ──
+EVOLVE_ARGS ?=
+evolve: $(BIN_CLI)
+	python3 tests/self-evolve/runner.py $(EVOLVE_ARGS)
+
+evolve-task: $(BIN_CLI)
+	python3 tests/self-evolve/runner.py --task-only $(EVOLVE_ARGS)
+
+evolve-cheap: $(BIN_CLI)
+	python3 tests/self-evolve/runner.py --model deepseek-chat --provider deepseek $(EVOLVE_ARGS)

@@ -31,8 +31,9 @@ struct OpenAIProviderConfig {
     bool supportsTopK = true;                // some providers (Groq) reject top_k
     std::string chatEndpoint = "/chat/completions";
     std::string modelsEndpoint = "/models";
-    std::string reasoningEffort;             // OpenAI reasoning models: low|medium|high|xhigh
+    std::string reasoningEffort;             // OpenAI/Codex reasoning models: low|medium|high|xhigh
     int defaultMaxTokens = 65536;
+    std::string apiMode = "chat-completions"; // chat-completions | openai-codex-responses
 
     std::string resolveApiKey() const {
         if (!apiKeyEnvVar.empty()) {
@@ -64,40 +65,6 @@ struct OpenAIProviderConfig {
 // ---------------------------------------------------------------------------
 // GenericOpenAIClient — the ONE client class
 // ---------------------------------------------------------------------------
-class CodexCliProvider : public ILlmProvider {
-public:
-    CodexCliProvider();
-
-    std::string generate(const ChatMessages& msgs) override;
-    void generateStream(const ChatMessages& msgs, StreamCallback cb) override;
-
-    void setModel(const std::string& model) override { model_ = model; }
-    void setTemperature(double t) override { temperature_ = t; }
-    void setMaxTokens(int n) override { maxTokens_ = n; }
-    void setTopP(double p) override { topP_ = p; }
-    void setTopK(int k) override { topK_ = k; }
-    void setPresencePenalty(double p) override { presencePenalty_ = p; }
-    void setFrequencyPenalty(double p) override { frequencyPenalty_ = p; }
-    std::string getModel() const override { return model_; }
-    double getTemperature() const override { return temperature_; }
-    int getMaxTokens() const override { return maxTokens_; }
-    std::string providerName() const override { return "openai-codex"; }
-    std::vector<ModelInfo> listModels() override;
-
-private:
-    std::string model_ = "gpt-5.5";
-    std::string reasoningEffort_ = "high";
-    double temperature_ = 0.7;
-    double topP_ = 0.95;
-    int topK_ = 40;
-    double presencePenalty_ = 0.0;
-    double frequencyPenalty_ = 0.0;
-    int maxTokens_ = 65536;
-
-    static std::string renderPrompt(const ChatMessages& msgs);
-    static std::string shellEscape(const std::string& input);
-};
-
 class GenericOpenAIClient : public ILlmProvider {
 public:
     explicit GenericOpenAIClient(const OpenAIProviderConfig& cfg);
@@ -113,6 +80,7 @@ public:
     void setTopK(int k) override { topK_ = k; }
     void setPresencePenalty(double p) override { presencePenalty_ = p; }
     void setFrequencyPenalty(double p) override { frequencyPenalty_ = p; }
+    void setQuietLogs(bool q) override { quietLogs_ = q; }
     std::string getModel() const override { return model_; }
     double getTemperature() const override { return temperature_; }
     int getMaxTokens() const override { return maxTokens_; }
@@ -146,12 +114,17 @@ private:
         StreamCallback cb;
         std::string buffer;
         std::string lastErrorBody;  // preserved for HTTP error responses
+        bool codexResponses = false;
+        bool codexSawTextDelta = false;
     };
 
     // Model cache
     mutable std::vector<ModelInfo> cachedModels_;
     mutable bool modelsFetched_ = false;
     int maxRetries_ = 3;
+    bool quietLogs_ = false;
+
+    static std::string resolveCodexAccountId(const std::string& token);
 };
 
 // ===========================================================================
@@ -174,7 +147,8 @@ inline OpenAIProviderConfig deepseekConfig() {
         "/chat/completions",
         "/models",
         "",
-        65536
+        65536,
+        "chat-completions"
     };
 }
 
@@ -195,7 +169,8 @@ inline OpenAIProviderConfig openrouterConfig() {
         "/chat/completions",
         "/models",
         "",
-        65536
+        65536,
+        "chat-completions"
     };
 }
 
@@ -203,19 +178,18 @@ inline OpenAIProviderConfig openrouterConfig() {
 inline OpenAIProviderConfig codexConfig() {
     OpenAIProviderConfig cfg{
         "openai-codex",
-        "https://api.openai.com/v1",
+        "https://chatgpt.com/backend-api",
         "OPENAI_API_KEY",
         "",
         "gpt-5.5",
-        {
-            {"X-Title", "Cortex-MK3"},
-        },
+        {},
         true,
         false,
-        "/chat/completions",
-        "/models",
+        "/codex/responses",
+        "",
         "high",
-        65536
+        65536,
+        "openai-codex-responses"
     };
     cfg.reasoningEffort = "high";
     cfg.defaultMaxTokens = 65536;
@@ -236,7 +210,8 @@ inline OpenAIProviderConfig groqConfig() {
         "/chat/completions",
         "/models",
         "",
-        65536
+        65536,
+        "chat-completions"
     };
 }
 
@@ -257,7 +232,8 @@ inline OpenAIProviderConfig zenConfig() {
         "/chat/completions",
         "/models",
         "",
-        65536
+        65536,
+        "chat-completions"
     };
 }
 
@@ -275,7 +251,8 @@ inline OpenAIProviderConfig togetherConfig() {
         "/chat/completions",
         "/models",
         "",
-        65536
+        65536,
+        "chat-completions"
     };
 }
 
@@ -293,7 +270,8 @@ inline OpenAIProviderConfig fireworksConfig() {
         "/chat/completions",
         "/models",
         "",
-        65536
+        65536,
+        "chat-completions"
     };
 }
 

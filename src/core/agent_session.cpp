@@ -33,8 +33,14 @@ void Agent::dumpSessionArtifacts() const {
                 f << line << "\n";
             f << "\n";
             if (i < iterationOutputs_.size()) {
-                f << "### RESPONSE\n\n";
+                f << "\n--- model/runtime output after this prompt (not part of the prompt above) ---\n\n";
                 f << iterationOutputs_[i] << "\n\n";
+            }
+        }
+        if (!subAgentTraces_.empty()) {
+            f << "# Delegated Agent Traces\n\n";
+            for (const auto& trace : subAgentTraces_) {
+                f << trace << "\n";
             }
         }
     }
@@ -55,6 +61,7 @@ void Agent::dumpSessionArtifacts() const {
 void Agent::loadSession(const std::string &id) {
     history_.clear();
     contextFeeds_.clear();
+    actionResults_.clear();
     auto session = sessionMgr_.load(id);
     for (auto &rec : session.records) {
         std::string prefix;
@@ -118,6 +125,7 @@ void Agent::saveSession(const std::string &id) {
 void Agent::clearHistory() {
     history_.clear();
     executedActions_.clear();
+    actionResults_.clear();
     contextFeeds_.clear();
     bareTextReminded_ = false;
 }

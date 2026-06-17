@@ -11,7 +11,7 @@ manifests/                    ← Global scope — auto-loaded, name-resolvable
   built-in/tools/             exec, list, grep, context_pin, context_peek, context_unpin
   built-in/feeds/             system_clock, system_stats, working_directory
   built-in/relics/            session_journal, state_checkpoint
-  tools/                      fs_read, fs_write, json, web_fetch (yml + source + config)
+  tools/                      fs_read, fs_write, simple_fs_write, json, web_fetch (yml + source + config)
   relics/                     artifact_store, secret_store, event_bus, process_manager, file_watcher
   agents/                     assistant (default agent, globally available)
   workflows/                  workflow_spec (manifest format reference)
@@ -37,12 +37,13 @@ Flow: build in config/ → graduate to manifests/ when needed globally
 | context_peek | Peek at file for N cycles, then auto-evict |
 | context_unpin | Remove pinned file from context |
 
-## Global Tools (4)
+## Global Tools (5)
 
 | Name | Runtime | Description |
 |------|---------|-------------|
 | fs_read | python3 | Read file contents with offset/limit |
-| fs_write | python3 | Write/create files with append support |
+| fs_write | python3 | Structured JSON write/create files with append support |
+| simple_fs_write | native | Text-body convenience writer; attrs carry path/append, body carries content |
 | json | python3 | Parse, query, validate, transform JSON |
 | web_fetch | python3 | HTTP GET/POST with status and headers |
 

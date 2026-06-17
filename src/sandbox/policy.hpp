@@ -108,6 +108,20 @@ struct SandboxPolicy {
             }
         }
 
+        // DeepSearchStack tools are local-stack operations. Keep them confined
+        // to localhost unless the caller explicitly allows another host.
+        if (toolName.rfind("dss_", 0) == 0) {
+            std::string baseUrl = jsonStringField(paramsJson, "base_url");
+            if (!baseUrl.empty() && !isLocalhostUrl(baseUrl) &&
+                (allowedApiHost.empty() || baseUrl.find(allowedApiHost) == std::string::npos)) {
+                return "sandbox: dss tool base_url '" + baseUrl +
+                       "' blocked; use localhost or set allowedApiHost";
+            }
+            if (toolName == "dss_ingest" && !jsonBoolField(paramsJson, "allow_mutation")) {
+                return "sandbox: dss_ingest is mutating; pass allow_mutation=true or disable sandbox";
+            }
+        }
+
         return "";  // Allowed
     }
 
@@ -132,6 +146,44 @@ struct SandboxPolicy {
     }
 
 private:
+    static std::string jsonStringField(const std::string& json, const std::string& field) {
+        std::string needle = "\"" + field + "\":";
+        auto pos = json.find(needle);
+        if (pos == std::string::npos) return "";
+        auto start = json.find('"', pos + needle.size());
+        if (start == std::string::npos) return "";
+        ++start;
+        std::string out;
+        bool escape = false;
+        for (size_t i = start; i < json.size(); ++i) {
+            char c = json[i];
+            if (escape) {
+                out.push_back(c);
+                escape = false;
+            } else if (c == '\\') {
+                escape = true;
+            } else if (c == '"') {
+                break;
+            } else {
+                out.push_back(c);
+            }
+        }
+        return out;
+    }
+
+    static bool jsonBoolField(const std::string& json, const std::string& field) {
+        std::string needle = "\"" + field + "\":";
+        auto pos = json.find(needle);
+        if (pos == std::string::npos) return false;
+        return json.compare(pos + needle.size(), 4, "true") == 0;
+    }
+
+    static bool isLocalhostUrl(const std::string& url) {
+        return url.find("http://localhost") == 0 ||
+               url.find("http://127.0.0.1") == 0 ||
+               url.find("http://[::1]") == 0;
+    }
+
     std::string extractPath(const std::string& json) const {
         auto pos = json.find("\"path\":");
         if (pos == std::string::npos) {

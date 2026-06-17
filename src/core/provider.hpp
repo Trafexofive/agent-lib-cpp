@@ -28,6 +28,7 @@ public:
     virtual void setTopK(int k) {}
     virtual void setPresencePenalty(double p) {}
     virtual void setFrequencyPenalty(double p) {}
+    virtual void setQuietLogs(bool) {}
 
     // Getters
     virtual std::string getModel() const = 0;

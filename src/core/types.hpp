@@ -71,6 +71,8 @@ struct ToolDef {
     bool isNative = true;                // true = C++ callback, false = script
     std::string scriptPath;              // for script tools
     std::string scriptRuntime;           // "python3", "bash", etc.
+    std::string inputType = "json";      // action body mode: json | text
+    std::string textParam;               // for text body mode: content/input/instruction
 
     // Generate OpenAI function-calling schema
     Json::Value toOpenAISchema() const;
@@ -142,6 +144,11 @@ struct AgentConfig {
     std::string sandboxRuntime = "";         // docker image name
     std::string sandboxImage = "";           // docker image
     std::vector<std::string> sandboxFiles;   // files to mount/copy
+
+    // Sub-agent runtime behavior
+    // memory  = keep sub-agent history in-process only
+    // session = derive stable child session ids from parent session id
+    std::string subAgentPersistence = "memory";
 
     // Environment
     std::map<std::string, std::string> environment;

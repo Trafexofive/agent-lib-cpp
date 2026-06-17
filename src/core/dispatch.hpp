@@ -7,7 +7,7 @@
 #include "../tools/registry.hpp"
 #include "../relics/builtin_relics.hpp"
 #include "../relics/docker_dispatcher.hpp"
-#include "../feeds/feed_engine.hpp"
+#include "../workflows/workflow_engine.hpp"
 #include <json/json.h>
 #include <sstream>
 #include <map>
@@ -44,11 +44,15 @@ inline Json::Value dispatchRelic(const protocol::ParsedAction& action) {
     // Try Docker relic dispatcher first (handles managed + remote)
     auto& drd = relics::DockerRelicDispatcher::instance();
     if (drd.getRelic(action.name)) {
-        std::string endpoint = action.params.get("endpoint", action.name).asString();
+        Json::Value relicParams = action.params;
+        std::string endpoint = relicParams.get("endpoint", action.name).asString();
         if (endpoint == action.name && !action.content.empty()) {
             endpoint = action.content;
         }
-        auto rr = drd.dispatch(action.name, endpoint, action.params);
+        if (relicParams.isMember("body") && relicParams["body"].isObject()) relicParams = relicParams["body"];
+        relicParams.removeMember("endpoint");
+        relicParams.removeMember("method");
+        auto rr = drd.dispatch(action.name, endpoint, relicParams);
         Json::Value result;
         result["success"] = rr.success;
         if (rr.success) {
@@ -68,11 +72,15 @@ inline Json::Value dispatchRelic(const protocol::ParsedAction& action) {
     }
 
     // Fall back to builtin relic dispatcher
-    std::string endpoint = action.params.get("endpoint", action.name).asString();
+    Json::Value relicParams = action.params;
+    std::string endpoint = relicParams.get("endpoint", action.name).asString();
     if (endpoint == action.name && !action.content.empty()) {
         endpoint = action.content;
     }
-    auto rr = relics::RelicDispatcher::instance().dispatch(action.name, endpoint, action.params);
+    if (relicParams.isMember("body") && relicParams["body"].isObject()) relicParams = relicParams["body"];
+    relicParams.removeMember("endpoint");
+    relicParams.removeMember("method");
+    auto rr = relics::RelicDispatcher::instance().dispatch(action.name, endpoint, relicParams);
     Json::Value result;
     result["success"] = rr.success;
     if (rr.success) result["data"] = rr.data;
@@ -93,14 +101,34 @@ inline Json::Value dispatchAgent(const protocol::ParsedAction& action,
         err["error"] = "No sub-agent dispatcher configured";
         return err;
     }
-    std::string instruction = action.content.empty()
-        ? action.params.get("instruction", "Execute task").asString()
-        : action.content;
+    // Accept any of the names LLMs commonly use; instruction was hard-coded
+    // and any other key silently fell back to "Execute task".
+    std::string instruction;
+    if (!action.content.empty()) {
+        instruction = action.content;
+    } else {
+        for (const char* key : {"instruction", "query", "task", "prompt", "input", "message"}) {
+            std::string v = action.params.get(key, "").asString();
+            if (!v.empty()) { instruction = v; break; }
+        }
+        if (instruction.empty()) instruction = "Execute task";
+    }
     Json::Value subResult = delegate(action.name, instruction);
-    std::string output = subResult.isString() ? subResult.asString() : "";
     Json::Value result;
-    result["success"] = !output.empty();
-    result["output"] = output;
+    if (subResult.isString()) {
+        // Sub returned a plain string — DP01: empty string is still a valid
+        // response (e.g. the sub chose to say nothing). Don't treat it as failure.
+        result["success"] = true;
+        result["output"] = subResult.asString();
+    } else if (subResult.isObject()) {
+        // Sub returned a structured result; honour its own success field if present.
+        result["success"] = subResult.get("success", true).asBool();
+        result["output"] = subResult.get("output", Json::Value("")).asString();
+        if (subResult.isMember("error")) result["error"] = subResult["error"];
+    } else {
+        result["success"] = false;
+        result["error"] = "sub-agent returned unexpected type";
+    }
     return result;
 }
 
@@ -117,7 +145,7 @@ inline Json::Value dispatchFeed(const protocol::ParsedAction& action) {
     }
     setenv("FEED_PARAMS", paramsJson.c_str(), 1);
 
-    auto fr = feeds::FeedEngine::instance().pollOne(action.name);
+    auto fr = feeds::FeedEngine::instance().pollOne(action.name, true);
 
     Json::Value result;
     result["success"] = fr.ok;
@@ -139,9 +167,56 @@ inline Json::Value dispatchFeed(const protocol::ParsedAction& action) {
     return result;
 }
 
+// ── Workflow dispatcher — executes a named workflow through the WorkflowEngine ──
+using WorkflowDispatchFn = std::function<workflows::WorkflowResult(
+    const std::string& workflowName, const Json::Value& params)>;
+
+inline Json::Value dispatchWorkflow(const protocol::ParsedAction& action,
+                                      WorkflowDispatchFn executor) {
+    if (!executor) {
+        Json::Value err;
+        err["success"] = false;
+        err["error"] = "No workflow executor configured";
+        return err;
+    }
+    auto wfResult = executor(action.name, action.params);
+    Json::Value result;
+    result["success"] = wfResult.success;
+    result["workflow"] = wfResult.workflowName;
+    result["elapsed_ms"] = wfResult.elapsedMs;
+    result["step_count"] = (int)wfResult.stepIds.size();
+    Json::Value outputs(Json::objectValue);
+    for (auto& [id, val] : wfResult.outputs) outputs[id] = val;
+    result["outputs"] = outputs;
+
+    // Build a compact output string so the model sees what happened
+    std::ostringstream summary;
+    summary << "workflow=" << wfResult.workflowName
+            << " success=" << (wfResult.success ? "ok" : "fail")
+            << " steps=[";
+    for (size_t i = 0; i < wfResult.stepIds.size(); ++i) {
+        if (i > 0) summary << ", ";
+        summary << wfResult.stepIds[i];
+        auto it = wfResult.outputs.find(wfResult.stepIds[i]);
+        if (it != wfResult.outputs.end() && it->second.isMember("success"))
+            summary << (it->second["success"].asBool() ? ":ok" : ":fail");
+    }
+    summary << "]";
+    if (!wfResult.error.empty()) summary << " error=" << wfResult.error;
+    result["output"] = summary.str();
+    if (!wfResult.error.empty()) result["error"] = wfResult.error;
+    if (!wfResult.diagnostics.empty()) {
+        Json::Value diags(Json::arrayValue);
+        for (auto& d : wfResult.diagnostics) diags.append(d);
+        result["diagnostics"] = diags;
+    }
+    return result;
+}
+
 // ── Unified dispatcher ──
 struct ActionDispatcher {
     AgentDispatchFn agentDelegate;
+    WorkflowDispatchFn workflowDelegate;
 
     Json::Value dispatch(const protocol::ParsedAction& action) {
         switch (action.type) {
@@ -153,6 +228,8 @@ struct ActionDispatcher {
                 return dispatchAgent(action, agentDelegate);
             case protocol::ActionType::FEED:
                 return dispatchFeed(action);
+            case protocol::ActionType::WORKFLOW:
+                return dispatchWorkflow(action, workflowDelegate);
             default:
                 Json::Value err;
                 err["success"] = false;

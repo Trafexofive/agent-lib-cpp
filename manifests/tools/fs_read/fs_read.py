@@ -3,9 +3,20 @@
 import json
 import sys
 
+def load_params():
+    if len(sys.argv) <= 1:
+        return {}
+    arg = sys.argv[1]
+    try:
+        with open(arg, "r", encoding="utf-8") as f:
+            return json.loads(f.read())
+    except OSError:
+        pass
+    return json.loads(arg)
+
 def main():
     try:
-        params = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
+        params = load_params()
     except (json.JSONDecodeError, ValueError) as e:
         print(json.dumps({"error": f"invalid JSON input: {e}"}))
         sys.exit(1)
