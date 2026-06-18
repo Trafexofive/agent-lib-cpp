@@ -42,6 +42,7 @@ CYAN = "\033[36m"
 MAGENTA = "\033[35m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
+RED = "\033[31m"
 
 
 @dataclass
@@ -251,8 +252,8 @@ class DiagramTui:
         rows = header
         for a, b in zip(left, right):
             rows.append(a + " " + b)
-        rows.append(style(plain_fit(f" {self.spinner()} {self.status_text()}", width), self.color, DIM))
-        rows.append(style(plain_fit(f" {self.example_dial(24)}  press ? for keys", width), self.color, DIM))
+        rows.append(style(plain_fit(f" {self.pressure_line(selected_doc, 30)}  {self.status_text()}", width), self.color, DIM))
+        rows.append(style(plain_fit(f" {self.example_dial(24)}  j/k select · enter open · t theme · c color · q quit", width), self.color, DIM))
         return "\n".join(rows[:height]) + "\n"
 
     def canvas_frame(self, width: int, height: int) -> str:
@@ -274,6 +275,7 @@ class DiagramTui:
             legend=self.legend,
             ports=self.ports,
         ).render().splitlines()
+        rendered = self.with_crosshair(rendered, max(5, canvas_w), max(5, body_h))
         right = panel("canvas", canvas_w, body_h, rendered, color=self.color, active=True)
         rows = header
         if self.sidebar_visible:
@@ -282,7 +284,7 @@ class DiagramTui:
                 rows.append(a + " " + b)
         else:
             rows.extend(right)
-        rows.append(style(plain_fit(f" {self.spinner()} {self.status_text()}", width), self.color, DIM))
+        rows.append(style(plain_fit(f" {self.pressure_line(self.doc, 30)}  {self.status_text()}", width), self.color, DIM))
         rows.append(style(plain_fit(" space center · b rail · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width), self.color, DIM))
         return "\n".join(rows[:height]) + "\n"
 
@@ -355,6 +357,52 @@ class DiagramTui:
         ]
         return [fit_ansi(line, width) for line in lines[:height]]
 
+    def replace_visible_char(self, line: str, col: int, ch: str) -> str:
+        if col < 0:
+            return line
+        out = ""
+        visible = 0
+        i = 0
+        replaced = False
+        while i < len(line):
+            if line[i] == "\033":
+                m = ANSI_RE.match(line, i)
+                if m:
+                    out += m.group(0)
+                    i = m.end()
+                    continue
+            if visible == col:
+                out += ch
+                replaced = True
+                i += 1
+                visible += 1
+                continue
+            out += line[i]
+            i += 1
+            visible += 1
+        if not replaced:
+            out += " " * max(0, col - visible) + ch
+        if "\033[" in out and not out.endswith(RESET):
+            out += RESET
+        return out
+
+    def with_crosshair(self, lines: list[str], width: int, height: int) -> list[str]:
+        out = list(lines[:height])
+        while len(out) < height:
+            out.append("")
+        cx = max(0, width // 2)
+        cy = max(0, height // 2)
+        mark = style("┼", self.color, BOLD, MAGENTA)
+        arm = style("·", self.color, DIM)
+        for dx in (-2, -1, 1, 2):
+            out[cy] = self.replace_visible_char(out[cy], cx + dx, arm)
+        for dy in (-2, -1, 1, 2):
+            y = cy + dy
+            if 0 <= y < len(out):
+                out[y] = self.replace_visible_char(out[y], cx, arm)
+        out[cy] = self.replace_visible_char(out[cy], cx, mark)
+        return out
+
     def set_message(self, text: str, *, ttl: float = 1.2) -> None:
         self.message = text
         self.message_until = time.monotonic() + ttl
@@ -364,10 +412,28 @@ class DiagramTui:
         if self.message and now < self.message_until:
             return self.message
         self.message = ""
-        if self.mode == "dashboard":
-            return "j/k select · enter open · t theme · c color · q quit"
-        rail = "hide rail" if self.sidebar_visible else "show rail"
-        return f"space center · b {rail} · f fit · +/- zoom · esc dashboard"
+        return ""
+
+    def pressure_score(self, doc: dict[str, Any]) -> tuple[int, float]:
+        nodes = len(doc.get("nodes", []))
+        edges = len(doc.get("edges", []))
+        ports = sum(len(n.get("ports", [])) for n in doc.get("nodes", []))
+        annotations = len(doc.get("annotations", []))
+        groups = len(doc.get("groups", []))
+        score = nodes * 9 + edges * 7 + ports * 2 + annotations * 6 + groups * 4
+        return score, min(1.0, score / 140.0)
+
+    def pressure_line(self, doc: dict[str, Any], width: int) -> str:
+        score, t = self.pressure_score(doc)
+        bar_w = max(10, width)
+        filled = max(1, round(t * bar_w))
+        empty = max(0, bar_w - filled)
+        pen = GREEN if t < 0.45 else YELLOW if t < 0.75 else RED
+        label = "pressure"
+        bar = "█" * filled + "░" * empty
+        if self.color:
+            bar = style("█" * filled, True, pen) + style("░" * empty, True, DIM)
+        return f"{label} {bar} {score}"
 
     def tick(self, speed: float = 8.0) -> int:
         return int((time.monotonic() - self.started_at) * speed)
