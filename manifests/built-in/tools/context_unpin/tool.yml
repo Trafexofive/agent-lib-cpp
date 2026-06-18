@@ -27,4 +27,4 @@ output_schema:
 examples:
   - description: "Unpin a config file no longer needed"
     params:
-      path: "config/agents/assistant/agent.yml"
+      path: "manifests/agents/default/agent.yml"

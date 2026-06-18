@@ -30,4 +30,4 @@ output_schema:
 examples:
   - description: "Pin a project's config file"
     params:
-      path: "config/agents/assistant/agent.yml"
+      path: "manifests/agents/default/agent.yml"

@@ -176,7 +176,7 @@ Only valid with `mode="sync"`. Using with `async` or `fire_and_forget` is undefi
 
 User: read config.json
 
-<action type="tool" name="fs_read" id="r1" mode="sync">{"path":"config.json"}</action>
+<action type="tool" name="exec" id="r1" mode="sync">{"command":"sed -n '1,120p' config.json"}</action>
 
 ← <result id="r1" status="error">{"error":"File not found: config.json"}</result> →
 

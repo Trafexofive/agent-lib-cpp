@@ -185,7 +185,6 @@ import:
     - context_pin
     - context_peek
     - context_unpin
-    - simple_fs_write
 )YAML");
 
     auto cfg = ManifestLoader::loadAgentConfig((root / "agent.yml").string());
@@ -198,13 +197,11 @@ import:
     CHECK(agent.hasTool("context_pin"), "context_pin not registered");
     CHECK(agent.hasTool("context_peek"), "context_peek not registered");
     CHECK(agent.hasTool("context_unpin"), "context_unpin not registered");
-    CHECK(agent.hasTool("simple_fs_write"), "simple_fs_write not registered");
     CHECK(xml.find("<tool name=\"context_pin\">") != std::string::npos,
           "context_pin schema missing from XML");
-    CHECK(xml.find("<tool name=\"simple_fs_write\">") != std::string::npos,
-          "simple_fs_write schema missing from XML");
-    CHECK(xml.find("<input mode=\"text\" text_param=\"content\">") != std::string::npos,
-          "simple_fs_write text input metadata missing");
+    CHECK(xml.find("<params>") != std::string::npos, "context_pin params missing from XML");
+    CHECK(xml.find("<returns>") != std::string::npos, "context_pin returns missing from XML");
+    CHECK(xml.find("<examples>") != std::string::npos, "context_pin examples missing from XML");
     PASS();
 }
 

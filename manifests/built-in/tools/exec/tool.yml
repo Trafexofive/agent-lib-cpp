@@ -18,7 +18,7 @@ description: "See input_schema for parameters"
   - Chain with `&&`: `cd /tmp && ./script.sh`
 
   **DON'T:**
-  - Use `exec` when `fs_read` or `list` is more appropriate
+  - Use `exec` when `list`, `grep`, or a context tool is not the better fit
   - Run `rm -rf` without explicit user approval
   - Run interactive commands (`vim`, `top`)
   - Run commands that require user input

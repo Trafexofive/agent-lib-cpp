@@ -25,8 +25,8 @@ Every module follows the same pattern:
 | Runtime | Used by | Manifest field |
 |---------|---------|----------------|
 | `builtin` | C++ tools, feeds, relics | Compiles into binary |
-| `python3` | fs_read, fs_write, json, web_fetch | `runtime: python3` |
-| `docker` | artifact_store, secret_store, etc. | `runtime: docker` |
+| `python3` | POC script tools only (`poc/tools/*`); not stdlib | `runtime: python3` |
+| `docker` | POC Docker relics only (`poc/relics/*`); not stdlib | `runtime: docker` |
 
 ## Rules
 - **Only production-ready manifests** live here. Staging → `config/staging/`

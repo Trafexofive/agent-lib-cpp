@@ -54,22 +54,21 @@ description: |
 
 # ── Example ──
 # steps:
-#   - id: fetch
+#   - id: find_issues
 #     type: tool
-#     name: "Fetch the API spec"
-#     tool: web_fetch
+#     name: "Search for TODOs and FIXMEs"
+#     tool: grep
 #     params:
-#       url: "https://api.example.com/openapi.json"
-#     on_error: abort
+#       pattern: "TODO|FIXME|HACK|XXX"
+#       path: "${input.target}"
+#     on_error: skip
 #
-#   - id: validate
+#   - id: summarize
 #     type: tool
-#     name: "Validate the spec"
-#     tool: json
+#     name: "Print issue summary"
+#     tool: exec
 #     params:
-#       operation: validate
-#       data: "${fetch.content}"
-#       schema: "openapi"
+#       command: "printf '%s\n' 'Issues found in ${input.target}'"
 #     on_error: abort
 #
 #   - id: generate
