@@ -1080,11 +1080,10 @@ static int cmdRun(CliConfig& cli) {
         // ── Prompt line ──
         out << "\033[" << termH << ";1H\033[2K";
         if (dialogActive.load(std::memory_order_acquire)) {
-            out << ansi::dim << "  Enter to submit · " << ansi::reset;
-        } else {
-            out << ansi::bold << "▸ " << ansi::reset;
+            out << ansi::dim << "  Enter to submit" << ansi::reset;
+            return out.str();
         }
-        out << "\033[2m";
+        out << ansi::bold << "▸ " << ansi::reset << "\033[2m";
         if (input.searching()) {
             out << tui::ansi::fg(255, 200, 0) << input.searchLine();
         } else {

@@ -381,7 +381,7 @@ class DialogRenderer {
         lines.push_back("");
         lines.push_back(ansi::fg(120, 210, 255) + ansi::bold() + "  " + state.chainTitle +
                         ansi::reset());
-        lines.push_back(ansi::fg(120, 210, 255) + "  " + repeatStr("─", std::min(inner, 60)) +
+        lines.push_back(ansi::fg(120, 210, 255) + "  " + repeatStr("─", inner) +
                         ansi::reset());
 
         // ── Message ──
@@ -435,7 +435,7 @@ class DialogRenderer {
 
         // ── Bottom rule ──
         lines.push_back("");
-        lines.push_back(ansi::fg(120, 210, 255) + "  " + repeatStr("─", std::min(inner, 60)) +
+        lines.push_back(ansi::fg(120, 210, 255) + "  " + repeatStr("─", inner) +
                         ansi::reset());
         return lines;
     }
