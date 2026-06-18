@@ -572,6 +572,10 @@ int GenericOpenAIClient::abortCheckCb(void*, curl_off_t, curl_off_t, curl_off_t,
 // ---------------------------------------------------------------------------
 // Model listing
 // ---------------------------------------------------------------------------
+static bool isKnownStaleOpenRouterModel(const std::string& id) {
+    return id == "nex-agi/nex-n2-pro:free" || id == "qwen/qwen3-coder:free";
+}
+
 static int knownContextWindow(const std::string& provider, const std::string& modelId,
                               int fallback) {
     static const std::unordered_map<std::string, int> opencodeGo = {
@@ -669,6 +673,8 @@ std::vector<ILlmProvider::ModelInfo> GenericOpenAIClient::listModels() {
         info.id = m["id"].asString();
         info.name = (m.isMember("name") && m["name"].isString()) ? m["name"].asString() : info.id;
         int fallbackContext = config_.name == "openai-codex" ? 272000 : 65536;
+        if (config_.name == "openrouter" && isKnownStaleOpenRouterModel(info.id))
+            continue;
         info.contextWindow = knownContextWindow(config_.name, info.id, fallbackContext);
         info.isFree = (info.id.find(":free") != std::string::npos ||
                        info.name.find(":free") != std::string::npos);

@@ -184,12 +184,15 @@ inline OpenAIProviderConfig deepseekConfig() {
 }
 
 // OpenRouter
+// Default was nex-agi/nex-n2-pro:free, but OpenRouter's catalog still lists it
+// while the completion endpoint rejects/hangs it. Liquid LFM 2.5 1.2B is the
+// current live-verified free fallback as of 2026-06-18.
 inline OpenAIProviderConfig openrouterConfig() {
     return {"openrouter",
             "https://openrouter.ai/api/v1",
             "OPENROUTER_API_KEY",
             "",
-            "nex-agi/nex-n2-pro:free",
+            "liquid/lfm-2.5-1.2b-instruct:free",
             {
                 {"HTTP-Referer", "https://github.com/Cortex-Prime-MK1"},
                 {"X-Title", "Cortex-MK3"},
@@ -199,7 +202,7 @@ inline OpenAIProviderConfig openrouterConfig() {
             "/chat/completions",
             "/models",
             "",
-            65536,
+            4096,
             "chat-completions"};
 }
 

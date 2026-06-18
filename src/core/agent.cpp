@@ -72,7 +72,7 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
     : config_(std::move(cfg)), provider_(std::move(provider)) {
     provider_->setModel(config_.model);
     provider_->setTemperature(config_.temperature);
-    provider_->setMaxTokens(config_.maxTokens);
+    provider_->setMaxTokens(config_.maxTokens > 0 ? config_.maxTokens : provider_->getMaxTokens());
     provider_->setTopP(config_.topP);
     provider_->setTopK(config_.topK);
     provider_->setPresencePenalty(config_.presencePenalty);

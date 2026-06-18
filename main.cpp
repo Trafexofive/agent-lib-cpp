@@ -383,6 +383,42 @@ static CliConfig parseArgs(int argc, char* argv[]) {
 
                                        {0, 0, 0, 0}};
 
+    if (argc >= 2 && std::string(argv[1]) == "list") {
+        cli.command = "list";
+        for (int i = 2; i < argc; i++) {
+            std::string arg = argv[i];
+            if (arg == "--providers" || arg == "-L") {
+                cli.listProviders = true;
+            } else if (arg.rfind("--provider=", 0) == 0) {
+                cli.provider = arg.substr(std::string("--provider=").size());
+                cli.providerSet = true;
+                cli.listModels = true;
+                cli.listModelsProvider = cli.provider;
+            } else if (arg == "--provider") {
+                if (i + 1 < argc && argv[i + 1][0] != '-') {
+                    cli.provider = argv[++i];
+                    cli.providerSet = true;
+                    cli.listModels = true;
+                    cli.listModelsProvider = cli.provider;
+                } else {
+                    cli.listProviders = true;
+                }
+            } else if (arg == "--models" || arg == "-l") {
+                cli.listModels = true;
+                if (i + 1 < argc && argv[i + 1][0] != '-')
+                    cli.listModelsProvider = argv[++i];
+            } else if (arg.rfind("--models=", 0) == 0) {
+                cli.listModels = true;
+                cli.listModelsProvider = arg.substr(std::string("--models=").size());
+            } else if (arg == "--tools" || arg == "-t") {
+                cli.listTools = true;
+            } else if (arg == "--help" || arg == "-h") {
+                cli.showHelp = true;
+            }
+        }
+        return cli;
+    }
+
     int opt;
     bool sawProviderFlag = false;
     bool providerFlagHadArg = false;
@@ -513,6 +549,15 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 std::cerr << "Try 'cortex-mk3 --help'\n";
                 exit(1);
         }
+    }
+
+    // GNU getopt only consumes optional option args with --opt=value. For
+    // `--provider openrouter`, optarg is null and the provider name remains in
+    // argv[optind], so normalize that form for all commands.
+    if (sawProviderFlag && !providerFlagHadArg && optind < argc && argv[optind][0] != '-') {
+        cli.provider = argv[optind];
+        cli.providerSet = true;
+        optind++;
     }
 
     // Subcommand (first positional after flags)
