@@ -34,6 +34,16 @@ inline std::shared_ptr<ILlmProvider> createProvider(const std::string& name,
         cfg = zenConfig();  // opencode = zen (free tier)
     else if (name == "fireworks")
         cfg = fireworksConfig();
+    else if (name == "sambanova")
+        cfg = sambanovaConfig();
+    else if (name == "cerebras")
+        cfg = cerebrasConfig();
+    else if (name == "hyperbolic")
+        cfg = hyperbolicConfig();
+    else if (name == "llm7")
+        cfg = llm7Config();
+    else if (name == "nvidia")
+        cfg = nvidiaConfig();
     else
         return nullptr;
 

@@ -327,4 +327,89 @@ inline OpenAIProviderConfig fireworksConfig() {
             "chat-completions"};
 }
 
+// SambaNova
+inline OpenAIProviderConfig sambanovaConfig() {
+    return {"sambanova",
+            "https://api.sambanova.ai/v1",
+            "SAMBANOVA_API_KEY",
+            "",
+            "DeepSeek-R1",
+            {},
+            true,
+            false,
+            "/chat/completions",
+            "/models",
+            "",
+            65536,
+            "chat-completions"};
+}
+
+// Cerebras
+inline OpenAIProviderConfig cerebrasConfig() {
+    return {"cerebras",
+            "https://api.cerebras.ai/v1",
+            "CEREBRAS_API_KEY",
+            "",
+            "llama3.1-405b",
+            {},
+            true,
+            false,
+            "/chat/completions",
+            "/models",
+            "",
+            65536,
+            "chat-completions"};
+}
+
+// Hyperbolic
+inline OpenAIProviderConfig hyperbolicConfig() {
+    return {"hyperbolic",
+            "https://api.hyperbolic.xyz/v1",
+            "HYPERBOLIC_API_KEY",
+            "",
+            "deepseek-r1",
+            {},
+            true,
+            false,
+            "/chat/completions",
+            "/models",
+            "",
+            65536,
+            "chat-completions"};
+}
+
+// LLM7
+inline OpenAIProviderConfig llm7Config() {
+    return {"llm7",
+            "https://api.llm7.io/v1",
+            "",
+            "public",
+            "deepseek-r1",
+            {},
+            true,
+            false,
+            "/chat/completions",
+            "/models",
+            "",
+            65536,
+            "chat-completions"};
+}
+
+// NVIDIA NIM
+inline OpenAIProviderConfig nvidiaConfig() {
+    return {"nvidia",
+            "https://integrate.api.nvidia.com/v1",
+            "NVIDIA_API_KEY",
+            "",
+            "meta/llama-3.3-70b-instruct",
+            {},
+            true,
+            false,
+            "/chat/completions",
+            "/models",
+            "",
+            65536,
+            "chat-completions"};
+}
+
 }  // namespace cortex::mk3::providers
