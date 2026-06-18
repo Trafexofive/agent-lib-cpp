@@ -165,6 +165,7 @@ class DiagramTui:
         self.projects: list[dict[str, Any]] = []
         self.project_diagrams: list[dict[str, Any]] = []
         self.pet_state = "idle"
+        self.pet_done_at = 0.0
         self.pet_note = "idle"
         self.model_output = ""
         self.chat_input = ""
@@ -181,6 +182,7 @@ class DiagramTui:
         self.sidebar_visible = False
         self.chat_visible = False
         self.crosshair_visible = True
+        self.animating = False
         self.mode = "canvas" if path or example else "dashboard"
         self.started_at = time.monotonic()
         self.message = ""
@@ -239,6 +241,7 @@ class DiagramTui:
                 sys.stdout.flush()
 
     def frame(self, width: int, height: int) -> str:
+        self.pet_idle_timeout()
         width = max(40, width)
         height = max(16, height)
         if self.chat_visible:
@@ -639,6 +642,7 @@ class DiagramTui:
             self.set_message("model already thinking", ttl=1.0)
             return
         self.pet_state = "thinking"
+        self.pet_done_at = 0.0
         self.pet_note = f"{self.provider}/{self.model}"
         self.set_message(f"asking {self.model}", ttl=1.2)
 
@@ -667,14 +671,22 @@ class DiagramTui:
                 self.model_output = self.clean_model_text(proc.stdout)[-800:]
                 self.chat_history.append(("pet", self.model_output or "model done"))
                 self.pet_state = "done"
+                self.pet_done_at = time.monotonic()
                 self.set_message("model replied", ttl=2.0)
             except Exception as e:
                 self.pet_state = "error"
+                self.pet_done_at = time.monotonic()
                 self.chat_history.append(("pet", f"error: {e}"))
                 self.set_message(f"model error: {e}", ttl=4.0)
 
         self.model_thread = threading.Thread(target=run, daemon=True)
         self.model_thread.start()
+
+    def pet_idle_timeout(self) -> None:
+        if self.pet_state in ("done", "error") and self.pet_done_at > 0:
+            if time.monotonic() - self.pet_done_at > 6.0:
+                self.pet_state = "idle"
+                self.pet_done_at = 0.0
 
     def set_message(self, text: str, *, ttl: float = 1.2) -> None:
         self.message = text
@@ -760,6 +772,8 @@ class DiagramTui:
         if key == "":
             return True
         if self.chat_visible:
+            if key in {"q", "\x03"}:
+                return False
             if key == "escape" or (key == "m" and not self.chat_input):
                 self.chat_visible = False
                 self.set_message("chat closed", ttl=0.8)
@@ -771,6 +785,8 @@ class DiagramTui:
                 self.chat_input = self.chat_input[:-1]
             elif key == "\x15":
                 self.chat_input = ""
+            elif key in {"W", "P", "C", "u"}:
+                getattr(self, {"W": "create_workspace", "P": "create_project", "C": "copy_current_to_project", "u": "refresh_workspace"}[key])()
             elif len(key) == 1 and key.isprintable():
                 self.chat_input += key
             return True
@@ -897,22 +913,28 @@ class DiagramTui:
         self.set_message("fit viewport to diagram bounds", ttl=1.0)
 
     def animate_center(self) -> None:
-        start = self.view
-        target = self.center_target()
-        frames = 14
-        for i in range(1, frames + 1):
-            t = i / frames
-            eased = t * t * (3 - 2 * t)
-            self.view = View(
-                start.x + (target.x - start.x) * eased,
-                start.y + (target.y - start.y) * eased,
-                start.zoom + (target.zoom - start.zoom) * eased,
-            )
-            self.set_message("centering…", ttl=0.4)
-            self.draw()
-            time.sleep(0.018)
-        self.view = target
-        self.set_message("centered on diagram", ttl=1.0)
+        if self.animating:
+            return
+        self.animating = True
+        try:
+            start = self.view
+            target = self.center_target()
+            frames = 14
+            for i in range(1, frames + 1):
+                t = i / frames
+                eased = t * t * (3 - 2 * t)
+                self.view = View(
+                    start.x + (target.x - start.x) * eased,
+                    start.y + (target.y - start.y) * eased,
+                    start.zoom + (target.zoom - start.zoom) * eased,
+                )
+                self.set_message("centering…", ttl=0.4)
+                self.draw()
+                time.sleep(0.018)
+            self.view = target
+            self.set_message("centered on diagram", ttl=1.0)
+        finally:
+            self.animating = False
 
     def open_selected_example(self) -> None:
         if not self.examples:

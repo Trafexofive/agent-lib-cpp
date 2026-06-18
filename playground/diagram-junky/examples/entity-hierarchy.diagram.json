@@ -1,130 +1,180 @@
 {
-  "version": "diagram.document.v0",
-  "meta": {
-    "title": "Entity Hierarchy \u2014 Document System",
-    "description": "Inheritance and composition graph for a document model.",
-    "author": "diagram-junky"
-  },
   "nodes": [
     {
       "id": "model",
       "label": "Model",
-      "pos": [
-        50,
-        2
-      ],
-      "category": "abstract"
+      "position": {
+        "x": 50,
+        "y": 2
+      },
+      "type": "node"
     },
     {
       "id": "embedding",
       "label": "EmbeddingModel",
-      "pos": [
-        20,
-        10
-      ],
-      "category": "concrete"
+      "position": {
+        "x": 20,
+        "y": 10
+      },
+      "type": "node"
     },
     {
       "id": "chat",
       "label": "ChatModel",
-      "pos": [
-        50,
-        10
-      ],
-      "category": "concrete"
+      "position": {
+        "x": 50,
+        "y": 10
+      },
+      "type": "node"
     },
     {
       "id": "image",
       "label": "ImageModel",
-      "pos": [
-        80,
-        10
-      ],
-      "category": "concrete"
+      "position": {
+        "x": 80,
+        "y": 10
+      },
+      "type": "node"
     },
     {
       "id": "tokenizer",
       "label": "Tokenizer",
-      "pos": [
-        20,
-        18
-      ],
-      "category": "component"
+      "position": {
+        "x": 20,
+        "y": 18
+      },
+      "type": "node"
     },
     {
       "id": "adapter",
       "label": "Adapter",
-      "pos": [
-        50,
-        18
-      ],
-      "category": "component"
+      "position": {
+        "x": 50,
+        "y": 18
+      },
+      "type": "node"
     },
     {
       "id": "sampler",
       "label": "Sampler",
-      "pos": [
-        80,
-        18
-      ],
-      "category": "component"
+      "position": {
+        "x": 80,
+        "y": 18
+      },
+      "type": "node"
     },
     {
       "id": "pipeline",
       "label": "Pipeline",
-      "pos": [
-        50,
-        26
-      ],
-      "category": "composite"
+      "position": {
+        "x": 50,
+        "y": 26
+      },
+      "type": "node"
     }
   ],
   "edges": [
     {
-      "from": "model",
-      "to": "embedding",
-      "label": "extends"
+      "label": "extends",
+      "source": {
+        "node": "model"
+      },
+      "target": {
+        "node": "embedding"
+      },
+      "id": "model-embedding",
+      "type": "flow"
     },
     {
-      "from": "model",
-      "to": "chat",
-      "label": "extends"
+      "label": "extends",
+      "source": {
+        "node": "model"
+      },
+      "target": {
+        "node": "chat"
+      },
+      "id": "model-chat",
+      "type": "flow"
     },
     {
-      "from": "model",
-      "to": "image",
-      "label": "extends"
+      "label": "extends",
+      "source": {
+        "node": "model"
+      },
+      "target": {
+        "node": "image"
+      },
+      "id": "model-image",
+      "type": "flow"
     },
     {
-      "from": "chat",
-      "to": "tokenizer",
-      "label": "has-a"
+      "label": "has-a",
+      "source": {
+        "node": "chat"
+      },
+      "target": {
+        "node": "tokenizer"
+      },
+      "id": "chat-tokenizer",
+      "type": "flow"
     },
     {
-      "from": "chat",
-      "to": "adapter",
-      "label": "has-a"
+      "label": "has-a",
+      "source": {
+        "node": "chat"
+      },
+      "target": {
+        "node": "adapter"
+      },
+      "id": "chat-adapter",
+      "type": "flow"
     },
     {
-      "from": "chat",
-      "to": "sampler",
-      "label": "has-a"
+      "label": "has-a",
+      "source": {
+        "node": "chat"
+      },
+      "target": {
+        "node": "sampler"
+      },
+      "id": "chat-sampler",
+      "type": "flow"
     },
     {
-      "from": "tokenizer",
-      "to": "pipeline",
-      "label": "feeds"
+      "label": "feeds",
+      "source": {
+        "node": "tokenizer"
+      },
+      "target": {
+        "node": "pipeline"
+      },
+      "id": "tokenizer-pipeline",
+      "type": "flow"
     },
     {
-      "from": "adapter",
-      "to": "pipeline",
-      "label": "feeds"
+      "label": "feeds",
+      "source": {
+        "node": "adapter"
+      },
+      "target": {
+        "node": "pipeline"
+      },
+      "id": "adapter-pipeline",
+      "type": "flow"
     },
     {
-      "from": "sampler",
-      "to": "pipeline",
-      "label": "feeds"
+      "label": "feeds",
+      "source": {
+        "node": "sampler"
+      },
+      "target": {
+        "node": "pipeline"
+      },
+      "id": "sampler-pipeline",
+      "type": "flow"
     }
   ],
-  "schema_version": "diagram.document.v0"
+  "schema_version": "diagram.document.v0",
+  "id": "entity-hierarchy",
+  "kind": "graph"
 }

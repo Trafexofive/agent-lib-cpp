@@ -1,166 +1,171 @@
 {
-  "version": "diagram.document.v0",
-  "meta": {
-    "title": "Build Pipeline State Machine",
-    "description": "Stateful build system with error recovery paths.",
-    "author": "diagram-junky"
-  },
-  "legend": {
-    "node_categories": [
-      {
-        "name": "state",
-        "style": "cyan",
-        "desc": "Pipeline state"
-      },
-      {
-        "name": "terminal",
-        "style": "green",
-        "desc": "Terminal state"
-      },
-      {
-        "name": "error",
-        "style": "red",
-        "desc": "Error state"
-      }
-    ],
-    "edge_categories": [
-      {
-        "name": "success",
-        "style": "green",
-        "desc": "Success transition"
-      },
-      {
-        "name": "failure",
-        "style": "red",
-        "desc": "Failure transition"
-      },
-      {
-        "name": "retry",
-        "style": "yellow",
-        "desc": "Retry path"
-      }
-    ]
-  },
   "nodes": [
     {
       "id": "idle",
       "label": "IDLE",
-      "category": "state",
-      "pos": [
-        10,
-        6
-      ]
+      "position": {
+        "x": 10,
+        "y": 6
+      },
+      "type": "node"
     },
     {
       "id": "fetch",
       "label": "FETCH",
-      "category": "state",
-      "pos": [
-        30,
-        4
-      ]
+      "position": {
+        "x": 30,
+        "y": 4
+      },
+      "type": "node"
     },
     {
       "id": "compile",
       "label": "COMPILE",
-      "category": "state",
-      "pos": [
-        50,
-        4
-      ]
+      "position": {
+        "x": 50,
+        "y": 4
+      },
+      "type": "node"
     },
     {
       "id": "test",
       "label": "TEST",
-      "category": "state",
-      "pos": [
-        70,
-        4
-      ]
+      "position": {
+        "x": 70,
+        "y": 4
+      },
+      "type": "node"
     },
     {
       "id": "deploy",
       "label": "DEPLOY",
-      "category": "terminal",
-      "pos": [
-        90,
-        6
-      ]
+      "position": {
+        "x": 90,
+        "y": 6
+      },
+      "type": "node"
     },
     {
       "id": "error",
       "label": "ERROR",
-      "category": "error",
-      "pos": [
-        50,
-        14
-      ]
+      "position": {
+        "x": 50,
+        "y": 14
+      },
+      "type": "node"
     },
     {
       "id": "retry",
       "label": "RETRY",
-      "category": "state",
-      "pos": [
-        30,
-        14
-      ]
+      "position": {
+        "x": 30,
+        "y": 14
+      },
+      "type": "node"
     }
   ],
   "edges": [
     {
-      "from": "idle",
-      "to": "fetch",
-      "category": "success",
-      "label": "trigger"
+      "label": "trigger",
+      "source": {
+        "node": "idle"
+      },
+      "target": {
+        "node": "fetch"
+      },
+      "id": "idle-fetch",
+      "type": "flow"
     },
     {
-      "from": "fetch",
-      "to": "compile",
-      "category": "success",
-      "label": "done"
+      "label": "done",
+      "source": {
+        "node": "fetch"
+      },
+      "target": {
+        "node": "compile"
+      },
+      "id": "fetch-compile",
+      "type": "flow"
     },
     {
-      "from": "fetch",
-      "to": "error",
-      "category": "failure",
-      "label": "timeout"
+      "label": "timeout",
+      "source": {
+        "node": "fetch"
+      },
+      "target": {
+        "node": "error"
+      },
+      "id": "fetch-error",
+      "type": "flow"
     },
     {
-      "from": "compile",
-      "to": "test",
-      "category": "success",
-      "label": "done"
+      "label": "done",
+      "source": {
+        "node": "compile"
+      },
+      "target": {
+        "node": "test"
+      },
+      "id": "compile-test",
+      "type": "flow"
     },
     {
-      "from": "compile",
-      "to": "error",
-      "category": "failure",
-      "label": "err"
+      "label": "err",
+      "source": {
+        "node": "compile"
+      },
+      "target": {
+        "node": "error"
+      },
+      "id": "compile-error",
+      "type": "flow"
     },
     {
-      "from": "test",
-      "to": "deploy",
-      "category": "success",
-      "label": "passed"
+      "label": "passed",
+      "source": {
+        "node": "test"
+      },
+      "target": {
+        "node": "deploy"
+      },
+      "id": "test-deploy",
+      "type": "flow"
     },
     {
-      "from": "test",
-      "to": "error",
-      "category": "failure",
-      "label": "failed"
+      "label": "failed",
+      "source": {
+        "node": "test"
+      },
+      "target": {
+        "node": "error"
+      },
+      "id": "test-error",
+      "type": "flow"
     },
     {
-      "from": "error",
-      "to": "retry",
-      "category": "retry",
-      "label": "diagnose"
+      "label": "diagnose",
+      "source": {
+        "node": "error"
+      },
+      "target": {
+        "node": "retry"
+      },
+      "id": "error-retry",
+      "type": "flow"
     },
     {
-      "from": "retry",
-      "to": "fetch",
-      "category": "retry",
-      "label": "reset"
+      "label": "reset",
+      "source": {
+        "node": "retry"
+      },
+      "target": {
+        "node": "fetch"
+      },
+      "id": "retry-fetch",
+      "type": "flow"
     }
   ],
-  "schema_version": "diagram.document.v0"
+  "schema_version": "diagram.document.v0",
+  "id": "state-machine",
+  "kind": "state"
 }
