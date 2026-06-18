@@ -206,27 +206,14 @@ class DiagramTui:
         return self.canvas_frame(width, height)
 
     def dashboard_frame(self, width: int, height: int) -> str:
-        header_h = 5
-        footer_h = 2
-        body_h = max(8, height - header_h - footer_h)
-        left_w = min(42, max(30, width // 3))
-        right_w = max(20, width - left_w - 1)
-        pulse = self.pulse_code()
-        title = style(f"{self.dots()} diagram-junky {self.dots(reverse=True)}", self.color, BOLD, pulse)
-        subtitle = style("canvas-first diagram playground", self.color, DIM)
-        header = [
-            "",
-            center_text(title, width),
-            center_text(subtitle, width),
-            center_text(f"{self.spinner()} Glow-ish docs browser · dash-style launcher · raw ANSI · living preview", width),
-            "",
-        ]
+        body_h, left_w, right_w = self.layout_dims(width, height)
+        header = self.header_lines(width, "dashboard", "docs browser · dash launcher · raw ANSI")
 
-        menu_body = [style(f"{self.spinner()} examples", self.color, BOLD, MAGENTA), ""]
+        menu_body = [style("examples", self.color, BOLD, MAGENTA), ""]
         for i, path in enumerate(self.examples):
             doc = load_doc(path)
             label = path.name.removesuffix(".diagram.json")
-            prefix = f"{self.spinner()} " if i == self.example_index else "  "
+            prefix = "▸ " if i == self.example_index else "  "
             row = f"{prefix}{label:<18} {doc.get('kind', 'diagram')}"
             if i == self.example_index:
                 row = style(row, self.color, INV)
@@ -261,21 +248,13 @@ class DiagramTui:
         for a, b in zip(left, right):
             rows.append(a + " " + b)
         rows.append(style(plain_fit(f" {self.spinner()} {self.message}", width), self.color, INV))
-        rows.append(plain_fit(f" {self.breath_bar(width // 3)}  press ? for keys", width))
+        rows.append(plain_fit(f" {self.example_dial(24)}  press ? for keys", width))
         return "\n".join(rows[:height]) + "\n"
 
     def canvas_frame(self, width: int, height: int) -> str:
-        header_h = 2
-        footer_h = 2
-        body_h = max(8, height - header_h - footer_h)
-        side_w = min(34, max(26, width // 4))
-        canvas_w = max(20, width - side_w - 1)
+        body_h, side_w, canvas_w = self.layout_dims(width, height)
         title = self.doc.get("title", self.doc.get("id", self.path.name))
-        rel = self.path.relative_to(ROOT) if self.path.is_relative_to(ROOT) else self.path
-        header = [
-            style(plain_fit(f" {self.spinner()} diagram-junky  {title}  {self.dots()}", width), self.color, BOLD, self.pulse_code()),
-            style(plain_fit(f" {rel} · theme={self.theme} · zoom={self.view.zoom:.2f} · view=({self.view.x:.1f},{self.view.y:.1f}) · {self.breath_bar(12)}", width), self.color, DIM),
-        ]
+        header = self.header_lines(width, title, self.path_label())
 
         sidebar = self.sidebar_lines(side_w, body_h)
         rendered = Renderer(
@@ -300,11 +279,57 @@ class DiagramTui:
         rows.append(plain_fit(" space center · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width))
         return "\n".join(rows[:height]) + "\n"
 
+    def layout_dims(self, width: int, height: int) -> tuple[int, int, int]:
+        # Stable geometry across dashboard/canvas: selecting a diagram should not
+        # make the whole app jump. Header is always exactly two rows.
+        header_h = 2
+        footer_h = 2
+        body_h = max(8, height - header_h - footer_h)
+        side_w = min(34, max(28, width // 4))
+        main_w = max(20, width - side_w - 1)
+        return body_h, side_w, main_w
+
+    def path_label(self) -> str:
+        rel = self.path.relative_to(ROOT) if self.path.is_relative_to(ROOT) else self.path
+        return str(rel)
+
+    def header_lines(self, width: int, title: str, subtitle: str) -> list[str]:
+        # Max height 2. Row 1 = identity/title. Row 2 = state + useful dials.
+        left = f" {self.spinner()} diagram-junky · {title}"
+        row1 = style(plain_fit(left, width), self.color, BOLD, self.pulse_code())
+        status = (
+            f" {subtitle} · theme={self.theme} · zoom={self.view.zoom:.2f} "
+            f"{self.zoom_dial(18)} · view=({self.view.x:.1f},{self.view.y:.1f})"
+        )
+        row2 = style(plain_fit(status, width), self.color, DIM)
+        return [row1, row2]
+
+    def zoom_dial(self, width: int) -> str:
+        width = max(8, width)
+        min_z, max_z = 0.1, 4.0
+        t = (max(min_z, min(max_z, self.view.zoom)) - min_z) / (max_z - min_z)
+        pos = round(t * (width - 1))
+        chars = ["─"] * width
+        for dx, ch in [(-1, "·"), (0, "●"), (1, "·")]:
+            j = pos + dx
+            if 0 <= j < width:
+                chars[j] = ch
+        return "".join(chars)
+
+    def example_dial(self, width: int) -> str:
+        width = max(8, width)
+        total = max(1, len(self.examples))
+        pos = 0 if total == 1 else round((self.example_index / (total - 1)) * (width - 1))
+        chars = ["─"] * width
+        chars[pos] = "●"
+        return "".join(chars) + f" {self.example_index + 1}/{total}"
+
     def sidebar_lines(self, width: int, height: int) -> list[str]:
         lines = [
-            style(f"{self.spinner()} current", self.color, BOLD, MAGENTA),
+            style("current", self.color, BOLD, MAGENTA),
             self.doc.get("id", self.path.stem),
             f"nodes {len(self.doc.get('nodes', []))}  edges {len(self.doc.get('edges', []))}",
+            f"zoom {self.view.zoom:.2f} {self.zoom_dial(max(8, width - 10))}",
             f"ports {'on' if self.ports else 'off'}  legend {'on' if self.legend else 'off'}",
             "",
             style("examples", self.color, BOLD, MAGENTA),
@@ -448,10 +473,8 @@ class DiagramTui:
 
     def canvas_dimensions(self) -> tuple[int, int]:
         size = shutil.get_terminal_size((120, 36))
-        body_h = max(8, size.lines - 4)
-        side_w = min(34, max(26, size.columns // 4))
-        canvas_w = max(20, size.columns - side_w - 1)
-        return max(5, canvas_w - 2), max(5, body_h - 2)
+        body_h, _, canvas_w = self.layout_dims(size.columns, size.lines)
+        return max(5, canvas_w), max(5, body_h)
 
     def center_target(self) -> View:
         w, h = self.canvas_dimensions()
