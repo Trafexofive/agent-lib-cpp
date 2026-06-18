@@ -173,7 +173,7 @@ class DiagramTui:
         self.examples = sorted(EXAMPLES_DIR.glob("*.diagram.json"))
         self.example_index = 0
         self.path = self._resolve_path(path, example)
-        self.doc = load_doc(self.path)
+        self.doc = load_doc(self.path, safe=True)
         self.view = View()
         self.theme = "neon"
         self.legend = True
@@ -212,7 +212,7 @@ class DiagramTui:
             saved_path = Path(raw.get("path", ""))
             if saved_path.exists():
                 self.path = saved_path
-                self.doc = load_doc(self.path)
+                self.doc = load_doc(self.path, safe=True)
             self.view = View(float(raw.get("x", 0)), float(raw.get("y", 0)), float(raw.get("zoom", 1)))
             self.theme = raw.get("theme", self.theme) if raw.get("theme") in THEMES else self.theme
             self.legend = bool(raw.get("legend", self.legend))
@@ -253,10 +253,7 @@ class DiagramTui:
 
         menu_body = [style("examples", self.color, BOLD, MAGENTA), ""]
         for i, path in enumerate(self.examples):
-            try:
-                doc = load_doc(path)
-            except Exception:
-                doc = {"id": path.stem, "title": path.stem, "kind": "broken"}
+            doc = load_doc(path, safe=True)
             label = path.name.removesuffix(".diagram.json")
             prefix = "● " if i == self.example_index else "  "
             row = f"{prefix}{label:<18} {doc.get('kind', 'diagram')}"
@@ -266,7 +263,7 @@ class DiagramTui:
         menu_body += ["", style("enter/space", self.color, GREEN) + " open", "j/k or arrows select", "t theme · c color · q quit"]
 
         selected = self.examples[self.example_index] if self.examples else self.path
-        selected_doc = load_doc(selected)
+        selected_doc = load_doc(selected, safe=True)
         preview = Renderer(
             selected_doc,
             max(10, right_w),
@@ -808,7 +805,7 @@ class DiagramTui:
             self.open_selected_example()
         elif key == "a":
             selected = self.examples[self.example_index] if self.examples else self.path
-            self.ask_model(load_doc(selected), "Give me one useful read of this diagram and one next action.")
+            self.ask_model(load_doc(selected, safe=True), "Give me one useful read of this diagram and one next action.")
         elif key == "t":
             self.cycle_theme()
         elif key == "c":
@@ -860,7 +857,7 @@ class DiagramTui:
         elif key == "p":
             self.open_example(-1)
         elif key == "r":
-            self.doc = load_doc(self.path)
+            self.doc = load_doc(self.path, safe=True)
             self.set_message(f"reloaded {self.path.name}", ttl=1.2)
         elif key == "s":
             self.save_state()
@@ -922,7 +919,7 @@ class DiagramTui:
             self.set_message("no examples found", ttl=1.5)
             return
         self.path = self.examples[self.example_index]
-        self.doc = load_doc(self.path)
+        self.doc = load_doc(self.path, safe=True)
         self.view = self.center_target()
         self.mode = "canvas"
         self.set_message(f"opened {self.path.name}", ttl=1.0)

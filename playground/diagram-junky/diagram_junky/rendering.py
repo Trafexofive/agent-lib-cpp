@@ -808,9 +808,28 @@ def resolve_diagram(diagram: Path | None, example: str | None) -> Path:
     return diagram
 
 
-def load_doc(path: Path) -> dict[str, Any]:
-    doc = json.loads(path.read_text())
+def load_doc(path: Path, *, safe: bool = False) -> dict[str, Any]:
+    """Load a diagram document. If safe=True, never raises — returns a placeholder.
+
+    The TUI calls this on untrusted user files and generated agent examples.
+    CLI mode keeps safe=False so schema violations are loud failures.
+    """
+    try:
+        raw = path.read_text()
+    except OSError as e:
+        if safe:
+            return {"schema_version": "diagram.document.v0", "id": path.stem, "title": path.stem, "kind": "broken"}
+        raise
+    try:
+        doc = json.loads(raw)
+    except json.JSONDecodeError as e:
+        if safe:
+            return {"schema_version": "diagram.document.v0", "id": path.stem, "title": path.stem, "kind": "invalid-json"}
+        raise ValueError(f"invalid JSON in {path}: {e}") from e
     if doc.get("schema_version") != "diagram.document.v0":
+        if safe:
+            doc["schema_version"] = "diagram.document.v0"
+            return doc
         raise ValueError(f"unsupported schema_version {doc.get('schema_version')!r}")
     return doc
 
