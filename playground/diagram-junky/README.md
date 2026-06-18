@@ -68,7 +68,7 @@ UX shape:
 - keeps stable sidebar/canvas columns so opening a diagram does not reflow the app
 - canvas info rail is hidden by default and toggleable with `b`
 - dashboard has a document list on the left and preview/metadata on the right
-- canvas mode has a diagram canvas with a center crosshair overlay
+- canvas mode has a diagram canvas with a toggleable center crosshair overlay (`x`)
 - idle redraw loop drives subtle status spinner/pulse accents
 - action messages are transient; the footer falls back to dimmed default hints
 - horizontal dials show useful state: example position and zoom level
@@ -83,7 +83,8 @@ Keys:
 - `+/-`: zoom
 - `0`: reset viewport
 - `f`: fit diagram bounds immediately
-- `b`: toggle canvas left hub/sidebar
+- `x`: toggle center crosshair
+- `b`: toggle canvas info rail
 - `esc`: back to dashboard
 - `n/p`: next/previous bundled example
 - `t`: cycle theme

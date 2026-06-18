@@ -149,6 +149,7 @@ class DiagramTui:
         self.legend = True
         self.ports = False
         self.sidebar_visible = False
+        self.crosshair_visible = True
         self.mode = "canvas" if path or example else "dashboard"
         self.started_at = time.monotonic()
         self.message = ""
@@ -186,6 +187,7 @@ class DiagramTui:
             self.legend = bool(raw.get("legend", self.legend))
             self.ports = bool(raw.get("ports", self.ports))
             self.sidebar_visible = bool(raw.get("sidebar_visible", self.sidebar_visible))
+            self.crosshair_visible = bool(raw.get("crosshair_visible", self.crosshair_visible))
             self.set_message(f"loaded state from {self.state_path}", ttl=1.2)
         except Exception as e:
             self.set_message(f"state load skipped: {e}", ttl=1.5)
@@ -275,7 +277,8 @@ class DiagramTui:
             legend=self.legend,
             ports=self.ports,
         ).render().splitlines()
-        rendered = self.with_crosshair(rendered, max(5, canvas_w), max(5, body_h))
+        if self.crosshair_visible:
+            rendered = self.with_crosshair(rendered, max(5, canvas_w), max(5, body_h))
         right = panel("canvas", canvas_w, body_h, rendered, color=self.color, active=True)
         rows = header
         if self.sidebar_visible:
@@ -285,7 +288,7 @@ class DiagramTui:
         else:
             rows.extend(right)
         rows.append(style(plain_fit(f" {self.pressure_line(self.doc, 30)}  {self.status_text()}", width), self.color, DIM))
-        rows.append(style(plain_fit(" space center · b rail · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width), self.color, DIM))
+        rows.append(style(plain_fit(" space center · x crosshair · b rail · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width), self.color, DIM))
         return "\n".join(rows[:height]) + "\n"
 
     def layout_dims(self, width: int, height: int, *, allow_hide: bool = False) -> tuple[int, int, int]:
@@ -352,6 +355,7 @@ class DiagramTui:
             style("flags", self.color, BOLD, MAGENTA),
             f"ports   {'on' if self.ports else 'off'}",
             f"legend  {'on' if self.legend else 'off'}",
+            f"cross   {'on' if self.crosshair_visible else 'off'}",
             "",
             style("b hides rail", self.color, DIM),
         ]
@@ -542,6 +546,9 @@ class DiagramTui:
         elif key == "b":
             self.sidebar_visible = not self.sidebar_visible
             self.set_message("info rail shown" if self.sidebar_visible else "info rail hidden", ttl=1.0)
+        elif key == "x":
+            self.crosshair_visible = not self.crosshair_visible
+            self.set_message("crosshair on" if self.crosshair_visible else "crosshair off", ttl=1.0)
         elif key == "n":
             self.open_example(1)
         elif key == "p":
@@ -552,7 +559,7 @@ class DiagramTui:
         elif key == "s":
             self.save_state()
         elif key == "?":
-            self.set_message("keys: space smooth-center · b rail · esc dashboard · arrows/hjkl pan · +/- zoom · f fit · t/c/g/o toggles · r reload · s save", ttl=3.0)
+            self.set_message("keys: space smooth-center · x crosshair · b rail · esc dashboard · arrows/hjkl pan · +/- zoom · f fit · t/c/g/o toggles · r reload · s save", ttl=3.0)
         return True
 
     def cycle_theme(self) -> None:
@@ -630,6 +637,7 @@ class DiagramTui:
             "legend": self.legend,
             "ports": self.ports,
             "sidebar_visible": self.sidebar_visible,
+            "crosshair_visible": self.crosshair_visible,
             "saved_at": time.time(),
         }
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
