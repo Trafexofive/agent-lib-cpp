@@ -20,6 +20,10 @@ class Input {
    public:
     using Callback = std::function<void(const std::string& line)>;
 
+    /// Action interceptor — called before normal key processing.
+    /// Return true to consume the action (dialog navigation, etc.).
+    using ActionInterceptor = std::function<bool(int act, char outChar)>;
+
     using Completer = std::function<std::vector<std::string>(const std::string& prefix)>;
 
     Input() {
@@ -148,6 +152,10 @@ class Input {
             // ── Resolve through keymap ──
             char outChar = 0;
             KeyAction act = keymap_.resolve(seq, outChar);
+
+            // ── Action interceptor (dialog navigation, etc.) ──
+            if (actionInterceptor_ && actionInterceptor_((int)act, outChar))
+                continue;
 
             // ── Search mode ──
             if (searching() && act == KeyAction::CHAR) {
@@ -419,6 +427,13 @@ class Input {
         searchPos_ = -1;
     }
 
+    void setActionInterceptor(ActionInterceptor fn) {
+        actionInterceptor_ = std::move(fn);
+    }
+    void clearActionInterceptor() {
+        actionInterceptor_ = nullptr;
+    }
+
     void setCompleter(Completer c) {
         completer_ = std::move(c);
     }
@@ -437,6 +452,7 @@ class Input {
     int searchPos_ = -1;
     Callback onEnter_, onCancel_;
     Completer completer_;
+    ActionInterceptor actionInterceptor_;
     KeyMap keymap_;
     InputHistory history_;
 };

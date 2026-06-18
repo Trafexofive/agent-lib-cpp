@@ -1083,8 +1083,7 @@ static int cmdRun(CliConfig& cli) {
         std::ostringstream out;
         out << "\033[" << termH << ";1H\033[2K";
         if (dialogActive.load(std::memory_order_acquire)) {
-            out << ansi::bold << tui::ansi::fg(120, 210, 255) << "❯ " << ansi::reset
-                << "\033[2m\033[3m";
+            out << ansi::dim << "  Enter to submit · Esc to cancel" << ansi::reset;
         } else {
             out << ansi::bold << "▸ " << ansi::reset << "\033[2m\033[3m";
         }
@@ -1171,7 +1170,8 @@ static int cmdRun(CliConfig& cli) {
         if (dialogActive.load(std::memory_order_acquire) && !askDialog->state.done()) {
             // Replace history entirely — dialog is the only visible content.
             display.clear();
-            auto dialogLines = cortex::mk3::tui::DialogRenderer::render(askDialog->state, termW);
+            auto dialogLines =
+                cortex::mk3::tui::DialogRenderer::render(askDialog->state, termW, input.line());
             display.insert(display.end(), dialogLines.begin(), dialogLines.end());
         }
         // Viewport: which lines should be visible
@@ -1588,6 +1588,7 @@ static int cmdRun(CliConfig& cli) {
             askParamsReady = false;
             askPending.store(false, std::memory_order_release);
             dialogActive.store(false, std::memory_order_release);
+            input.clearActionInterceptor();
             return out;
         });
 
@@ -1719,6 +1720,80 @@ static int cmdRun(CliConfig& cli) {
                         dialogActive.store(true, std::memory_order_release);
                         input.clearEscape();
                         renderDirty = true;
+                        // ── Dialog input interceptor: j/k/arrows navigate,
+                        //    y/n for confirm, everything else passes through ──
+                        input.setActionInterceptor([&](int act, char outChar) -> bool {
+                            if (!dialogActive.load(std::memory_order_acquire))
+                                return false;
+                            const cortex::mk3::tui::DialogCard* card = askDialog->state.current();
+                            if (!card)
+                                return false;
+
+                            // j / down → next option
+                            if ((act == (int)cortex::mk3::tui::KeyAction::CHAR &&
+                                 (outChar == 'j' || outChar == 'J')) ||
+                                act == (int)cortex::mk3::tui::KeyAction::HISTORY_DOWN) {
+                                if (card->type == "choice" || card->type == "multi_choice" ||
+                                    card->type == "ranker") {
+                                    if (askDialog->state.selectedOption <
+                                        (int)card->options.size() - 1)
+                                        askDialog->state.selectedOption++;
+                                    renderDirty = true;
+                                    return true;
+                                }
+                            }
+                            // k / up → prev option
+                            if ((act == (int)cortex::mk3::tui::KeyAction::CHAR &&
+                                 (outChar == 'k' || outChar == 'K')) ||
+                                act == (int)cortex::mk3::tui::KeyAction::HISTORY_UP) {
+                                if (card->type == "choice" || card->type == "multi_choice" ||
+                                    card->type == "ranker") {
+                                    if (askDialog->state.selectedOption > 0)
+                                        askDialog->state.selectedOption--;
+                                    renderDirty = true;
+                                    return true;
+                                }
+                            }
+                            // y/n → immediate confirm (no Enter needed)
+                            if (card->type == "confirm" &&
+                                act == (int)cortex::mk3::tui::KeyAction::CHAR) {
+                                if (outChar == 'y' || outChar == 'Y') {
+                                    cortex::mk3::tui::advanceDialog(askDialog->state, true);
+                                    renderDirty = true;
+                                    if (askDialog->state.done()) {
+                                        askDialog->complete = true;
+                                        askDialog->result = askDialog->state.results;
+                                        askDialog->active = false;
+                                        dialogActive.store(false, std::memory_order_release);
+                                        input.clearActionInterceptor();
+                                        askCv.notify_one();
+                                    }
+                                    return true;
+                                }
+                                if (outChar == 'n' || outChar == 'N') {
+                                    cortex::mk3::tui::advanceDialog(askDialog->state, false);
+                                    renderDirty = true;
+                                    if (askDialog->state.done()) {
+                                        askDialog->complete = true;
+                                        askDialog->result = askDialog->state.results;
+                                        askDialog->active = false;
+                                        dialogActive.store(false, std::memory_order_release);
+                                        input.clearActionInterceptor();
+                                        askCv.notify_one();
+                                    }
+                                    return true;
+                                }
+                            }
+                            // Block slash commands, search, scroll, etc. during dialog
+                            if (act == (int)cortex::mk3::tui::KeyAction::SEARCH ||
+                                act == (int)cortex::mk3::tui::KeyAction::SCROLL_UP ||
+                                act == (int)cortex::mk3::tui::KeyAction::SCROLL_DOWN ||
+                                act == (int)cortex::mk3::tui::KeyAction::CLEAR_SCREEN ||
+                                act == (int)cortex::mk3::tui::KeyAction::TAB)
+                                return true;
+                            // Let everything else through (text typing, Enter, Backspace)
+                            return false;
+                        });
                     }
                 }
             }
@@ -1738,6 +1813,7 @@ static int cmdRun(CliConfig& cli) {
                     askDialog->cancelled = true;
                     askDialog->active = false;
                     dialogActive.store(false, std::memory_order_release);
+                    input.clearActionInterceptor();
                     input.clearEscape();
                     renderDirty = true;
                     askCv.notify_one();
@@ -1759,6 +1835,7 @@ static int cmdRun(CliConfig& cli) {
                     askDialog->result = askDialog->state.results;
                     askDialog->active = false;
                     dialogActive.store(false, std::memory_order_release);
+                    input.clearActionInterceptor();
                     askCv.notify_one();
                 }
             }

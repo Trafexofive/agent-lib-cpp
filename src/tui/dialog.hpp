@@ -48,6 +48,7 @@ struct DialogState {
     std::string error;
     bool cancelled = false;
     bool completed = false;
+    int selectedOption = 0;  // current highlight for choice/multi_choice/ranker
 
     bool done() const {
         return completed || cancelled;
@@ -367,7 +368,8 @@ static inline std::string repeatStr(const std::string& s, int n) {
 
 class DialogRenderer {
    public:
-    static std::vector<std::string> render(const DialogState& state, int width) {
+    static std::vector<std::string> render(const DialogState& state, int width,
+                                           const std::string& inputBuf = "") {
         std::vector<std::string> lines;
         if (width < 40)
             width = 40;
@@ -400,10 +402,17 @@ class DialogRenderer {
                                     std::string(std::max(0, inner - (int)visLen(line)), ' ') +
                                     " │" + ansi::reset());
             }
-            for (auto line : renderCardOptions(*card, inner))
+            for (auto line : renderCardOptions(*card, inner, state.selectedOption))
                 lines.push_back(ansi::dim() + "│ " + line +
                                 std::string(std::max(0, inner - (int)visLen(line)), ' ') + " │" +
                                 ansi::reset());
+            // ── Inline input field inside the card box ──
+            if (card->type != "note" && card->type != "info" && card->type != "section_header") {
+                std::string inputLine = renderInputField(*card, inputBuf, inner);
+                lines.push_back(ansi::fg(120, 210, 255) + "│ " + inputLine +
+                                std::string(std::max(0, inner - (int)visLen(inputLine)), ' ') +
+                                " │" + ansi::reset());
+            }
             if (!state.error.empty()) {
                 for (auto line : wrapAnsiAware(state.error, inner))
                     lines.push_back(ansi::fg(255, 90, 90) + "│ " + line +
@@ -489,25 +498,34 @@ class DialogRenderer {
         return lines;
     }
 
-    static std::vector<std::string> renderCardOptions(const DialogCard& card, int inner) {
+    static std::vector<std::string> renderCardOptions(const DialogCard& card, int inner,
+                                                      int selectedOption) {
         std::vector<std::string> lines;
         if (card.type == "choice" || card.type == "multi_choice" || card.type == "ranker") {
             for (size_t i = 0; i < card.options.size(); i++) {
                 const auto& opt = card.options[i];
+                bool selected = ((int)i == selectedOption);
+                std::string marker = selected ? "► " : "  ";
                 std::string prefix = std::to_string(i + 1) + ") ";
                 std::string label = opt.label + (opt.disabled ? " (disabled)" : "");
                 if (!opt.description.empty())
                     label += " — " + opt.description;
-                auto wrapped = wrapAnsiAware(prefix + label, inner - 2);
+                std::string line = marker + prefix + label;
+                if (selected)
+                    line =
+                        ansi::fg(255, 210, 80) + ansi::bold() + line + ansi::reset() + ansi::dim();
+                auto wrapped = wrapAnsiAware(line, inner - 2);
                 for (size_t j = 0; j < wrapped.size(); j++)
                     lines.push_back("  " + wrapped[j]);
             }
             if (card.type == "multi_choice")
-                lines.push_back("Enter numbers/names separated by commas.");
+                lines.push_back("j/k navigate, Enter selects. Or type numbers/names.");
             else if (card.type == "ranker")
-                lines.push_back("Enter option numbers in ranked order.");
+                lines.push_back("j/k navigate, Enter confirms. Or type numbers in order.");
+            else
+                lines.push_back("j/k navigate, Enter selects. Or type a number.");
         } else if (card.type == "confirm") {
-            lines.push_back("Type y/yes or n/no.");
+            lines.push_back("Press y for yes, n for no.");
         } else if (card.type == "type_confirm") {
             lines.push_back("Type exactly: " + card.confirmWord);
         } else if (card.type == "number") {
@@ -529,6 +547,24 @@ class DialogRenderer {
             lines.push_back("Enter a value.");
         }
         return lines;
+    }
+
+    static std::string renderInputField(const DialogCard& card, const std::string& buf, int inner) {
+        if (card.type == "confirm") {
+            return "[y] yes   [n] no   [Esc] cancel";
+        }
+        if (card.type == "choice" || card.type == "multi_choice" || card.type == "ranker") {
+            return "❯ " + buf + (buf.empty() ? "_" : "");
+        }
+        if (card.type == "note" || card.type == "info" || card.type == "section_header") {
+            return "Press Enter to continue";
+        }
+        // text, textarea, secret, number, type_confirm, key_value
+        std::string display = buf;
+        if (card.type == "secret") {
+            display = std::string(buf.size(), '*');
+        }
+        return "❯ " + display + "_";
     }
 };
 
