@@ -146,14 +146,11 @@ class DiagramTui:
         self.theme = "neon"
         self.legend = True
         self.ports = False
-        self.sidebar_visible = True
+        self.sidebar_visible = False
         self.mode = "canvas" if path or example else "dashboard"
         self.started_at = time.monotonic()
-        self.message = (
-            "space center · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit"
-            if self.mode == "canvas"
-            else "dashboard: j/k select · enter open · q quit"
-        )
+        self.message = ""
+        self.message_until = 0.0
         self._load_state_if_relevant(path, example)
         self._sync_example_index()
 
@@ -187,9 +184,9 @@ class DiagramTui:
             self.legend = bool(raw.get("legend", self.legend))
             self.ports = bool(raw.get("ports", self.ports))
             self.sidebar_visible = bool(raw.get("sidebar_visible", self.sidebar_visible))
-            self.message = f"loaded state from {self.state_path}"
+            self.set_message(f"loaded state from {self.state_path}", ttl=1.2)
         except Exception as e:
-            self.message = f"state load skipped: {e}"
+            self.set_message(f"state load skipped: {e}", ttl=1.5)
 
     def run(self) -> None:
         with RawMode():
@@ -253,8 +250,8 @@ class DiagramTui:
         rows = header
         for a, b in zip(left, right):
             rows.append(a + " " + b)
-        rows.append(style(plain_fit(f" {self.spinner()} {self.message}", width), self.color, INV))
-        rows.append(plain_fit(f" {self.example_dial(24)}  press ? for keys", width))
+        rows.append(style(plain_fit(f" {self.spinner()} {self.status_text()}", width), self.color, INV))
+        rows.append(style(plain_fit(f" {self.example_dial(24)}  press ? for keys", width), self.color, DIM))
         return "\n".join(rows[:height]) + "\n"
 
     def canvas_frame(self, width: int, height: int) -> str:
@@ -284,8 +281,8 @@ class DiagramTui:
                 rows.append(a + " " + b)
         else:
             rows.extend(right)
-        rows.append(style(plain_fit(f" {self.spinner()} {self.message}", width), self.color, INV))
-        rows.append(plain_fit(" space center · b sidebar · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width))
+        rows.append(style(plain_fit(f" {self.spinner()} {self.status_text()}", width), self.color, INV))
+        rows.append(style(plain_fit(" space center · b rail · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width), self.color, DIM))
         return "\n".join(rows[:height]) + "\n"
 
     def layout_dims(self, width: int, height: int, *, allow_hide: bool = False) -> tuple[int, int, int]:
@@ -294,7 +291,7 @@ class DiagramTui:
         header_h = 2
         footer_h = 2
         body_h = max(8, height - header_h - footer_h)
-        side_w = min(34, max(28, width // 4)) if (self.sidebar_visible or not allow_hide) else 0
+        side_w = min(24, max(20, width // 5)) if (self.sidebar_visible or not allow_hide) else 0
         main_w = max(20, width - side_w - (1 if side_w else 0))
         return body_h, side_w, main_w
 
@@ -334,30 +331,39 @@ class DiagramTui:
         return "".join(chars) + f" {self.example_index + 1}/{total}"
 
     def sidebar_lines(self, width: int, height: int) -> list[str]:
+        # Optional info rail, not a second menu. Keep it quiet.
         lines = [
-            style("current", self.color, BOLD, MAGENTA),
+            style("info", self.color, BOLD, MAGENTA),
             self.doc.get("id", self.path.stem),
-            f"nodes {len(self.doc.get('nodes', []))}  edges {len(self.doc.get('edges', []))}",
-            f"zoom {self.view.zoom:.2f} {self.zoom_dial(max(8, width - 10))}",
-            f"ports {'on' if self.ports else 'off'}  legend {'on' if self.legend else 'off'}",
-            "sidebar b hide",
             "",
-            style("examples", self.color, BOLD, MAGENTA),
-        ]
-        for i, path in enumerate(self.examples[: max(0, height - 13)]):
-            label = path.name.removesuffix(".diagram.json")
-            row = ("▸ " if path == self.path else "  ") + label
-            lines.append(style(row, self.color, INV) if path == self.path else row)
-        lines += [
+            f"nodes  {len(self.doc.get('nodes', []))}",
+            f"edges  {len(self.doc.get('edges', []))}",
             "",
-            style("keys", self.color, BOLD, MAGENTA),
-            "space center animate",
-            "enter dashboard/open",
-            "n/p next/prev",
-            "t/c/g/o toggles",
-            "s save state",
+            style("zoom", self.color, BOLD, MAGENTA),
+            f"{self.view.zoom:.2f}",
+            self.zoom_dial(max(8, width)),
+            "",
+            style("flags", self.color, BOLD, MAGENTA),
+            f"ports   {'on' if self.ports else 'off'}",
+            f"legend  {'on' if self.legend else 'off'}",
+            "",
+            style("b hides rail", self.color, DIM),
         ]
-        return [fit_ansi(line, width) for line in lines]
+        return [fit_ansi(line, width) for line in lines[:height]]
+
+    def set_message(self, text: str, *, ttl: float = 1.2) -> None:
+        self.message = text
+        self.message_until = time.monotonic() + ttl
+
+    def status_text(self) -> str:
+        now = time.monotonic()
+        if self.message and now < self.message_until:
+            return self.message
+        self.message = ""
+        if self.mode == "dashboard":
+            return "j/k select · enter open · t theme · c color · q quit"
+        rail = "hide rail" if self.sidebar_visible else "show rail"
+        return f"space center · b {rail} · f fit · +/- zoom · esc dashboard"
 
     def tick(self, speed: float = 8.0) -> int:
         return int((time.monotonic() - self.started_at) * speed)
@@ -428,7 +434,7 @@ class DiagramTui:
         elif key == "c":
             self.color = not self.color
         elif key == "?":
-            self.message = "dashboard keys: j/k select · enter/space open · t theme · c color · q quit"
+            self.set_message("dashboard keys: j/k select · enter/space open · t theme · c color · q quit", ttl=3.0)
         return True
 
     def handle_canvas_key(self, key: str) -> bool:
@@ -436,7 +442,7 @@ class DiagramTui:
         if key in {"escape", "tab"}:
             self.mode = "dashboard"
             self._sync_example_index()
-            self.message = "dashboard"
+            self.set_message("dashboard", ttl=0.8)
         elif key in {"h", "left"}:
             self.view.x -= pan
         elif key in {"l", "right"}:
@@ -465,24 +471,24 @@ class DiagramTui:
             self.ports = not self.ports
         elif key == "b":
             self.sidebar_visible = not self.sidebar_visible
-            self.message = "left column shown" if self.sidebar_visible else "left column hidden"
+            self.set_message("info rail shown" if self.sidebar_visible else "info rail hidden", ttl=1.0)
         elif key == "n":
             self.open_example(1)
         elif key == "p":
             self.open_example(-1)
         elif key == "r":
             self.doc = load_doc(self.path)
-            self.message = f"reloaded {self.path.name}"
+            self.set_message(f"reloaded {self.path.name}", ttl=1.2)
         elif key == "s":
             self.save_state()
         elif key == "?":
-            self.message = "keys: space smooth-center · b sidebar · esc dashboard · arrows/hjkl pan · +/- zoom · f fit · t/c/g/o toggles · r reload · s save"
+            self.set_message("keys: space smooth-center · b rail · esc dashboard · arrows/hjkl pan · +/- zoom · f fit · t/c/g/o toggles · r reload · s save", ttl=3.0)
         return True
 
     def cycle_theme(self) -> None:
         i = (THEME_ORDER.index(self.theme) + 1) % len(THEME_ORDER)
         self.theme = THEME_ORDER[i]
-        self.message = f"theme: {self.theme}"
+        self.set_message(f"theme: {self.theme}", ttl=1.0)
 
     def canvas_dimensions(self) -> tuple[int, int]:
         size = shutil.get_terminal_size((120, 36))
@@ -506,7 +512,7 @@ class DiagramTui:
 
     def fit(self) -> None:
         self.view = self.center_target()
-        self.message = "fit viewport to diagram bounds"
+        self.set_message("fit viewport to diagram bounds", ttl=1.0)
 
     def animate_center(self) -> None:
         start = self.view
@@ -520,25 +526,25 @@ class DiagramTui:
                 start.y + (target.y - start.y) * eased,
                 start.zoom + (target.zoom - start.zoom) * eased,
             )
-            self.message = "centering…"
+            self.set_message("centering…", ttl=0.4)
             self.draw()
             time.sleep(0.018)
         self.view = target
-        self.message = "centered on diagram"
+        self.set_message("centered on diagram", ttl=1.0)
 
     def open_selected_example(self) -> None:
         if not self.examples:
-            self.message = "no examples found"
+            self.set_message("no examples found", ttl=1.5)
             return
         self.path = self.examples[self.example_index]
         self.doc = load_doc(self.path)
         self.view = self.center_target()
         self.mode = "canvas"
-        self.message = f"opened {self.path.name}"
+        self.set_message(f"opened {self.path.name}", ttl=1.0)
 
     def open_example(self, delta: int) -> None:
         if not self.examples:
-            self.message = "no examples found"
+            self.set_message("no examples found", ttl=1.5)
             return
         self._sync_example_index()
         self.example_index = (self.example_index + delta) % len(self.examples)
@@ -558,7 +564,7 @@ class DiagramTui:
         }
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.state_path.write_text(json.dumps(payload, indent=2))
-        self.message = f"saved state to {self.state_path}"
+        self.set_message(f"saved state to {self.state_path}", ttl=1.5)
 
 
 def main(argv: list[str]) -> int:
