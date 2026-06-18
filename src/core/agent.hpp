@@ -7,6 +7,7 @@
 #include <json/json.h>
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -112,6 +113,10 @@ class Agent {
         return std::vector<std::string>(relics_.begin(), relics_.end());
     }
 
+    void setAskToolHandler(std::function<Json::Value(const Json::Value& params)> handler) {
+        askToolHandler_ = std::move(handler);
+    }
+
     // ---- Context management (pin / peek / unpin) ----
     // A pinned file lives in the system prompt indefinitely until unpin.
     // A peek file lives in the system prompt for `cycles` iterations, then evicts.
@@ -183,6 +188,7 @@ class Agent {
     std::string buildDynamicContextPrompt() const;
     // Tool dispatch
     Json::Value dispatchTool(const protocol::ParsedAction& action);
+    Json::Value dispatchAskTool(const Json::Value& params);
     Json::Value executeScriptTool(const ToolDef& tool, const Json::Value& params);
     void dumpSessionArtifacts() const;
 
@@ -235,6 +241,7 @@ class Agent {
         actionResults_;  // persistent results table for ${id.field} expansion
     std::map<std::string, std::string> env_;
     sandbox::SandboxPolicy sandboxPolicy_;
+    std::function<Json::Value(const Json::Value& params)> askToolHandler_;
 
     // ── Cached harness text (loaded once in constructor) ──
     mutable std::string harnessText_;

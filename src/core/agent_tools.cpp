@@ -4,6 +4,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 #include "../feeds/feed_engine.hpp"
 #include "../tools/dispatch.hpp"
@@ -13,6 +14,41 @@
 #include "manifest_loader.hpp"
 
 namespace cortex::mk3 {
+
+Json::Value Agent::dispatchAskTool(const Json::Value& params) {
+    if (askToolHandler_) {
+        Json::Value result = askToolHandler_(params);
+        if (!result.isObject()) {
+            Json::Value wrapped;
+            wrapped["success"] = true;
+            wrapped["results"] = result;
+            return wrapped;
+        }
+        if (!result.isMember("success"))
+            result["success"] = true;
+        return result;
+    }
+
+    auto fn = tools::ToolRegistry::instance().get("ask_tool");
+    if (fn) {
+        std::string raw = fn(params);
+        Json::Value parsed;
+        Json::CharReaderBuilder reader;
+        std::string errs;
+        std::istringstream ss(raw);
+        if (Json::parseFromStream(reader, ss, &parsed, &errs))
+            return parsed;
+    }
+
+    Json::Value out;
+    out["success"] = false;
+    out["error"] = "ask_tool requires an interactive ask handler";
+    return out;
+}
+
+static bool parsedActionIsAskTool(const protocol::ParsedAction& action) {
+    return action.type == protocol::ActionType::TOOL && action.name == "ask_tool";
+}
 
 static bool isConfigStagingDir(const std::string& dir) {
     std::error_code ec;
@@ -36,6 +72,13 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
         if (!textParam.empty() && !normalized.params.isMember(textParam)) {
             normalized.params[textParam] = action.content;
         }
+    }
+
+    // ── Ask tool: interactive dialog bridge. This must run before sandbox/tool
+    //    availability checks so the TUI can own terminal input instead of the
+    //    agent thread blocking on stdin.
+    if (parsedActionIsAskTool(normalized)) {
+        return dispatchAskTool(normalized.params);
     }
 
     // ── Sandbox validation (BT04, SB07) — runs FIRST so meta-tools and

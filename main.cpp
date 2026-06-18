@@ -12,6 +12,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <condition_variable>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -30,6 +31,7 @@
 #include "src/providers/factory.hpp"
 #include "src/sandbox/policy.hpp"
 #include "src/session/manager.hpp"
+#include "src/tui/dialog.hpp"
 #include "src/tui/input.hpp"
 #include "src/tui/renderer.hpp"
 #include "src/tui/slash_commands.hpp"
