@@ -20,8 +20,10 @@ import json
 import re
 import select
 import shutil
+import subprocess
 import sys
 import termios
+import threading
 import time
 import tty
 from dataclasses import dataclass
@@ -31,6 +33,7 @@ from typing import Any
 from diagram_junky.rendering import EXAMPLES_DIR, THEMES, Renderer, diagram_bounds, load_doc
 
 ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT.parents[1]
 DEFAULT_STATE = Path.home() / ".cache" / "diagram-junky" / "tui-state.json"
 THEME_ORDER = ["default", "mono", "neon"]
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
@@ -137,9 +140,25 @@ class RawMode:
 
 
 class DiagramTui:
-    def __init__(self, path: Path | None, example: str | None, state_path: Path, color: bool):
+    def __init__(
+        self,
+        path: Path | None,
+        example: str | None,
+        state_path: Path,
+        color: bool,
+        provider: str = "deepseek",
+        model: str = "deepseek-v4-pro",
+        model_timeout: int = 120,
+    ):
         self.state_path = state_path
         self.color = color
+        self.provider = provider
+        self.model = model
+        self.model_timeout = model_timeout
+        self.pet_state = "idle"
+        self.pet_note = "idle"
+        self.model_output = ""
+        self.model_thread: threading.Thread | None = None
         self.examples = sorted(EXAMPLES_DIR.glob("*.diagram.json"))
         self.example_index = 0
         self.path = self._resolve_path(path, example)
@@ -255,7 +274,8 @@ class DiagramTui:
         for a, b in zip(left, right):
             rows.append(a + " " + b)
         rows.append(style(plain_fit(f" {self.pressure_line(selected_doc, 30)}  {self.status_text()}", width), self.color, DIM))
-        rows.append(style(plain_fit(f" {self.example_dial(24)}  j/k select · enter open · t theme · c color · q quit", width), self.color, DIM))
+        rows.append(style(plain_fit(f" {self.example_dial(24)}  a ask · j/k select · enter open · t theme · c color · q quit", width), self.color, DIM))
+        rows = self.overlay_pet(rows[:height], width)
         return "\n".join(rows[:height]) + "\n"
 
     def canvas_frame(self, width: int, height: int) -> str:
@@ -288,7 +308,8 @@ class DiagramTui:
         else:
             rows.extend(right)
         rows.append(style(plain_fit(f" {self.pressure_line(self.doc, 30)}  {self.status_text()}", width), self.color, DIM))
-        rows.append(style(plain_fit(" space center · x crosshair · b rail · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width), self.color, DIM))
+        rows.append(style(plain_fit(" a ask · space center · x crosshair · b rail · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width), self.color, DIM))
+        rows = self.overlay_pet(rows[:height], width)
         return "\n".join(rows[:height]) + "\n"
 
     def layout_dims(self, width: int, height: int, *, allow_hide: bool = False) -> tuple[int, int, int]:
@@ -407,6 +428,84 @@ class DiagramTui:
         out[cy] = self.replace_visible_char(out[cy], cx, mark)
         return out
 
+    def pet_lines(self) -> list[str]:
+        if self.pet_state == "thinking":
+            eyes = ["o.o", "O.o", "o.O", "O.O"][self.tick(7.0) % 4]
+            return [" /\\ ", f"({eyes})", " /|\\", " / \\", " ask "]
+        if self.pet_state == "error":
+            return [" /\\ ", "(x.x)", " /|\\", " / \\", " err "]
+        if self.pet_state == "done":
+            return [" /\\ ", "(^.^)", " /|\\", " / \\", " ok  "]
+        return [" /\\ ", "(·.·)", " /|\\", " / \\", " ai  "]
+
+    def overlay_pet(self, rows: list[str], width: int) -> list[str]:
+        if width < 48 or len(rows) < 8:
+            return rows
+        pet = self.pet_lines()
+        start = max(2, len(rows) - 7)
+        col = max(0, width - 7)
+        out = list(rows)
+        for i, line in enumerate(pet):
+            y = start + i
+            if y >= len(out):
+                break
+            out[y] = fit_ansi(out[y], col) + style(line, self.color, DIM)
+        return out
+
+    def model_prompt(self, doc: dict[str, Any]) -> str:
+        nodes = [n.get("id", "?") for n in doc.get("nodes", [])]
+        edges = [f"{e.get('source', {}).get('node', '?')}->{e.get('target', {}).get('node', '?')}" for e in doc.get("edges", [])]
+        return (
+            "You are the diagram-junky embedded harness pet. Be concise. "
+            "Read this diagram summary and give one useful insight plus one next action.\n"
+            f"id: {doc.get('id')}\n"
+            f"title: {doc.get('title')}\n"
+            f"kind: {doc.get('kind')}\n"
+            f"nodes: {', '.join(nodes)}\n"
+            f"edges: {', '.join(edges)}\n"
+            f"pressure: {self.pressure_score(doc)[0]}\n"
+        )
+
+    def ask_model(self, doc: dict[str, Any]) -> None:
+        if self.model_thread and self.model_thread.is_alive():
+            self.set_message("model already thinking", ttl=1.0)
+            return
+        self.pet_state = "thinking"
+        self.pet_note = f"{self.provider}/{self.model}"
+        self.set_message(f"asking {self.model}", ttl=1.2)
+
+        def run() -> None:
+            try:
+                exe = PROJECT_ROOT / "cortex-mk3"
+                if not exe.exists():
+                    raise FileNotFoundError(str(exe))
+                manifest = ROOT / "manifests" / "agents" / "diagram-junky" / "agent.yml"
+                cmd = [
+                    str(exe),
+                    "--provider",
+                    self.provider,
+                    "--model",
+                    self.model,
+                    "--raw",
+                    "--manifest",
+                    str(manifest),
+                    "run",
+                    "-p",
+                    self.model_prompt(doc),
+                ]
+                proc = subprocess.run(cmd, cwd=PROJECT_ROOT, text=True, capture_output=True, timeout=self.model_timeout)
+                if proc.returncode != 0:
+                    raise RuntimeError((proc.stderr or proc.stdout).strip()[:240])
+                self.model_output = strip_ansi(proc.stdout).strip()[-500:]
+                self.pet_state = "done"
+                self.set_message(self.model_output.splitlines()[-1][:160] if self.model_output else "model done", ttl=4.0)
+            except Exception as e:
+                self.pet_state = "error"
+                self.set_message(f"model error: {e}", ttl=4.0)
+
+        self.model_thread = threading.Thread(target=run, daemon=True)
+        self.model_thread.start()
+
     def set_message(self, text: str, *, ttl: float = 1.2) -> None:
         self.message = text
         self.message_until = time.monotonic() + ttl
@@ -503,6 +602,9 @@ class DiagramTui:
             self.example_index = (self.example_index - 1) % max(1, len(self.examples))
         elif key in {"enter", " "}:
             self.open_selected_example()
+        elif key == "a":
+            selected = self.examples[self.example_index] if self.examples else self.path
+            self.ask_model(load_doc(selected))
         elif key == "t":
             self.cycle_theme()
         elif key == "c":
@@ -558,8 +660,10 @@ class DiagramTui:
             self.set_message(f"reloaded {self.path.name}", ttl=1.2)
         elif key == "s":
             self.save_state()
+        elif key == "a":
+            self.ask_model(self.doc)
         elif key == "?":
-            self.set_message("keys: space smooth-center · x crosshair · b rail · esc dashboard · arrows/hjkl pan · +/- zoom · f fit · t/c/g/o toggles · r reload · s save", ttl=3.0)
+            self.set_message("keys: a ask model · space center · x crosshair · b rail · esc dashboard · arrows/hjkl pan · +/- zoom · f fit · t/c/g/o toggles · r reload · s save", ttl=3.0)
         return True
 
     def cycle_theme(self) -> None:
@@ -650,11 +754,22 @@ def main(argv: list[str]) -> int:
     ap.add_argument("diagram", type=Path, nargs="?", help="Path to *.diagram.json")
     ap.add_argument("--example", help="Bundled example name")
     ap.add_argument("--state", type=Path, default=DEFAULT_STATE, help="Viewport/session state file")
+    ap.add_argument("--provider", default="deepseek", help="Model provider for the embedded pet harness")
+    ap.add_argument("--model", default="deepseek-v4-pro", help="Model for the embedded pet harness")
+    ap.add_argument("--model-timeout", type=int, default=120, help="Seconds before model ask times out")
     ap.add_argument("--no-color", action="store_true", help="Disable ANSI colors in rendered canvas")
     ap.add_argument("--smoke-render", action="store_true", help="Render one frame and exit for tests/CI")
     args = ap.parse_args(argv)
 
-    app = DiagramTui(args.diagram, args.example, args.state, color=not args.no_color)
+    app = DiagramTui(
+        args.diagram,
+        args.example,
+        args.state,
+        color=not args.no_color,
+        provider=args.provider,
+        model=args.model,
+        model_timeout=args.model_timeout,
+    )
     if args.smoke_render:
         size = shutil.get_terminal_size((100, 28))
         sys.stdout.write(app.frame(size.columns, size.lines))

@@ -69,6 +69,7 @@ UX shape:
 - canvas info rail is hidden by default and toggleable with `b`
 - dashboard has a document list on the left and preview/metadata on the right
 - canvas mode has a diagram canvas with a toggleable center crosshair overlay (`x`)
+- bottom-right 5x5 tamagotchi-style harness pet is wired to a model via `cortex-mk3` (`a` asks)
 - idle redraw loop drives subtle status spinner/pulse accents
 - action messages are transient; the footer falls back to dimmed default hints
 - horizontal dials show useful state: example position and zoom level
@@ -83,6 +84,7 @@ Keys:
 - `+/-`: zoom
 - `0`: reset viewport
 - `f`: fit diagram bounds immediately
+- `a`: ask the embedded model-backed harness pet about the current/selected diagram
 - `x`: toggle center crosshair
 - `b`: toggle canvas info rail
 - `esc`: back to dashboard
