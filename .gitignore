@@ -31,6 +31,7 @@ session-test
 sandbox-context-test
 policy-test
 ask-tool-test
+workflow-engine-test
 iterations.md
 raw.md
 .pi/

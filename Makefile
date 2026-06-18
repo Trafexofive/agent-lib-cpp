@@ -191,6 +191,16 @@ test-protocol: $(PROTOCOL_TEST_BIN)
 test-protocol-list: $(PROTOCOL_TEST_BIN)
 	./$(PROTOCOL_TEST_BIN) --list
 
+# ── Workflow engine tests ──
+WORKFLOW_ENGINE_TEST_SRC := src/testing/workflow_engine_test.cpp
+WORKFLOW_ENGINE_TEST_BIN := workflow-engine-test
+
+$(WORKFLOW_ENGINE_TEST_BIN): $(WORKFLOW_ENGINE_TEST_SRC)
+	$(CXX) $(CXXFLAGS) $(WORKFLOW_ENGINE_TEST_SRC) -o $@ $(LDFLAGS)
+
+test-workflows: $(WORKFLOW_ENGINE_TEST_BIN)
+	./$(WORKFLOW_ENGINE_TEST_BIN)
+
 # Feed manifest tests
 FEED_MANIFEST_TEST_SRC = src/testing/feed_manifest_runner.cpp
 FEED_MANIFEST_TEST_BIN = feed-manifest-test
@@ -317,7 +327,7 @@ dev: clean all
 	@$(MAKE) -s test-protocol 2>/dev/null | tail -3
 	@echo "✓ dev build complete"
 
-all-tests: test-yaml test-manifest-classifier test-autoload test-context test-session test-parser test-protocol test-feeds test-policy
+all-tests: test-yaml test-manifest-classifier test-autoload test-context test-session test-parser test-protocol test-workflows test-feeds test-policy
 	@echo "✓ all tests passed"
 
 # ── Multi-turn compliance + latency benchmark ──
