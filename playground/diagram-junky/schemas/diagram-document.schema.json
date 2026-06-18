@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cortex-prime.local/schemas/diagram-document.v0.json",
+  "title": "Diagram Document v0",
+  "description": "Canvas-neutral diagram document for nodes, ports, edges, groups, annotations, and renderer hints.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "kind", "nodes", "edges"],
+  "properties": {
+    "schema_version": {
+      "const": "diagram.document.v0"
+    },
+    "id": {
+      "$ref": "#/$defs/id"
+    },
+    "title": {
+      "type": "string",
+      "default": "Untitled diagram"
+    },
+    "description": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "description": "Loose diagram category. Renderers should not branch hard on this alone.",
+      "enum": ["freeform", "flow", "graph", "state", "sequence", "architecture", "unknown"]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {"type": ["string", "number", "boolean", "null"]},
+      "properties": {
+        "created_at": {"type": "string"},
+        "updated_at": {"type": "string"},
+        "created_by": {"type": "string"},
+        "tags": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        }
+      }
+    },
+    "canvas": {
+      "$ref": "#/$defs/canvas"
+    },
+    "layers": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/layer"},
+      "default": []
+    },
+    "groups": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/group"},
+      "default": []
+    },
+    "nodes": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/node"},
+      "default": []
+    },
+    "edges": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/edge"},
+      "default": []
+    },
+    "annotations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/annotation"},
+      "default": []
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": {"type": "number"},
+        "y": {"type": "number"}
+      }
+    },
+    "size": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["w", "h"],
+      "properties": {
+        "w": {"type": "number", "exclusiveMinimum": 0},
+        "h": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "w", "h"],
+      "properties": {
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "w": {"type": "number", "exclusiveMinimum": 0},
+        "h": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "style": {
+      "type": "object",
+      "description": "Renderer hints. Unknown keys are allowed so renderers can evolve independently.",
+      "additionalProperties": {"type": ["string", "number", "boolean", "null"]},
+      "properties": {
+        "fill": {"type": "string"},
+        "stroke": {"type": "string"},
+        "stroke_width": {"type": "number", "minimum": 0},
+        "text_color": {"type": "string"},
+        "line": {"enum": ["solid", "dashed", "dotted"]},
+        "arrow_start": {"type": "boolean"},
+        "arrow_end": {"type": "boolean"},
+        "z": {"type": "number"}
+      }
+    },
+    "canvas": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "units": {"type": "string", "default": "logical"},
+        "grid": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean", "default": true},
+            "size": {"type": "number", "exclusiveMinimum": 0, "default": 1},
+            "snap": {"type": "boolean", "default": false}
+          }
+        },
+        "viewport": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "x": {"type": "number", "default": 0},
+            "y": {"type": "number", "default": 0},
+            "zoom": {"type": "number", "exclusiveMinimum": 0, "default": 1}
+          }
+        },
+        "bounds": {"$ref": "#/$defs/rect"},
+        "theme": {"type": "string", "default": "default"}
+      }
+    },
+    "layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "label": {"type": "string"},
+        "visible": {"type": "boolean", "default": true},
+        "locked": {"type": "boolean", "default": false},
+        "order": {"type": "integer", "default": 0}
+      }
+    },
+    "port": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "label": {"type": "string"},
+        "side": {"enum": ["top", "right", "bottom", "left", "auto"]},
+        "direction": {"enum": ["in", "out", "bidir", "none"], "default": "none"},
+        "data_type": {"type": "string"},
+        "position": {"$ref": "#/$defs/point"},
+        "data": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "position"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {
+          "type": "string",
+          "description": "Semantic node type, e.g. process, decision, tool, agent, file, note."
+        },
+        "label": {"type": "string"},
+        "body": {"type": "string"},
+        "position": {"$ref": "#/$defs/point"},
+        "size": {"$ref": "#/$defs/size"},
+        "ports": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/port"},
+          "default": []
+        },
+        "layer": {"$ref": "#/$defs/id"},
+        "group": {"$ref": "#/$defs/id"},
+        "style": {"$ref": "#/$defs/style"},
+        "data": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node"],
+      "properties": {
+        "node": {"$ref": "#/$defs/id"},
+        "port": {"$ref": "#/$defs/id"}
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "source", "target"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {
+          "type": "string",
+          "description": "Semantic edge type, e.g. flow, dependency, contains, calls, result."
+        },
+        "label": {"type": "string"},
+        "source": {"$ref": "#/$defs/endpoint"},
+        "target": {"$ref": "#/$defs/endpoint"},
+        "points": {
+          "type": "array",
+          "description": "Optional bend/control points in logical canvas units.",
+          "items": {"$ref": "#/$defs/point"},
+          "default": []
+        },
+        "style": {"$ref": "#/$defs/style"},
+        "data": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "members"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "label": {"type": "string"},
+        "members": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/id"},
+          "uniqueItems": true
+        },
+        "collapsed": {"type": "boolean", "default": false},
+        "bounds": {"$ref": "#/$defs/rect"},
+        "style": {"$ref": "#/$defs/style"},
+        "data": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "position", "body"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"enum": ["note", "label", "warning", "todo"]},
+        "position": {"$ref": "#/$defs/point"},
+        "size": {"$ref": "#/$defs/size"},
+        "body": {"type": "string"},
+        "style": {"$ref": "#/$defs/style"},
+        "data": {"type": "object", "additionalProperties": true}
+      }
+    }
+  }
+}

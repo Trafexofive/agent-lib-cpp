@@ -1,0 +1,162 @@
+{
+  "schema_version": "diagram.document.v0",
+  "id": "mk3-runtime-loop",
+  "title": "MK3 runtime loop sketch",
+  "description": "Diagram schema stress sample: nodes with ports, semantic edge types, group metadata, and annotations.",
+  "kind": "architecture",
+  "metadata": {
+    "created_by": "diagram-junky",
+    "tags": ["mk3", "harness", "runtime"]
+  },
+  "canvas": {
+    "units": "logical",
+    "grid": {"enabled": true, "size": 1, "snap": true},
+    "viewport": {"x": 0, "y": 0, "zoom": 1},
+    "theme": "terminal-dark"
+  },
+  "layers": [
+    {"id": "runtime", "label": "Runtime", "order": 0},
+    {"id": "model", "label": "Model", "order": 1}
+  ],
+  "nodes": [
+    {
+      "id": "user",
+      "type": "actor",
+      "label": "User",
+      "position": {"x": 2, "y": 8},
+      "size": {"w": 12, "h": 4},
+      "ports": [{"id": "prompt", "side": "right", "direction": "out", "data_type": "text"}],
+      "layer": "runtime"
+    },
+    {
+      "id": "prompt_builder",
+      "type": "process",
+      "label": "Prompt builder",
+      "body": "harness + persona + tools + context",
+      "position": {"x": 22, "y": 6},
+      "size": {"w": 22, "h": 6},
+      "ports": [
+        {"id": "in", "side": "left", "direction": "in"},
+        {"id": "messages", "side": "right", "direction": "out", "data_type": "ChatMessages"}
+      ],
+      "layer": "runtime"
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "LLM provider",
+      "position": {"x": 56, "y": 6},
+      "size": {"w": 20, "h": 6},
+      "ports": [
+        {"id": "messages", "side": "left", "direction": "in", "data_type": "ChatMessages"},
+        {"id": "stream", "side": "right", "direction": "out", "data_type": "tokens"}
+      ],
+      "layer": "model"
+    },
+    {
+      "id": "parser",
+      "type": "process",
+      "label": "Protocol parser",
+      "body": "response/action/thought/result state machine",
+      "position": {"x": 88, "y": 6},
+      "size": {"w": 26, "h": 6},
+      "ports": [
+        {"id": "stream", "side": "left", "direction": "in", "data_type": "tokens"},
+        {"id": "action", "side": "bottom", "direction": "out", "data_type": "ParsedAction"},
+        {"id": "response", "side": "right", "direction": "out", "data_type": "text"}
+      ],
+      "layer": "runtime"
+    },
+    {
+      "id": "dispatcher",
+      "type": "process",
+      "label": "Dispatcher",
+      "position": {"x": 88, "y": 22},
+      "size": {"w": 26, "h": 5},
+      "ports": [
+        {"id": "action", "side": "top", "direction": "in", "data_type": "ParsedAction"},
+        {"id": "result", "side": "left", "direction": "out", "data_type": "result-json"}
+      ],
+      "layer": "runtime"
+    },
+    {
+      "id": "tool_surface",
+      "type": "collection",
+      "label": "Tools / agents / relics / feeds",
+      "position": {"x": 54, "y": 22},
+      "size": {"w": 26, "h": 5},
+      "ports": [
+        {"id": "call", "side": "right", "direction": "in"},
+        {"id": "result", "side": "left", "direction": "out"}
+      ],
+      "layer": "runtime"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-user-prompt",
+      "type": "input",
+      "source": {"node": "user", "port": "prompt"},
+      "target": {"node": "prompt_builder", "port": "in"},
+      "label": "request",
+      "style": {"arrow_end": true}
+    },
+    {
+      "id": "e-prompt-llm",
+      "type": "messages",
+      "source": {"node": "prompt_builder", "port": "messages"},
+      "target": {"node": "llm", "port": "messages"},
+      "style": {"arrow_end": true}
+    },
+    {
+      "id": "e-llm-parser",
+      "type": "stream",
+      "source": {"node": "llm", "port": "stream"},
+      "target": {"node": "parser", "port": "stream"},
+      "style": {"arrow_end": true}
+    },
+    {
+      "id": "e-parser-dispatcher",
+      "type": "action",
+      "source": {"node": "parser", "port": "action"},
+      "target": {"node": "dispatcher", "port": "action"},
+      "points": [{"x": 101, "y": 16}],
+      "style": {"arrow_end": true}
+    },
+    {
+      "id": "e-dispatch-tool",
+      "type": "call",
+      "source": {"node": "dispatcher", "port": "result"},
+      "target": {"node": "tool_surface", "port": "call"},
+      "label": "execute",
+      "style": {"arrow_end": true}
+    },
+    {
+      "id": "e-result-loop",
+      "type": "result",
+      "source": {"node": "tool_surface", "port": "result"},
+      "target": {"node": "prompt_builder", "port": "in"},
+      "points": [{"x": 38, "y": 30}, {"x": 38, "y": 16}],
+      "style": {"arrow_end": true, "line": "dashed"}
+    }
+  ],
+  "groups": [
+    {
+      "id": "runtime_loop",
+      "label": "runtime loop",
+      "members": ["prompt_builder", "parser", "dispatcher", "tool_surface"],
+      "collapsed": false,
+      "bounds": {"x": 18, "y": 4, "w": 100, "h": 28},
+      "style": {"stroke": "blue", "line": "dotted"}
+    }
+  ],
+  "annotations": [
+    {
+      "id": "note-schema-first",
+      "type": "note",
+      "position": {"x": 2, "y": 34},
+      "size": {"w": 58, "h": 4},
+      "body": "Renderer should treat this as data, not layout gospel. Coordinates are logical units."
+    }
+  ]
+}

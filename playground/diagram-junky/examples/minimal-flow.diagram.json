@@ -1,0 +1,61 @@
+{
+  "schema_version": "diagram.document.v0",
+  "id": "minimal-flow",
+  "title": "Minimal flow",
+  "kind": "flow",
+  "canvas": {
+    "units": "logical",
+    "grid": {"enabled": true, "size": 1, "snap": true},
+    "viewport": {"x": 0, "y": 0, "zoom": 1},
+    "theme": "default"
+  },
+  "nodes": [
+    {
+      "id": "start",
+      "type": "terminator",
+      "label": "Start",
+      "position": {"x": 2, "y": 2},
+      "size": {"w": 12, "h": 3},
+      "ports": [
+        {"id": "out", "side": "right", "direction": "out"}
+      ]
+    },
+    {
+      "id": "work",
+      "type": "process",
+      "label": "Do work",
+      "position": {"x": 22, "y": 2},
+      "size": {"w": 16, "h": 3},
+      "ports": [
+        {"id": "in", "side": "left", "direction": "in"},
+        {"id": "out", "side": "right", "direction": "out"}
+      ]
+    },
+    {
+      "id": "done",
+      "type": "terminator",
+      "label": "Done",
+      "position": {"x": 46, "y": 2},
+      "size": {"w": 12, "h": 3},
+      "ports": [
+        {"id": "in", "side": "left", "direction": "in"}
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-start-work",
+      "type": "flow",
+      "source": {"node": "start", "port": "out"},
+      "target": {"node": "work", "port": "in"},
+      "style": {"arrow_end": true}
+    },
+    {
+      "id": "e-work-done",
+      "type": "flow",
+      "source": {"node": "work", "port": "out"},
+      "target": {"node": "done", "port": "in"},
+      "style": {"arrow_end": true}
+    }
+  ]
+}

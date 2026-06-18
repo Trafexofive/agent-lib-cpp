@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cortex-prime.local/schemas/diagram-patch.v0.json",
+  "title": "Diagram Patch v0",
+  "description": "Domain-aware mutation envelope for diagram UI/backend sync. Not a CRDT; just a clean prototype contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "diagram_id", "ops"],
+  "properties": {
+    "schema_version": {"const": "diagram.patch.v0"},
+    "patch_id": {"$ref": "#/$defs/id"},
+    "diagram_id": {"$ref": "#/$defs/id"},
+    "base_revision": {
+      "type": ["integer", "string", "null"],
+      "description": "Revision this patch expects. Null means best-effort/apply-any."
+    },
+    "author": {"type": "string"},
+    "created_at": {"type": "string"},
+    "ops": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/op"}
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": {"type": "number"},
+        "y": {"type": "number"}
+      }
+    },
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"enum": ["diagram", "canvas", "node", "edge", "group", "layer", "annotation", "port"]},
+        "id": {"$ref": "#/$defs/id"},
+        "parent": {"$ref": "#/$defs/id"}
+      }
+    },
+    "op": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "diagram.update",
+            "canvas.update",
+            "node.add",
+            "node.update",
+            "node.move",
+            "node.remove",
+            "port.add",
+            "port.update",
+            "port.remove",
+            "edge.add",
+            "edge.update",
+            "edge.remove",
+            "group.add",
+            "group.update",
+            "group.remove",
+            "layer.add",
+            "layer.update",
+            "layer.remove",
+            "annotation.add",
+            "annotation.update",
+            "annotation.remove"
+          ]
+        },
+        "target": {"$ref": "#/$defs/selector"},
+        "value": {
+          "type": ["object", "array", "string", "number", "boolean", "null"],
+          "description": "Full object for add ops; partial object for update ops."
+        },
+        "from": {"$ref": "#/$defs/point"},
+        "to": {"$ref": "#/$defs/point"},
+        "reason": {"type": "string"}
+      }
+    }
+  }
+}

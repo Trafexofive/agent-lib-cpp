@@ -1,0 +1,34 @@
+{
+  "schema_version": "diagram.patch.v0",
+  "patch_id": "patch-add-verify-node",
+  "diagram_id": "mk3-runtime-loop",
+  "base_revision": null,
+  "author": "diagram-junky",
+  "ops": [
+    {
+      "op": "node.add",
+      "value": {
+        "id": "verifier",
+        "type": "process",
+        "label": "Verifier",
+        "position": {"x": 122, "y": 6},
+        "size": {"w": 20, "h": 5},
+        "ports": [
+          {"id": "in", "side": "left", "direction": "in"},
+          {"id": "out", "side": "right", "direction": "out"}
+        ]
+      },
+      "reason": "Prototype domain-aware patch op shape."
+    },
+    {
+      "op": "edge.add",
+      "value": {
+        "id": "e-parser-verifier",
+        "type": "response",
+        "source": {"node": "parser", "port": "response"},
+        "target": {"node": "verifier", "port": "in"},
+        "style": {"arrow_end": true}
+      }
+    }
+  ]
+}
