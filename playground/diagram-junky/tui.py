@@ -38,7 +38,6 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 RESET = "\033[0m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
-INV = "\033[7m"
 CYAN = "\033[36m"
 MAGENTA = "\033[35m"
 GREEN = "\033[32m"
@@ -77,6 +76,8 @@ def fit_ansi(s: str, width: int) -> str:
         out += s[i]
         visible += 1
         i += 1
+    if "\033[" in out and not out.endswith(RESET):
+        out += RESET
     return out + (" " * max(0, width - visible))
 
 
@@ -216,10 +217,10 @@ class DiagramTui:
         for i, path in enumerate(self.examples):
             doc = load_doc(path)
             label = path.name.removesuffix(".diagram.json")
-            prefix = "▸ " if i == self.example_index else "  "
+            prefix = "● " if i == self.example_index else "  "
             row = f"{prefix}{label:<18} {doc.get('kind', 'diagram')}"
             if i == self.example_index:
-                row = style(row, self.color, INV)
+                row = style(row, self.color, BOLD, CYAN)
             menu_body.append(row)
         menu_body += ["", style("enter/space", self.color, GREEN) + " open", "j/k or arrows select", "t theme · c color · q quit"]
 
@@ -250,7 +251,7 @@ class DiagramTui:
         rows = header
         for a, b in zip(left, right):
             rows.append(a + " " + b)
-        rows.append(style(plain_fit(f" {self.spinner()} {self.status_text()}", width), self.color, INV))
+        rows.append(style(plain_fit(f" {self.spinner()} {self.status_text()}", width), self.color, DIM))
         rows.append(style(plain_fit(f" {self.example_dial(24)}  press ? for keys", width), self.color, DIM))
         return "\n".join(rows[:height]) + "\n"
 
@@ -281,7 +282,7 @@ class DiagramTui:
                 rows.append(a + " " + b)
         else:
             rows.extend(right)
-        rows.append(style(plain_fit(f" {self.spinner()} {self.status_text()}", width), self.color, INV))
+        rows.append(style(plain_fit(f" {self.spinner()} {self.status_text()}", width), self.color, DIM))
         rows.append(style(plain_fit(" space center · b rail · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width), self.color, DIM))
         return "\n".join(rows[:height]) + "\n"
 
@@ -291,7 +292,10 @@ class DiagramTui:
         header_h = 2
         footer_h = 2
         body_h = max(8, height - header_h - footer_h)
-        side_w = min(24, max(20, width // 5)) if (self.sidebar_visible or not allow_hide) else 0
+        if not allow_hide:
+            side_w = min(42, max(30, width // 3))
+        else:
+            side_w = min(24, max(20, width // 5)) if self.sidebar_visible else 0
         main_w = max(20, width - side_w - (1 if side_w else 0))
         return body_h, side_w, main_w
 
