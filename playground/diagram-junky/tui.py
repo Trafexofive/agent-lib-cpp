@@ -168,6 +168,7 @@ class DiagramTui:
         self.legend = True
         self.ports = False
         self.sidebar_visible = False
+        self.chat_visible = False
         self.crosshair_visible = True
         self.mode = "canvas" if path or example else "dashboard"
         self.started_at = time.monotonic()
@@ -227,6 +228,8 @@ class DiagramTui:
     def frame(self, width: int, height: int) -> str:
         width = max(40, width)
         height = max(16, height)
+        if self.chat_visible:
+            return self.chat_frame(width, height)
         if self.mode == "dashboard":
             return self.dashboard_frame(width, height)
         return self.canvas_frame(width, height)
@@ -274,7 +277,7 @@ class DiagramTui:
         for a, b in zip(left, right):
             rows.append(a + " " + b)
         rows.append(style(plain_fit(f" {self.pressure_line(selected_doc, 30)}  {self.status_text()}", width), self.color, DIM))
-        rows.append(style(plain_fit(f" {self.example_dial(24)}  a ask · j/k select · enter open · t theme · c color · q quit", width), self.color, DIM))
+        rows.append(style(plain_fit(f" {self.example_dial(24)}  a ask · m chat · j/k select · enter open · t theme · c color · q quit", width), self.color, DIM))
         rows = self.overlay_pet(rows[:height], width)
         return "\n".join(rows[:height]) + "\n"
 
@@ -299,16 +302,16 @@ class DiagramTui:
         ).render().splitlines()
         if self.crosshair_visible:
             rendered = self.with_crosshair(rendered, max(5, canvas_w), max(5, body_h))
-        right = panel("canvas", canvas_w, body_h, rendered, color=self.color, active=True)
+        canvas_panel = panel("canvas", canvas_w, body_h, rendered, color=self.color, active=True)
         rows = header
         if self.sidebar_visible:
             left = panel("hub", side_w, body_h, sidebar, color=self.color, active=False)
-            for a, b in zip(left, right):
+            for a, b in zip(left, canvas_panel):
                 rows.append(a + " " + b)
         else:
-            rows.extend(right)
+            rows.extend(canvas_panel)
         rows.append(style(plain_fit(f" {self.pressure_line(self.doc, 30)}  {self.status_text()}", width), self.color, DIM))
-        rows.append(style(plain_fit(" a ask · space center · x crosshair · b rail · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width), self.color, DIM))
+        rows.append(style(plain_fit(" a ask · m chat · space center · x crosshair · b rail · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width), self.color, DIM))
         rows = self.overlay_pet(rows[:height], width)
         return "\n".join(rows[:height]) + "\n"
 
@@ -324,6 +327,32 @@ class DiagramTui:
             side_w = min(24, max(20, width // 5)) if self.sidebar_visible else 0
         main_w = max(20, width - side_w - (1 if side_w else 0))
         return body_h, side_w, main_w
+
+    def chat_frame(self, width: int, height: int) -> str:
+        body_h = max(8, height - 4)
+        title = "harness chat"
+        header = self.header_lines(width, title, f"{self.provider}/{self.model}")
+        body = [
+            style("tamagotchi", self.color, BOLD, MAGENTA),
+            *self.pet_lines(),
+            "",
+            style("prompt", self.color, BOLD, MAGENTA),
+            "a ask current diagram",
+            "m / esc close chat",
+            "",
+            style("last model output", self.color, BOLD, MAGENTA),
+        ]
+        if self.model_output:
+            body.extend(self.wrap_plain(self.model_output, width - 2, body_h - len(body)))
+        elif self.pet_state == "thinking":
+            body.append("thinking…")
+        else:
+            body.append("no message yet")
+        rows = header
+        rows.extend(panel("chat", width, body_h, body, color=self.color, active=True))
+        rows.append(style(plain_fit(f" {self.pressure_line(self.doc, 30)}  {self.status_text()}", width), self.color, DIM))
+        rows.append(style(plain_fit(" a ask · m/esc close · q quit", width), self.color, DIM))
+        return "\n".join(rows[:height]) + "\n"
 
     def path_label(self) -> str:
         rel = self.path.relative_to(ROOT) if self.path.is_relative_to(ROOT) else self.path
@@ -359,6 +388,51 @@ class DiagramTui:
         chars = ["─"] * width
         chars[pos] = "●"
         return "".join(chars) + f" {self.example_index + 1}/{total}"
+
+    def wrap_plain(self, text: str, width: int, max_lines: int) -> list[str]:
+        if width <= 0 or max_lines <= 0:
+            return []
+        words = strip_ansi(text).replace("\n", " \n ").split()
+        lines: list[str] = []
+        cur = ""
+        for word in words:
+            if word == "\n":
+                if cur:
+                    lines.append(cur)
+                    cur = ""
+                continue
+            if not cur:
+                cur = word
+            elif len(cur) + 1 + len(word) <= width:
+                cur += " " + word
+            else:
+                lines.append(cur)
+                cur = word
+            if len(lines) >= max_lines:
+                break
+        if cur and len(lines) < max_lines:
+            lines.append(cur)
+        return lines[:max_lines]
+
+    def chat_lines(self, width: int, height: int) -> list[str]:
+        body_w = max(8, width)
+        lines = [
+            style("pet", self.color, BOLD, MAGENTA),
+            *self.pet_lines(),
+            "",
+            style("model", self.color, BOLD, MAGENTA),
+            f"{self.provider}/{self.model}",
+            "a asks current diagram",
+            "",
+            style("last", self.color, BOLD, MAGENTA),
+        ]
+        if self.model_output:
+            lines.extend(self.wrap_plain(self.model_output, body_w, max(0, height - len(lines))))
+        elif self.pet_state == "thinking":
+            lines.append("thinking…")
+        else:
+            lines.append("no message yet")
+        return [fit_ansi(line, body_w) for line in lines[:height]]
 
     def sidebar_lines(self, width: int, height: int) -> list[str]:
         # Optional info rail, not a second menu. Keep it quiet.
@@ -591,6 +665,17 @@ class DiagramTui:
             return True
         if key in {"q", "\x03"}:
             return False
+        if self.chat_visible:
+            if key in {"m", "escape"}:
+                self.chat_visible = False
+                self.set_message("chat closed", ttl=0.8)
+            elif key == "a":
+                self.ask_model(self.doc)
+            return True
+        if key == "m":
+            self.chat_visible = True
+            self.set_message("chat opened", ttl=0.8)
+            return True
         if self.mode == "dashboard":
             return self.handle_dashboard_key(key)
         return self.handle_canvas_key(key)
