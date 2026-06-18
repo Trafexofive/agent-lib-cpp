@@ -66,6 +66,7 @@ UX shape:
 - keeps the header to exactly two rows in dashboard and canvas modes
 - uses horizontal section rules only for TUI chrome — no boxed panel corners
 - keeps stable sidebar/canvas columns so opening a diagram does not reflow the app
+- canvas left hub column is toggleable with `b`
 - dashboard has a document list on the left and preview/metadata on the right
 - canvas mode has a small hub/sidebar plus the diagram canvas
 - idle redraw loop drives subtle status spinner/pulse accents
@@ -76,10 +77,11 @@ Keys:
 
 - dashboard: `j/k` or arrows select, `enter`/`space` open
 - canvas: `h/j/k/l` or arrows pan
-- canvas: `space`: smooth center-to-diagram animation
+- canvas: `space`: smooth true-center-to-diagram animation
 - `+/-`: zoom
 - `0`: reset viewport
 - `f`: fit diagram bounds immediately
+- `b`: toggle canvas left hub/sidebar
 - `esc`: back to dashboard
 - `n/p`: next/previous bundled example
 - `t`: cycle theme

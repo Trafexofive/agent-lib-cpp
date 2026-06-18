@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from diagram_junky.rendering import EXAMPLES_DIR, THEMES, Renderer, fit_viewport, load_doc
+from diagram_junky.rendering import EXAMPLES_DIR, THEMES, Renderer, diagram_bounds, load_doc
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_STATE = Path.home() / ".cache" / "diagram-junky" / "tui-state.json"
@@ -146,6 +146,7 @@ class DiagramTui:
         self.theme = "neon"
         self.legend = True
         self.ports = False
+        self.sidebar_visible = True
         self.mode = "canvas" if path or example else "dashboard"
         self.started_at = time.monotonic()
         self.message = (
@@ -185,6 +186,7 @@ class DiagramTui:
             self.theme = raw.get("theme", self.theme) if raw.get("theme") in THEMES else self.theme
             self.legend = bool(raw.get("legend", self.legend))
             self.ports = bool(raw.get("ports", self.ports))
+            self.sidebar_visible = bool(raw.get("sidebar_visible", self.sidebar_visible))
             self.message = f"loaded state from {self.state_path}"
         except Exception as e:
             self.message = f"state load skipped: {e}"
@@ -210,7 +212,7 @@ class DiagramTui:
         return self.canvas_frame(width, height)
 
     def dashboard_frame(self, width: int, height: int) -> str:
-        body_h, left_w, right_w = self.layout_dims(width, height)
+        body_h, left_w, right_w = self.layout_dims(width, height, allow_hide=False)
         header = self.header_lines(width, "dashboard", "docs browser · dash launcher · raw ANSI")
 
         menu_body = [style("examples", self.color, BOLD, MAGENTA), ""]
@@ -256,11 +258,11 @@ class DiagramTui:
         return "\n".join(rows[:height]) + "\n"
 
     def canvas_frame(self, width: int, height: int) -> str:
-        body_h, side_w, canvas_w = self.layout_dims(width, height)
+        body_h, side_w, canvas_w = self.layout_dims(width, height, allow_hide=True)
         title = self.doc.get("title", self.doc.get("id", self.path.name))
         header = self.header_lines(width, title, self.path_label())
 
-        sidebar = self.sidebar_lines(side_w, body_h)
+        sidebar = self.sidebar_lines(side_w, body_h) if self.sidebar_visible else []
         rendered = Renderer(
             self.doc,
             max(5, canvas_w),
@@ -274,23 +276,26 @@ class DiagramTui:
             legend=self.legend,
             ports=self.ports,
         ).render().splitlines()
-        left = panel("hub", side_w, body_h, sidebar, color=self.color, active=False)
         right = panel("canvas", canvas_w, body_h, rendered, color=self.color, active=True)
         rows = header
-        for a, b in zip(left, right):
-            rows.append(a + " " + b)
+        if self.sidebar_visible:
+            left = panel("hub", side_w, body_h, sidebar, color=self.color, active=False)
+            for a, b in zip(left, right):
+                rows.append(a + " " + b)
+        else:
+            rows.extend(right)
         rows.append(style(plain_fit(f" {self.spinner()} {self.message}", width), self.color, INV))
-        rows.append(plain_fit(" space center · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width))
+        rows.append(plain_fit(" space center · b sidebar · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width))
         return "\n".join(rows[:height]) + "\n"
 
-    def layout_dims(self, width: int, height: int) -> tuple[int, int, int]:
+    def layout_dims(self, width: int, height: int, *, allow_hide: bool = False) -> tuple[int, int, int]:
         # Stable geometry across dashboard/canvas: selecting a diagram should not
         # make the whole app jump. Header is always exactly two rows.
         header_h = 2
         footer_h = 2
         body_h = max(8, height - header_h - footer_h)
-        side_w = min(34, max(28, width // 4))
-        main_w = max(20, width - side_w - 1)
+        side_w = min(34, max(28, width // 4)) if (self.sidebar_visible or not allow_hide) else 0
+        main_w = max(20, width - side_w - (1 if side_w else 0))
         return body_h, side_w, main_w
 
     def path_label(self) -> str:
@@ -335,6 +340,7 @@ class DiagramTui:
             f"nodes {len(self.doc.get('nodes', []))}  edges {len(self.doc.get('edges', []))}",
             f"zoom {self.view.zoom:.2f} {self.zoom_dial(max(8, width - 10))}",
             f"ports {'on' if self.ports else 'off'}  legend {'on' if self.legend else 'off'}",
+            "sidebar b hide",
             "",
             style("examples", self.color, BOLD, MAGENTA),
         ]
@@ -457,6 +463,9 @@ class DiagramTui:
             self.legend = not self.legend
         elif key == "o":
             self.ports = not self.ports
+        elif key == "b":
+            self.sidebar_visible = not self.sidebar_visible
+            self.message = "left column shown" if self.sidebar_visible else "left column hidden"
         elif key == "n":
             self.open_example(1)
         elif key == "p":
@@ -467,7 +476,7 @@ class DiagramTui:
         elif key == "s":
             self.save_state()
         elif key == "?":
-            self.message = "keys: space smooth-center · esc dashboard · arrows/hjkl pan · +/- zoom · f fit · t/c/g/o toggles · r reload · s save"
+            self.message = "keys: space smooth-center · b sidebar · esc dashboard · arrows/hjkl pan · +/- zoom · f fit · t/c/g/o toggles · r reload · s save"
         return True
 
     def cycle_theme(self) -> None:
@@ -477,13 +486,23 @@ class DiagramTui:
 
     def canvas_dimensions(self) -> tuple[int, int]:
         size = shutil.get_terminal_size((120, 36))
-        body_h, _, canvas_w = self.layout_dims(size.columns, size.lines)
+        body_h, _, canvas_w = self.layout_dims(size.columns, size.lines, allow_hide=True)
         return max(5, canvas_w), max(5, body_h)
 
     def center_target(self) -> View:
+        # Renderer coordinates are logical viewport coordinates: screen=(p-view)*zoom.
+        # True centering means diagram center maps to canvas center, not simply
+        # placing the top-left bound at a margin.
         w, h = self.canvas_dimensions()
-        x, y, z = fit_viewport(self.doc, w, h, margin=2, scale=True, upscale=False)
-        return View(x, y, z)
+        bounds = diagram_bounds(self.doc)
+        margin = 2
+        usable_w = max(1, w - margin * 2)
+        usable_h = max(1, h - margin * 2)
+        zoom = min(usable_w / max(1, bounds.w), usable_h / max(1, bounds.h), 1.0)
+        zoom = max(0.05, zoom)
+        cx = bounds.x + bounds.w / 2
+        cy = bounds.y + bounds.h / 2
+        return View(cx - (w / zoom) / 2, cy - (h / zoom) / 2, zoom)
 
     def fit(self) -> None:
         self.view = self.center_target()
@@ -534,6 +553,7 @@ class DiagramTui:
             "theme": self.theme,
             "legend": self.legend,
             "ports": self.ports,
+            "sidebar_visible": self.sidebar_visible,
             "saved_at": time.time(),
         }
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
