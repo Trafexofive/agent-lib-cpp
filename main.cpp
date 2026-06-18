@@ -10,9 +10,9 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdio>
-#include <condition_variable>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -111,6 +111,21 @@ struct CliConfig {
     // Help
     bool showHelp = false;
     std::string helpCommand;
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// ask_tool bridge — shared pending-dialog state between agent thread and TUI
+// ═══════════════════════════════════════════════════════════════════════
+struct AskDialogSession {
+    std::string actionId;
+    Json::Value params;
+    cortex::mk3::tui::DialogState state;
+    Json::Value result;
+    bool active = false;
+    bool complete = false;
+    bool cancelled = false;
+    std::mutex mutex;
+    std::condition_variable cv;
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1005,6 +1020,9 @@ static int cmdRun(CliConfig& cli) {
 
     // Bottom-up layout: output anchors to bottom, above status/input bars
     tui::Input input;
+    // ask_tool dialog state — shared between renderScreen and the prompt loop.
+    auto askDialog = std::make_shared<AskDialogSession>();
+    std::atomic<bool> dialogActive{false};
     std::vector<std::string> historyLines;
     int scrollOffset = 0;      // lines scrolled above viewport
     bool showPrompts = false;  // /prompts toggle
@@ -1139,6 +1157,11 @@ static int cmdRun(CliConfig& cli) {
         } else {
             auto lines = renderer.render();
             display.insert(display.end(), lines.begin(), lines.end());
+        }
+        // ── ask_tool dialog: overlay on top of history when active ──
+        if (dialogActive.load(std::memory_order_acquire) && !askDialog->state.done()) {
+            auto dialogLines = cortex::mk3::tui::DialogRenderer::render(askDialog->state, termW);
+            display.insert(display.end(), dialogLines.begin(), dialogLines.end());
         }
         // Viewport: which lines should be visible
         int overflow = std::max(0, (int)display.size() - (termH - 2));
@@ -1512,6 +1535,46 @@ static int cmdRun(CliConfig& cli) {
         bool snapClearRenderer = false;
         bool firstToken = true;
 
+        // ── ask_tool bridge: shared pending-dialog state ──
+        std::mutex askMtx;
+        std::condition_variable askCv;
+        Json::Value askParams;
+        bool askParamsReady = false;
+        std::atomic<bool> askPending{false};
+
+        agent.setAskToolHandler([&](const Json::Value& params) -> Json::Value {
+            // Agent thread: park the request and wait for the TUI loop to
+            // collect the user's answer.
+            {
+                std::lock_guard<std::mutex> lk(askMtx);
+                askParams = params;
+                askParamsReady = true;
+            }
+            askPending.store(true, std::memory_order_release);
+            askCv.notify_one();
+
+            std::unique_lock<std::mutex> lk(askMtx);
+            askCv.wait(lk, [&] {
+                return askDialog->complete || askDialog->cancelled || !cortex::mk3::g_running;
+            });
+            Json::Value out;
+            if (askDialog->cancelled) {
+                out["success"] = false;
+                out["cancelled"] = true;
+                out["results"] = askDialog->state.results;
+            } else {
+                out["success"] = true;
+                out["results"] = askDialog->state.results;
+            }
+            askDialog->active = false;
+            askDialog->complete = false;
+            askDialog->cancelled = false;
+            askParamsReady = false;
+            askPending.store(false, std::memory_order_release);
+            dialogActive.store(false, std::memory_order_release);
+            return out;
+        });
+
         auto applyStreamSnapshot = [&]() {
             std::vector<cortex::mk3::ProtocolAction> acts;
             std::vector<cortex::mk3::ProtocolResult> ress;
@@ -1621,6 +1684,29 @@ static int cmdRun(CliConfig& cli) {
 
         // Main loop: poll input + render concurrently with agent
         while (!agentDone.load(std::memory_order_acquire) && cortex::mk3::g_running && !quit) {
+            // ── ask_tool: pick up a pending dialog from the agent thread ──
+            if (!dialogActive.load(std::memory_order_acquire) &&
+                askPending.load(std::memory_order_acquire)) {
+                std::lock_guard<std::mutex> lk(askMtx);
+                if (askParamsReady) {
+                    askDialog->active = true;
+                    askDialog->complete = false;
+                    askDialog->cancelled = false;
+                    askDialog->params = askParams;
+                    askDialog->state = cortex::mk3::tui::parseDialogState(askParams);
+                    cortex::mk3::tui::completeNonInteractiveCards(askDialog->state);
+                    if (askDialog->state.done()) {
+                        askDialog->complete = true;
+                        askDialog->result = askDialog->state.results;
+                        askCv.notify_one();
+                    } else {
+                        dialogActive.store(true, std::memory_order_release);
+                        input.clearEscape();
+                        renderDirty = true;
+                    }
+                }
+            }
+
             // Poll input non-blocking. Keystrokes must redraw immediately even
             // while the provider is waiting on first byte.
             std::string beforeInput = input.line();
@@ -1630,10 +1716,38 @@ static int cmdRun(CliConfig& cli) {
             if (inputChanged)
                 renderDirty = true;
 
-            // Escape → cancel agent
+            // Escape → cancel dialog (if active) or cancel agent
             if (input.escapePressed()) {
-                cortex::mk3::g_running = false;
+                if (dialogActive.load(std::memory_order_acquire)) {
+                    askDialog->cancelled = true;
+                    askDialog->active = false;
+                    dialogActive.store(false, std::memory_order_release);
+                    input.clearEscape();
+                    renderDirty = true;
+                    askCv.notify_one();
+                } else {
+                    cortex::mk3::g_running = false;
+                    input.clearEscape();
+                }
+            }
+
+            // Dialog input: route Enter to the dialog, not the prompt buffer
+            if (dialogActive.load(std::memory_order_acquire) && hadInput) {
+                std::string line = input.line();
+                if (!cmd.empty()) {
+                    line = cmd;
+                    cmd.clear();
+                }
+                bool done = cortex::mk3::tui::handleDialogLine(askDialog->state, line);
                 input.clearEscape();
+                renderDirty = true;
+                if (done) {
+                    askDialog->complete = true;
+                    askDialog->result = askDialog->state.results;
+                    askDialog->active = false;
+                    dialogActive.store(false, std::memory_order_release);
+                    askCv.notify_one();
+                }
             }
 
             // Ctrl-D / Ctrl-C during streaming → quit or cancel
