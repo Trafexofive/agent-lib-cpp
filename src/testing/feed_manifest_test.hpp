@@ -4,6 +4,7 @@
 // =============================================================================
 #pragma once
 #include <json/json.h>
+#include <unistd.h>
 
 #include <cassert>
 #include <filesystem>
