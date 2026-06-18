@@ -70,6 +70,8 @@ struct CliConfig {
     std::string manifestDir;
     int iterations = 0;
     std::string sessionId;
+    bool continueSession = false;
+    std::string resumeSessionId;
     std::string systemPromptPath;
     std::string harnessPromptPath;
     bool ephemeral = false;
@@ -230,6 +232,8 @@ Flags:
   --harness <path>       Harness prompt (XML protocol spec)
   --system <path>        System prompt override
   --session <id>         Session ID for persistence
+  --continue, -c         Continue the most recent session
+  --resume <id>, -r <id> Resume a specific session
   --ephemeral            Don't save session
   --repl                 Force interactive mode even with --prompt
   --tui-debug-dump <path> Auto-write TUI render/debug state
@@ -363,6 +367,8 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"harness", required_argument, 0, 'H'},
                                        {"system", required_argument, 0, 'y'},
                                        {"session", required_argument, 0, 's'},
+                                       {"continue", no_argument, 0, 'c'},
+                                       {"resume", required_argument, 0, 1002},
                                        {"ephemeral", no_argument, 0, 'e'},
                                        {"repl", no_argument, 0, 'E'},
 
@@ -500,6 +506,12 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 break;
             case 's':
                 cli.sessionId = optarg;
+                break;
+            case 'c':
+                cli.continueSession = true;
+                break;
+            case 1002:
+                cli.resumeSessionId = optarg;
                 break;
             case 'e':
                 cli.ephemeral = true;
@@ -1614,7 +1626,17 @@ static int cmdRun(CliConfig& cli) {
     std::string cmd;
     bool quit = false;
     session::SessionManager sm;
-    std::string sessionId = cli.sessionId.empty() ? "default" : cli.sessionId;
+    std::string sessionId;
+    if (!cli.resumeSessionId.empty()) {
+        sessionId = cli.resumeSessionId;
+    } else if (cli.continueSession) {
+        auto sessions = sm.list();
+        std::sort(sessions.begin(), sessions.end(),
+                  [](const auto& a, const auto& b) { return a.updated > b.updated; });
+        sessionId = sessions.empty() ? "default" : sessions[0].id;
+    } else {
+        sessionId = cli.sessionId.empty() ? "default" : cli.sessionId;
+    }
     auto sess = sm.exists(sessionId) ? sm.load(sessionId)
                                      : sm.create(sessionId, "mk3", cli.model, cli.provider);
     input.start([&](const std::string& s) {
