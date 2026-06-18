@@ -167,6 +167,8 @@ class DiagramTui:
         self.pet_state = "idle"
         self.pet_note = "idle"
         self.model_output = ""
+        self.chat_input = ""
+        self.chat_history: list[tuple[str, str]] = []
         self.model_thread: threading.Thread | None = None
         self.examples = sorted(EXAMPLES_DIR.glob("*.diagram.json"))
         self.example_index = 0
@@ -340,29 +342,19 @@ class DiagramTui:
         return body_h, side_w, main_w
 
     def chat_frame(self, width: int, height: int) -> str:
-        body_h = max(8, height - 4)
+        body_h = max(8, height - 6)
         title = "harness chat"
         header = self.header_lines(width, title, f"{self.provider}/{self.model}")
-        body = [
-            style("tamagotchi", self.color, BOLD, MAGENTA),
-            *self.pet_lines(),
-            "",
-            style("prompt", self.color, BOLD, MAGENTA),
-            "a ask current diagram",
-            "m / esc close chat",
-            "",
-            style("last model output", self.color, BOLD, MAGENTA),
-        ]
-        if self.model_output:
-            body.extend(self.wrap_plain(self.model_output, width - 2, body_h - len(body)))
-        elif self.pet_state == "thinking":
-            body.append("thinking…")
-        else:
-            body.append("no message yet")
+        transcript = self.chat_transcript(width - 2, body_h)
+        input_line = "> " + self.chat_input
+        if self.pet_state == "thinking":
+            input_line += "  " + self.spinner()
         rows = header
-        rows.extend(panel("chat", width, body_h, body, color=self.color, active=True))
+        rows.extend(panel("transcript", width, body_h, transcript, color=self.color, active=True))
+        rows.append(rule("prompt", width, color=self.color, active=True))
+        rows.append(fit_ansi(style(input_line[-max(1, width - 1):], self.color, BOLD, CYAN), width))
         rows.append(style(plain_fit(f" {self.pressure_line(self.doc, 30)}  {self.status_text()}", width), self.color, DIM))
-        rows.append(style(plain_fit(" a ask · m/esc close · q quit", width), self.color, DIM))
+        rows.append(style(plain_fit(" enter send · a quick ask · m/esc close · backspace edit · q quit", width), self.color, DIM))
         return "\n".join(rows[:height]) + "\n"
 
     def path_label(self) -> str:
@@ -425,25 +417,27 @@ class DiagramTui:
             lines.append(cur)
         return lines[:max_lines]
 
-    def chat_lines(self, width: int, height: int) -> list[str]:
-        body_w = max(8, width)
-        lines = [
-            style("pet", self.color, BOLD, MAGENTA),
-            *self.pet_lines(),
-            "",
-            style("model", self.color, BOLD, MAGENTA),
-            f"{self.provider}/{self.model}",
-            "a asks current diagram",
-            "",
-            style("last", self.color, BOLD, MAGENTA),
-        ]
-        if self.model_output:
-            lines.extend(self.wrap_plain(self.model_output, body_w, max(0, height - len(lines))))
-        elif self.pet_state == "thinking":
-            lines.append("thinking…")
+    def chat_transcript(self, width: int, height: int) -> list[str]:
+        lines: list[str] = []
+        lines.append(style("pet", self.color, BOLD, MAGENTA))
+        pet = self.pet_lines()
+        lines.extend(pet[:5])
+        lines.append("")
+        lines.append(style(f"model {self.provider}/{self.model}", self.color, DIM))
+        lines.append(style(f"diagram {self.doc.get('id', self.path.stem)} · {self.current_workspace}/{self.current_project}", self.color, DIM))
+        lines.append("")
+        if not self.chat_history:
+            lines.extend([
+                style("no messages yet", self.color, DIM),
+                "type a prompt below, or press a for a quick read",
+            ])
         else:
-            lines.append("no message yet")
-        return [fit_ansi(line, body_w) for line in lines[:height]]
+            for role, text in self.chat_history[-8:]:
+                label = style("you", self.color, BOLD, CYAN) if role == "you" else style("pet", self.color, BOLD, MAGENTA)
+                lines.append(label)
+                lines.extend("  " + line for line in self.wrap_plain(text, max(8, width - 2), 8))
+                lines.append("")
+        return [fit_ansi(line, width) for line in lines[-height:]]
 
     def server_call(self, endpoint: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         data = json.dumps(payload or {}).encode()
@@ -607,12 +601,28 @@ class DiagramTui:
             out[y] = fit_ansi(out[y], col) + style(line, self.color, DIM)
         return out
 
-    def model_prompt(self, doc: dict[str, Any]) -> str:
+    def submit_chat(self, text: str | None = None) -> None:
+        prompt = (text if text is not None else self.chat_input).strip()
+        if not prompt:
+            prompt = "Give me one useful read of this diagram and one next action."
+        self.chat_input = ""
+        self.chat_history.append(("you", prompt))
+        self.ask_model(self.doc, user_text=prompt)
+
+    def clean_model_text(self, raw: str) -> str:
+        text = strip_ansi(raw).strip()
+        m = re.search(r"<response[^>]*>(.*?)</response>", text, re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        return text
+
+    def model_prompt(self, doc: dict[str, Any], user_text: str = "") -> str:
         nodes = [n.get("id", "?") for n in doc.get("nodes", [])]
         edges = [f"{e.get('source', {}).get('node', '?')}->{e.get('target', {}).get('node', '?')}" for e in doc.get("edges", [])]
         return (
-            "You are the diagram-junky embedded harness pet. Be concise. "
-            "Read this diagram summary and give one useful insight plus one next action.\n"
+            "You are the diagram-junky embedded harness pet. Be concise and practical. "
+            "Answer the user's diagram request using the summary. If suggesting changes, propose them as workspace/project-safe operations, not raw filesystem mutation.\n"
+            f"user_request: {user_text or 'Give one useful insight plus one next action.'}\n"
             f"id: {doc.get('id')}\n"
             f"title: {doc.get('title')}\n"
             f"kind: {doc.get('kind')}\n"
@@ -624,7 +634,7 @@ class DiagramTui:
             "You may propose workspace/project operations, but do not assume they are applied until confirmed.\n"
         )
 
-    def ask_model(self, doc: dict[str, Any]) -> None:
+    def ask_model(self, doc: dict[str, Any], user_text: str = "") -> None:
         if self.model_thread and self.model_thread.is_alive():
             self.set_message("model already thinking", ttl=1.0)
             return
@@ -649,16 +659,18 @@ class DiagramTui:
                     str(manifest),
                     "run",
                     "-p",
-                    self.model_prompt(doc),
+                    self.model_prompt(doc, user_text),
                 ]
                 proc = subprocess.run(cmd, cwd=PROJECT_ROOT, text=True, capture_output=True, timeout=self.model_timeout)
                 if proc.returncode != 0:
                     raise RuntimeError((proc.stderr or proc.stdout).strip()[:240])
-                self.model_output = strip_ansi(proc.stdout).strip()[-500:]
+                self.model_output = self.clean_model_text(proc.stdout)[-800:]
+                self.chat_history.append(("pet", self.model_output or "model done"))
                 self.pet_state = "done"
-                self.set_message(self.model_output.splitlines()[-1][:160] if self.model_output else "model done", ttl=4.0)
+                self.set_message("model replied", ttl=2.0)
             except Exception as e:
                 self.pet_state = "error"
+                self.chat_history.append(("pet", f"error: {e}"))
                 self.set_message(f"model error: {e}", ttl=4.0)
 
         self.model_thread = threading.Thread(target=run, daemon=True)
@@ -747,15 +759,23 @@ class DiagramTui:
     def handle_key(self, key: str) -> bool:
         if key == "":
             return True
-        if key in {"q", "\x03"}:
-            return False
         if self.chat_visible:
-            if key in {"m", "escape"}:
+            if key == "escape" or (key == "m" and not self.chat_input):
                 self.chat_visible = False
                 self.set_message("chat closed", ttl=0.8)
-            elif key == "a":
-                self.ask_model(self.doc)
+            elif key == "enter":
+                self.submit_chat()
+            elif key == "a" and not self.chat_input:
+                self.submit_chat("Give me one useful read of this diagram and one next action.")
+            elif key in {"\x7f", "\b"}:
+                self.chat_input = self.chat_input[:-1]
+            elif key == "\x15":
+                self.chat_input = ""
+            elif len(key) == 1 and key.isprintable():
+                self.chat_input += key
             return True
+        if key in {"q", "\x03"}:
+            return False
         if key == "m":
             self.chat_visible = True
             self.set_message("chat opened", ttl=0.8)
@@ -785,7 +805,7 @@ class DiagramTui:
             self.open_selected_example()
         elif key == "a":
             selected = self.examples[self.example_index] if self.examples else self.path
-            self.ask_model(load_doc(selected))
+            self.ask_model(load_doc(selected), "Give me one useful read of this diagram and one next action.")
         elif key == "t":
             self.cycle_theme()
         elif key == "c":
@@ -842,7 +862,7 @@ class DiagramTui:
         elif key == "s":
             self.save_state()
         elif key == "a":
-            self.ask_model(self.doc)
+            self.ask_model(self.doc, "Give me one useful read of this diagram and one next action.")
         elif key == "?":
             self.set_message("keys: a ask model · space center · x crosshair · b rail · esc dashboard · arrows/hjkl pan · +/- zoom · f fit · t/c/g/o toggles · r reload · s save", ttl=3.0)
         return True
