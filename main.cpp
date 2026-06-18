@@ -1047,13 +1047,10 @@ static int cmdRun(CliConfig& cli) {
     size_t streamRawBytes = 0;
     auto statusBarText = [&](int displaySize) -> std::string {
         if (dialogActive.load(std::memory_order_acquire)) {
-            return std::string(ansi::dim) + "─── Dialog · Esc to cancel ───" + ansi::reset;
+            return std::string(ansi::dim) + "  Esc to cancel" + ansi::reset;
         }
-        int visibleLines = termH - 2;
-        int scrollPct =
-            displaySize > visibleLines ? (scrollOffset * 100 / (displaySize - visibleLines)) : 100;
         std::string spinner = streaming ? std::string("\033[38;2;255;200;50m") +
-                                              spinnerFrames[spinnerFrame] + " \033[0m"
+                                              spinnerFrames[spinnerFrame] + "\033[0m "
                                         : "";
         std::string ttc;
         if (streaming) {
@@ -1062,31 +1059,32 @@ static int cmdRun(CliConfig& cli) {
                                .count();
             if (elapsed >= 1000)
                 ttc = std::to_string(elapsed / 1000) + "." +
-                      std::to_string((elapsed % 1000) / 100) + "s ";
+                      std::to_string((elapsed % 1000) / 100) + "s";
             else if (elapsed >= 100)
-                ttc = "0." + std::to_string(elapsed / 100) + "s ";
+                ttc = "0." + std::to_string(elapsed / 100) + "s";
         }
         std::string telemetry;
         if (streaming) {
-            telemetry = " · " + streamPhase + " | actions=" + std::to_string(streamActionCount) +
-                        " complete=" + std::to_string(streamResultCount) +
-                        " resp=" + std::to_string(streamRespBytes) + "b" +
-                        " text=" + std::to_string(streamRawBytes) + "b";
+            telemetry = " " + streamPhase + " act=" + std::to_string(streamActionCount) +
+                        " done=" + std::to_string(streamResultCount) + " " +
+                        std::to_string(streamRespBytes) + "b";
         }
-        return spinner + ttc + ansi::dim +
-               "─── Mode: " + tui::TuiRenderer::modeName(renderer.mode()) +
-               (showPrompts ? " + PROMPTS" : "") +
-               (displaySize > visibleLines ? " · " + std::to_string(scrollPct) + "%" : "") +
-               telemetry + " ───" + ansi::reset;
+        std::string mode = tui::TuiRenderer::modeName(renderer.mode());
+        std::string model = acfg.provider + "/" + acfg.model;
+        return spinner + ttc + telemetry + ansi::dim + "  " + mode + " · " + model + ansi::reset;
     };
     auto inputLineText = [&]() -> std::string {
         std::ostringstream out;
+        // ── Status bar (one line above prompt) ──
+        out << "\033[" << (termH - 1) << ";1H\033[2K" << statusBarText(0);
+        // ── Prompt line ──
         out << "\033[" << termH << ";1H\033[2K";
         if (dialogActive.load(std::memory_order_acquire)) {
-            out << ansi::dim << "  Enter to submit · Esc to cancel" << ansi::reset;
-            return out.str();
+            out << ansi::dim << "  Enter to submit · " << ansi::reset;
+        } else {
+            out << ansi::bold << "▸ " << ansi::reset;
         }
-        out << ansi::bold << "▸ " << ansi::reset << "\033[2m\033[3m";
+        out << "\033[2m";
         if (input.searching()) {
             out << tui::ansi::fg(255, 200, 0) << input.searchLine();
         } else {
@@ -1110,8 +1108,7 @@ static int cmdRun(CliConfig& cli) {
             return;
         lastStatusTime = now;
         spinnerFrame = (spinnerFrame + 1) % 10;
-        std::cout << "\033[" << termH - 1 << ";1H\033[2K" << statusBarText(lastDisplaySize)
-                  << inputLineText() << std::flush;
+        std::cout << inputLineText() << std::flush;
     };
     auto captureAnsiFrame = [&](const std::vector<std::string>& visible, int startRow,
                                 int visibleCount, int displaySize) {
@@ -1122,7 +1119,10 @@ static int cmdRun(CliConfig& cli) {
                 frame[row] = visible[i];
         }
         frame[termH - 2] = statusBarText(displaySize);
-        frame[termH - 1] = inputLineText();
+        // inputLineText now includes both status + prompt; just use it for the
+        // last two lines for the frame capture.
+        std::string fullInput = inputLineText();
+        frame[termH - 1] = fullInput;
         std::ostringstream ss;
         for (const auto& line : frame)
             ss << line << "\n";
@@ -1259,16 +1259,16 @@ static int cmdRun(CliConfig& cli) {
 
         int displaySize = (int)display.size() - skip;
         lastDisplaySize = displaySize;
-        std::string statusLine =
-            "\033[" + std::to_string(termH - 1) + ";1H\033[2K" + statusBarText(displaySize);
-        std::string inputLine = inputLineText();
+        // inputLineText() now renders both the status bar (termH-1) and the
+        // prompt line (termH) in one call.
+        std::string bottomUI = inputLineText();
         lastStatusTime = std::chrono::steady_clock::now();
         if (!cli.tuiDebugDumpPath.empty()) {
             captureAnsiFrame(visible, startRow, visibleCount, displaySize);
         }
 
-        // Status bar + input line (always redraw — cost is negligible)
-        frameOut << statusLine << inputLine;
+        // Content + bottom UI (always redraw bottom — cost is negligible)
+        frameOut << bottomUI;
         std::cout << frameOut.str() << std::flush;
     };
 
@@ -1589,6 +1589,9 @@ static int cmdRun(CliConfig& cli) {
             askPending.store(false, std::memory_order_release);
             dialogActive.store(false, std::memory_order_release);
             input.clearActionInterceptor();
+            prevDisplay.clear();
+            prevDisplaySize_ = 0;
+            renderDirty = true;
             return out;
         });
 
@@ -1720,6 +1723,9 @@ static int cmdRun(CliConfig& cli) {
                         dialogActive.store(true, std::memory_order_release);
                         input.clearEscape();
                         renderDirty = true;
+                        // Force full screen clear — dialog replaces history.
+                        prevDisplay.clear();
+                        prevDisplaySize_ = 0;
                         // ── Dialog input interceptor: j/k/arrows navigate,
                         //    y/n for confirm, everything else passes through ──
                         input.setActionInterceptor([&](int act, char outChar) -> bool {
@@ -1766,6 +1772,9 @@ static int cmdRun(CliConfig& cli) {
                                         askDialog->active = false;
                                         dialogActive.store(false, std::memory_order_release);
                                         input.clearActionInterceptor();
+                                        prevDisplay.clear();
+                                        prevDisplaySize_ = 0;
+                                        renderDirty = true;
                                         askCv.notify_one();
                                     }
                                     return true;
@@ -1779,6 +1788,9 @@ static int cmdRun(CliConfig& cli) {
                                         askDialog->active = false;
                                         dialogActive.store(false, std::memory_order_release);
                                         input.clearActionInterceptor();
+                                        prevDisplay.clear();
+                                        prevDisplaySize_ = 0;
+                                        renderDirty = true;
                                         askCv.notify_one();
                                     }
                                     return true;
@@ -1814,6 +1826,9 @@ static int cmdRun(CliConfig& cli) {
                     askDialog->active = false;
                     dialogActive.store(false, std::memory_order_release);
                     input.clearActionInterceptor();
+                    prevDisplay.clear();
+                    prevDisplaySize_ = 0;
+                    renderDirty = true;
                     input.clearEscape();
                     renderDirty = true;
                     askCv.notify_one();
@@ -1836,6 +1851,9 @@ static int cmdRun(CliConfig& cli) {
                     askDialog->active = false;
                     dialogActive.store(false, std::memory_order_release);
                     input.clearActionInterceptor();
+                    prevDisplay.clear();
+                    prevDisplaySize_ = 0;
+                    renderDirty = true;
                     askCv.notify_one();
                 }
             }
