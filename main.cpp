@@ -1046,6 +1046,9 @@ static int cmdRun(CliConfig& cli) {
     size_t streamRespBytes = 0;
     size_t streamRawBytes = 0;
     auto statusBarText = [&](int displaySize) -> std::string {
+        if (dialogActive.load(std::memory_order_acquire)) {
+            return std::string(ansi::dim) + "─── Dialog · Esc to cancel ───" + ansi::reset;
+        }
         int visibleLines = termH - 2;
         int scrollPct =
             displaySize > visibleLines ? (scrollOffset * 100 / (displaySize - visibleLines)) : 100;
@@ -1164,8 +1167,10 @@ static int cmdRun(CliConfig& cli) {
             auto lines = renderer.render();
             display.insert(display.end(), lines.begin(), lines.end());
         }
-        // ── ask_tool dialog: overlay on top of history when active ──
+        // ── ask_tool dialog: takes over the viewport when active ──
         if (dialogActive.load(std::memory_order_acquire) && !askDialog->state.done()) {
+            // Replace history entirely — dialog is the only visible content.
+            display.clear();
             auto dialogLines = cortex::mk3::tui::DialogRenderer::render(askDialog->state, termW);
             display.insert(display.end(), dialogLines.begin(), dialogLines.end());
         }
