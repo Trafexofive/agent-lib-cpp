@@ -61,6 +61,7 @@ struct CliConfig {
     std::string model;  // empty → provider's defaultModel is used
     bool providerSet = false;
     bool modelSet = false;
+    bool providerPickerRequested = false;  // --provider with no arg, no model
 
     // Run mode
     std::string prompt;
@@ -441,9 +442,11 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                     cli.providerSet = true;
                 } else {
                     // `--provider` with no arg: in list context, show providers.
-                    // In run context, it's a no-op (keep current provider).
+                    // In run context, launch interactive picker.
                     if (cli.command == "list")
                         cli.listProviders = true;
+                    else
+                        cli.providerPickerRequested = true;
                 }
                 break;
             case 'M':
@@ -884,6 +887,191 @@ static bool endsWith(const std::string& s, const std::string& suffix) {
            s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Interactive provider/model picker (fzf-style)
+// ═══════════════════════════════════════════════════════════════════════
+static bool interactivePicker(std::string& outProvider, std::string& outModel) {
+    // ── Gather providers ──
+    static const std::vector<std::pair<std::string, std::string>> providerInfo = {
+        {"deepseek", "DeepSeek API"},
+        {"openrouter", "OpenRouter"},
+        {"openai-codex", "OpenAI Codex"},
+        {"groq", "Groq"},
+        {"zen", "OpenCode Zen (free)"},
+        {"opencode-go", "OpenCode Go ($10/mo)"},
+        {"opencode", "OpenCode (alias→zen)"},
+        {"together", "Together AI"},
+        {"fireworks", "Fireworks AI"},
+        {"sambanova", "SambaNova"},
+        {"cerebras", "Cerebras"},
+        {"hyperbolic", "Hyperbolic"},
+        {"llm7", "LLM7"},
+        {"nvidia", "NVIDIA"},
+    };
+    auto avail = providers::availableProviders();
+    std::vector<std::pair<std::string, std::string>> providers;
+    for (const auto& [name, desc] : providerInfo) {
+        if (std::find(avail.begin(), avail.end(), name) != avail.end())
+            providers.push_back({name, desc});
+    }
+    if (providers.empty()) {
+        std::cerr << "No providers available.\n";
+        return false;
+    }
+
+    // ── Raw mode ──
+    struct termios oldt;
+    tcgetattr(STDIN_FILENO, &oldt);
+    struct termios raw = oldt;
+    cfmakeraw(&raw);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    std::cout << tui::ansi::hideCursor();
+
+    auto renderList = [&](const std::string& title, const std::string& subtitle,
+                          const std::vector<std::pair<std::string, std::string>>& items,
+                          int selected) {
+        tui::DialogState ds;
+        ds.chainTitle = title;
+        ds.message = subtitle;
+        tui::DialogCard card;
+        card.id = "pick";
+        card.type = "choice";
+        card.title = "";
+        for (const auto& [val, label] : items)
+            card.options.push_back({val, label, "", false});
+        ds.cards.push_back(std::move(card));
+        ds.selectedOption = selected;
+        auto lines = tui::DialogRenderer::render(ds, 80);
+        std::cout << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1);
+        for (const auto& line : lines)
+            std::cout << line << "\n";
+        std::cout.flush();
+    };
+
+    auto readKey = [&]() -> std::pair<tui::KeyAction, char> {
+        char buf[64];
+        ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
+        if (n <= 0)
+            return {tui::KeyAction::NONE, 0};
+        // Accumulate escape sequences
+        std::string seq;
+        for (ssize_t i = 0; i < n; i++) {
+            seq += buf[i];
+        }
+        // Handle multi-byte escape sequences
+        if (seq[0] == 27) {
+            if (seq.size() == 1) {
+                // Bare ESC — wait a bit for continuation
+                struct timeval tv = {0, 5000};
+                fd_set fds;
+                FD_ZERO(&fds);
+                FD_SET(STDIN_FILENO, &fds);
+                if (select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) > 0) {
+                    char buf2[64];
+                    ssize_t n2 = read(STDIN_FILENO, buf2, sizeof(buf2));
+                    if (n2 > 0)
+                        seq.append(buf2, n2);
+                }
+            }
+        }
+        char outChar = 0;
+        tui::KeyMap keymap;
+        tui::KeyAction act = keymap.resolve(seq, outChar);
+        return {act, outChar};
+    };
+
+    // ── Provider selection ──
+    int sel = 0;
+    bool picked = false;
+    while (!picked) {
+        renderList("Select Provider", "j/k or arrows to navigate, Enter to select, Esc to cancel",
+                   providers, sel);
+        auto [act, ch] = readKey();
+        if (act == tui::KeyAction::ENTER) {
+            picked = true;
+        } else if (act == tui::KeyAction::CANCEL || act == tui::KeyAction::EXIT) {
+            tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldt);
+            std::cout << tui::ansi::showCursor() << tui::ansi::clearScreen()
+                      << tui::ansi::moveTo(1, 1);
+            return false;
+        } else if (act == tui::KeyAction::HISTORY_DOWN ||
+                   (act == tui::KeyAction::CHAR && ch == 'j')) {
+            if (sel < (int)providers.size() - 1)
+                sel++;
+        } else if (act == tui::KeyAction::HISTORY_UP ||
+                   (act == tui::KeyAction::CHAR && ch == 'k')) {
+            if (sel > 0)
+                sel--;
+        }
+    }
+    outProvider = providers[sel].first;
+
+    // ── Model selection ──
+    auto provider = providers::createProvider(outProvider, "");
+    if (!provider) {
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldt);
+        std::cout << tui::ansi::showCursor() << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1);
+        std::cerr << "Failed to create provider: " << outProvider << "\n";
+        return false;
+    }
+    auto models = provider->listModels();
+    if (outProvider == "openrouter") {
+        std::vector<ILlmProvider::ModelInfo> freeOnly;
+        for (auto& m : models)
+            if (m.isFree)
+                freeOnly.push_back(m);
+        if (!freeOnly.empty())
+            models = std::move(freeOnly);
+    }
+    if (models.empty()) {
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldt);
+        std::cout << tui::ansi::showCursor() << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1);
+        std::cerr << "No models available for " << outProvider << ". Use --model to specify one.\n";
+        return true;  // provider was selected, just no model list
+    }
+
+    std::vector<std::pair<std::string, std::string>> modelItems;
+    for (auto& m : models) {
+        std::string label = m.name.empty() ? m.id : m.name;
+        if (m.isFree)
+            label += " [free]";
+        label += " — " + std::to_string(m.contextWindow / 1000) + "K";
+        modelItems.push_back({m.id, label});
+    }
+
+    sel = 0;
+    picked = false;
+    while (!picked) {
+        renderList("Select Model — " + outProvider,
+                   "j/k or arrows to navigate, Enter to select, Esc to cancel", modelItems, sel);
+        auto [act, ch] = readKey();
+        if (act == tui::KeyAction::ENTER) {
+            picked = true;
+        } else if (act == tui::KeyAction::CANCEL || act == tui::KeyAction::EXIT) {
+            tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldt);
+            std::cout << tui::ansi::showCursor() << tui::ansi::clearScreen()
+                      << tui::ansi::moveTo(1, 1);
+            return false;
+        } else if (act == tui::KeyAction::HISTORY_DOWN ||
+                   (act == tui::KeyAction::CHAR && ch == 'j')) {
+            if (sel < (int)modelItems.size() - 1)
+                sel++;
+        } else if (act == tui::KeyAction::HISTORY_UP ||
+                   (act == tui::KeyAction::CHAR && ch == 'k')) {
+            if (sel > 0)
+                sel--;
+        }
+    }
+    outModel = modelItems[sel].first;
+
+    // ── Restore terminal ──
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldt);
+    std::cout << tui::ansi::showCursor() << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1);
+    return true;
+}
+
 static bool validateExplicitModel(const std::string& providerName, const std::string& model,
                                   const std::shared_ptr<ILlmProvider>& provider) {
     if (model.empty())
@@ -919,6 +1107,23 @@ static bool validateExplicitModel(const std::string& providerName, const std::st
 // Command: run (agent execution)
 // ═══════════════════════════════════════════════════════════════════════
 static int cmdRun(CliConfig& cli) {
+    // ── Interactive picker: `--provider` with no model and no prompt ──
+    // Launch fzf-style provider→model selection.
+    if (cli.providerPickerRequested && cli.prompt.empty() && cli.promptFile.empty() &&
+        !cli.replMode && cli.manifestPath.empty()) {
+        std::string pickedProvider, pickedModel;
+        if (interactivePicker(pickedProvider, pickedModel)) {
+            cli.provider = pickedProvider;
+            cli.providerSet = true;
+            if (!pickedModel.empty()) {
+                cli.model = pickedModel;
+                cli.modelSet = true;
+            }
+        } else {
+            return 0;
+        }
+    }
+
     // Load prompt from file if specified
     if (cli.prompt.empty() && !cli.promptFile.empty()) {
         std::ifstream f(cli.promptFile);

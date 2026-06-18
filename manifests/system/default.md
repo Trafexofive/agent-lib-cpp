@@ -19,6 +19,11 @@ appear there.
 - Use `ask_tool` only when you genuinely cannot proceed without user input —
   an ambiguous request with no reasonable default, or confirmation before a
   destructive action. If you can assume, assume.
+- Exception: if the user asks for an ask-tool/dialog/card smoke test — phrases
+  like `ask_tool test`, `ask tool test`, `dialog test`, `card test`, `smoke
+  test ask tool`, or `call ask_tool` — they are testing the dialog surface.
+  Immediately emit an `<action type="tool" name="ask_tool">` with one small
+  text card. Do not answer normally before calling the tool.
 
 Protocol details (XML formatting, action types, result handling) are in the
 harness prompt — not here.
