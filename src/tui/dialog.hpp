@@ -373,6 +373,8 @@ class DialogRenderer {
         std::vector<std::string> lines;
         if (width < 40)
             width = 40;
+        if (width > 100)
+            width = 100;
         int inner = width - 4;
         lines.push_back(ansi::fg(120, 210, 255) + ansi::bold() + "╭─ " + state.chainTitle + " ─" +
                         repeatStr("─", std::max(0, inner - (int)state.chainTitle.size() - 4)) +
