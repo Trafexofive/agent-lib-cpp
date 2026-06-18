@@ -47,6 +47,7 @@ grep -q "themes:" /tmp/diagram-junky-styles.txt
 grep -q "bounds:" /tmp/diagram-junky-inspect.txt
 grep -q "schema ok" /tmp/diagram-junky-validate.txt
 grep -q "Start" /tmp/diagram-junky-output.txt
-grep -q "diagram-junky TUI" /tmp/diagram-junky-tui.txt
+grep -q "diagram-junky" /tmp/diagram-junky-tui.txt
+grep -q "canvas ─" /tmp/diagram-junky-tui.txt
 
 echo "render smoke ok"

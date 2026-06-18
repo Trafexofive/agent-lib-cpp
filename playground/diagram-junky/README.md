@@ -60,12 +60,24 @@ diagram_junky/rendering.py      # reusable scene/canvas/CLI renderer core
 ./playground/diagram-junky/tui.py --example minimal-flow --smoke-render
 ```
 
+UX shape:
+
+- starts on a Glow/dash-style dashboard when no file/example is provided
+- uses horizontal section rules only for TUI chrome — no boxed panel corners
+- dashboard has a document list on the left and preview/metadata on the right
+- canvas mode has a small hub/sidebar plus the diagram canvas
+- idle redraw loop drives breathing dots, pulse accents, and braille loaders
+- `space` smoothly animates the viewport back to centered diagram bounds
+
 Keys:
 
-- `h/j/k/l` or arrows: pan
+- dashboard: `j/k` or arrows select, `enter`/`space` open
+- canvas: `h/j/k/l` or arrows pan
+- canvas: `space`: smooth center-to-diagram animation
 - `+/-`: zoom
 - `0`: reset viewport
-- `f`: fit diagram bounds
+- `f`: fit diagram bounds immediately
+- `esc`: back to dashboard
 - `n/p`: next/previous bundled example
 - `t`: cycle theme
 - `c`: toggle color

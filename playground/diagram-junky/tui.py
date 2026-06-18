@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 """Raw ANSI diagram-junky TUI prototype.
 
-No curses dependency: this is deliberately small and playground-local. It uses
-``diagram_junky.rendering.Renderer`` directly so the future C++/canvas hub can
-keep the same scene/canvas split while we iterate on interaction feel here.
+The shape is closer to Glow/dash.nvim than a bare renderer dump:
+
+- dashboard-first start screen
+- focused document list + preview
+- structured canvas layout with sidebar/chrome
+- smooth space-to-center animation
+
+Still no curses dependency. This remains playground-local and keeps rendering
+inside ``diagram_junky.rendering.Renderer`` so the future hub/canvas app can
+reuse the same logical renderer.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import select
 import shutil
 import sys
@@ -25,6 +33,16 @@ from diagram_junky.rendering import EXAMPLES_DIR, THEMES, Renderer, fit_viewport
 ROOT = Path(__file__).resolve().parent
 DEFAULT_STATE = Path.home() / ".cache" / "diagram-junky" / "tui-state.json"
 THEME_ORDER = ["default", "mono", "neon"]
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+INV = "\033[7m"
+CYAN = "\033[36m"
+MAGENTA = "\033[35m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
 
 
 @dataclass
@@ -32,6 +50,73 @@ class View:
     x: float = 0.0
     y: float = 0.0
     zoom: float = 1.0
+
+
+def strip_ansi(s: str) -> str:
+    return ANSI_RE.sub("", s)
+
+
+def visible_len(s: str) -> int:
+    return len(strip_ansi(s))
+
+
+def fit_ansi(s: str, width: int) -> str:
+    """Clip/pad a possibly-ANSI string by visible width."""
+    if width <= 0:
+        return ""
+    out = ""
+    visible = 0
+    i = 0
+    while i < len(s) and visible < width:
+        if s[i] == "\033":
+            m = ANSI_RE.match(s, i)
+            if m:
+                out += m.group(0)
+                i = m.end()
+                continue
+        out += s[i]
+        visible += 1
+        i += 1
+    return out + (" " * max(0, width - visible))
+
+
+def plain_fit(s: str, width: int) -> str:
+    clean = strip_ansi(s)
+    if len(clean) > width:
+        clean = clean[: max(0, width - 1)] + "…"
+    return clean + " " * max(0, width - len(clean))
+
+
+def style(s: str, enabled: bool, *codes: str) -> str:
+    if not enabled:
+        return s
+    return "".join(codes) + s + RESET
+
+
+def center_text(s: str, width: int) -> str:
+    clean = strip_ansi(s)
+    left = max(0, (width - len(clean)) // 2)
+    return " " * left + s + " " * max(0, width - left - len(clean))
+
+
+def rule(title: str, width: int, *, color: bool = False, active: bool = False) -> str:
+    """Glow-style horizontal section rule. No corners, no vertical chrome."""
+    width = max(4, width)
+    pen = CYAN if active else DIM
+    label = f" {title.strip()} " if title.strip() else ""
+    line = label + "─" * max(0, width - visible_len(label))
+    line = fit_ansi(line, width)
+    return style(line, color, pen)
+
+
+def panel(title: str, width: int, height: int, body: list[str], *, color: bool = False, active: bool = False) -> list[str]:
+    width = max(4, width)
+    height = max(1, height)
+    lines = [rule(title, width, color=color, active=active)]
+    for i in range(height - 1):
+        content = body[i] if i < len(body) else ""
+        lines.append(fit_ansi(content, width))
+    return lines[:height]
 
 
 class RawMode:
@@ -57,8 +142,15 @@ class DiagramTui:
         self.theme = "neon"
         self.legend = True
         self.ports = False
-        self.message = "h/j/k/l or arrows pan · +/- zoom · n/p examples · f fit · t theme · s save · q quit"
+        self.mode = "canvas" if path or example else "dashboard"
+        self.started_at = time.monotonic()
+        self.message = (
+            "space center · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit"
+            if self.mode == "canvas"
+            else "dashboard: j/k select · enter open · q quit"
+        )
         self._load_state_if_relevant(path, example)
+        self._sync_example_index()
 
     def _resolve_path(self, path: Path | None, example: str | None) -> Path:
         if example:
@@ -69,6 +161,12 @@ class DiagramTui:
         if path:
             return path
         return self.examples[0] if self.examples else ROOT / "examples" / "minimal-flow.diagram.json"
+
+    def _sync_example_index(self) -> None:
+        try:
+            self.example_index = self.examples.index(self.path)
+        except ValueError:
+            self.example_index = 0
 
     def _load_state_if_relevant(self, path: Path | None, example: str | None) -> None:
         if path or example or not self.state_path.exists():
@@ -101,11 +199,89 @@ class DiagramTui:
                 sys.stdout.flush()
 
     def frame(self, width: int, height: int) -> str:
-        canvas_h = max(5, height - 3)
+        width = max(40, width)
+        height = max(16, height)
+        if self.mode == "dashboard":
+            return self.dashboard_frame(width, height)
+        return self.canvas_frame(width, height)
+
+    def dashboard_frame(self, width: int, height: int) -> str:
+        header_h = 5
+        footer_h = 2
+        body_h = max(8, height - header_h - footer_h)
+        left_w = min(42, max(30, width // 3))
+        right_w = max(20, width - left_w - 1)
+        pulse = self.pulse_code()
+        title = style(f"{self.dots()} diagram-junky {self.dots(reverse=True)}", self.color, BOLD, pulse)
+        subtitle = style("canvas-first diagram playground", self.color, DIM)
+        header = [
+            "",
+            center_text(title, width),
+            center_text(subtitle, width),
+            center_text(f"{self.spinner()} Glow-ish docs browser · dash-style launcher · raw ANSI · living preview", width),
+            "",
+        ]
+
+        menu_body = [style(f"{self.spinner()} examples", self.color, BOLD, MAGENTA), ""]
+        for i, path in enumerate(self.examples):
+            doc = load_doc(path)
+            label = path.name.removesuffix(".diagram.json")
+            prefix = f"{self.spinner()} " if i == self.example_index else "  "
+            row = f"{prefix}{label:<18} {doc.get('kind', 'diagram')}"
+            if i == self.example_index:
+                row = style(row, self.color, INV)
+            menu_body.append(row)
+        menu_body += ["", style("enter/space", self.color, GREEN) + " open", "j/k or arrows select", "t theme · c color · q quit"]
+
+        selected = self.examples[self.example_index] if self.examples else self.path
+        selected_doc = load_doc(selected)
+        preview = Renderer(
+            selected_doc,
+            max(10, right_w),
+            max(5, body_h - 6),
+            color=self.color,
+            theme=self.theme,
+            view_x=0,
+            view_y=0,
+            zoom=1,
+            legend=False,
+            ports=False,
+        ).render().splitlines()
+        meta = [
+            style(selected_doc.get("title", selected.stem), self.color, BOLD, YELLOW),
+            f"id: {selected_doc.get('id', selected.stem)}",
+            f"nodes: {len(selected_doc.get('nodes', []))} · edges: {len(selected_doc.get('edges', []))}",
+            "",
+        ]
+        preview_body = meta + preview
+
+        left = panel("documents", left_w, body_h, menu_body, color=self.color, active=True)
+        right = panel("preview", right_w, body_h, preview_body, color=self.color, active=False)
+        rows = header
+        for a, b in zip(left, right):
+            rows.append(a + " " + b)
+        rows.append(style(plain_fit(f" {self.spinner()} {self.message}", width), self.color, INV))
+        rows.append(plain_fit(f" {self.breath_bar(width // 3)}  press ? for keys", width))
+        return "\n".join(rows[:height]) + "\n"
+
+    def canvas_frame(self, width: int, height: int) -> str:
+        header_h = 2
+        footer_h = 2
+        body_h = max(8, height - header_h - footer_h)
+        side_w = min(34, max(26, width // 4))
+        canvas_w = max(20, width - side_w - 1)
+        title = self.doc.get("title", self.doc.get("id", self.path.name))
+        rel = self.path.relative_to(ROOT) if self.path.is_relative_to(ROOT) else self.path
+        header = [
+            style(plain_fit(f" {self.spinner()} diagram-junky  {title}  {self.dots()}", width), self.color, BOLD, self.pulse_code()),
+            style(plain_fit(f" {rel} · theme={self.theme} · zoom={self.view.zoom:.2f} · view=({self.view.x:.1f},{self.view.y:.1f}) · {self.breath_bar(12)}", width), self.color, DIM),
+        ]
+
+        sidebar = self.sidebar_lines(side_w, body_h)
         rendered = Renderer(
             self.doc,
-            width,
-            canvas_h,
+            max(5, canvas_w),
+            max(5, body_h),
             ascii_mode=False,
             color=self.color,
             theme=self.theme,
@@ -114,10 +290,66 @@ class DiagramTui:
             zoom=self.view.zoom,
             legend=self.legend,
             ports=self.ports,
-        ).render().rstrip("\n")
-        status = self.status_line(width)
-        hint = self.message[: max(0, width - 1)]
-        return f"{rendered}\n\033[7m{status:<{width}}\033[0m\n{hint}\n"
+        ).render().splitlines()
+        left = panel("hub", side_w, body_h, sidebar, color=self.color, active=False)
+        right = panel("canvas", canvas_w, body_h, rendered, color=self.color, active=True)
+        rows = header
+        for a, b in zip(left, right):
+            rows.append(a + " " + b)
+        rows.append(style(plain_fit(f" {self.spinner()} {self.message}", width), self.color, INV))
+        rows.append(plain_fit(" space center · f fit · hjkl/arrows pan · +/- zoom · esc dashboard · q quit", width))
+        return "\n".join(rows[:height]) + "\n"
+
+    def sidebar_lines(self, width: int, height: int) -> list[str]:
+        lines = [
+            style(f"{self.spinner()} current", self.color, BOLD, MAGENTA),
+            self.doc.get("id", self.path.stem),
+            f"nodes {len(self.doc.get('nodes', []))}  edges {len(self.doc.get('edges', []))}",
+            f"ports {'on' if self.ports else 'off'}  legend {'on' if self.legend else 'off'}",
+            "",
+            style("examples", self.color, BOLD, MAGENTA),
+        ]
+        for i, path in enumerate(self.examples[: max(0, height - 13)]):
+            label = path.name.removesuffix(".diagram.json")
+            row = ("▸ " if path == self.path else "  ") + label
+            lines.append(style(row, self.color, INV) if path == self.path else row)
+        lines += [
+            "",
+            style("keys", self.color, BOLD, MAGENTA),
+            "space center animate",
+            "enter dashboard/open",
+            "n/p next/prev",
+            "t/c/g/o toggles",
+            "s save state",
+        ]
+        return [fit_ansi(line, width) for line in lines]
+
+    def tick(self, speed: float = 8.0) -> int:
+        return int((time.monotonic() - self.started_at) * speed)
+
+    def spinner(self) -> str:
+        frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        return frames[self.tick(10.0) % len(frames)]
+
+    def dots(self, *, reverse: bool = False) -> str:
+        frames = ["·  ", "·· ", "···", " ··", "  ·", "   "]
+        i = self.tick(5.0) % len(frames)
+        s = frames[-i - 1] if reverse else frames[i]
+        return style(s, self.color, DIM)
+
+    def pulse_code(self) -> str:
+        return [CYAN, GREEN, YELLOW, MAGENTA][self.tick(2.0) % 4]
+
+    def breath_bar(self, width: int) -> str:
+        width = max(6, width)
+        phase = self.tick(6.0) % (width * 2)
+        pos = phase if phase < width else width * 2 - phase - 1
+        chars = ["─"] * width
+        for dx, ch in [(-1, "·"), (0, "●"), (1, "·")]:
+            j = pos + dx
+            if 0 <= j < width:
+                chars[j] = ch
+        return style("".join(chars), self.color, DIM)
 
     def draw(self) -> None:
         size = shutil.get_terminal_size((120, 36))
@@ -125,33 +357,52 @@ class DiagramTui:
         sys.stdout.write(self.frame(size.columns, size.lines))
         sys.stdout.flush()
 
-    def status_line(self, width: int) -> str:
-        title = self.doc.get("title", self.doc.get("id", self.path.name))
-        rel = self.path.relative_to(ROOT) if self.path.is_relative_to(ROOT) else self.path
-        return (
-            f" diagram-junky TUI | {title} | {rel} | theme={self.theme} "
-            f"zoom={self.view.zoom:.2f} view=({self.view.x:.1f},{self.view.y:.1f}) "
-            f"ports={'on' if self.ports else 'off'} legend={'on' if self.legend else 'off'} "
-        )[:width]
-
     def read_key(self) -> str:
-        while True:
-            r, _, _ = select.select([sys.stdin], [], [], 0.25)
-            if r:
-                ch = sys.stdin.read(1)
-                if ch == "\x1b":
-                    # Decode common arrow key escape sequences.
-                    r2, _, _ = select.select([sys.stdin], [], [], 0.01)
-                    if r2:
-                        seq = sys.stdin.read(2)
-                        return {"[A": "up", "[B": "down", "[C": "right", "[D": "left"}.get(seq, ch + seq)
-                return ch
+        r, _, _ = select.select([sys.stdin], [], [], 0.12)
+        if not r:
+            return ""
+        ch = sys.stdin.read(1)
+        if ch == "\x1b":
+            r2, _, _ = select.select([sys.stdin], [], [], 0.01)
+            if r2:
+                seq = sys.stdin.read(2)
+                return {"[A": "up", "[B": "down", "[C": "right", "[D": "left"}.get(seq, ch + seq)
+            return "escape"
+        if ch in {"\r", "\n"}:
+            return "enter"
+        return ch
 
     def handle_key(self, key: str) -> bool:
-        pan = max(1.0, 4.0 / max(0.25, self.view.zoom))
+        if key == "":
+            return True
         if key in {"q", "\x03"}:
             return False
-        if key in {"h", "left"}:
+        if self.mode == "dashboard":
+            return self.handle_dashboard_key(key)
+        return self.handle_canvas_key(key)
+
+    def handle_dashboard_key(self, key: str) -> bool:
+        if key in {"j", "down"}:
+            self.example_index = (self.example_index + 1) % max(1, len(self.examples))
+        elif key in {"k", "up"}:
+            self.example_index = (self.example_index - 1) % max(1, len(self.examples))
+        elif key in {"enter", " "}:
+            self.open_selected_example()
+        elif key == "t":
+            self.cycle_theme()
+        elif key == "c":
+            self.color = not self.color
+        elif key == "?":
+            self.message = "dashboard keys: j/k select · enter/space open · t theme · c color · q quit"
+        return True
+
+    def handle_canvas_key(self, key: str) -> bool:
+        pan = max(1.0, 4.0 / max(0.25, self.view.zoom))
+        if key in {"escape", "tab"}:
+            self.mode = "dashboard"
+            self._sync_example_index()
+            self.message = "dashboard"
+        elif key in {"h", "left"}:
             self.view.x -= pan
         elif key in {"l", "right"}:
             self.view.x += pan
@@ -167,9 +418,10 @@ class DiagramTui:
             self.view = View()
         elif key == "f":
             self.fit()
+        elif key == " ":
+            self.animate_center()
         elif key == "t":
-            i = (THEME_ORDER.index(self.theme) + 1) % len(THEME_ORDER)
-            self.theme = THEME_ORDER[i]
+            self.cycle_theme()
         elif key == "c":
             self.color = not self.color
         elif key == "g":
@@ -186,28 +438,65 @@ class DiagramTui:
         elif key == "s":
             self.save_state()
         elif key == "?":
-            self.message = "keys: q quit · arrows/hjkl pan · +/- zoom · 0 reset · f fit · n/p examples · t/c/g/o toggles · r reload · s save"
+            self.message = "keys: space smooth-center · esc dashboard · arrows/hjkl pan · +/- zoom · f fit · t/c/g/o toggles · r reload · s save"
         return True
 
-    def fit(self) -> None:
+    def cycle_theme(self) -> None:
+        i = (THEME_ORDER.index(self.theme) + 1) % len(THEME_ORDER)
+        self.theme = THEME_ORDER[i]
+        self.message = f"theme: {self.theme}"
+
+    def canvas_dimensions(self) -> tuple[int, int]:
         size = shutil.get_terminal_size((120, 36))
-        x, y, z = fit_viewport(self.doc, size.columns, max(5, size.lines - 3), margin=2, scale=True, upscale=False)
-        self.view = View(x, y, z)
+        body_h = max(8, size.lines - 4)
+        side_w = min(34, max(26, size.columns // 4))
+        canvas_w = max(20, size.columns - side_w - 1)
+        return max(5, canvas_w - 2), max(5, body_h - 2)
+
+    def center_target(self) -> View:
+        w, h = self.canvas_dimensions()
+        x, y, z = fit_viewport(self.doc, w, h, margin=2, scale=True, upscale=False)
+        return View(x, y, z)
+
+    def fit(self) -> None:
+        self.view = self.center_target()
         self.message = "fit viewport to diagram bounds"
+
+    def animate_center(self) -> None:
+        start = self.view
+        target = self.center_target()
+        frames = 14
+        for i in range(1, frames + 1):
+            t = i / frames
+            eased = t * t * (3 - 2 * t)
+            self.view = View(
+                start.x + (target.x - start.x) * eased,
+                start.y + (target.y - start.y) * eased,
+                start.zoom + (target.zoom - start.zoom) * eased,
+            )
+            self.message = "centering…"
+            self.draw()
+            time.sleep(0.018)
+        self.view = target
+        self.message = "centered on diagram"
+
+    def open_selected_example(self) -> None:
+        if not self.examples:
+            self.message = "no examples found"
+            return
+        self.path = self.examples[self.example_index]
+        self.doc = load_doc(self.path)
+        self.view = self.center_target()
+        self.mode = "canvas"
+        self.message = f"opened {self.path.name}"
 
     def open_example(self, delta: int) -> None:
         if not self.examples:
             self.message = "no examples found"
             return
-        try:
-            self.example_index = self.examples.index(self.path)
-        except ValueError:
-            self.example_index = 0
+        self._sync_example_index()
         self.example_index = (self.example_index + delta) % len(self.examples)
-        self.path = self.examples[self.example_index]
-        self.doc = load_doc(self.path)
-        self.view = View()
-        self.message = f"opened {self.path.name}"
+        self.open_selected_example()
 
     def save_state(self) -> None:
         payload: dict[str, Any] = {
