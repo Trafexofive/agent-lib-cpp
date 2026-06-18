@@ -68,8 +68,10 @@ class ManifestAutoload {
                     td.isNative = false;
                     td.scriptRuntime = schema.runtime;
                     td.scriptPath = (p.parent_path() / schema.entrypoint).string();
+                    agent.addTool(tools::Tool(td, td.scriptPath, td.scriptRuntime));
+                } else {
+                    agent.addTool(tools::Tool(td));
                 }
-                agent.addTool(td);
             } else if (file == "feed.yml") {
                 auto mr = feeds::FeedEngine::instance().loadFeedManifest(p.string());
                 if (!mr.success || mr.name.empty() || seenFeeds.count(mr.name))

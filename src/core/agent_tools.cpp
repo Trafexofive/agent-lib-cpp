@@ -66,8 +66,8 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
         !action.content.empty()) {
         if (!normalized.params.isObject())
             normalized.params = Json::Value(Json::objectValue);
-        std::string textParam = toolIt->second.textParam;
-        if (textParam.empty() && toolIt->second.inputType == "text")
+        std::string textParam = toolIt->second.textParam();
+        if (textParam.empty() && toolIt->second.inputType() == "text")
             textParam = "input";
         if (!textParam.empty() && !normalized.params.isMember(textParam)) {
             normalized.params[textParam] = action.content;
@@ -139,17 +139,36 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
 
     // Script tools (path-imported, not native)
     auto it = tools_.find(normalized.name);
-    if (it != tools_.end() && !it->second.isNative && !it->second.scriptPath.empty()) {
+    if (it != tools_.end() && it->second.isScript() && !it->second.scriptPath().empty()) {
         return executeScriptTool(it->second, normalized.params);
     }
 
-    return dispatch::dispatchTool(normalized);
+    // Native tools: execute through the sovereign Tool object.
+    if (it != tools_.end()) {
+        std::string raw = it->second.execute(normalized.params);
+        Json::Value parsed;
+        Json::CharReaderBuilder reader;
+        std::string errs;
+        std::istringstream ss(raw);
+        if (Json::parseFromStream(reader, ss, &parsed, &errs))
+            return parsed;
+        Json::Value fallback;
+        fallback["success"] = true;
+        fallback["output"] = raw;
+        return fallback;
+    }
+
+    Json::Value err;
+    err["success"] = false;
+    err["error"] = "tool not available: " + normalized.name;
+    return err;
 }
 
-Json::Value Agent::executeScriptTool(const ToolDef& tool, const Json::Value& params) {
+Json::Value Agent::executeScriptTool(const tools::Tool& tool, const Json::Value& params) {
     // Synchronous execution — blocks but returns actual output
+    std::string toolName = tool.name();
     std::string paramsJson = Json::writeString(Json::StreamWriterBuilder(), params);
-    std::string blockReason = sandboxPolicy_.validate(tool.name, paramsJson);
+    std::string blockReason = sandboxPolicy_.validate(toolName, paramsJson);
     if (!blockReason.empty()) {
         Json::Value err;
         err["success"] = false;
@@ -157,10 +176,10 @@ Json::Value Agent::executeScriptTool(const ToolDef& tool, const Json::Value& par
         return err;
     }
 
-    std::string cmd = tool.scriptRuntime + " " + tool.scriptPath;
+    std::string cmd = tool.scriptRuntime() + " " + tool.scriptPath();
 
     // Write params to tmpfile for script to read
-    std::string tmpFile = "/tmp/cortex-tool-" + tool.name + ".json";
+    std::string tmpFile = "/tmp/cortex-tool-" + toolName + ".json";
     {
         Json::StreamWriterBuilder w;
         w["indentation"] = "";
@@ -198,8 +217,8 @@ Json::Value Agent::executeScriptTool(const ToolDef& tool, const Json::Value& par
     return r;
 }
 
-void Agent::addTool(ToolDef tool) {
-    tools_[tool.name] = std::move(tool);
+void Agent::addTool(tools::Tool tool) {
+    tools_[tool.name()] = std::move(tool);
 }
 
 void Agent::removeTool(const std::string& name) {
@@ -231,22 +250,21 @@ Json::Value Agent::toggleBuiltin(const Json::Value& params, bool enable) {
 }
 
 bool Agent::hasTool(const std::string& name) const {
-    // Only consider tools explicitly added to this agent — not the global
+    // Only consider tools explicitly granted to this agent — not the global
     // registry
     return tools_.count(name);
 }
 
+const tools::Tool* Agent::findTool(const std::string& name) const {
+    auto it = tools_.find(name);
+    return (it != tools_.end()) ? &it->second : nullptr;
+}
+
 std::vector<std::string> Agent::toolNames() const {
-    std::unordered_set<std::string> seen;
     std::vector<std::string> names;
-    auto push = [&](const std::string& n) {
-        if (seen.insert(n).second)
-            names.push_back(n);
-    };
-    for (auto& name : tools::ToolRegistry::instance().list())
-        push(name);
+    names.reserve(tools_.size());
     for (auto& [name, _] : tools_)
-        push(name);
+        names.push_back(name);
     return names;
 }
 
@@ -333,7 +351,7 @@ int Agent::reloadManifests(bool backup) {
             // Not a script tool — skip
             continue;
         }
-        tools_[td.name] = td;
+        tools_[td.name] = tools::Tool(td, td.scriptPath, td.scriptRuntime);
         count++;
     }
     // Persist loaded tools to session manifest (survives restarts)
@@ -350,13 +368,13 @@ void Agent::saveSessionTools() {
     std::filesystem::create_directories(sessionDir);
     Json::Value arr(Json::arrayValue);
     for (auto& [name, tool] : tools_) {
-        if (tool.isNative || tool.scriptPath.empty())
+        if (tool.isNative() || tool.scriptPath().empty())
             continue;
         Json::Value t;
         t["name"] = name;
-        t["description"] = tool.description;
-        t["scriptRuntime"] = tool.scriptRuntime;
-        t["scriptPath"] = tool.scriptPath;
+        t["description"] = tool.description();
+        t["scriptRuntime"] = tool.scriptRuntime();
+        t["scriptPath"] = tool.scriptPath();
         arr.append(t);
     }
     std::ofstream f(sessionDir + "/tools.json");
@@ -390,7 +408,7 @@ void Agent::loadSessionTools() {
         td.scriptRuntime = t.get("scriptRuntime", "").asString();
         td.scriptPath = t.get("scriptPath", "").asString();
         if (!disabledBuiltins_.count(td.name))
-            tools_[td.name] = td;
+            tools_[td.name] = tools::Tool(td, td.scriptPath, td.scriptRuntime);
     }
 }
 

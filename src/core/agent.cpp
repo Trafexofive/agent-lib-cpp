@@ -1007,8 +1007,8 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
         // Session-restored script tools keep scriptPath but historically lost
         // schema context. Recover nearest tool.yml so the model sees params.
         bool emittedRecoveredSchema = false;
-        if (!tool.scriptPath.empty()) {
-            std::filesystem::path scriptPath(tool.scriptPath);
+        if (!tool.scriptPath().empty()) {
+            std::filesystem::path scriptPath(tool.scriptPath());
             std::vector<std::filesystem::path> candidates = {
                 scriptPath.parent_path() / "tool.yml",
                 scriptPath.parent_path().parent_path() / "tool.yml"};
@@ -1029,8 +1029,8 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
             continue;
 
         ss << "        <tool name=\"" << xmlAttr(name) << "\"";
-        if (!tool.description.empty() && tool.description != "See input_schema for parameters")
-            ss << " desc=\"" << xmlAttr(tool.description) << "\"";
+        if (!tool.description().empty() && tool.description() != "See input_schema for parameters")
+            ss << " desc=\"" << xmlAttr(tool.description()) << "\"";
         ss << ">\n";
         ss << "\n            <params unavailable=\"true\">schema not loaded; do not guess required "
               "JSON keys</params>\n";

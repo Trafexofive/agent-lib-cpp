@@ -136,7 +136,7 @@ static inline DialogState parseDialogState(const Json::Value& params) {
     state.message = params.get("message", "").asString();
     if (params.isMember("cards") && params["cards"].isArray()) {
         for (size_t i = 0; i < params["cards"].size(); i++) {
-            DialogCard card = cardFromJson(params["cards"][i]);
+            DialogCard card = cardFromJson(params["cards"][(Json::ArrayIndex)i]);
             if (card.id.empty())
                 card.id = "card_" + std::to_string(i);
             state.cards.push_back(card);
@@ -362,8 +362,8 @@ class DialogRenderer {
         if (width < 40)
             width = 40;
         int inner = width - 4;
-        lines.push_back(ansi::fg(120, 210, 255) + ansi::bold() + "╭─ " + state.chainTitle +
-                        " ─" + std::string(std::max(0, inner - (int)state.chainTitle.size() - 4), '-') +
+        lines.push_back(ansi::fg(120, 210, 255) + ansi::bold() + "╭─ " + state.chainTitle + " ─" +
+                        std::string(std::max(0, inner - (int)state.chainTitle.size() - 4), '-') +
                         "╮" + ansi::reset());
         if (!state.message.empty()) {
             for (auto line : wrapAnsiAware(state.message, inner))

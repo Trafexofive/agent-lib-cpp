@@ -99,7 +99,7 @@ class Agent {
     void undoLastInteraction();
 
     // ---- Tool management ----
-    void addTool(ToolDef tool);
+    void addTool(tools::Tool tool);
     void addFeed(const std::string& name) {
         feeds_.insert(name);
     }
@@ -138,6 +138,7 @@ class Agent {
     void loadSessionTools();
     bool hasTool(const std::string& name) const;
     std::vector<std::string> toolNames() const;
+    const tools::Tool* findTool(const std::string& name) const;
 
     // ---- Sub-agents ----
     void addSubAgent(std::shared_ptr<Agent> agent);
@@ -189,7 +190,7 @@ class Agent {
     // Tool dispatch
     Json::Value dispatchTool(const protocol::ParsedAction& action);
     Json::Value dispatchAskTool(const Json::Value& params);
-    Json::Value executeScriptTool(const ToolDef& tool, const Json::Value& params);
+    Json::Value executeScriptTool(const tools::Tool& tool, const Json::Value& params);
     void dumpSessionArtifacts() const;
 
     // Output sanitization
@@ -204,7 +205,7 @@ class Agent {
     std::string personaText_;                             // persona content (identity/values)
     std::vector<std::string> contextFeeds_;               // accumulated from <context_feed> tags
     std::map<std::string, std::string> executedActions_;  // dedup: key → cached result JSON string
-    std::map<std::string, ToolDef> tools_;
+    std::map<std::string, tools::Tool> tools_;
     std::set<std::string> feeds_;  // enabled feed names (from manifest import)
     std::set<std::string> disabledBuiltins_;
     std::set<std::string> relics_;  // enabled relic names (from manifest import)

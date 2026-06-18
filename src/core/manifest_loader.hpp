@@ -333,8 +333,10 @@ class ManifestLoader {
                         td.isNative = false;
                         td.scriptRuntime = schema.runtime;
                         td.scriptPath = (toolPath.parent_path() / schema.entrypoint).string();
+                        agent.addTool(tools::Tool(td, td.scriptPath, td.scriptRuntime));
+                    } else {
+                        agent.addTool(tools::Tool(td));
                     }
-                    agent.addTool(td);
                 }
             } else {
                 // Bare name (incl. legacy "builtin/exec" prefix) → built-in tool.
@@ -342,16 +344,23 @@ class ManifestLoader {
                 auto schema = loadBuiltinToolSchema(bareName);
                 if (!schema.name.empty()) {
                     schemas.push_back(schema);
-                    ToolDef td;
-                    td.name = schema.name;
-                    td.description = schema.description;
-                    td.inputType = schema.inputType.empty() ? "json" : schema.inputType;
-                    td.textParam = schema.textParam;
-                    agent.addTool(td);
+                    // If the backend registry has an executable Tool, grant that
+                    // object directly so dispatch goes through the sovereign Tool.
+                    const tools::Tool* reg = tools::ToolRegistry::instance().findTool(bareName);
+                    if (reg) {
+                        agent.addTool(*reg);
+                    } else {
+                        ToolDef td;
+                        td.name = schema.name;
+                        td.description = schema.description;
+                        td.inputType = schema.inputType.empty() ? "json" : schema.inputType;
+                        td.textParam = schema.textParam;
+                        agent.addTool(tools::Tool(td));
+                    }
                 } else {
                     ToolDef td;
                     td.name = bareName;
-                    agent.addTool(td);
+                    agent.addTool(tools::Tool(td));
                 }
             }
         }
@@ -371,19 +380,24 @@ class ManifestLoader {
             auto schema = loadBuiltinToolSchema(name);
             if (!schema.name.empty()) {
                 schemas.push_back(schema);
-                ToolDef td;
-                td.name = schema.name;
-                td.description = schema.description;
-                td.inputType = schema.inputType.empty() ? "json" : schema.inputType;
-                td.textParam = schema.textParam;
-                agent.addTool(std::move(td));
+                const tools::Tool* reg = tools::ToolRegistry::instance().findTool(name);
+                if (reg) {
+                    agent.addTool(*reg);
+                } else {
+                    ToolDef td;
+                    td.name = schema.name;
+                    td.description = schema.description;
+                    td.inputType = schema.inputType.empty() ? "json" : schema.inputType;
+                    td.textParam = schema.textParam;
+                    agent.addTool(tools::Tool(td));
+                }
             } else {
                 // Schema missing — still grant so dispatch can run the
                 // backend-registered implementation; <action_available> will
                 // mark params unavailable.
                 ToolDef td;
                 td.name = name;
-                agent.addTool(std::move(td));
+                agent.addTool(tools::Tool(td));
             }
         }
         return schemas;
