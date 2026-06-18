@@ -1,0 +1,111 @@
+kind: Tool
+name: diagram_render
+version: "0.1"
+summary: "Render, inspect, validate, or list diagram-junky diagram documents."
+description: >
+  Project-local helper for diagram-junky. Use it to render diagram.document.v0
+  JSON files to ANSI/plain terminal output, inspect diagram metadata, validate
+  schemas, list bundled examples, and write rendered output files.
+
+implementation:
+  type: script
+  runtime: python3
+  entrypoint: ./src/main.py
+  input_type: json
+
+timeout: 30
+on_error: abort
+
+input_schema:
+  type: object
+  properties:
+    action:
+      type: string
+      enum: [render, inspect, validate, bounds, examples, styles]
+      default: render
+      description: "Renderer action to perform."
+    path:
+      type: string
+      description: "Path to a .diagram.json file. Optional when example is provided."
+    example:
+      type: string
+      description: "Bundled example name, e.g. minimal-flow, runtime-loop, ansi-showcase."
+    preset:
+      type: string
+      enum: [compact, wide, neon, poster]
+      description: "Renderer preset."
+    width:
+      type: integer
+      description: "Canvas width in characters."
+    height:
+      type: integer
+      description: "Canvas height in characters."
+    theme:
+      type: string
+      enum: [default, mono, neon]
+      description: "Renderer theme."
+    color:
+      type: string
+      enum: [auto, always, never]
+      default: never
+      description: "ANSI color policy. Use never for machine-readable logs."
+    ascii:
+      type: boolean
+      default: false
+    fit:
+      type: boolean
+      default: false
+    fit_scale:
+      type: boolean
+      default: false
+    fit_upscale:
+      type: boolean
+      default: false
+    margin:
+      type: integer
+      default: 2
+    legend:
+      type: boolean
+      default: false
+    ports:
+      type: boolean
+      default: false
+    output:
+      type: string
+      description: "Optional file path to write rendered output."
+  required: [action]
+
+output_schema:
+  type: object
+  properties:
+    success:
+      type: boolean
+    action:
+      type: string
+    output:
+      type: string
+      description: "Rendered/inspection text, or a short status if output file was used."
+    command:
+      type: array
+      items: { type: string }
+    error:
+      type: string
+
+examples:
+  - description: "Render the ANSI showcase without color for clean logs"
+    params:
+      action: render
+      example: ansi-showcase
+      width: 120
+      height: 36
+      theme: neon
+      color: never
+      legend: true
+  - description: "Inspect the runtime-loop example"
+    params:
+      action: inspect
+      example: runtime-loop
+  - description: "Validate a diagram document"
+    params:
+      action: validate
+      path: playground/diagram-junky/examples/minimal-flow.diagram.json

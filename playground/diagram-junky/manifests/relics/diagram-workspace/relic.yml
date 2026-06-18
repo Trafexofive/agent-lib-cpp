@@ -1,0 +1,48 @@
+kind: Relic
+version: "0.1"
+name: diagram_workspace
+summary: "Managed local diagram document workspace for diagram-junky agents."
+mode: managed
+port: 8127
+health_path: /health
+compose_file: docker-compose.yml
+project_name: diagram-junky-workspace
+
+description: >
+  Starter managed relic for storing and retrieving diagram.document.v0 payloads
+  while prototyping the future TUI canvas/backend boundary. This is intentionally
+  project-local and not promoted to stdlib.
+
+service_type: storage
+
+interface:
+  type: rest_api
+  base_url: "http://localhost:8127"
+
+endpoints:
+  - name: health
+    method: GET
+    path: /health
+    description: "Service health check."
+  - name: put
+    method: POST
+    path: /put
+    description: "Store a diagram document by id. Body: {id?, document}."
+  - name: get
+    method: POST
+    path: /get
+    description: "Fetch a diagram document. Body: {id}."
+  - name: list
+    method: POST
+    path: /list
+    description: "List stored diagram ids. Body may be empty."
+  - name: delete
+    method: POST
+    path: /delete
+    description: "Delete a stored diagram. Body: {id}."
+
+tags:
+  - diagram-junky
+  - diagrams
+  - playground
+  - managed-relic

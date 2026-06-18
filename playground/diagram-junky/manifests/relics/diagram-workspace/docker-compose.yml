@@ -1,0 +1,13 @@
+services:
+  diagram-workspace:
+    build: .
+    container_name: diagram-junky-workspace
+    ports:
+      - "8127:8127"
+    volumes:
+      - diagram-junky-workspace-data:/data
+    environment:
+      DIAGRAM_WORKSPACE_DATA: /data
+
+volumes:
+  diagram-junky-workspace-data:
