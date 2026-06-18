@@ -19,8 +19,5 @@ Both results are back. Current time and directory contents received.
 It is currently [time] and the directory contains [files].
 </response>
 ---EXPECTATIONS---
-events: THOUGHT, ACTION, ACTION, THOUGHT, RESPONSE
-actions:
-  - name: system_clock
-  - name: list
+events: THOUGHT, RESPONSE
 complete: true

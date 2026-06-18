@@ -552,7 +552,14 @@ void Agent::tickContextCycles() {
 
 std::string Agent::renderSystemPrompt() const {
     AgentContext ctx;
-    return buildSystemPrompt(ctx);
+    std::string prompt = buildSystemPrompt(ctx);
+    std::string dynamicTail = buildDynamicContextPrompt();
+    if (!dynamicTail.empty()) {
+        if (!prompt.empty() && prompt.back() != '\n')
+            prompt += '\n';
+        prompt += dynamicTail;
+    }
+    return prompt;
 }
 
 Json::Value Agent::contextSnapshot() const {

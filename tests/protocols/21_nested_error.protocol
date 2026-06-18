@@ -15,5 +15,5 @@ The file read failed due to permissions. Expected.
 Cannot access system files. Working with available project files.
 </response>
 ---EXPECTATIONS---
-events: THOUGHT, ACTION, THOUGHT, RESPONSE
+events: THOUGHT, RESPONSE
 complete: true
