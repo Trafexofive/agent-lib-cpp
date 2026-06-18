@@ -1023,6 +1023,7 @@ static int cmdRun(CliConfig& cli) {
     // ask_tool dialog state — shared between renderScreen and the prompt loop.
     auto askDialog = std::make_shared<AskDialogSession>();
     std::atomic<bool> dialogActive{false};
+    std::string dialogInputLine;  // last submitted line during a dialog
     std::vector<std::string> historyLines;
     int scrollOffset = 0;      // lines scrolled above viewport
     bool showPrompts = false;  // /prompts toggle
@@ -1077,8 +1078,13 @@ static int cmdRun(CliConfig& cli) {
     };
     auto inputLineText = [&]() -> std::string {
         std::ostringstream out;
-        out << "\033[" << termH << ";1H\033[2K" << ansi::bold << "▸ " << ansi::reset
-            << "\033[2m\033[3m";
+        out << "\033[" << termH << ";1H\033[2K";
+        if (dialogActive.load(std::memory_order_acquire)) {
+            out << ansi::bold << tui::ansi::fg(120, 210, 255) << "❯ " << ansi::reset
+                << "\033[2m\033[3m";
+        } else {
+            out << ansi::bold << "▸ " << ansi::reset << "\033[2m\033[3m";
+        }
         if (input.searching()) {
             out << tui::ansi::fg(255, 200, 0) << input.searchLine();
         } else {
@@ -1267,7 +1273,12 @@ static int cmdRun(CliConfig& cli) {
     std::string sessionId = cli.sessionId.empty() ? "default" : cli.sessionId;
     auto sess = sm.exists(sessionId) ? sm.load(sessionId)
                                      : sm.create(sessionId, "mk3", cli.model, cli.provider);
-    input.start([&](const std::string& s) { cmd = s; });
+    input.start([&](const std::string& s) {
+        if (dialogActive.load(std::memory_order_acquire))
+            dialogInputLine = s;
+        else
+            cmd = s;
+    });
 
     // Load history
     const char* home = getenv("HOME");
@@ -1733,11 +1744,8 @@ static int cmdRun(CliConfig& cli) {
 
             // Dialog input: route Enter to the dialog, not the prompt buffer
             if (dialogActive.load(std::memory_order_acquire) && hadInput) {
-                std::string line = input.line();
-                if (!cmd.empty()) {
-                    line = cmd;
-                    cmd.clear();
-                }
+                std::string line = dialogInputLine;
+                dialogInputLine.clear();
                 bool done = cortex::mk3::tui::handleDialogLine(askDialog->state, line);
                 input.clearEscape();
                 renderDirty = true;

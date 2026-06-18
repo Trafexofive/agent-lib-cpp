@@ -355,6 +355,16 @@ static inline bool handleDialogLine(DialogState& state, const std::string& rawLi
     return false;
 }
 
+static inline std::string repeatStr(const std::string& s, int n) {
+    if (n <= 0)
+        return {};
+    std::string out;
+    out.reserve(s.size() * n);
+    for (int i = 0; i < n; i++)
+        out += s;
+    return out;
+}
+
 class DialogRenderer {
    public:
     static std::vector<std::string> render(const DialogState& state, int width) {
@@ -363,7 +373,7 @@ class DialogRenderer {
             width = 40;
         int inner = width - 4;
         lines.push_back(ansi::fg(120, 210, 255) + ansi::bold() + "╭─ " + state.chainTitle + " ─" +
-                        std::string(std::max(0, inner - (int)state.chainTitle.size() - 4), '-') +
+                        repeatStr("─", std::max(0, inner - (int)state.chainTitle.size() - 4)) +
                         "╮" + ansi::reset());
         if (!state.message.empty()) {
             for (auto line : wrapAnsiAware(state.message, inner))
@@ -407,7 +417,7 @@ class DialogRenderer {
                             ansi::reset());
         }
         lines.push_back(ansi::fg(120, 210, 255) + ansi::bold() + "╰" +
-                        std::string(std::max(0, inner + 2), '─') + "╯" + ansi::reset());
+                        repeatStr("─", std::max(0, inner + 2)) + "╯" + ansi::reset());
         return lines;
     }
 
@@ -428,28 +438,51 @@ class DialogRenderer {
 
     static std::vector<std::string> wrapAnsiAware(const std::string& text, int width) {
         std::vector<std::string> lines;
+        if (width < 10)
+            width = 10;
+        // Split on explicit newlines first.
         std::stringstream ss(text);
-        std::string line;
-        while (std::getline(ss, line)) {
-            if (line.empty()) {
+        std::string paragraph;
+        while (std::getline(ss, paragraph)) {
+            if (paragraph.empty()) {
                 lines.push_back("");
                 continue;
             }
+            // Word-wrap by visible length (ANSI codes don't count).
             std::string current;
-            size_t currentLen = 0;
-            for (char c : line) {
-                current.push_back(c);
-                if (c == '\033')
-                    continue;
-                if (c == 'm' && !current.empty() && current[current.size() - 2] == '\033')
-                    continue;
-                currentLen++;
-                if ((int)currentLen >= width) {
+            int visible = 0;
+            std::string word;
+            auto flushWord = [&]() {
+                if (word.empty())
+                    return;
+                int wordVisible = 0;
+                bool esc = false;
+                for (char c : word)
+                    if (c == '\033')
+                        esc = true;
+                    else if (esc && c == 'm')
+                        esc = false;
+                    else if (!esc)
+                        wordVisible++;
+                if (visible + wordVisible > width && !current.empty()) {
                     lines.push_back(current);
                     current.clear();
-                    currentLen = 0;
+                    visible = 0;
+                }
+                current += word;
+                visible += wordVisible;
+                word.clear();
+            };
+            for (char c : paragraph) {
+                if (c == ' ') {
+                    flushWord();
+                    word += ' ';
+                    flushWord();
+                } else {
+                    word += c;
                 }
             }
+            flushWord();
             if (!current.empty())
                 lines.push_back(current);
         }
