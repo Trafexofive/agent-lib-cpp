@@ -36,7 +36,15 @@ ACTIONS = {"render", "inspect", "validate", "bounds", "examples", "styles"}
 def read_params() -> dict[str, Any]:
     if len(sys.argv) < 2 or not sys.argv[1].strip():
         return {}
-    return json.loads(sys.argv[1])
+    arg = sys.argv[1]
+    # cortex-mk3 executeScriptTool writes params to a temp file and passes the
+    # path. The Tool class's own executeScript passes JSON directly. Handle both.
+    if arg.startswith("/") or arg.startswith("./") or arg.startswith("../"):
+        try:
+            return json.loads(Path(arg).read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+    return json.loads(arg)
 
 
 def build_command(params: dict[str, Any]) -> list[str]:
