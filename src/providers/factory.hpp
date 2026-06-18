@@ -53,7 +53,7 @@ inline std::string defaultProviderModel(const std::string& name) {
     if (name == "deepseek")
         return "deepseek-chat";
     if (name == "openrouter")
-        return "liquid/lfm-2.5-1.2b-instruct:free";
+        return "nex-agi/nex-n2-pro:free";
     if (name == "openai-codex" || name == "codex-provider" || name == "codex")
         return "gpt-5.5";
     if (name == "groq")

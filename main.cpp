@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -878,6 +879,42 @@ complete -c cortex-mk3 -n "__fish_seen_subcommand_from help" -a "run serve list 
     return 0;
 }
 
+static bool endsWith(const std::string& s, const std::string& suffix) {
+    return s.size() >= suffix.size() &&
+           s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+static bool validateExplicitModel(const std::string& providerName, const std::string& model,
+                                  const std::shared_ptr<ILlmProvider>& provider) {
+    if (model.empty())
+        return true;
+
+    auto models = provider->listModels();
+    if (models.empty())
+        return true;  // Provider cannot validate/catalog failed; defer to API.
+
+    std::vector<std::string> suggestions;
+    for (const auto& m : models) {
+        if (m.id == model)
+            return true;
+        if (endsWith(m.id, "/" + model) || m.id.find(model) != std::string::npos) {
+            if (suggestions.size() < 5)
+                suggestions.push_back(m.id);
+        }
+    }
+
+    std::cerr << "Error: model '" << model << "' is not listed for provider '" << providerName
+              << "'.\n";
+    if (!suggestions.empty()) {
+        std::cerr << "Did you mean:\n";
+        for (const auto& s : suggestions)
+            std::cerr << "  " << s << "\n";
+    }
+    std::cerr << "Run 'cortex-mk3 list --provider " << providerName
+              << "' to see valid model IDs.\n";
+    return false;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Command: run (agent execution)
 // ═══════════════════════════════════════════════════════════════════════
@@ -981,6 +1018,9 @@ static int cmdRun(CliConfig& cli) {
         std::cerr << "Run 'cortex-mk3 list --providers' to see available providers.\n";
         return 1;
     }
+    if (cli.modelSet && !validateExplicitModel(acfg.provider, acfg.model, provider))
+        return 1;
+
     // TUI stderr is not a side channel; provider retry logs corrupt alternate-screen rendering.
     provider->setQuietLogs(true);
 
