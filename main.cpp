@@ -561,6 +561,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
     if (sawProviderFlag && !providerFlagHadArg && optind < argc && argv[optind][0] != '-') {
         cli.provider = argv[optind];
         cli.providerSet = true;
+        cli.providerPickerRequested = false;  // got a real provider name
         optind++;
     }
 
