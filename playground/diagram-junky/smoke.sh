@@ -28,9 +28,13 @@ PY
 
 "$ROOT/render.py" "$ROOT/examples/minimal-flow.diagram.json" --width 72 --height 12 >/tmp/diagram-junky-minimal.txt
 "$ROOT/render.py" "$ROOT/examples/runtime-loop.diagram.json" --width 150 --height 42 >/tmp/diagram-junky-runtime.txt
+"$ROOT/render.py" "$ROOT/examples/ansi-showcase.diagram.json" --width 120 --height 36 --theme neon --color always --legend --ports >/tmp/diagram-junky-ansi.txt
+"$ROOT/render.py" "$ROOT/examples/ansi-showcase.diagram.json" --width 100 --height 30 --theme neon --color never --fit --legend >/tmp/diagram-junky-fit.txt
 
 grep -q "Start" /tmp/diagram-junky-minimal.txt
 grep -q "Do work" /tmp/diagram-junky-minimal.txt
 grep -q "Protocol parser" /tmp/diagram-junky-runtime.txt
+grep -q "Harness" /tmp/diagram-junky-ansi.txt
+grep -q $'\033\\[' /tmp/diagram-junky-ansi.txt
 
 echo "render smoke ok"

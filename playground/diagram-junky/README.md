@@ -21,6 +21,7 @@ schemas/
 examples/
   minimal-flow.diagram.json     # tiny valid flow diagram
   runtime-loop.diagram.json     # MK3-ish harness/runtime diagram
+  ansi-showcase.diagram.json    # colors, shapes, line styles
   add-node.patch.json           # patch envelope example
 render.py                       # first CLI renderer prototype
 ```
@@ -35,7 +36,29 @@ render.py                       # first CLI renderer prototype
 ./playground/diagram-junky/render.py \
   playground/diagram-junky/examples/runtime-loop.diagram.json \
   --width 150 --height 42
+
+./playground/diagram-junky/render.py \
+  playground/diagram-junky/examples/ansi-showcase.diagram.json \
+  --width 120 --height 36 --theme neon --color always --legend
 ```
+
+Current renderer tricks:
+
+- ANSI color policy: `--color auto|always|never`
+- themes: `default`, `mono`, `neon`
+- Unicode/ASCII modes
+- square, rounded, double, heavy, dotted borders
+- process/terminator/external/collection/actor defaults
+- diamond decision nodes
+- cylinder/database nodes
+- solid, dashed, dotted, heavy, double edge lines
+- selected/inverse node styling
+- word-wrapped bodies + ellipsis fitting
+- label halo pass so edges do not slice text
+- viewport overrides: `--x`, `--y`, `--zoom`
+- auto-pan/fit: `--fit`, `--fit-scale`, `--fit-upscale`, `--margin`
+- optional port markers: `--ports`
+- debug legend: `--legend`
 
 Renderer split:
 

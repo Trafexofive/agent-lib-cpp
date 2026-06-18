@@ -111,7 +111,7 @@
         "stroke": {"type": "string"},
         "stroke_width": {"type": "number", "minimum": 0},
         "text_color": {"type": "string"},
-        "line": {"enum": ["solid", "dashed", "dotted"]},
+        "line": {"enum": ["solid", "dashed", "dotted", "heavy", "double"]},
         "arrow_start": {"type": "boolean"},
         "arrow_end": {"type": "boolean"},
         "z": {"type": "number"}

@@ -1,0 +1,126 @@
+{
+  "schema_version": "diagram.document.v0",
+  "id": "ansi-showcase",
+  "title": "ANSI renderer showcase",
+  "kind": "flow",
+  "canvas": {
+    "units": "logical",
+    "grid": {"enabled": true, "size": 1, "snap": true},
+    "viewport": {"x": 0, "y": 0, "zoom": 1},
+    "theme": "neon"
+  },
+  "nodes": [
+    {
+      "id": "actor",
+      "type": "actor",
+      "label": "Operator",
+      "position": {"x": 2, "y": 4},
+      "size": {"w": 14, "h": 4},
+      "ports": [{"id": "out", "side": "right", "direction": "out"}],
+      "style": {"stroke": "bright_green", "border": "rounded"}
+    },
+    {
+      "id": "process",
+      "type": "process",
+      "label": "Harness",
+      "body": "XML protocol\nstrict parser",
+      "position": {"x": 24, "y": 3},
+      "size": {"w": 20, "h": 6},
+      "ports": [
+        {"id": "in", "side": "left", "direction": "in"},
+        {"id": "out", "side": "right", "direction": "out"}
+      ],
+      "style": {"stroke": "bright_cyan", "bold": true}
+    },
+    {
+      "id": "decision",
+      "type": "decision",
+      "label": "Valid?",
+      "position": {"x": 56, "y": 2},
+      "size": {"w": 18, "h": 8},
+      "ports": [
+        {"id": "in", "side": "left", "direction": "in"},
+        {"id": "yes", "side": "right", "direction": "out"},
+        {"id": "no", "side": "bottom", "direction": "out"}
+      ],
+      "style": {"stroke": "bright_yellow", "shape": "diamond"}
+    },
+    {
+      "id": "external",
+      "type": "external",
+      "label": "Model",
+      "position": {"x": 86, "y": 3},
+      "size": {"w": 18, "h": 5},
+      "ports": [{"id": "in", "side": "left", "direction": "in"}],
+      "style": {"stroke": "bright_magenta", "border": "double"}
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "Trace store",
+      "position": {"x": 52, "y": 18},
+      "size": {"w": 24, "h": 7},
+      "ports": [{"id": "in", "side": "top", "direction": "in"}],
+      "style": {"stroke": "bright_blue", "shape": "cylinder"}
+    },
+    {
+      "id": "selected",
+      "type": "collection",
+      "label": "Selected group",
+      "position": {"x": 86, "y": 18},
+      "size": {"w": 22, "h": 5},
+      "style": {"stroke": "bright_white", "border": "heavy", "selected": true}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-actor-process",
+      "type": "input",
+      "label": "prompt",
+      "source": {"node": "actor", "port": "out"},
+      "target": {"node": "process", "port": "in"},
+      "style": {"stroke": "bright_green", "arrow_end": true}
+    },
+    {
+      "id": "e-process-decision",
+      "type": "flow",
+      "source": {"node": "process", "port": "out"},
+      "target": {"node": "decision", "port": "in"},
+      "style": {"stroke": "bright_cyan", "arrow_end": true, "line": "heavy"}
+    },
+    {
+      "id": "e-decision-model",
+      "type": "call",
+      "label": "yes",
+      "source": {"node": "decision", "port": "yes"},
+      "target": {"node": "external", "port": "in"},
+      "style": {"stroke": "bright_magenta", "arrow_end": true, "line": "double"}
+    },
+    {
+      "id": "e-decision-store",
+      "type": "result",
+      "label": "no → trace",
+      "source": {"node": "decision", "port": "no"},
+      "target": {"node": "store", "port": "in"},
+      "points": [{"x": 65, "y": 14}],
+      "style": {"stroke": "bright_yellow", "arrow_end": true, "line": "dashed"}
+    },
+    {
+      "id": "e-store-selected",
+      "type": "dependency",
+      "source": {"node": "store"},
+      "target": {"node": "selected"},
+      "style": {"stroke": "bright_blue", "arrow_end": true, "line": "dotted"}
+    }
+  ],
+  "annotations": [
+    {
+      "id": "warn",
+      "type": "warning",
+      "position": {"x": 2, "y": 28},
+      "size": {"w": 74, "h": 4},
+      "body": "ANSI is renderer sugar. The schema remains canvas-neutral.",
+      "style": {"stroke": "bright_red", "border": "rounded"}
+    }
+  ]
+}
