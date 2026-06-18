@@ -594,6 +594,12 @@ static int knownContextWindow(const std::string& provider, const std::string& mo
         {"minimax-m3", 512000},
         {"minimax-m2.7", 204800},
         {"minimax-m2.5", 204800},
+        {"deepseek-v4-flash-free", 1000000},
+        {"mimo-v2.5-free", 1048576},
+        {"qwen3.6-plus-free", 1000000},
+        {"minimax-m3-free", 512000},
+        {"nemotron-3-ultra-free", 1000000},
+        {"north-mini-code-free", 256000},
         {"hy3-preview", 256000},
     };
 
@@ -601,7 +607,7 @@ static int knownContextWindow(const std::string& provider, const std::string& mo
     std::transform(key.begin(), key.end(), key.begin(),
                    [](unsigned char c) { return std::tolower(c); });
 
-    if (provider == "opencode-go" || provider == "opencode") {
+    if (provider == "opencode-go" || provider == "opencode" || provider == "zen") {
         auto it = opencodeGo.find(key);
         if (it != opencodeGo.end())
             return it->second;
