@@ -946,7 +946,7 @@ static bool interactivePicker(std::string& outProvider, std::string& outModel) {
         auto lines = tui::DialogRenderer::render(ds, 80);
         std::cout << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1);
         for (const auto& line : lines)
-            std::cout << line << "\n";
+            std::cout << line << "\r\n";
         std::cout.flush();
     };
 
