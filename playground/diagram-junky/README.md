@@ -71,6 +71,7 @@ UX shape:
 - canvas mode has a diagram canvas with a toggleable center crosshair overlay (`x`)
 - bottom-right 5x5 tamagotchi-style harness pet is wired to a model via `cortex-mk3` (`a` asks)
 - fullscreen harness chat is toggleable with `m`; `esc` or `m` closes it
+- workspaces/projects live behind the `diagram_workspace` relic/server API
 - idle redraw loop drives subtle status spinner/pulse accents
 - action messages are transient; the footer falls back to dimmed default hints
 - horizontal dials show useful state: example position and zoom level
@@ -87,6 +88,10 @@ Keys:
 - `f`: fit diagram bounds immediately
 - `a`: ask the embedded model-backed harness pet about the current/selected diagram
 - `m`: toggle fullscreen harness chat
+- `u`: refresh workspace/project state from the server
+- `W`: create a workspace
+- `P`: create a project in the active workspace
+- `C`: copy the current diagram into the active project
 - `x`: toggle center crosshair
 - `b`: toggle canvas info rail
 - `esc`: back to dashboard

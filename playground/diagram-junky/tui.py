@@ -29,6 +29,8 @@ import tty
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 from diagram_junky.rendering import EXAMPLES_DIR, THEMES, Renderer, diagram_bounds, load_doc
 
@@ -149,12 +151,19 @@ class DiagramTui:
         provider: str = "deepseek",
         model: str = "deepseek-v4-pro",
         model_timeout: int = 120,
+        server_url: str = "http://localhost:8127",
     ):
         self.state_path = state_path
         self.color = color
         self.provider = provider
         self.model = model
         self.model_timeout = model_timeout
+        self.server_url = server_url.rstrip("/")
+        self.current_workspace = "default"
+        self.current_project = "inbox"
+        self.workspaces: list[dict[str, Any]] = []
+        self.projects: list[dict[str, Any]] = []
+        self.project_diagrams: list[dict[str, Any]] = []
         self.pet_state = "idle"
         self.pet_note = "idle"
         self.model_output = ""
@@ -208,6 +217,8 @@ class DiagramTui:
             self.ports = bool(raw.get("ports", self.ports))
             self.sidebar_visible = bool(raw.get("sidebar_visible", self.sidebar_visible))
             self.crosshair_visible = bool(raw.get("crosshair_visible", self.crosshair_visible))
+            self.current_workspace = raw.get("current_workspace", self.current_workspace)
+            self.current_project = raw.get("current_project", self.current_project)
             self.set_message(f"loaded state from {self.state_path}", ttl=1.2)
         except Exception as e:
             self.set_message(f"state load skipped: {e}", ttl=1.5)
@@ -434,12 +445,82 @@ class DiagramTui:
             lines.append("no message yet")
         return [fit_ansi(line, body_w) for line in lines[:height]]
 
+    def server_call(self, endpoint: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        data = json.dumps(payload or {}).encode()
+        req = urlrequest.Request(
+            self.server_url + endpoint,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlrequest.urlopen(req, timeout=2.0) as resp:
+                return json.loads(resp.read().decode())
+        except (urlerror.URLError, TimeoutError, json.JSONDecodeError) as e:
+            raise RuntimeError(f"workspace server unavailable: {e}") from e
+
+    def refresh_workspace(self) -> None:
+        try:
+            ws = self.server_call("/workspace/list")
+            self.workspaces = ws.get("workspaces", [])
+            pr = self.server_call("/project/list", {"workspace": self.current_workspace})
+            self.projects = pr.get("projects", [])
+            dg = self.server_call("/project/diagrams", {"workspace": self.current_workspace, "project": self.current_project})
+            self.project_diagrams = dg.get("diagrams", [])
+            self.set_message("workspace refreshed", ttl=1.0)
+        except Exception as e:
+            self.set_message(str(e), ttl=3.0)
+
+    def create_workspace(self) -> None:
+        wid = f"ws-{int(time.time())}"
+        try:
+            self.server_call("/workspace/create", {"workspace": wid, "title": wid})
+            self.current_workspace = wid
+            self.current_project = "inbox"
+            self.server_call("/project/create", {"workspace": wid, "project": "inbox", "title": "inbox"})
+            self.refresh_workspace()
+            self.set_message(f"workspace created: {wid}", ttl=2.0)
+        except Exception as e:
+            self.set_message(str(e), ttl=3.0)
+
+    def create_project(self) -> None:
+        pid = f"project-{int(time.time())}"
+        try:
+            self.server_call("/project/create", {"workspace": self.current_workspace, "project": pid, "title": pid})
+            self.current_project = pid
+            self.refresh_workspace()
+            self.set_message(f"project created: {pid}", ttl=2.0)
+        except Exception as e:
+            self.set_message(str(e), ttl=3.0)
+
+    def copy_current_to_project(self) -> None:
+        try:
+            self.server_call(
+                "/project/copy",
+                {
+                    "workspace": self.current_workspace,
+                    "project": self.current_project,
+                    "id": self.doc.get("id", self.path.stem),
+                    "document": self.doc,
+                },
+            )
+            self.refresh_workspace()
+            self.set_message(f"copied {self.doc.get('id', self.path.stem)} → {self.current_workspace}/{self.current_project}", ttl=2.0)
+        except Exception as e:
+            self.set_message(str(e), ttl=3.0)
+
     def sidebar_lines(self, width: int, height: int) -> list[str]:
         # Optional info rail, not a second menu. Keep it quiet.
         lines = [
+            style("workspace", self.color, BOLD, MAGENTA),
+            self.current_workspace,
+            f"project {self.current_project}",
+            f"diagrams {len(self.project_diagrams)}",
+            "W new ws · P project",
+            "C copy · u refresh",
+            "",
             style("info", self.color, BOLD, MAGENTA),
             self.doc.get("id", self.path.stem),
-            "",
             f"nodes  {len(self.doc.get('nodes', []))}",
             f"edges  {len(self.doc.get('edges', []))}",
             "",
@@ -538,6 +619,9 @@ class DiagramTui:
             f"nodes: {', '.join(nodes)}\n"
             f"edges: {', '.join(edges)}\n"
             f"pressure: {self.pressure_score(doc)[0]}\n"
+            f"workspace: {self.current_workspace}\n"
+            f"project: {self.current_project}\n"
+            "You may propose workspace/project operations, but do not assume they are applied until confirmed.\n"
         )
 
     def ask_model(self, doc: dict[str, Any]) -> None:
@@ -675,6 +759,18 @@ class DiagramTui:
         if key == "m":
             self.chat_visible = True
             self.set_message("chat opened", ttl=0.8)
+            return True
+        if key == "u":
+            self.refresh_workspace()
+            return True
+        if key == "W":
+            self.create_workspace()
+            return True
+        if key == "P":
+            self.create_project()
+            return True
+        if key == "C":
+            self.copy_current_to_project()
             return True
         if self.mode == "dashboard":
             return self.handle_dashboard_key(key)
@@ -827,6 +923,8 @@ class DiagramTui:
             "ports": self.ports,
             "sidebar_visible": self.sidebar_visible,
             "crosshair_visible": self.crosshair_visible,
+            "current_workspace": self.current_workspace,
+            "current_project": self.current_project,
             "saved_at": time.time(),
         }
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -842,6 +940,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--provider", default="deepseek", help="Model provider for the embedded pet harness")
     ap.add_argument("--model", default="deepseek-v4-pro", help="Model for the embedded pet harness")
     ap.add_argument("--model-timeout", type=int, default=120, help="Seconds before model ask times out")
+    ap.add_argument("--server-url", default="http://localhost:8127", help="diagram_workspace server/relic URL")
     ap.add_argument("--no-color", action="store_true", help="Disable ANSI colors in rendered canvas")
     ap.add_argument("--smoke-render", action="store_true", help="Render one frame and exit for tests/CI")
     args = ap.parse_args(argv)
@@ -854,6 +953,7 @@ def main(argv: list[str]) -> int:
         provider=args.provider,
         model=args.model,
         model_timeout=args.model_timeout,
+        server_url=args.server_url,
     )
     if args.smoke_render:
         size = shutil.get_terminal_size((100, 28))

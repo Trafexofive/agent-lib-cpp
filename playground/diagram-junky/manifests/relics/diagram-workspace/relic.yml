@@ -40,6 +40,30 @@ endpoints:
     method: POST
     path: /delete
     description: "Delete a stored diagram. Body: {id}."
+  - name: workspace_create
+    method: POST
+    path: /workspace/create
+    description: "Create/update a workspace. Body: {workspace, title?}."
+  - name: workspace_list
+    method: POST
+    path: /workspace/list
+    description: "List workspaces. Body may be empty."
+  - name: project_create
+    method: POST
+    path: /project/create
+    description: "Create/update a project. Body: {workspace, project, title?}."
+  - name: project_list
+    method: POST
+    path: /project/list
+    description: "List projects in a workspace. Body: {workspace}."
+  - name: project_copy
+    method: POST
+    path: /project/copy
+    description: "Copy a diagram into a project. Body: {workspace, project, id?, document|source_path}."
+  - name: project_diagrams
+    method: POST
+    path: /project/diagrams
+    description: "List diagrams in a project. Body: {workspace, project}."
 
 tags:
   - diagram-junky
