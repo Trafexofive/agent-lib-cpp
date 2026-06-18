@@ -29,12 +29,22 @@ PY
 "$ROOT/render.py" "$ROOT/examples/minimal-flow.diagram.json" --width 72 --height 12 >/tmp/diagram-junky-minimal.txt
 "$ROOT/render.py" "$ROOT/examples/runtime-loop.diagram.json" --width 150 --height 42 >/tmp/diagram-junky-runtime.txt
 "$ROOT/render.py" "$ROOT/examples/ansi-showcase.diagram.json" --width 120 --height 36 --theme neon --color always --legend --ports >/tmp/diagram-junky-ansi.txt
-"$ROOT/render.py" "$ROOT/examples/ansi-showcase.diagram.json" --width 100 --height 30 --theme neon --color never --fit --legend >/tmp/diagram-junky-fit.txt
+"$ROOT/render.py" --example ansi-showcase --width 100 --height 30 --theme neon --color never --fit --legend >/tmp/diagram-junky-fit.txt
+"$ROOT/render.py" --example minimal-flow --preset compact --output /tmp/diagram-junky-output.txt
+"$ROOT/render.py" --examples >/tmp/diagram-junky-examples.txt
+"$ROOT/render.py" --styles >/tmp/diagram-junky-styles.txt
+"$ROOT/render.py" --example ansi-showcase --inspect --bounds >/tmp/diagram-junky-inspect.txt
+"$ROOT/render.py" --example ansi-showcase --validate >/tmp/diagram-junky-validate.txt
 
 grep -q "Start" /tmp/diagram-junky-minimal.txt
 grep -q "Do work" /tmp/diagram-junky-minimal.txt
 grep -q "Protocol parser" /tmp/diagram-junky-runtime.txt
 grep -q "Harness" /tmp/diagram-junky-ansi.txt
 grep -q $'\033\\[' /tmp/diagram-junky-ansi.txt
+grep -q "Minimal flow" /tmp/diagram-junky-examples.txt
+grep -q "themes:" /tmp/diagram-junky-styles.txt
+grep -q "bounds:" /tmp/diagram-junky-inspect.txt
+grep -q "schema ok" /tmp/diagram-junky-validate.txt
+grep -q "Start" /tmp/diagram-junky-output.txt
 
 echo "render smoke ok"

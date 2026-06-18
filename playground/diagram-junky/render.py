@@ -16,6 +16,7 @@ import math
 import os
 import shutil
 import sys
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Literal
@@ -84,6 +85,17 @@ ANSI_FG = {
     "bright_magenta": 95,
     "bright_cyan": 96,
     "bright_white": 97,
+}
+
+ROOT = Path(__file__).resolve().parent
+EXAMPLES_DIR = ROOT / "examples"
+DOC_SCHEMA = ROOT / "schemas" / "diagram-document.schema.json"
+
+PRESETS = {
+    "compact": {"width": 100, "height": 30, "fit": True, "theme": "default"},
+    "wide": {"width": 150, "height": 42, "theme": "default"},
+    "neon": {"width": 120, "height": 36, "theme": "neon", "legend": True},
+    "poster": {"width": 160, "height": 48, "theme": "neon", "legend": True, "ports": True},
 }
 
 THEMES: dict[str, dict[str, Pen]] = {
@@ -760,15 +772,134 @@ def fit_viewport(
     return b.x - margin / zoom, b.y - margin / zoom, zoom
 
 
+def list_examples() -> str:
+    lines = ["examples:"]
+    for path in sorted(EXAMPLES_DIR.glob("*.diagram.json")):
+        try:
+            doc = json.loads(path.read_text())
+            title = doc.get("title", path.stem)
+            kind = doc.get("kind", "unknown")
+            lines.append(f"  {path.name.removesuffix('.diagram.json'):<18} {kind:<12} {title}")
+        except Exception:
+            lines.append(f"  {path.name.removesuffix('.diagram.json'):<18} invalid")
+    return "\n".join(lines) + "\n"
+
+
+def list_styles() -> str:
+    return (
+        "themes: " + ", ".join(sorted(THEMES)) + "\n"
+        "borders: " + ", ".join(k for k in BORDERS if k != "ascii") + "\n"
+        "lines: solid, dashed, dotted, heavy, double\n"
+        "node shapes: box, diamond, cylinder\n"
+        "presets: " + ", ".join(sorted(PRESETS)) + "\n"
+    )
+
+
+def resolve_diagram(diagram: Path | None, example: str | None) -> Path:
+    if example:
+        candidate = EXAMPLES_DIR / example
+        if candidate.suffix != ".json":
+            candidate = EXAMPLES_DIR / f"{example}.diagram.json"
+        if not candidate.exists():
+            raise FileNotFoundError(f"unknown example: {example}\n{list_examples().rstrip()}")
+        return candidate
+    if diagram is None:
+        raise FileNotFoundError("missing diagram path. Use --examples or --example <name>.")
+    return diagram
+
+
+def load_doc(path: Path) -> dict[str, Any]:
+    doc = json.loads(path.read_text())
+    if doc.get("schema_version") != "diagram.document.v0":
+        raise ValueError(f"unsupported schema_version {doc.get('schema_version')!r}")
+    return doc
+
+
+def validate_doc(doc: dict[str, Any]) -> tuple[bool, str]:
+    try:
+        import jsonschema  # type: ignore
+    except Exception as e:
+        return False, f"jsonschema unavailable: {e}"
+    schema = json.loads(DOC_SCHEMA.read_text())
+    jsonschema.Draft202012Validator(schema).validate(doc)
+    return True, "schema ok"
+
+
+def inspect_doc(doc: dict[str, Any], path: Path) -> str:
+    b = diagram_bounds(doc)
+    ports = sum(len(n.get("ports", [])) for n in doc.get("nodes", []))
+    node_types: dict[str, int] = {}
+    edge_types: dict[str, int] = {}
+    for n in doc.get("nodes", []):
+        node_types[n.get("type", "node")] = node_types.get(n.get("type", "node"), 0) + 1
+    for e in doc.get("edges", []):
+        edge_types[e.get("type", "edge")] = edge_types.get(e.get("type", "edge"), 0) + 1
+    return "\n".join(
+        [
+            f"file: {path}",
+            f"id: {doc.get('id')}",
+            f"title: {doc.get('title', '')}",
+            f"kind: {doc.get('kind')}",
+            f"nodes: {len(doc.get('nodes', []))}  edges: {len(doc.get('edges', []))}  ports: {ports}",
+            f"groups: {len(doc.get('groups', []))}  annotations: {len(doc.get('annotations', []))}",
+            f"bounds: x={b.x:g} y={b.y:g} w={b.w:g} h={b.h:g}",
+            "node_types: " + (", ".join(f"{k}={v}" for k, v in sorted(node_types.items())) or "none"),
+            "edge_types: " + (", ".join(f"{k}={v}" for k, v in sorted(edge_types.items())) or "none"),
+        ]
+    ) + "\n"
+
+
+def apply_preset(ns: argparse.Namespace, term: os.terminal_size) -> None:
+    if not ns.preset:
+        return
+    preset = PRESETS[ns.preset]
+    if ns.width is None and "width" in preset:
+        ns.width = min(int(preset["width"]), max(int(preset["width"]), term.columns))
+    if ns.height is None and "height" in preset:
+        ns.height = min(int(preset["height"]), max(int(preset["height"]), term.lines - 2))
+    if ns.theme is None and "theme" in preset:
+        ns.theme = preset["theme"]
+    for flag in ("fit", "legend", "ports"):
+        if getattr(ns, flag) is False and preset.get(flag):
+            setattr(ns, flag, True)
+
+
+def render_once(doc: dict[str, Any], ns: argparse.Namespace) -> str:
+    view_x, view_y, zoom = ns.x, ns.y, ns.zoom
+    if ns.fit:
+        fit_height = ns.height - (4 if ns.legend else 0)
+        fx, fy, fz = fit_viewport(doc, ns.width, fit_height, ns.margin, ns.fit_scale, ns.fit_upscale)
+        view_x = fx if view_x is None else view_x
+        view_y = fy if view_y is None else view_y
+        zoom = fz if zoom is None else zoom
+    return Renderer(
+        doc,
+        ns.width,
+        ns.height,
+        ascii_mode=ns.ascii,
+        color=color_enabled(ns.color),
+        theme=ns.theme,
+        view_x=view_x,
+        view_y=view_y,
+        zoom=zoom,
+        legend=ns.legend,
+        ports=ns.ports,
+    ).render()
+
+
 def main(argv: list[str]) -> int:
     term = shutil.get_terminal_size((120, 40))
     ap = argparse.ArgumentParser(description="Render diagram.document.v0 JSON to a terminal canvas")
-    ap.add_argument("diagram", type=Path, help="Path to *.diagram.json")
-    ap.add_argument("--width", type=int, default=term.columns, help="Canvas width in characters")
-    ap.add_argument("--height", type=int, default=min(60, max(20, term.lines - 2)), help="Canvas height in characters")
+    ap.add_argument("diagram", type=Path, nargs="?", help="Path to *.diagram.json")
+    ap.add_argument("--example", help="Render example by name from playground/diagram-junky/examples")
+    ap.add_argument("--examples", action="store_true", help="List bundled examples and exit")
+    ap.add_argument("--styles", action="store_true", help="List themes, border styles, line styles, presets and exit")
+    ap.add_argument("--preset", choices=sorted(PRESETS), help="Apply a renderer preset")
+    ap.add_argument("--width", type=int, default=None, help="Canvas width in characters")
+    ap.add_argument("--height", type=int, default=None, help="Canvas height in characters")
     ap.add_argument("--ascii", action="store_true", help="Use ASCII instead of Unicode box drawing")
     ap.add_argument("--color", choices=["auto", "always", "never"], default="auto", help="ANSI color policy")
-    ap.add_argument("--theme", choices=sorted(THEMES), default="default", help="Color theme")
+    ap.add_argument("--theme", choices=sorted(THEMES), default=None, help="Color theme")
     ap.add_argument("--x", type=float, default=None, help="Viewport x override")
     ap.add_argument("--y", type=float, default=None, help="Viewport y override")
     ap.add_argument("--zoom", type=float, default=None, help="Viewport zoom override")
@@ -778,35 +909,75 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--margin", type=int, default=2, help="Canvas margin used by --fit")
     ap.add_argument("--legend", action="store_true", help="Draw renderer/debug legend")
     ap.add_argument("--ports", action="store_true", help="Draw port markers on node borders")
+    ap.add_argument("--inspect", action="store_true", help="Print document summary before rendering")
+    ap.add_argument("--validate", action="store_true", help="Validate document against diagram-document schema")
+    ap.add_argument("--bounds", action="store_true", help="Print computed logical bounds and exit")
+    ap.add_argument("--output", type=Path, help="Write rendered output to file instead of stdout")
+    ap.add_argument("--watch", type=float, nargs="?", const=1.0, help="Re-render every N seconds")
+    ap.add_argument("--no-clear", action="store_true", help="Do not clear the terminal in --watch mode")
     ns = ap.parse_args(argv)
 
-    doc = json.loads(ns.diagram.read_text())
-    if doc.get("schema_version") != "diagram.document.v0":
-        print(f"error: unsupported schema_version {doc.get('schema_version')!r}", file=sys.stderr)
-        return 2
-    view_x, view_y, zoom = ns.x, ns.y, ns.zoom
-    if ns.fit:
-        fit_height = ns.height - (4 if ns.legend else 0)
-        fx, fy, fz = fit_viewport(doc, ns.width, fit_height, ns.margin, ns.fit_scale, ns.fit_upscale)
-        view_x = fx if view_x is None else view_x
-        view_y = fy if view_y is None else view_y
-        zoom = fz if zoom is None else zoom
+    if ns.examples:
+        sys.stdout.write(list_examples())
+        return 0
+    if ns.styles:
+        sys.stdout.write(list_styles())
+        return 0
 
-    sys.stdout.write(
-        Renderer(
-            doc,
-            ns.width,
-            ns.height,
-            ascii_mode=ns.ascii,
-            color=color_enabled(ns.color),
-            theme=ns.theme,
-            view_x=view_x,
-            view_y=view_y,
-            zoom=zoom,
-            legend=ns.legend,
-            ports=ns.ports,
-        ).render()
-    )
+    apply_preset(ns, term)
+    if ns.width is None:
+        ns.width = term.columns
+    if ns.height is None:
+        ns.height = min(60, max(20, term.lines - 2))
+    if ns.theme is None:
+        ns.theme = "default"
+
+    try:
+        path = resolve_diagram(ns.diagram, ns.example)
+        doc = load_doc(path)
+    except Exception as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    if ns.validate:
+        try:
+            ok, msg = validate_doc(doc)
+        except Exception as e:
+            print(f"schema error: {e}", file=sys.stderr)
+            return 2
+        print(msg, file=sys.stderr if not ok else sys.stdout)
+        if not ok:
+            return 2
+
+    if ns.inspect:
+        sys.stdout.write(inspect_doc(doc, path))
+
+    if ns.bounds:
+        b = diagram_bounds(doc)
+        sys.stdout.write(f"x={b.x:g} y={b.y:g} w={b.w:g} h={b.h:g}\n")
+        return 0
+
+    def emit() -> None:
+        fresh = load_doc(path)
+        rendered = render_once(fresh, ns)
+        if ns.output:
+            ns.output.parent.mkdir(parents=True, exist_ok=True)
+            ns.output.write_text(rendered)
+        else:
+            sys.stdout.write(rendered)
+            sys.stdout.flush()
+
+    if ns.watch:
+        while True:
+            if not ns.no_clear and not ns.output:
+                sys.stdout.write("\033[2J\033[H")
+            emit()
+            if not ns.output:
+                sys.stdout.write(f"\nwatching {path} every {ns.watch:g}s — Ctrl-C to stop\n")
+                sys.stdout.flush()
+            time.sleep(max(0.1, ns.watch))
+
+    emit()
     return 0
 
 

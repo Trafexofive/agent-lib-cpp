@@ -40,6 +40,14 @@ render.py                       # first CLI renderer prototype
 ./playground/diagram-junky/render.py \
   playground/diagram-junky/examples/ansi-showcase.diagram.json \
   --width 120 --height 36 --theme neon --color always --legend
+
+# QOL shortcuts
+./playground/diagram-junky/render.py --examples
+./playground/diagram-junky/render.py --styles
+./playground/diagram-junky/render.py --example ansi-showcase --preset neon --ports
+./playground/diagram-junky/render.py --example runtime-loop --inspect --validate
+./playground/diagram-junky/render.py --example minimal-flow --output /tmp/minimal.txt
+./playground/diagram-junky/render.py --example ansi-showcase --watch 0.5
 ```
 
 Current renderer tricks:
@@ -59,6 +67,11 @@ Current renderer tricks:
 - auto-pan/fit: `--fit`, `--fit-scale`, `--fit-upscale`, `--margin`
 - optional port markers: `--ports`
 - debug legend: `--legend`
+- example resolver: `--examples`, `--example NAME`
+- preset profiles: `--preset compact|wide|neon|poster`
+- schema/docs helpers: `--validate`, `--inspect`, `--bounds`, `--styles`
+- file output: `--output path`
+- live reload loop: `--watch [seconds]`, `--no-clear`
 
 Renderer split:
 
