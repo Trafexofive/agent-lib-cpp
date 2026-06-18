@@ -296,6 +296,9 @@ install: $(BIN_CLI)
 	@echo "✓ installed $(BIN_CLI) → $(DESTDIR)$(BINDIR)/$(BIN_CLI)"
 	@if [ -f $(BIN_SERVER) ]; then install -m 755 $(BIN_SERVER) $(DESTDIR)$(BINDIR)/$(BIN_SERVER); echo "✓ installed $(BIN_SERVER) → $(DESTDIR)$(BINDIR)/$(BIN_SERVER)"; fi
 
+reinstall: clean all install
+	@echo "✓ reinstalled"
+
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(BIN_CLI)
 	rm -f $(DESTDIR)$(BINDIR)/$(BIN_SERVER)
