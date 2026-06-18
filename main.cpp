@@ -343,7 +343,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"config", required_argument, 0, 'C'},
                                        {"manifest-dir", required_argument, 0, 'G'},
                                        {"iterations", required_argument, 0, 'X'},
-                                       {"provider", required_argument, 0, 'P'},
+                                       {"provider", optional_argument, 0, 'P'},
                                        {"model", required_argument, 0, 'M'},
                                        {"sandbox", no_argument, 0, 'S'},
                                        {"sandbox-ro", no_argument, 0, 'R'},
@@ -384,6 +384,8 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {0, 0, 0, 0}};
 
     int opt;
+    bool sawProviderFlag = false;
+    bool providerFlagHadArg = false;
     while ((opt = getopt_long(argc, argv, "C:G:P:M:p:f:m:H:y:s:VhrSReEDnX:", longOpts, nullptr)) !=
            -1) {
         switch (opt) {
@@ -395,8 +397,17 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 cli.manifestDir = optarg;
                 break;
             case 'P':
-                cli.provider = optarg;
-                cli.providerSet = true;
+                sawProviderFlag = true;
+                if (optarg) {
+                    providerFlagHadArg = true;
+                    cli.provider = optarg;
+                    cli.providerSet = true;
+                } else {
+                    // `--provider` with no arg: in list context, show providers.
+                    // In run context, it's a no-op (keep current provider).
+                    if (cli.command == "list")
+                        cli.listProviders = true;
+                }
                 break;
             case 'M':
                 cli.model = optarg;
@@ -519,6 +530,18 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                     cli.prompt += " ";
                 cli.prompt += argv[i];
             }
+        }
+    }
+
+    // `list --provider <name>` → list models for that provider.
+    // GNU getopt only consumes optional option args with --provider=name, so
+    // `--provider opencode-go` leaves the provider name in argv[optind].
+    if (cli.command == "list" && sawProviderFlag && !cli.listModels && !cli.listProviders) {
+        if (!providerFlagHadArg && optind < argc && argv[optind][0] != '-') {
+            cli.listModels = true;
+            cli.listModelsProvider = argv[optind];
+        } else {
+            cli.listProviders = true;
         }
     }
 
@@ -672,14 +695,10 @@ static int cmdList(const CliConfig& cli) {
         std::cout << "  exec          Run a shell command\n";
         std::cout << "  list          List directory contents\n";
         std::cout << "  grep          Search files for a pattern\n";
-        std::cout << "  fs_read       Read a file\n";
-        std::cout << "  fs_write      Write a file\n";
-        std::cout << "  json          Validate/transform JSON\n";
-        std::cout << "  web_fetch     Fetch a URL\n";
         std::cout << "  context_pin   Pin file to context\n";
         std::cout << "  context_peek  Read file ephemerally\n";
         std::cout << "  context_unpin Remove pinned file\n";
-        std::cout << "  ask_tool      Interactive confirmation dialog\n";
+        std::cout << "  ask_tool      Interactive dialog (ask user)\n";
         return 0;
     }
 
