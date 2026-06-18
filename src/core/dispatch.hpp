@@ -10,7 +10,6 @@
 #include <string>
 
 #include "../protocol/parser.hpp"
-#include "../relics/builtin_relics.hpp"
 #include "../relics/docker_dispatcher.hpp"
 #include "../tools/registry.hpp"
 #include "../workflows/workflow_engine.hpp"
@@ -74,25 +73,6 @@ inline Json::Value dispatchRelic(const protocol::ParsedAction& action) {
         }
         return result;
     }
-
-    // Fall back to builtin relic dispatcher
-    Json::Value relicParams = action.params;
-    std::string endpoint = relicParams.get("endpoint", action.name).asString();
-    if (endpoint == action.name && !action.content.empty()) {
-        endpoint = action.content;
-    }
-    if (relicParams.isMember("body") && relicParams["body"].isObject())
-        relicParams = relicParams["body"];
-    relicParams.removeMember("endpoint");
-    relicParams.removeMember("method");
-    auto rr = relics::RelicDispatcher::instance().dispatch(action.name, endpoint, relicParams);
-    Json::Value result;
-    result["success"] = rr.success;
-    if (rr.success)
-        result["data"] = rr.data;
-    else
-        result["error"] = rr.error;
-    return result;
 }
 
 // ── Agent dispatcher (placeholder — sub-agent delegation) ──

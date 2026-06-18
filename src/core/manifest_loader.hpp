@@ -19,7 +19,6 @@
 #include "../core/types.hpp"
 #include "../feeds/feed_engine.hpp"
 #include "../providers/factory.hpp"
-#include "../relics/builtin_relics.hpp"
 #include "../relics/docker_dispatcher.hpp"
 #include "../workflows/workflow_engine.hpp"
 #include "mini_yaml.hpp"
@@ -273,10 +272,7 @@ class ManifestLoader {
                               << " (imported from " << manifestPath << ")\n";
                     continue;
                 }
-                auto rc = loadRelicConfig(relicYml.string());
                 relics::DockerRelicDispatcher::instance().loadRelic(relicPath.string());
-                if (!rc.baseUrl.empty())
-                    relics::RelicDispatcher::instance().registerHttpRelic(name, rc.baseUrl);
             }
             agent.addRelic(name);
         }

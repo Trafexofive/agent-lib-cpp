@@ -23,14 +23,14 @@ src/
   providers/     LLM backends (DeepSeek, OpenRouter, Groq, Zen, Together, Fireworks)
   tools/         Built-in tool implementations (exec, grep, fs_read, ...)
   feeds/         System feed pollers (clock, stats, working dir)
-  relics/        Built-in relics (session_journal, state_checkpoint)
+  relics/        Runtime relic abstractions; stdlib has no built-in relics yet
   workflows/     Workflow engine (step executor)
   session/       Session persistence
   testing/       Protocol test runner, parser tests
 
 manifests/
-  built-in/      Tools, feeds, relics compiled into binary
-  tools/         Script tools (fs_read, fs_write, json, web_fetch)
+  built-in/      Tools, feeds, and reserved relic space compiled into binary
+  tools/         Script tools under development (not stdlib)
   relics/        Docker relics (artifact_store, secret_store, ...)
   agents/        Production agent manifests
   workflows/     Workflow spec
@@ -56,7 +56,7 @@ Agents communicate via streaming XML tags:
 
 ## Standard Library
 
-### Tools (10)
+### Tools (7)
 | Tool | Type | Description |
 |------|------|-------------|
 | exec | built-in | Execute shell commands |
@@ -65,10 +65,7 @@ Agents communicate via streaming XML tags:
 | context_pin | built-in | Pin file to persistent context |
 | context_peek | built-in | Read file for N cycles, auto-evict |
 | context_unpin | built-in | Remove pinned file from context |
-| fs_read | script (python3) | Read file with offset/limit |
-| fs_write | script (python3) | Write/create files |
-| json | script (python3) | Parse, query, validate JSON |
-| web_fetch | script (python3) | HTTP GET/POST |
+| ask_tool | built-in | Ask structured clarification/confirmation questions |
 
 ### Feeds (3) — auto-injected into prompt
 | Feed | Data |
@@ -77,11 +74,9 @@ Agents communicate via streaming XML tags:
 | system_stats | Hostname, platform, CPU, memory, PID |
 | working_directory | CWD, git repo, branch, dirty, commit |
 
-### Built-in Relics (2)
-| Relic | Description |
-|-------|-------------|
-| session_journal | Session event recording and querying (filesystem) |
-| state_checkpoint | Agent state snapshots for crash recovery (filesystem) |
+### Built-in Relics (0)
+
+No built-in relics are promoted to stdlib. Runtime checkpointing belongs in the core runtime.
 
 ### Docker Relics (5) — containers exist, dispatcher WIP
 | Relic | Description |

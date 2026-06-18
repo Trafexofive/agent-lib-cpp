@@ -14,7 +14,7 @@
 
 #include "../feeds/feed_engine.hpp"
 #include "../providers/factory.hpp"
-#include "../relics/builtin_relics.hpp"
+#include "../relics/docker_dispatcher.hpp"
 #include "../workflows/workflow_engine.hpp"
 #include "agent.hpp"
 #include "manifest_loader.hpp"
@@ -84,11 +84,6 @@ class ManifestAutoload {
                 seenRelics.insert(name);
                 report.relics.push_back(name);
                 agent.addRelic(name);
-                // Register relic URL for HTTP dispatch
-                auto relicCfg = ManifestLoader::loadRelicConfig(p.string());
-                if (!relicCfg.baseUrl.empty()) {
-                    relics::RelicDispatcher::instance().registerHttpRelic(name, relicCfg.baseUrl);
-                }
             } else if (file == "agent.yml") {
                 if (!skipAgentManifest.empty() && samePath(p, fs::path(skipAgentManifest)))
                     continue;

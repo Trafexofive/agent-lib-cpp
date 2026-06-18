@@ -92,6 +92,8 @@ class Agent {
     // ---- Session ----
     void loadSession(const std::string& id);
     void saveSession(const std::string& id);
+    void loadStateCheckpoint(const std::string& sessionId);
+    void saveStateCheckpoint(const std::string& sessionId) const;
     void clearHistory();
     void undoLastInteraction();
 
@@ -117,9 +119,11 @@ class Agent {
     Json::Value contextPin(const std::string& path, bool force = false);
     Json::Value contextPeek(const std::string& path, int cycles = 1, bool force = false);
     Json::Value contextUnpin(const std::string& path);
-    void tickContextCycles();                           // called at end of each iteration
-    Json::Value contextSnapshot() const;                // for debugging / introspection
-    std::string renderSystemPrompt() const;             // testing hook — no LLM call
+    void tickContextCycles();                // called at end of each iteration
+    Json::Value contextSnapshot() const;     // for debugging / introspection
+    std::string renderSystemPrompt() const;  // testing hook — no LLM call
+    Json::Value stateCheckpointJson() const;
+    void loadStateCheckpointJson(const Json::Value& root);
     static constexpr size_t kContextSizeLimit = 65536;  // 64 KB per entry; override via force=true
 
     void removeTool(const std::string& name);
@@ -191,7 +195,7 @@ class Agent {
     session::SessionManager sessionMgr_;
     std::vector<std::string> history_;
     std::string systemPrompt_;
-    std::string personaText_;  // persona content (identity/values)
+    std::string personaText_;                             // persona content (identity/values)
     std::vector<std::string> contextFeeds_;               // accumulated from <context_feed> tags
     std::map<std::string, std::string> executedActions_;  // dedup: key → cached result JSON string
     std::map<std::string, ToolDef> tools_;

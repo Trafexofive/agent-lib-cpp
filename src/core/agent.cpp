@@ -17,7 +17,6 @@
 #include <unordered_set>
 
 #include "../feeds/feed_engine.hpp"
-#include "../relics/builtin_relics.hpp"
 #include "../tools/dispatch.hpp"
 #include "../utils/ansi.hpp"
 #include "dispatch.hpp"
@@ -64,10 +63,6 @@ static std::string indentText(const std::string& text, int spaces) {
     }
     return out.str();
 }
-
-// Built-in relic endpoint map — file scope, no magic-statics lock on hot path.
-static const std::map<std::string, std::string> BUILTIN_RELICS = {
-    {"session_journal", "record,query,export,prune"}, {"state_checkpoint", "save,load,list,gc"}};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Constructor
@@ -156,8 +151,10 @@ std::string Agent::prompt(const std::string& input, StreamCallback onToken,
     ctx.verbose = verbose_;
     ctx.debug = (env_.count("__DEBUG_MODE__") && env_["__DEBUG_MODE__"] == "true");
 
-    if (!ephemeral && !sessionId.empty())
+    if (!ephemeral && !sessionId.empty()) {
         loadSession(sessionId);
+        loadStateCheckpoint(sessionId);
+    }
 
     std::string result = runLoop(ctx);
 
@@ -904,6 +901,7 @@ std::string Agent::runLoop(AgentContext& ctx) {
 
     if (!ctx.ephemeral && !ctx.sessionId.empty()) {
         saveSession(ctx.sessionId);
+        saveStateCheckpoint(ctx.sessionId);
     }
 
     if (ctx.raw && !rawOutput.empty()) {
@@ -1044,10 +1042,7 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
         ss << "    <relics>\n        <description>Persistent stores callable with <action "
               "type=\"relic\">.</description>\n";
         for (auto& name : relics_) {
-            auto it = BUILTIN_RELICS.find(name);
-            if (it != BUILTIN_RELICS.end())
-                ss << "        <relic name=\"" << xmlAttr(name) << "\" endpoints=\"" << it->second
-                   << "\"/>\n";
+            ss << "        <relic name=\"" << xmlAttr(name) << "\"/>\n";
         }
         ss << "    </relics>\n";
     }

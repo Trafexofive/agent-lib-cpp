@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -185,6 +186,52 @@ void test_peek_ignored_when_pinned() {
 // End-to-end: prove the content lands in the rendered system prompt and
 // is removed when the entry expires.
 // ═══════════════════════════════════════════════════════════════════════
+void test_state_checkpoint_roundtrips_context() {
+    TEST("state checkpoint round-trips pinned and peeking context");
+    std::string session = "ctx-checkpoint-" + std::to_string(::getpid());
+    auto pinnedPath = writeTmpFile("checkpoint_pinned.txt", "CHECKPOINT_PINNED_MARKER\n");
+    auto peekPath = writeTmpFile("checkpoint_peeking.txt", "CHECKPOINT_PEEKING_MARKER\n");
+
+    auto a = makeAgent();
+    a->contextPin(pinnedPath.string(), false);
+    a->contextPeek(peekPath.string(), 3, false);
+    a->saveStateCheckpoint(session);
+
+    auto b = makeAgent();
+    b->loadStateCheckpoint(session);
+    auto snap = b->contextSnapshot();
+    CHECK(snap["pinned"].size() == 1, "pinned restored");
+    CHECK(snap["peeking"].size() == 1, "peeking restored");
+    CHECK(snap["peeking"][0]["cycles_remaining"].asInt() == 3, "peek cycles restored");
+
+    fs::remove(fs::path(std::getenv("HOME") ?: "/tmp") / ".cortex" / "state" / (session + ".json"));
+    PASS();
+}
+
+void test_state_checkpoint_roundtrips_subagent_context() {
+    TEST("state checkpoint round-trips non-ephemeral sub-agent context");
+    std::string session = "ctx-checkpoint-sub-" + std::to_string(::getpid());
+    auto path = writeTmpFile("checkpoint_subagent.txt", "CHECKPOINT_SUBAGENT_MARKER\n");
+
+    auto parent = makeAgent();
+    auto childOwner = makeAgent();
+    childOwner->contextPin(path.string(), false);
+    auto child = std::shared_ptr<Agent>(childOwner.release());
+    parent->addSubAgent(child);
+    parent->saveStateCheckpoint(session);
+
+    auto restoredParent = makeAgent();
+    auto restoredChildOwner = makeAgent();
+    auto restoredChild = std::shared_ptr<Agent>(restoredChildOwner.release());
+    restoredParent->addSubAgent(restoredChild);
+    restoredParent->loadStateCheckpoint(session);
+    auto snap = restoredChild->contextSnapshot();
+    CHECK(snap["pinned"].size() == 1, "sub-agent pinned context restored");
+
+    fs::remove(fs::path(std::getenv("HOME") ?: "/tmp") / ".cortex" / "state" / (session + ".json"));
+    PASS();
+}
+
 void test_pinned_appears_in_system_prompt() {
     TEST("pinned content appears inside <pinned_context> in system prompt");
     auto agent = makeAgent();
@@ -242,6 +289,8 @@ int main() {
     g_tmpDir = fs::temp_directory_path() / ("cortex-ctx-test-" + std::to_string(::getpid()));
     fs::create_directories(g_tmpDir);
 
+    ::setenv("HOME", g_tmpDir.string().c_str(), 1);
+
     test_pin_basic();
     test_pin_same_path_two_forms();
     test_peek_cycles_decrement();
@@ -251,6 +300,8 @@ int main() {
     test_size_guard_force();
     test_pin_overrides_peek();
     test_peek_ignored_when_pinned();
+    test_state_checkpoint_roundtrips_context();
+    test_state_checkpoint_roundtrips_subagent_context();
     test_pinned_appears_in_system_prompt();
     test_peek_disappears_after_eviction();
     test_missing_file();

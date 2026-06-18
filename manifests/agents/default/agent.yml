@@ -33,8 +33,7 @@ import:
     - context_peek
     - context_unpin
     - ask_tool
-  # relics:
-  #   - session_journal
-  #   - state_checkpoint
+  # Built-in relics: none. Runtime checkpointing belongs in the core runtime,
+  # not as stdlib relic manifests.
   feeds: []
   env: []

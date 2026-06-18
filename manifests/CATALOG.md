@@ -10,7 +10,7 @@ Last updated: 2026-06-17 — sovereign C++ classes, prompt/skill consolidation, 
 manifests/                    ← Global scope — auto-loaded, name-resolvable
   built-in/tools/             7 tools (exec, list, grep, context_pin/peek/unpin, ask_tool)
   built-in/feeds/             3 feeds (system_clock, system_stats, working_directory)
-  built-in/relics/            2 relics (session_journal, state_checkpoint)
+  built-in/relics/            reserved for future runtime relics; stdlib has no built-in relics yet
   agents/                     1 agent (default)
   workflows/                  2 workflows (code-review, workflow_spec)
   prompts/                    14 reusable prompt modules
@@ -43,12 +43,11 @@ poc/                          ← POC/archive, not auto-loaded
 | system_stats | Hostname, platform, arch, kernel, CPU, memory |
 | working_directory | CWD path, git root/branch/dirty |
 
-## Built-in Relics (2)
+## Built-in Relics (0)
 
-| Name | Description |
-|------|-------------|
-| session_journal | Runtime-local session and context persistence |
-| state_checkpoint | Agent state serialization for crash recovery |
+No built-in relics are promoted to stdlib yet. Runtime persistence/checkpointing
+belongs in the core runtime, not as fake relic services.
+
 
 ## Agent Modules (1)
 
@@ -100,7 +99,7 @@ poc/                          ← POC/archive, not auto-loaded
 | Workflow | `Workflow` | `src/workflows/workflow.hpp` | Owns manifest + serialization |
 | Tools | `ToolRegistry` | `src/tools/registry.hpp` | Stores `Tool` objects, backward compat |
 | Feeds | `FeedEngine` | `src/feeds/feed_engine.hpp` | Orchestrates `Feed` objects |
-| Relics | `RelicDispatcher` | `src/relics/builtin_relics.hpp` | Routes via `RelicPtr`, HTTP fallback |
+| Relics | none yet | n/a | Built-in relic abstractions were removed from stdlib; runtime persistence belongs in the core runtime |
 | Workflows | `WorkflowEngine` | `src/workflows/workflow_engine.hpp` | Loads/executes `Workflow` objects |
 
 

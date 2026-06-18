@@ -2,7 +2,6 @@
 // Docker Relic Dispatcher — manages Docker relic lifecycle and HTTP routing
 // Managed relics: auto-start via docker-compose, health-check, keep running
 // Remote relics: direct HTTP call, no lifecycle management
-// Builtin relics: delegated to RelicDispatcher (filesystem-based)
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 #include <curl/curl.h>
@@ -25,7 +24,7 @@ namespace fs = std::filesystem;
 // ── Relic definition (loaded from relic.yml) ──
 struct DockerRelicDef {
     std::string name;
-    std::string mode;  // managed | remote | builtin
+    std::string mode;  // managed | remote
     std::string summary;
     int port = 0;
     std::string composeDir;   // path to directory with docker-compose.yml
@@ -147,15 +146,6 @@ class DockerRelicDispatcher {
         }
 
         auto& def = it->second;
-
-        // Builtin relics delegate to filesystem dispatcher
-        if (def.mode == "builtin") {
-            auto rr = RelicDispatcher::instance().dispatch(relicName, endpoint, params);
-            result.success = rr.success;
-            result.data = Json::writeString(Json::StreamWriterBuilder(), rr.data);
-            result.error = rr.error;
-            return result;
-        }
 
         // Remote relics: direct HTTP call
         if (def.mode == "remote") {

@@ -16,7 +16,7 @@ Every module follows the same pattern:
 |------|---------|--------|
 | `built-in/tools/` | C++ compiled tools (exec, list, grep, context_pin/peek/unpin, ask_tool) | ✅ stable |
 | `built-in/feeds/` | C++ compiled feeds (system_clock, stats, working_dir) | ✅ stable |
-| `built-in/relics/` | Filesystem relics (session_journal, state_checkpoint) | ✅ stable |
+| `built-in/relics/` | Reserved for future runtime relics; stdlib has no built-in relics yet | ⚪ empty |
 | `agents/` | Agent manifests (default) | ✅ stable |
 | `workflows/` | Workflow definitions (code-review, workflow_spec) | 🟡 growing |
 | `prompts/` | Reusable task/persona prompts for bespoke agents | 🟡 seeded |

@@ -284,7 +284,7 @@ endpoints:                          # Available operations
 2. `dispatchRelic()` checks `DockerRelicDispatcher::getRelic("artifact_store")`
 3. If **managed**: checks container health → if down, `docker-compose up -d` → waits for `/health` → HTTP call
 4. If **remote**: direct HTTP call to the configured endpoint
-5. If **builtin**: delegates to filesystem-based `RelicDispatcher`
+5. Built-in relic dispatch is not part of stdlib; runtime persistence/checkpointing belongs in the core runtime.
 6. Managed relics are **never shut down** — they stay running for subsequent calls
 
 ## Workflow Manifest

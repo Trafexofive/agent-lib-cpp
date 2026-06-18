@@ -6,7 +6,6 @@
 #include <fstream>
 
 #include "../feeds/feed_engine.hpp"
-#include "../relics/builtin_relics.hpp"
 #include "../tools/dispatch.hpp"
 #include "../utils/ansi.hpp"
 #include "agent.hpp"
@@ -92,14 +91,7 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
 
     // ── Relic dispatch ──
     if (normalized.type == protocol::ActionType::RELIC) {
-        auto result = relics::RelicDispatcher::instance().dispatch(
-            normalized.name, normalized.params.get("endpoint", "").asString(), normalized.params);
-        Json::Value r;
-        r["success"] = result.success;
-        r["output"] = result.success ? result.data : result.error;
-        if (result.success && !result.data.empty())
-            r["data"] = result.data;
-        return r;
+        return dispatch::dispatchRelic(normalized);
     }
 
     // Script tools (path-imported, not native)
