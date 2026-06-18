@@ -112,8 +112,12 @@ def rule(title: str, width: int, *, color: bool = False, active: bool = False) -
 def panel(title: str, width: int, height: int, body: list[str], *, color: bool = False, active: bool = False) -> list[str]:
     width = max(4, width)
     height = max(1, height)
+    # One breathing row after the section rule keeps Glow-style headers from
+    # crashing into content while preserving the no-boxes/no-corners chrome.
     lines = [rule(title, width, color=color, active=active)]
-    for i in range(height - 1):
+    if height > 1:
+        lines.append(" " * width)
+    for i in range(max(0, height - len(lines))):
         content = body[i] if i < len(body) else ""
         lines.append(fit_ansi(content, width))
     return lines[:height]
