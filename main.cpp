@@ -637,7 +637,15 @@ static int cmdList(const CliConfig& cli) {
     }
 
     if (cli.listModels) {
-        auto printModels = [](const std::string& p) -> bool {
+        auto formatContextWindow = [](int tokens) -> std::string {
+            if (tokens <= 0)
+                return "0";
+            if (tokens >= 1000000)
+                return std::to_string(tokens / 1000000) + "M";
+            return std::to_string(tokens / 1000) + "K";
+        };
+
+        auto printModels = [&](const std::string& p) -> bool {
             auto provider = providers::createProvider(p, "");
             if (!provider) {
                 std::cerr << "Unknown provider: " << p << "\n";
@@ -660,7 +668,7 @@ static int cmdList(const CliConfig& cli) {
                     std::cout << " (" << m.name << ")";
                 if (m.isFree)
                     std::cout << " [free]";
-                std::cout << " — " << (m.contextWindow / 1024) << "K ctx\n";
+                std::cout << " — " << formatContextWindow(m.contextWindow) << " ctx\n";
             }
             if (models.empty()) {
                 std::string fallback = providers::defaultProviderModel(p);

@@ -5,11 +5,13 @@
 #include "generic_openai.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <iostream>
 #include <regex>
 #include <sstream>
 #include <thread>
+#include <unordered_map>
 
 #include "../core/agent.hpp"  // g_running
 
@@ -570,6 +572,43 @@ int GenericOpenAIClient::abortCheckCb(void*, curl_off_t, curl_off_t, curl_off_t,
 // ---------------------------------------------------------------------------
 // Model listing
 // ---------------------------------------------------------------------------
+static int knownContextWindow(const std::string& provider, const std::string& modelId,
+                              int fallback) {
+    static const std::unordered_map<std::string, int> opencodeGo = {
+        {"glm-5.2", 1000000},
+        {"glm-5.1", 200000},
+        {"glm-5", 204800},
+        {"kimi-k2.7-code", 262144},
+        {"kimi-k2.6", 262144},
+        {"kimi-k2.5", 262144},
+        {"deepseek-v4-pro", 1000000},
+        {"deepseek-v4-flash", 1000000},
+        {"qwen3.7-max", 1000000},
+        {"qwen3.7-plus", 1000000},
+        {"qwen3.6-plus", 1000000},
+        {"qwen3.5-plus", 1000000},
+        {"mimo-v2-pro", 1048576},
+        {"mimo-v2-omni", 262144},
+        {"mimo-v2.5-pro", 1048576},
+        {"mimo-v2.5", 1048576},
+        {"minimax-m3", 512000},
+        {"minimax-m2.7", 204800},
+        {"minimax-m2.5", 204800},
+        {"hy3-preview", 256000},
+    };
+
+    std::string key = modelId;
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    if (provider == "opencode-go" || provider == "opencode") {
+        auto it = opencodeGo.find(key);
+        if (it != opencodeGo.end())
+            return it->second;
+    }
+    return fallback;
+}
+
 std::vector<ILlmProvider::ModelInfo> GenericOpenAIClient::listModels() {
     if (modelsFetched_)
         return cachedModels_;
@@ -629,8 +668,8 @@ std::vector<ILlmProvider::ModelInfo> GenericOpenAIClient::listModels() {
         ModelInfo info;
         info.id = m["id"].asString();
         info.name = (m.isMember("name") && m["name"].isString()) ? m["name"].asString() : info.id;
-        info.contextWindow =
-            m.get("context_window", config_.name == "openai-codex" ? 272000 : 65536).asInt();
+        int fallbackContext = config_.name == "openai-codex" ? 272000 : 65536;
+        info.contextWindow = knownContextWindow(config_.name, info.id, fallbackContext);
         info.isFree = (info.id.find(":free") != std::string::npos ||
                        info.name.find(":free") != std::string::npos);
         if (!info.isFree && m.isMember("pricing") && m["pricing"].isObject()) {
