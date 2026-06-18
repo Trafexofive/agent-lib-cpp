@@ -951,6 +951,12 @@ static bool interactivePicker(std::string& outProvider, std::string& outModel) {
     };
 
     auto readKey = [&]() -> std::pair<tui::KeyAction, char> {
+        // Block until a key is available — prevents the spin loop.
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(STDIN_FILENO, &fds);
+        select(STDIN_FILENO + 1, &fds, nullptr, nullptr, nullptr);  // no timeout = block
+
         char buf[64];
         ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
         if (n <= 0)
@@ -965,7 +971,6 @@ static bool interactivePicker(std::string& outProvider, std::string& outModel) {
             if (seq.size() == 1) {
                 // Bare ESC — wait a bit for continuation
                 struct timeval tv = {0, 5000};
-                fd_set fds;
                 FD_ZERO(&fds);
                 FD_SET(STDIN_FILENO, &fds);
                 if (select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) > 0) {
