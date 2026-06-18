@@ -23,7 +23,9 @@ examples/
   runtime-loop.diagram.json     # MK3-ish harness/runtime diagram
   ansi-showcase.diagram.json    # colors, shapes, line styles
   add-node.patch.json           # patch envelope example
-render.py                       # first CLI renderer prototype
+render.py                       # CLI wrapper around reusable renderer core
+tui.py                          # raw ANSI TUI playground prototype
+diagram_junky/rendering.py      # reusable scene/canvas/CLI renderer core
 ```
 
 ## CLI renderer
@@ -49,6 +51,33 @@ render.py                       # first CLI renderer prototype
 ./playground/diagram-junky/render.py --example minimal-flow --output /tmp/minimal.txt
 ./playground/diagram-junky/render.py --example ansi-showcase --watch 0.5
 ```
+
+## Raw ANSI TUI prototype
+
+```bash
+./playground/diagram-junky/tui.py --example ansi-showcase
+./playground/diagram-junky/tui.py --example runtime-loop --no-color
+./playground/diagram-junky/tui.py --example minimal-flow --smoke-render
+```
+
+Keys:
+
+- `h/j/k/l` or arrows: pan
+- `+/-`: zoom
+- `0`: reset viewport
+- `f`: fit diagram bounds
+- `n/p`: next/previous bundled example
+- `t`: cycle theme
+- `c`: toggle color
+- `g`: toggle legend
+- `o`: toggle port markers
+- `r`: reload current file
+- `s`: save viewport/session state to `~/.cache/diagram-junky/tui-state.json`
+- `?`: show help
+- `q`: quit
+
+The TUI intentionally uses raw ANSI + stdlib terminal input. It is a fast
+playground shell over the reusable renderer, not the final hub/canvas app.
 
 Current renderer tricks:
 

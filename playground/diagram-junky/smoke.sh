@@ -35,6 +35,7 @@ PY
 "$ROOT/render.py" --styles >/tmp/diagram-junky-styles.txt
 "$ROOT/render.py" --example ansi-showcase --inspect --bounds >/tmp/diagram-junky-inspect.txt
 "$ROOT/render.py" --example ansi-showcase --validate >/tmp/diagram-junky-validate.txt
+"$ROOT/tui.py" --example minimal-flow --no-color --smoke-render >/tmp/diagram-junky-tui.txt
 
 grep -q "Start" /tmp/diagram-junky-minimal.txt
 grep -q "Do work" /tmp/diagram-junky-minimal.txt
@@ -46,5 +47,6 @@ grep -q "themes:" /tmp/diagram-junky-styles.txt
 grep -q "bounds:" /tmp/diagram-junky-inspect.txt
 grep -q "schema ok" /tmp/diagram-junky-validate.txt
 grep -q "Start" /tmp/diagram-junky-output.txt
+grep -q "diagram-junky TUI" /tmp/diagram-junky-tui.txt
 
 echo "render smoke ok"
