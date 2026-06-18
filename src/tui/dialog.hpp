@@ -375,60 +375,68 @@ class DialogRenderer {
             width = 40;
         if (width > 100)
             width = 100;
-        int inner = width - 4;
-        lines.push_back(ansi::fg(120, 210, 255) + ansi::bold() + "╭─ " + state.chainTitle + " ─" +
-                        repeatStr("─", std::max(0, inner - (int)state.chainTitle.size() - 4)) +
-                        "╮" + ansi::reset());
+        int inner = width - 6;  // 3-char left margin, no right border
+
+        // ── Top rule ──
+        lines.push_back("");
+        lines.push_back(ansi::fg(120, 210, 255) + ansi::bold() + "  " + state.chainTitle +
+                        ansi::reset());
+        lines.push_back(ansi::fg(120, 210, 255) + "  " + repeatStr("─", std::min(inner, 60)) +
+                        ansi::reset());
+
+        // ── Message ──
         if (!state.message.empty()) {
-            for (auto line : wrapAnsiAware(state.message, inner))
-                lines.push_back(ansi::fg(120, 210, 255) + "│ " + line +
-                                std::string(std::max(0, inner - (int)visLen(line)), ' ') + " │" +
-                                ansi::reset());
+            lines.push_back("");
+            for (auto& line : wrapAnsiAware(state.message, inner))
+                lines.push_back(ansi::dim() + "  " + line + ansi::reset());
         }
+
         const DialogCard* card = state.current();
         if (card) {
-            std::string title = "[" + std::to_string(state.index + 1) + "/" +
+            // ── Card title ──
+            lines.push_back("");
+            std::string title = "  [" + std::to_string(state.index + 1) + "/" +
                                 std::to_string(state.cards.size()) + "] " + card->title;
-            lines.push_back(ansi::fg(255, 210, 80) + ansi::bold() + "│ " + title +
-                            std::string(std::max(0, inner - (int)visLen(title)), ' ') + " │" +
-                            ansi::reset());
+            lines.push_back(ansi::fg(255, 210, 80) + ansi::bold() + title + ansi::reset());
+
+            // ── Card message ──
             if (!card->message.empty()) {
-                for (auto line : wrapAnsiAware(card->message, inner))
-                    lines.push_back(ansi::dim() + "│ " + line +
-                                    std::string(std::max(0, inner - (int)visLen(line)), ' ') +
-                                    " │" + ansi::reset());
+                for (auto& line : wrapAnsiAware(card->message, inner))
+                    lines.push_back(ansi::dim() + "  " + line + ansi::reset());
             }
             if (!card->help.empty()) {
-                for (auto line : wrapAnsiAware("Help: " + card->help, inner))
-                    lines.push_back(ansi::dim() + "│ " + line +
-                                    std::string(std::max(0, inner - (int)visLen(line)), ' ') +
-                                    " │" + ansi::reset());
+                for (auto& line : wrapAnsiAware(card->help, inner))
+                    lines.push_back(ansi::dim() + "  " + line + ansi::reset());
             }
-            for (auto line : renderCardOptions(*card, inner, state.selectedOption))
-                lines.push_back(ansi::dim() + "│ " + line +
-                                std::string(std::max(0, inner - (int)visLen(line)), ' ') + " │" +
-                                ansi::reset());
-            // ── Inline input field inside the card box ──
+
+            // ── Options ──
+            for (auto& line : renderCardOptions(*card, inner, state.selectedOption))
+                lines.push_back("  " + line);
+
+            // ── Inline input field ──
             if (card->type != "note" && card->type != "info" && card->type != "section_header") {
+                lines.push_back("");
                 std::string inputLine = renderInputField(*card, inputBuf, inner);
-                lines.push_back(ansi::fg(120, 210, 255) + "│ " + inputLine +
-                                std::string(std::max(0, inner - (int)visLen(inputLine)), ' ') +
-                                " │" + ansi::reset());
+                lines.push_back(ansi::fg(120, 210, 255) + ansi::bold() + "  " + inputLine +
+                                ansi::reset());
             }
+
+            // ── Error ──
             if (!state.error.empty()) {
-                for (auto line : wrapAnsiAware(state.error, inner))
-                    lines.push_back(ansi::fg(255, 90, 90) + "│ " + line +
-                                    std::string(std::max(0, inner - (int)visLen(line)), ' ') +
-                                    " │" + ansi::reset());
+                lines.push_back("");
+                for (auto& line : wrapAnsiAware(state.error, inner))
+                    lines.push_back(ansi::fg(255, 90, 90) + "  " + line + ansi::reset());
             }
         } else {
-            std::string done = state.cancelled ? "Cancelled" : "Done";
-            lines.push_back(ansi::fg(120, 210, 255) + "│ " + done +
-                            std::string(std::max(0, inner - (int)done.size()), ' ') + " │" +
-                            ansi::reset());
+            lines.push_back("");
+            std::string done = state.cancelled ? "  Cancelled" : "  Done";
+            lines.push_back(ansi::fg(120, 210, 255) + done + ansi::reset());
         }
-        lines.push_back(ansi::fg(120, 210, 255) + ansi::bold() + "╰" +
-                        repeatStr("─", std::max(0, inner + 2)) + "╯" + ansi::reset());
+
+        // ── Bottom rule ──
+        lines.push_back("");
+        lines.push_back(ansi::fg(120, 210, 255) + "  " + repeatStr("─", std::min(inner, 60)) +
+                        ansi::reset());
         return lines;
     }
 
