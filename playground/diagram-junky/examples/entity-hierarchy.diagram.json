@@ -1,0 +1,130 @@
+{
+  "version": "diagram.document.v0",
+  "meta": {
+    "title": "Entity Hierarchy \u2014 Document System",
+    "description": "Inheritance and composition graph for a document model.",
+    "author": "diagram-junky"
+  },
+  "nodes": [
+    {
+      "id": "model",
+      "label": "Model",
+      "pos": [
+        50,
+        2
+      ],
+      "category": "abstract"
+    },
+    {
+      "id": "embedding",
+      "label": "EmbeddingModel",
+      "pos": [
+        20,
+        10
+      ],
+      "category": "concrete"
+    },
+    {
+      "id": "chat",
+      "label": "ChatModel",
+      "pos": [
+        50,
+        10
+      ],
+      "category": "concrete"
+    },
+    {
+      "id": "image",
+      "label": "ImageModel",
+      "pos": [
+        80,
+        10
+      ],
+      "category": "concrete"
+    },
+    {
+      "id": "tokenizer",
+      "label": "Tokenizer",
+      "pos": [
+        20,
+        18
+      ],
+      "category": "component"
+    },
+    {
+      "id": "adapter",
+      "label": "Adapter",
+      "pos": [
+        50,
+        18
+      ],
+      "category": "component"
+    },
+    {
+      "id": "sampler",
+      "label": "Sampler",
+      "pos": [
+        80,
+        18
+      ],
+      "category": "component"
+    },
+    {
+      "id": "pipeline",
+      "label": "Pipeline",
+      "pos": [
+        50,
+        26
+      ],
+      "category": "composite"
+    }
+  ],
+  "edges": [
+    {
+      "from": "model",
+      "to": "embedding",
+      "label": "extends"
+    },
+    {
+      "from": "model",
+      "to": "chat",
+      "label": "extends"
+    },
+    {
+      "from": "model",
+      "to": "image",
+      "label": "extends"
+    },
+    {
+      "from": "chat",
+      "to": "tokenizer",
+      "label": "has-a"
+    },
+    {
+      "from": "chat",
+      "to": "adapter",
+      "label": "has-a"
+    },
+    {
+      "from": "chat",
+      "to": "sampler",
+      "label": "has-a"
+    },
+    {
+      "from": "tokenizer",
+      "to": "pipeline",
+      "label": "feeds"
+    },
+    {
+      "from": "adapter",
+      "to": "pipeline",
+      "label": "feeds"
+    },
+    {
+      "from": "sampler",
+      "to": "pipeline",
+      "label": "feeds"
+    }
+  ],
+  "schema_version": "diagram.document.v0"
+}

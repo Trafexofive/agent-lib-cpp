@@ -1,0 +1,166 @@
+{
+  "version": "diagram.document.v0",
+  "meta": {
+    "title": "Build Pipeline State Machine",
+    "description": "Stateful build system with error recovery paths.",
+    "author": "diagram-junky"
+  },
+  "legend": {
+    "node_categories": [
+      {
+        "name": "state",
+        "style": "cyan",
+        "desc": "Pipeline state"
+      },
+      {
+        "name": "terminal",
+        "style": "green",
+        "desc": "Terminal state"
+      },
+      {
+        "name": "error",
+        "style": "red",
+        "desc": "Error state"
+      }
+    ],
+    "edge_categories": [
+      {
+        "name": "success",
+        "style": "green",
+        "desc": "Success transition"
+      },
+      {
+        "name": "failure",
+        "style": "red",
+        "desc": "Failure transition"
+      },
+      {
+        "name": "retry",
+        "style": "yellow",
+        "desc": "Retry path"
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "idle",
+      "label": "IDLE",
+      "category": "state",
+      "pos": [
+        10,
+        6
+      ]
+    },
+    {
+      "id": "fetch",
+      "label": "FETCH",
+      "category": "state",
+      "pos": [
+        30,
+        4
+      ]
+    },
+    {
+      "id": "compile",
+      "label": "COMPILE",
+      "category": "state",
+      "pos": [
+        50,
+        4
+      ]
+    },
+    {
+      "id": "test",
+      "label": "TEST",
+      "category": "state",
+      "pos": [
+        70,
+        4
+      ]
+    },
+    {
+      "id": "deploy",
+      "label": "DEPLOY",
+      "category": "terminal",
+      "pos": [
+        90,
+        6
+      ]
+    },
+    {
+      "id": "error",
+      "label": "ERROR",
+      "category": "error",
+      "pos": [
+        50,
+        14
+      ]
+    },
+    {
+      "id": "retry",
+      "label": "RETRY",
+      "category": "state",
+      "pos": [
+        30,
+        14
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "idle",
+      "to": "fetch",
+      "category": "success",
+      "label": "trigger"
+    },
+    {
+      "from": "fetch",
+      "to": "compile",
+      "category": "success",
+      "label": "done"
+    },
+    {
+      "from": "fetch",
+      "to": "error",
+      "category": "failure",
+      "label": "timeout"
+    },
+    {
+      "from": "compile",
+      "to": "test",
+      "category": "success",
+      "label": "done"
+    },
+    {
+      "from": "compile",
+      "to": "error",
+      "category": "failure",
+      "label": "err"
+    },
+    {
+      "from": "test",
+      "to": "deploy",
+      "category": "success",
+      "label": "passed"
+    },
+    {
+      "from": "test",
+      "to": "error",
+      "category": "failure",
+      "label": "failed"
+    },
+    {
+      "from": "error",
+      "to": "retry",
+      "category": "retry",
+      "label": "diagnose"
+    },
+    {
+      "from": "retry",
+      "to": "fetch",
+      "category": "retry",
+      "label": "reset"
+    }
+  ],
+  "schema_version": "diagram.document.v0"
+}

@@ -253,7 +253,10 @@ class DiagramTui:
 
         menu_body = [style("examples", self.color, BOLD, MAGENTA), ""]
         for i, path in enumerate(self.examples):
-            doc = load_doc(path)
+            try:
+                doc = load_doc(path)
+            except Exception:
+                doc = {"id": path.stem, "title": path.stem, "kind": "broken"}
             label = path.name.removesuffix(".diagram.json")
             prefix = "● " if i == self.example_index else "  "
             row = f"{prefix}{label:<18} {doc.get('kind', 'diagram')}"
