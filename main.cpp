@@ -988,31 +988,33 @@ static bool interactivePicker(std::string& outProvider, std::string& outModel) {
         return {act, outChar};
     };
 
-    // ── Provider selection ──
+    // ── Provider selection (skip if already chosen) ──
     int sel = 0;
     bool picked = false;
-    while (!picked) {
-        renderList("Select Provider", "j/k or arrows to navigate, Enter to select, Esc to cancel",
-                   providers, sel);
-        auto [act, ch] = readKey();
-        if (act == tui::KeyAction::ENTER) {
-            picked = true;
-        } else if (act == tui::KeyAction::CANCEL || act == tui::KeyAction::EXIT) {
-            tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldt);
-            std::cout << tui::ansi::showCursor() << tui::ansi::clearScreen()
-                      << tui::ansi::moveTo(1, 1);
-            return false;
-        } else if (act == tui::KeyAction::HISTORY_DOWN ||
-                   (act == tui::KeyAction::CHAR && ch == 'j')) {
-            if (sel < (int)providers.size() - 1)
-                sel++;
-        } else if (act == tui::KeyAction::HISTORY_UP ||
-                   (act == tui::KeyAction::CHAR && ch == 'k')) {
-            if (sel > 0)
-                sel--;
+    if (outProvider.empty()) {
+        while (!picked) {
+            renderList("Select Provider",
+                       "j/k or arrows to navigate, Enter to select, Esc to cancel", providers, sel);
+            auto [act, ch] = readKey();
+            if (act == tui::KeyAction::ENTER) {
+                picked = true;
+            } else if (act == tui::KeyAction::CANCEL || act == tui::KeyAction::EXIT) {
+                tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldt);
+                std::cout << tui::ansi::showCursor() << tui::ansi::clearScreen()
+                          << tui::ansi::moveTo(1, 1);
+                return false;
+            } else if (act == tui::KeyAction::HISTORY_DOWN ||
+                       (act == tui::KeyAction::CHAR && ch == 'j')) {
+                if (sel < (int)providers.size() - 1)
+                    sel++;
+            } else if (act == tui::KeyAction::HISTORY_UP ||
+                       (act == tui::KeyAction::CHAR && ch == 'k')) {
+                if (sel > 0)
+                    sel--;
+            }
         }
-    }
-    outProvider = providers[sel].first;
+        outProvider = providers[sel].first;
+    }  // end provider selection
 
     // ── Model selection ──
     auto provider = providers::createProvider(outProvider, "");
@@ -1113,11 +1115,26 @@ static bool validateExplicitModel(const std::string& providerName, const std::st
 // Command: run (agent execution)
 // ═══════════════════════════════════════════════════════════════════════
 static int cmdRun(CliConfig& cli) {
-    // ── Interactive picker: `--provider` with no model and no prompt ──
-    // Launch fzf-style provider→model selection.
-    if (cli.providerPickerRequested && cli.prompt.empty() && cli.promptFile.empty() &&
-        !cli.replMode && cli.manifestPath.empty()) {
+    // ── Interactive picker ──
+    // Three cases trigger the picker (only in non-REPL, no-prompt, no-manifest mode):
+    //   1. `--provider` bare → pick provider then model
+    //   2. `--provider openrouter` with no --model → pick model for that provider
+    //   3. No --provider and no --model → pick provider then model
+    bool needPicker = false;
+    if (cli.prompt.empty() && cli.promptFile.empty() && !cli.replMode && cli.manifestPath.empty()) {
+        if (cli.providerPickerRequested)
+            needPicker = true;  // bare --provider
+        else if (cli.providerSet && !cli.modelSet && cli.model.empty())
+            needPicker = true;  // --provider X but no --model
+        else if (!cli.providerSet && cli.model.empty())
+            needPicker = true;  // nothing specified at all
+    }
+
+    if (needPicker) {
         std::string pickedProvider, pickedModel;
+        // If provider already chosen, skip provider step and go straight to models.
+        if (cli.providerSet && !cli.provider.empty())
+            pickedProvider = cli.provider;
         if (interactivePicker(pickedProvider, pickedModel)) {
             cli.provider = pickedProvider;
             cli.providerSet = true;
