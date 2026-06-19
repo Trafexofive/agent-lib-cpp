@@ -109,6 +109,14 @@ int main() {
         pv.addResult({"c1", true, red, "diagram_render", 0, 0, red.size()});
         auto colored = pv.render(80);
         check(contains(colored, ansi::fg(255, 0, 0)), "protocol preserves tool output ANSI");
+        bool dimWrapped = false;
+        for (const auto& line : colored) {
+            auto redPos = line.find(ansi::fg(255, 0, 0));
+            auto dimPos = line.find(ansi::dim());
+            if (redPos != std::string::npos && dimPos != std::string::npos && dimPos < redPos)
+                dimWrapped = true;
+        }
+        check(!dimWrapped, "protocol does not dim-wrap colored tool output");
 
         ProtocolView plain;
         plain.setAnsiPassthrough(false);

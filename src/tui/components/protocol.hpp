@@ -340,12 +340,13 @@ class ProtocolView {
             }
         }
 
-        // Plain text
+        // Plain text. If tool output already contains ANSI, don't wrap it in MK3 dim styling;
+        // user/tool-authored color should own the line.
         std::istringstream bs(body);
         std::string bl;
         bool first = true;
         while (std::getline(bs, bl)) {
-            lines.push_back((first ? mark : "  ") + fgDim() + bl + fgReset());
+            lines.push_back((first ? mark : "  ") + styleToolLine(bl));
             first = false;
         }
         return lines;
@@ -363,7 +364,7 @@ class ProtocolView {
             std::string l;
             bool first = true;
             while (std::getline(ss, l)) {
-                lines.push_back((first ? mark : "  ") + (first ? l : fgDim() + l + fgReset()));
+                lines.push_back((first ? mark : "  ") + styleToolLine(l));
                 first = false;
             }
             return lines;
@@ -375,7 +376,7 @@ class ProtocolView {
             while (std::getline(ss, l)) {
                 if (l.empty())
                     continue;
-                lines.push_back((first ? mark : "  ") + fgDim() + l + fgReset());
+                lines.push_back((first ? mark : "  ") + styleToolLine(l));
                 first = false;
             }
             return lines;
@@ -385,8 +386,18 @@ class ProtocolView {
         std::string first = (nl != std::string::npos) ? body.substr(0, nl) : body;
         if (first.empty())
             first = "(empty)";
-        lines.push_back(mark + fgDim() + first + fgReset());
+        lines.push_back(mark + styleToolLine(first));
         return lines;
+    }
+
+    std::string styleToolLine(const std::string& line) const {
+        if (ansiPassthrough_ && containsAnsi(line))
+            return line + fgReset();
+        return fgDim() + line + fgReset();
+    }
+
+    static bool containsAnsi(const std::string& s) {
+        return s.find('\033') != std::string::npos;
     }
 
     std::string toolOutputText(const std::string& s) const {
