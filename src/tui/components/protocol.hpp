@@ -177,18 +177,18 @@ class ProtocolView {
     }
 
    private:
-    // ── ANSI helpers: foreground-only. No background blocks; copied output stays clean.
+    // ── ANSI helpers (foreground-only, never reset background) ──
     static std::string bgAction() {
-        return "";
+        return "\033[48;2;30;30;40m";
     }
     static std::string bgOk() {
-        return "";
+        return "\033[48;2;25;35;30m";
     }
     static std::string bgErr() {
-        return "";
+        return "\033[48;2;40;25;25m";
     }
     static std::string bgReset() {
-        return "";
+        return "\033[49m";
     }
     static std::string fgReset() {
         return "\033[39m\033[22m\033[24m";

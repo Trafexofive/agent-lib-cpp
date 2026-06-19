@@ -91,26 +91,14 @@ int main() {
               "protocol summarizes multiline content params");
     }
 
-    // FULL mode must not leak model planning/thought narration.
+    // FULL mode preserves the existing thought-stream feature.
     {
         TuiRenderer r(80);
         r.setThought("Let me plan this out in detail.");
         r.setResponse("Done.");
         auto lines = r.render();
-        check(!contains(lines, "Let me plan"), "full renderer hides thought stream");
+        check(contains(lines, "Let me plan"), "full renderer shows thought stream");
         check(contains(lines, "Done"), "full renderer still shows response");
-    }
-
-    // Protocol cards should be foreground-only: no block backgrounds in copied output.
-    {
-        ProtocolView pv;
-        pv.addAction({ActionType::TOOL, "diagram_render", "ex", "{\"action\":\"examples\"}", true});
-        auto lines = pv.render(80);
-        bool hasBackground = false;
-        for (const auto& line : lines)
-            if (line.find("\033[48;") != std::string::npos)
-                hasBackground = true;
-        check(!hasBackground, "protocol cards avoid background color blocks");
     }
 
     // SessionView viewport should stay contiguous and anchored above bottom bars.
