@@ -35,6 +35,7 @@
 #include "src/tui/dialog.hpp"
 #include "src/tui/input.hpp"
 #include "src/tui/renderer.hpp"
+#include "src/tui/session_view.hpp"
 #include "src/tui/slash_commands.hpp"
 #include "src/utils/ansi.hpp"
 
@@ -1413,13 +1414,9 @@ static int cmdRun(CliConfig& cli) {
     int spinnerFrame = 0;                                // animated spinner
     std::chrono::steady_clock::time_point streamStart_;  // for TTC
     static const char* spinnerFrames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
-    std::vector<std::string> prevDisplay;  // last rendered lines (for diff)
-    int prevDisplaySize_ = 0;              // total display size of last frame
     bool renderDirty = true;
     std::vector<std::string> tuiFrameLog;
     std::vector<std::string> tuiAnsiFrames;
-    size_t tuiFrameNo = 0;
-    int lastDisplaySize = 0;
     auto lastStatusTime = std::chrono::steady_clock::now();
     std::string streamPhase = "idle";
     size_t streamActionCount = 0;
@@ -1427,6 +1424,7 @@ static int cmdRun(CliConfig& cli) {
     size_t streamRespBytes = 0;
     size_t streamRawBytes = 0;
     auto statusBarText = [&](int displaySize) -> std::string {
+        (void)displaySize;
         if (dialogActive.load(std::memory_order_acquire)) {
             return std::string(ansi::dim) + "  Esc to cancel" + ansi::reset;
         }
@@ -1510,9 +1508,8 @@ static int cmdRun(CliConfig& cli) {
         while (tuiAnsiFrames.size() > 20)
             tuiAnsiFrames.erase(tuiAnsiFrames.begin());
     };
+    tui::SessionView sessionView(termW, termH);
     auto renderScreen = [&]() {
-        // Event-driven redraw: do not rebuild/render the whole screen just to
-        // animate a spinner. Repaint only when input/protocol/response changes.
         if (streaming) {
             if (!renderDirty)
                 return;
@@ -1525,131 +1522,37 @@ static int cmdRun(CliConfig& cli) {
             lastRenderTime = now;
         }
 
-        std::vector<std::string> display = historyLines;
-        if (showPrompts) {
+        std::vector<std::string> rendererLines;
+        std::vector<std::string> dialogLines;
+        bool showDialog = dialogActive.load(std::memory_order_acquire) && !askDialog->state.done();
+        if (showDialog) {
+            dialogLines = cortex::mk3::tui::DialogRenderer::render(askDialog->state, termW, input.line());
+        } else if (showPrompts) {
             auto& prompts = agent.iterationPrompts();
             if (prompts.empty()) {
-                display.push_back("\033[2m(no prompts captured — run a prompt first)\033[0m");
+                rendererLines.push_back("\033[2m(no prompts captured — run a prompt first)\033[0m");
             } else {
                 for (size_t i = 0; i < prompts.size(); i++) {
-                    display.push_back(std::string("\033[1m") + tui::ansi::fg(200, 200, 100) +
-                                      "─── Iter " + std::to_string(i + 1) + " ───\033[0m");
+                    rendererLines.push_back(std::string("\033[1m") + tui::ansi::fg(200, 200, 100) +
+                                            "─── Iter " + std::to_string(i + 1) + " ───\033[0m");
                     std::istringstream ps(prompts[i]);
                     std::string pline;
                     while (std::getline(ps, pline)) {
-                        display.push_back(std::string("\033[2m") + pline + "\033[0m");
+                        rendererLines.push_back(std::string("\033[2m") + pline + "\033[0m");
                     }
-                    display.push_back("");
+                    rendererLines.push_back("");
                 }
             }
         } else {
-            auto lines = renderer.render();
-            display.insert(display.end(), lines.begin(), lines.end());
-        }
-        // ── ask_tool dialog: takes over the viewport when active ──
-        if (dialogActive.load(std::memory_order_acquire) && !askDialog->state.done()) {
-            // Replace history entirely — dialog is the only visible content.
-            display.clear();
-            auto dialogLines =
-                cortex::mk3::tui::DialogRenderer::render(askDialog->state, termW, input.line());
-            display.insert(display.end(), dialogLines.begin(), dialogLines.end());
-        }
-        // Viewport: which lines should be visible
-        int overflow = std::max(0, (int)display.size() - (termH - 2));
-        if (scrollOffset < 0)
-            scrollOffset = 0;
-        if (scrollOffset > overflow)
-            scrollOffset = overflow;
-        int startRow = termH - 2 - (int)display.size() + 1 + scrollOffset;
-        int skip = 0;
-        if (startRow < 1) {
-            skip = 1 - startRow;
-            startRow = 1;
-        }
-        int visibleCount = std::min((int)display.size() - skip, termH - 2);
-
-        // Extract visible slice for diff comparison
-        std::vector<std::string> visible;
-        for (int i = skip; i < skip + visibleCount && i < (int)display.size(); i++)
-            visible.push_back(display[i]);
-
-        // Diff: find first and last changed lines
-        int firstChange = -1, lastChange = -1;
-        int prevSize = (int)prevDisplay.size();
-        int visSize = (int)visible.size();
-        int cmpMax = std::max(prevSize, visSize);
-        for (int i = 0; i < cmpMax; i++) {
-            std::string oldLine = i < prevSize ? prevDisplay[i] : "";
-            std::string newLine = i < visSize ? visible[i] : "";
-            if (oldLine != newLine) {
-                if (firstChange == -1)
-                    firstChange = i;
-                lastChange = i;
-            }
+            rendererLines = renderer.render();
         }
 
-        bool needsFull = prevDisplay.empty() || (int)display.size() != prevDisplaySize_;
-        if (!cli.tuiDebugDumpPath.empty()) {
-            std::ostringstream fl;
-            fl << "frame=" << (++tuiFrameNo) << " streaming=" << (streaming ? "true" : "false")
-               << " dirty=" << (renderDirty ? "true" : "false") << " display=" << display.size()
-               << " visible=" << visible.size() << " skip=" << skip
-               << " full=" << (needsFull ? "true" : "false") << " first_change=" << firstChange
-               << " last_change=" << lastChange
-               << " mode=" << tui::TuiRenderer::modeName(renderer.mode());
-            tuiFrameLog.push_back(fl.str());
-            if (tuiFrameLog.size() > 500)
-                tuiFrameLog.erase(tuiFrameLog.begin(), tuiFrameLog.begin() + 100);
-        }
+        tui::SessionViewport vp = sessionView.build(historyLines, rendererLines, dialogLines, showDialog, scrollOffset);
+        if (!cli.tuiDebugDumpPath.empty())
+            captureAnsiFrame(vp.visible, vp.startRow, vp.visibleCount, vp.displaySize);
 
-        std::ostringstream frameOut;
-        if (needsFull) {
-            frameOut << "\033[H\033[J";
-            for (int i = skip; i < skip + visibleCount && i < (int)display.size(); i++)
-                frameOut << "\033[" << (startRow + i - skip) << ";1H\033[2K" << display[i];
-        } else if (firstChange >= 0) {
-            // Only redraw changed region — absolute cursor positioning, no bare \n
-            int screenRow = startRow + firstChange;
-            for (int vi = firstChange; vi <= lastChange && vi < visSize; vi++) {
-                frameOut << "\033[" << (screenRow + vi - firstChange) << ";1H\033[2K"
-                         << visible[vi];
-            }
-            // Clear trailing lines if new content is shorter
-            if (visSize < prevSize) {
-                for (int vi = visSize; vi < prevSize; vi++) {
-                    frameOut << "\033[" << (screenRow + vi - firstChange) << ";1H\033[2K";
-                }
-            }
-        } else if (visSize != prevSize) {
-            // No content changes but size changed — new lines added or removed
-            if (visSize > prevSize) {
-                // New lines added at bottom
-                for (int vi = prevSize; vi < visSize; vi++)
-                    frameOut << "\033[" << (startRow + vi) << ";1H\033[2K" << visible[vi];
-            } else {
-                // Lines removed — clear trailing area
-                for (int vi = visSize; vi < prevSize; vi++)
-                    frameOut << "\033[" << (startRow + vi) << ";1H\033[2K";
-            }
-        }
-
-        prevDisplay = visible;
-        prevDisplaySize_ = (int)display.size();
+        std::cout << sessionView.renderFull(vp, statusBarText, inputLineText()) << std::flush;
         renderDirty = false;
-
-        int displaySize = (int)display.size() - skip;
-        lastDisplaySize = displaySize;
-        // inputLineText() now renders both the status bar (termH-1) and the
-        // prompt line (termH) in one call.
-        std::string bottomUI = inputLineText();
-        lastStatusTime = std::chrono::steady_clock::now();
-        if (!cli.tuiDebugDumpPath.empty()) {
-            captureAnsiFrame(visible, startRow, visibleCount, displaySize);
-        }
-
-        // Content + bottom UI (always redraw bottom — cost is negligible)
-        frameOut << bottomUI;
-        std::cout << frameOut.str() << std::flush;
     };
 
     std::string cmd;
@@ -1809,6 +1712,7 @@ static int cmdRun(CliConfig& cli) {
                 termW = ws.ws_col;
                 termH = ws.ws_row;
                 renderer.setWidth(termW);
+                sessionView.setWidthHeight(termW, termH);
             }
         }
         cmd.clear();
@@ -1979,8 +1883,6 @@ static int cmdRun(CliConfig& cli) {
             askPending.store(false, std::memory_order_release);
             dialogActive.store(false, std::memory_order_release);
             input.clearActionInterceptor();
-            prevDisplay.clear();
-            prevDisplaySize_ = 0;
             renderDirty = true;
             return out;
         });
@@ -2113,9 +2015,6 @@ static int cmdRun(CliConfig& cli) {
                         dialogActive.store(true, std::memory_order_release);
                         input.clearEscape();
                         renderDirty = true;
-                        // Force full screen clear — dialog replaces history.
-                        prevDisplay.clear();
-                        prevDisplaySize_ = 0;
                         // ── Dialog input interceptor: j/k/arrows navigate,
                         //    y/n for confirm, everything else passes through ──
                         input.setActionInterceptor([&](int act, char outChar) -> bool {
@@ -2162,9 +2061,7 @@ static int cmdRun(CliConfig& cli) {
                                         askDialog->active = false;
                                         dialogActive.store(false, std::memory_order_release);
                                         input.clearActionInterceptor();
-                                        prevDisplay.clear();
-                                        prevDisplaySize_ = 0;
-                                        renderDirty = true;
+                                                        renderDirty = true;
                                         askCv.notify_one();
                                     }
                                     return true;
@@ -2178,9 +2075,7 @@ static int cmdRun(CliConfig& cli) {
                                         askDialog->active = false;
                                         dialogActive.store(false, std::memory_order_release);
                                         input.clearActionInterceptor();
-                                        prevDisplay.clear();
-                                        prevDisplaySize_ = 0;
-                                        renderDirty = true;
+                                                        renderDirty = true;
                                         askCv.notify_one();
                                     }
                                     return true;
@@ -2216,8 +2111,6 @@ static int cmdRun(CliConfig& cli) {
                     askDialog->active = false;
                     dialogActive.store(false, std::memory_order_release);
                     input.clearActionInterceptor();
-                    prevDisplay.clear();
-                    prevDisplaySize_ = 0;
                     renderDirty = true;
                     input.clearEscape();
                     renderDirty = true;
@@ -2241,8 +2134,6 @@ static int cmdRun(CliConfig& cli) {
                     askDialog->active = false;
                     dialogActive.store(false, std::memory_order_release);
                     input.clearActionInterceptor();
-                    prevDisplay.clear();
-                    prevDisplaySize_ = 0;
                     renderDirty = true;
                     askCv.notify_one();
                 }
@@ -2262,6 +2153,7 @@ static int cmdRun(CliConfig& cli) {
                     termW = ws.ws_col;
                     termH = ws.ws_row;
                     renderer.setWidth(termW);
+                    sessionView.setWidthHeight(termW, termH);
                     renderDirty = true;
                 }
             }

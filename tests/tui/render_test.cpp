@@ -8,6 +8,7 @@
 #include "../../src/tui/components/protocol.hpp"
 #include "../../src/tui/grid.hpp"
 #include "../../src/tui/renderer.hpp"
+#include "../../src/tui/session_view.hpp"
 
 using namespace cortex::mk3::tui;
 
@@ -110,6 +111,31 @@ int main() {
             if (line.find("\033[48;") != std::string::npos)
                 hasBackground = true;
         check(!hasBackground, "protocol cards avoid background color blocks");
+    }
+
+    // SessionView viewport should stay contiguous and anchored above bottom bars.
+    {
+        SessionView view(80, 10);
+        std::vector<std::string> history(8);
+        for (int i = 0; i < 8; ++i)
+            history[i] = "line" + std::to_string(i);
+        int scroll = 0;
+        auto vp = view.build(history, {}, {}, false, scroll);
+        check(vp.visible.size() == 8, "session viewport uses body rows");
+        check(vp.startRow == 1, "session viewport anchors above bottom bars");
+        for (int i = 0; i < static_cast<int>(vp.visible.size()) - 1; ++i) {
+            int a = std::stoi(vp.visible[i].substr(4));
+            int b = std::stoi(vp.visible[i + 1].substr(4));
+            if (b != a + 1) {
+                failures++;
+                std::cerr << "FAIL: session viewport is contiguous between " << vp.visible[i]
+                          << " and " << vp.visible[i + 1] << "\n";
+                break;
+            }
+        }
+        std::string frame = view.renderFull(vp, [](int) { return "status"; }, "prompt");
+        check(frame.find("\033[9;1H") != std::string::npos && frame.find("status") != std::string::npos, "session frame renders status bar");
+        check(frame.find("prompt") != std::string::npos, "session frame renders prompt line");
     }
 
     // Renderer mode names include SEMI.
