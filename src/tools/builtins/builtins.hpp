@@ -15,5 +15,6 @@ std::string json(const Json::Value& params);
 std::string web_fetch(const Json::Value& params);
 std::string ask_tool(const Json::Value& params);
 std::string sleep(const Json::Value& params);
+std::string artifact(const Json::Value& params);
 
 }  // namespace cortex::mk3::tools::builtins

@@ -382,7 +382,7 @@ class ManifestLoader {
     // working tool surface instead of an empty <action_available>.
     static std::vector<ToolSchema> loadBuiltinTools(Agent& agent) {
         static const std::vector<std::string> builtin = {
-            "exec", "grep", "list", "fs_read", "fs_write", "json", "web_fetch", "sleep",
+            "exec", "grep", "list", "fs_read", "fs_write", "json", "web_fetch", "sleep", "artifact",
             "context_pin", "context_peek", "context_unpin", "ask_tool",
         };
         std::vector<ToolSchema> schemas;

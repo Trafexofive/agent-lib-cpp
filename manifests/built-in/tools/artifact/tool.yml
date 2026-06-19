@@ -1,0 +1,80 @@
+kind: Tool
+name: artifact
+version: "1.0"
+summary: "Project-local versioned artifact store"
+description: |
+  Stores durable artifacts in the current project under .cortex/artifacts.
+  Artifacts are namespace/key addressed and versioned automatically. Use this for
+  plans, reports, tool outputs, generated files, and handoff records that should
+  survive session compaction/reload without requiring a relic service.
+category: storage
+tags: [artifact, storage, persistence, handoff]
+input_schema:
+  type: object
+  properties:
+    op:
+      type: string
+      enum: [put, create, store, get, read, list, search, delete, remove, stats]
+      default: put
+    namespace:
+      type: string
+      description: "Namespace path segment"
+      default: default
+    key:
+      type: string
+      description: "Artifact key/name"
+    name:
+      type: string
+      description: "Alias for key"
+    content:
+      description: "String or JSON content for put/store"
+    content_type:
+      type: string
+      description: "MIME/content type"
+    tags:
+      type: array
+      items: {type: string}
+    tag:
+      type: string
+      description: "Single tag filter or tag to store"
+    metadata:
+      type: object
+      description: "Extra metadata stored with artifact version"
+    version:
+      type: integer
+      description: "Specific version for get/delete; latest when omitted"
+    prefix:
+      type: string
+      description: "List key prefix filter"
+    query:
+      type: string
+      description: "Search query across key, metadata, tags, and content"
+    limit:
+      type: integer
+      default: 100
+    root:
+      type: string
+      description: "Storage root override"
+      default: .cortex/artifacts
+output_schema:
+  type: object
+  properties:
+    success: {type: boolean}
+    artifact: {type: object}
+    artifacts: {type: array}
+    content: {}
+    path: {type: string}
+    count: {type: integer}
+    output: {type: string}
+examples:
+  - description: "Store a report"
+    params:
+      op: put
+      namespace: reports
+      key: build-summary
+      content: "Tests passed"
+      tags: [build, test]
+  - description: "Read latest artifact"
+    params: {op: get, namespace: reports, key: build-summary}
+  - description: "Search artifacts"
+    params: {op: search, namespace: reports, query: "Tests"}

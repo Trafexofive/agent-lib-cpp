@@ -34,6 +34,7 @@ import:
     - json
     - web_fetch
     - sleep
+    - artifact
     - context_pin
     - context_peek
     - context_unpin
