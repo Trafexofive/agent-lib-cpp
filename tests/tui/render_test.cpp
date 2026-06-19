@@ -135,6 +135,25 @@ int main() {
         check(frame.find("prompt") != std::string::npos, "session frame renders prompt line");
     }
 
+    // SessionView incremental render should only rewrite changed rows unless viewport moves.
+    {
+        SessionView view(80, 10);
+        std::vector<std::string> history(3, "old");
+        int scroll = 0;
+        auto vp1 = view.build(history, {}, {}, false, scroll);
+        auto first = view.render(vp1, [](int) { return "status"; }, "prompt");
+        history[1] = "new";
+        auto vp2 = view.build(history, {}, {}, false, scroll);
+        auto second = view.render(vp2, [](int) { return "status"; }, "prompt");
+        check(first.find("\033[H\033[J") != std::string::npos, "first session render is full");
+        check(second.find("\033[H\033[J") == std::string::npos, "second render is incremental");
+        check(second.find("\033[7;1H") != std::string::npos, "incremental render rewrites changed row");
+        history.insert(history.begin(), "top");
+        auto vp3 = view.build(history, {}, {}, false, scroll);
+        auto third = view.render(vp3, [](int) { return "status"; }, "prompt");
+        check(third.find("\033[H\033[J") != std::string::npos, "viewport move forces full redraw");
+    }
+
     // Renderer mode names include SEMI.
     {
         check(std::string(TuiRenderer::modeName(RenderMode::SEMI)) == "SEMI",

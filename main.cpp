@@ -1551,7 +1551,7 @@ static int cmdRun(CliConfig& cli) {
         if (!cli.tuiDebugDumpPath.empty())
             captureAnsiFrame(vp.visible, vp.startRow, vp.visibleCount, vp.displaySize);
 
-        std::cout << sessionView.renderFull(vp, statusBarText, inputLineText()) << std::flush;
+        std::cout << sessionView.render(vp, statusBarText, inputLineText()) << std::flush;
         renderDirty = false;
     };
 
