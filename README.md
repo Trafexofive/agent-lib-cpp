@@ -122,8 +122,10 @@ Usage: cortex-mk3 [options]
   --raw                   Raw XML output (no sanitization)
   --verbose, -V           Dump full prompts each iteration
   --debug                 Iteration-level stats
-  --session <id>          Session persistence
-  --ephemeral             Don't save session
+  -c, --continue          Continue previous session
+  -r, --resume            Select a session to resume
+  --session <id>          Use specific session id
+  --no-session            Don't save session
 
 Interactive TUI:
   See docs/TUI_KEYBINDS.md for prompt editing, history/search, scrolling,

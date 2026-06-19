@@ -8,7 +8,8 @@ Canonical keybinding reference for the `cortex-mk3` interactive TUI/REPL.
 cortex-mk3 run
 cortex-mk3 run --repl
 cortex-mk3 --continue run
-cortex-mk3 --resume <session-id> run
+cortex-mk3 --resume run
+cortex-mk3 --session <session-id> run
 ```
 
 If `run -p/--prompt` is used without `--repl`, MK3 runs one-shot mode instead of the interactive TUI.
@@ -99,6 +100,7 @@ These are shell flags, not TUI keybinds:
 
 | Command | Action |
 |---|---|
-| `cortex-mk3 -r` / `cortex-mk3 --sessions` | List saved sessions |
+| `cortex-mk3 -r run` / `cortex-mk3 --resume run` | Select a session to resume |
 | `cortex-mk3 -c run` / `cortex-mk3 --continue run` | Continue the most recently updated session |
-| `cortex-mk3 --resume <id> run` | Resume a specific session |
+| `cortex-mk3 --session <id> run` | Use a specific session id |
+| `cortex-mk3 --no-session run` | Ephemeral run; do not save session |

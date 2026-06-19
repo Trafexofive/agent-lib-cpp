@@ -980,11 +980,11 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
         ss << "  </persona>\n";
     }
 
-    // System block — capabilities/tools/behavior (loaded from systemPromptPath)
+    // System prompt block — capabilities/tools/behavior (loaded from systemPromptPath)
     if (!systemPrompt_.empty()) {
-        ss << "  <system>\n";
+        ss << "  <system_prompt>\n";
         ss << indentText(systemPrompt_, 4) << "\n";
-        ss << "  </system>\n";
+        ss << "  </system_prompt>\n";
     }
 
     ss << "  <action_available>\n";

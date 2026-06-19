@@ -72,8 +72,7 @@ struct CliConfig {
     int iterations = 0;
     std::string sessionId;
     bool continueSession = false;
-    std::string resumeSessionId;
-    bool listSessions = false;
+    bool resumePicker = false;
     std::string systemPromptPath;
     std::string harnessPromptPath;
     bool ephemeral = false;
@@ -200,7 +199,10 @@ Global flags:
   --verbose, -V        Verbose: dump full prompts each iteration
   --debug              Enable debug output
   --raw                Pipe-clean output (no formatting, no banner)
-  -r, --sessions       List saved sessions
+  -c, --continue       Continue previous session
+  -r, --resume         Select a session to resume
+  --session <id>       Use specific session id
+  --no-session         Don't save session (ephemeral)
   --tui-debug-dump <path> Auto-write TUI render/debug state (env: MK3_TUI_DEBUG_DUMP)
   --dry-run            Validate config + prompt without calling LLM
   --help               Show this help
@@ -234,11 +236,11 @@ Flags:
   -m, --manifest <path>  Agent manifest YAML (recursive imports + global scope)
   --harness <path>       Harness prompt (XML protocol spec)
   --system <path>        System prompt override
-  --session <id>         Session ID for persistence
-  -c, --continue         Continue the most recent session
-  --resume <id>          Resume a specific session
-  -r, --sessions         List saved sessions
-  --ephemeral            Don't save session
+  --session <id>         Use specific session id
+  -c, --continue         Continue previous session
+  -r, --resume           Select a session to resume
+  --no-session           Don't save session (ephemeral)
+  --ephemeral            Alias for --no-session
   --repl                 Force interactive mode even with --prompt
   --tui-debug-dump <path> Auto-write TUI render/debug state
 )";
@@ -360,7 +362,6 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"verbose", no_argument, 0, 'V'},
                                        {"debug", no_argument, 0, 'D'},
                                        {"raw", no_argument, 0, 1003},
-                                       {"sessions", no_argument, 0, 'r'},
                                        {"tui-debug-dump", required_argument, 0, 1001},
                                        {"dry-run", no_argument, 0, 'n'},
                                        {"help", no_argument, 0, 'h'},
@@ -373,7 +374,8 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"system", required_argument, 0, 'y'},
                                        {"session", required_argument, 0, 's'},
                                        {"continue", no_argument, 0, 'c'},
-                                       {"resume", required_argument, 0, 1002},
+                                       {"resume", no_argument, 0, 'r'},
+                                       {"no-session", no_argument, 0, 'e'},
                                        {"ephemeral", no_argument, 0, 'e'},
                                        {"repl", no_argument, 0, 'E'},
 
@@ -481,7 +483,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 cli.iterations = std::stoi(optarg);
                 break;
             case 'r':
-                cli.listSessions = true;
+                cli.resumePicker = true;
                 break;
             case 1003:
                 cli.raw = true;
@@ -517,9 +519,6 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 break;
             case 'c':
                 cli.continueSession = true;
-                break;
-            case 1002:
-                cli.resumeSessionId = optarg;
                 break;
             case 'e':
                 cli.ephemeral = true;
@@ -673,38 +672,58 @@ static int cmdHelp(const CliConfig& cli) {
 // ═══════════════════════════════════════════════════════════════════════
 // Command: sessions
 // ═══════════════════════════════════════════════════════════════════════
+static std::vector<session::SessionManager::SessionInfo> sortedSessions() {
+    session::SessionManager sm;
+    auto sessions = sm.list();
+    std::sort(sessions.begin(), sessions.end(),
+              [](const auto& a, const auto& b) { return a.updated > b.updated; });
+    return sessions;
+}
+
+static std::string pickSessionInteractive(bool defaultIfEmpty) {
+    auto sessions = sortedSessions();
+    if (sessions.empty())
+        return defaultIfEmpty ? "default" : "";
+    if (!isatty(STDIN_FILENO))
+        return sessions[0].id;
+
+    std::cout << "Select session to resume:\n\n";
+    for (size_t i = 0; i < sessions.size(); ++i) {
+        const auto& s = sessions[i];
+        std::cout << "  " << (i + 1) << ") " << s.id << "  " << s.updated << "  "
+                  << s.turnCount << " turns";
+        if (!s.model.empty())
+            std::cout << "  " << s.model;
+        std::cout << "\n";
+    }
+    std::cout << "\nSession [1]: " << std::flush;
+    std::string line;
+    std::getline(std::cin, line);
+    if (line.empty())
+        return sessions[0].id;
+    try {
+        size_t idx = static_cast<size_t>(std::stoul(line));
+        if (idx >= 1 && idx <= sessions.size())
+            return sessions[idx - 1].id;
+    } catch (...) {
+    }
+    for (const auto& s : sessions) {
+        if (s.id.find(line) != std::string::npos)
+            return s.id;
+    }
+    return sessions[0].id;
+}
+
 static std::string resolveSessionId(const CliConfig& cli, bool defaultIfEmpty) {
-    if (!cli.resumeSessionId.empty())
-        return cli.resumeSessionId;
+    if (cli.resumePicker)
+        return pickSessionInteractive(defaultIfEmpty);
     if (cli.continueSession) {
-        session::SessionManager sm;
-        auto sessions = sm.list();
-        std::sort(sessions.begin(), sessions.end(),
-                  [](const auto& a, const auto& b) { return a.updated > b.updated; });
+        auto sessions = sortedSessions();
         return sessions.empty() ? "default" : sessions[0].id;
     }
     if (!cli.sessionId.empty())
         return cli.sessionId;
     return defaultIfEmpty ? "default" : "";
-}
-
-static int cmdSessions() {
-    session::SessionManager sm;
-    auto sessions = sm.list();
-    std::sort(sessions.begin(), sessions.end(),
-              [](const auto& a, const auto& b) { return a.updated > b.updated; });
-    if (sessions.empty()) {
-        std::cout << "No saved sessions in " << sm.baseDir() << ".\n";
-        return 0;
-    }
-    std::cout << "Saved sessions in " << sm.baseDir() << ":\n\n";
-    for (const auto& s : sessions) {
-        std::cout << "  " << s.id << "  " << s.updated << "  " << s.turnCount << " turns";
-        if (!s.model.empty()) std::cout << "  " << s.model;
-        std::cout << "\n";
-    }
-    std::cout << "\nResume with: cortex-mk3 --resume <id>\n";
-    return 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -2268,8 +2287,6 @@ int main(int argc, char* argv[]) {
         return cmdVersion();
     if (cli.command == "help")
         return cmdHelp(cli);
-    if (cli.listSessions)
-        return cmdSessions();
     if (cli.command == "list")
         return cmdList(cli);
     if (cli.command == "config")

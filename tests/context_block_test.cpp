@@ -52,14 +52,14 @@ int main() {
     bool hasHarness = prompt.find("<harness>") != std::string::npos;
     bool hasProtocol = prompt.find("<protocol>") != std::string::npos;
     bool hasPersona = prompt.find("<persona>") != std::string::npos;
-    bool hasSystem = prompt.find("  <system>") != std::string::npos;
+    bool hasSystem = prompt.find("  <system_prompt>") != std::string::npos;
     bool hasActionAvailable = prompt.find("<action_available>") != std::string::npos;
 
     std::cout << "\n=== Prompt structure ===" << "\n";
     std::cout << "<harness>:          " << (hasHarness ? "YES" : "NO") << "\n";
     std::cout << "<protocol>:         " << (hasProtocol ? "YES" : "NO") << "\n";
     std::cout << "<persona>:          " << (hasPersona ? "YES" : "NO") << "\n";
-    std::cout << "<system> (inner):   " << (hasSystem ? "YES" : "NO") << "\n";
+    std::cout << "<system_prompt>:    " << (hasSystem ? "YES" : "NO") << "\n";
     std::cout << "<action_available>: " << (hasActionAvailable ? "YES" : "NO") << "\n";
 
     // Show a snippet of each block
@@ -74,13 +74,13 @@ int main() {
 
     std::cout << "\n=== Snippets ===" << "\n";
     std::cout << snippet("<persona>") << "\n...\n";
-    std::cout << snippet("  <system>") << "\n...\n";
+    std::cout << snippet("  <system_prompt>") << "\n...\n";
 
     int failures = 0;
     if (!hasHarness) { std::cerr << "FAIL: missing <harness>\n"; failures++; }
     if (!hasProtocol) { std::cerr << "FAIL: missing <protocol>\n"; failures++; }
     if (!hasPersona) { std::cerr << "FAIL: missing <persona>\n"; failures++; }
-    if (!hasSystem) { std::cerr << "FAIL: missing inner <system>\n"; failures++; }
+    if (!hasSystem) { std::cerr << "FAIL: missing <system_prompt>\n"; failures++; }
     if (!hasActionAvailable) { std::cerr << "FAIL: missing <action_available>\n"; failures++; }
 
     if (failures == 0) {
