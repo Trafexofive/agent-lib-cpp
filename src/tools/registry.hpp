@@ -16,6 +16,9 @@
 
 namespace cortex::mk3::tools {
 
+std::string dispatch(const std::string& toolName, const Json::Value& params);
+void registerDefaults();
+
 // ── Convenience macro for static auto-registration ───────────────────────
 #define REGISTER_TOOL(identifier, func_ptr)               \
     static bool ANONYMOUS_VAR(auto_register_##func_ptr) = \
