@@ -12,6 +12,7 @@
 #include "dialog.hpp"
 #include "renderer.hpp"
 #include "terminal.hpp"
+#include "width.hpp"
 
 namespace cortex::mk3::tui {
 
@@ -74,13 +75,14 @@ class SessionView {
         out << "\033[H\033[J";
 
         for (int i = 0; i < static_cast<int>(vp.visible.size()); ++i) {
-            out << ansi::moveTo(vp.startRow + i, 1) << ansi::clearLine() << vp.visible[i];
+            out << ansi::moveTo(vp.startRow + i, 1) << ansi::clearLine()
+                << padRight(vp.visible[i], width_);
         }
 
         if (height_ >= 2) {
             out << ansi::moveTo(height_ - 1, 1) << ansi::clearLine()
-                << statusLine(vp.displaySize);
-            out << promptLine;
+                << padRight(statusLine(vp.displaySize), width_);
+            out << padRight(promptLine, width_);
         }
 
         return out.str();

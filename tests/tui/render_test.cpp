@@ -9,6 +9,7 @@
 #include "../../src/tui/grid.hpp"
 #include "../../src/tui/renderer.hpp"
 #include "../../src/tui/session_view.hpp"
+#include "../../src/tui/width.hpp"
 
 using namespace cortex::mk3::tui;
 
@@ -56,6 +57,14 @@ int main() {
         check(contains(lines, "bold"), "markdown renders inline bold");
         check(contains(lines, "https://example.com"), "markdown renders links");
         check(contains(lines, "1"), "markdown flushes table at EOF");
+    }
+
+    // ANSI/wide char width accounting for box drawing rows.
+    {
+        std::string row = std::string("  ") + ansi::fg(0, 200, 0) + "╭─ Start ──╮" + ansi::reset();
+        check(visibleWidth(row) == 19, "visibleWidth counts box drawing as wide");
+        std::string padded = padRight(row, 20);
+        check(visibleWidth(padded) == 20, "padRight reaches terminal width");
     }
 
     // ProtocolView incremental action/result rendering.

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "../terminal.hpp"
+#include "../width.hpp"
 
 namespace cortex::mk3::tui {
 
@@ -118,9 +119,7 @@ class ProtocolView {
         for (auto& line : actionHeaderLines(a, width))
             cached_lines_.push_back(line);
         for (auto& p : actionParams(a, width)) {
-            cached_lines_.push_back(bgAction() + "      " + p +
-                                    std::string(std::max(0, width - (int)visLen(p) - 6), ' ') +
-                                    bgReset());
+            cached_lines_.push_back(padRight(bgAction() + "      " + p, width));
         }
     }
 
@@ -129,8 +128,7 @@ class ProtocolView {
         std::string meta = actionIcon(a) + fgBold() + a.name + fgReset();
         if (!a.id.empty() && a.id != a.name)
             meta += fgDim() + "#" + a.id + fgReset();
-        lines.push_back(bgAction() + "  " + meta +
-                        std::string(std::max(0, width - (int)visLen(meta)), ' ') + bgReset());
+        lines.push_back(padRight(bgAction() + "  " + meta, width));
         return lines;
     }
 
@@ -211,20 +209,6 @@ class ProtocolView {
                                                                  : "⏳ ") +
                        fgReset();
         }
-    }
-
-    static size_t visLen(const std::string& s) {
-        size_t n = 0;
-        bool esc = false;
-        for (char c : s) {
-            if (c == '\033')
-                esc = true;
-            else if (esc && c == 'm')
-                esc = false;
-            else if (!esc)
-                n++;
-        }
-        return n;
     }
 
     // ── Action params ──
