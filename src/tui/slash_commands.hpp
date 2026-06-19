@@ -281,6 +281,8 @@ class SlashCommands {
             "Readline keys: Ctrl-A/E start/end, Ctrl-B/F left/right, Alt-B/F word move,");
         lines.push_back("               Ctrl-P/N history, Ctrl-R search, Ctrl-U/K kill line,");
         lines.push_back("               Ctrl-W kill word, Ctrl-Y yank, Ctrl-L redraw, Esc cancel.");
+        lines.push_back("Scroll: PageUp/Ctrl-O up, PageDown down. Dialogs: j/k move, y/n confirm.");
+        lines.push_back("Docs: docs/TUI_KEYBINDS.md");
         return lines;
     }
 };

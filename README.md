@@ -125,8 +125,9 @@ Usage: cortex-mk3 [options]
   --session <id>          Session persistence
   --ephemeral             Don't save session
 
-Interactive commands:
-  /help, /tools, /sessions, /load, /save, /clear, /providers, /model, /quit
+Interactive TUI:
+  See docs/TUI_KEYBINDS.md for prompt editing, history/search, scrolling,
+  dialog controls, slash commands, and session shortcuts.
 ```
 
 ## Testing
