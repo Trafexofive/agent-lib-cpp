@@ -9,6 +9,11 @@ description: |
 implementation:
   runtime: process
   entrypoint: ./build/c_echo_tool
+  build:
+    command: make
+    cwd: .
+    output: ./build/c_echo_tool
+    auto: true
 input_schema:
   type: object
   properties:

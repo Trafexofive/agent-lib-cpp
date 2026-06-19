@@ -8,6 +8,11 @@ description: |
 implementation:
   runtime: process
   entrypoint: ./build/cpp_echo_tool
+  build:
+    command: make
+    cwd: .
+    output: ./build/cpp_echo_tool
+    auto: true
 input_schema:
   type: object
   properties:

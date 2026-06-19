@@ -35,8 +35,12 @@ struct ToolSchema {
     std::string inputSchema;         // JSON string
     std::string outputSchema;        // JSON string
     std::string examples;            // JSON string
-    std::string runtime;             // python3, builtin, etc.
-    std::string entrypoint;          // script path
+    std::string runtime;             // python3, builtin, process, etc.
+    std::string entrypoint;          // script/binary path
+    std::string buildCommand;        // optional build command
+    std::string buildCwd;            // optional build cwd
+    std::string buildOutput;         // optional build artifact
+    bool autoBuild = true;           // auto-run build when output missing
     std::string inputType = "json";  // action body mode: json | text
     std::string textParam;           // where text body lands for text mode
 };
@@ -332,7 +336,15 @@ class ManifestLoader {
                     if (!schema.runtime.empty() && !schema.entrypoint.empty()) {
                         td.isNative = false;
                         td.scriptRuntime = schema.runtime;
-                        td.scriptPath = (toolPath.parent_path() / schema.entrypoint).string();
+                        td.scriptPath = (toolPath.parent_path() / schema.entrypoint).lexically_normal().string();
+                        td.buildCommand = schema.buildCommand;
+                        td.buildCwd = schema.buildCwd.empty()
+                                          ? toolPath.parent_path().string()
+                                          : (toolPath.parent_path() / schema.buildCwd).lexically_normal().string();
+                        td.buildOutput = schema.buildOutput.empty()
+                                             ? ""
+                                             : (toolPath.parent_path() / schema.buildOutput).lexically_normal().string();
+                        td.autoBuild = schema.autoBuild;
                         agent.addTool(tools::Tool(td, td.scriptPath, td.scriptRuntime));
                     } else {
                         agent.addTool(tools::Tool(td));
@@ -669,12 +681,28 @@ class ManifestLoader {
             s.entrypoint = ManifestYaml::get(*impl, "entrypoint", s.entrypoint);
             s.inputType = ManifestYaml::get(*impl, "input_type", s.inputType);
             s.textParam = ManifestYaml::get(*impl, "text_param", s.textParam);
+            auto* build = ManifestYaml::find(*impl, "build");
+            if (build) {
+                s.buildCommand = ManifestYaml::get(*build, "command", s.buildCommand);
+                s.buildCwd = ManifestYaml::get(*build, "cwd", s.buildCwd);
+                s.buildOutput = ManifestYaml::get(*build, "output", s.buildOutput);
+                std::string autoBuild = ManifestYaml::get(*build, "auto", "true");
+                s.autoBuild = promptFlagEnabled(autoBuild);
+            }
         }
         // Fallback: some tool manifests use top-level runtime/entrypoint
         if (s.runtime.empty())
             s.runtime = ManifestYaml::get(root, "runtime");
         if (s.entrypoint.empty())
             s.entrypoint = ManifestYaml::get(root, "entrypoint");
+        auto* topBuild = ManifestYaml::find(root, "build");
+        if (topBuild) {
+            s.buildCommand = ManifestYaml::get(*topBuild, "command", s.buildCommand);
+            s.buildCwd = ManifestYaml::get(*topBuild, "cwd", s.buildCwd);
+            s.buildOutput = ManifestYaml::get(*topBuild, "output", s.buildOutput);
+            std::string autoBuild = ManifestYaml::get(*topBuild, "auto", "true");
+            s.autoBuild = promptFlagEnabled(autoBuild);
+        }
         s.inputType =
             ManifestYaml::get(root, "input_type", s.inputType.empty() ? "json" : s.inputType);
         s.textParam = ManifestYaml::get(root, "text_param", s.textParam);

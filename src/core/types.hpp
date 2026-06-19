@@ -81,7 +81,11 @@ struct ToolDef {
     std::vector<ToolParam> params;
     bool isNative = true;            // true = C++ callback, false = script
     std::string scriptPath;          // for script tools
-    std::string scriptRuntime;       // "python3", "bash", etc.
+    std::string scriptRuntime;       // "python3", "bash", "process", etc.
+    std::string buildCommand;        // optional build command for process/script tools
+    std::string buildCwd;            // directory to run buildCommand in
+    std::string buildOutput;         // output artifact used to skip rebuild when present
+    bool autoBuild = true;           // run buildCommand automatically when needed
     std::string inputType = "json";  // action body mode: json | text
     std::string textParam;           // for text body mode: content/input/instruction
 

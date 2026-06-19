@@ -4,7 +4,7 @@ These templates show the lightweight compiled-runtime convention.
 
 ## Runtime contract
 
-Use `runtime: process` (aliases: `binary`, `direct`, `exec`) when the entrypoint is already executable.
+Use `runtime: process` (aliases: `binary`, `direct`, `exec`) for compiled/direct entrypoints. Add `build` so MK3 can produce the executable when it is missing.
 
 ### Tool
 
@@ -13,6 +13,11 @@ kind: Tool
 implementation:
   runtime: process
   entrypoint: ./build/my_tool
+  build:
+    command: make
+    cwd: .
+    output: ./build/my_tool
+    auto: true
 ```
 
 MK3 invokes Agent script tools as:
@@ -33,6 +38,11 @@ The tool should print one JSON object to stdout:
 kind: Feed
 runtime: process
 entrypoint: ./build/my_feed
+build:
+  command: make
+  cwd: .
+  output: ./build/my_feed
+  auto: true
 ```
 
 MK3 invokes feeds as:

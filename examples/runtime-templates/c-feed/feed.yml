@@ -7,3 +7,8 @@ description: |
     ./build/c_status_feed
 runtime: process
 entrypoint: ./build/c_status_feed
+build:
+  command: make
+  cwd: .
+  output: ./build/c_status_feed
+  auto: true

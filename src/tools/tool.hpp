@@ -8,6 +8,7 @@
 
 #include <json/json.h>
 
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -72,6 +73,18 @@ class Tool {
     }
     const std::string& scriptRuntime() const noexcept {
         return def_.scriptRuntime;
+    }
+    const std::string& buildCommand() const noexcept {
+        return def_.buildCommand;
+    }
+    const std::string& buildCwd() const noexcept {
+        return def_.buildCwd;
+    }
+    const std::string& buildOutput() const noexcept {
+        return def_.buildOutput;
+    }
+    bool autoBuild() const noexcept {
+        return def_.autoBuild;
     }
     const std::string& inputType() const noexcept {
         return def_.inputType;
@@ -163,6 +176,12 @@ class Tool {
         j["input_type"] = def_.inputType;
         if (!def_.scriptRuntime.empty())
             j["runtime"] = def_.scriptRuntime;
+        if (!def_.buildCommand.empty()) {
+            j["build_command"] = def_.buildCommand;
+            j["build_cwd"] = def_.buildCwd;
+            j["build_output"] = def_.buildOutput;
+            j["auto_build"] = def_.autoBuild;
+        }
         Json::Value paramArray(Json::arrayValue);
         for (const auto& p : def_.params) {
             Json::Value pj;
@@ -202,8 +221,13 @@ class Tool {
             return jsonError("No script path for: " + def_.name);
         }
 
+        std::string buildErr = ensureBuilt();
+        if (!buildErr.empty())
+            return jsonError(buildErr);
+
         std::string cmd = runtimeCommand(scriptRuntime_, scriptPath_);
 
+        std::string tmpFile;
         if (def_.inputType == "text" && !def_.textParam.empty()) {
             std::string textInput = args.get(def_.textParam, "").asString();
             cmd += " " + shellEscape(textInput) + " 2>/dev/null";
@@ -211,10 +235,16 @@ class Tool {
             Json::StreamWriterBuilder w;
             w["indentation"] = "";
             std::string jsonArgs = Json::writeString(w, args);
-            cmd += " " + shellEscape(jsonArgs) + " 2>/dev/null";
+            tmpFile = tempInputPath();
+            std::ofstream tf(tmpFile);
+            tf << jsonArgs;
+            tf.close();
+            cmd += " " + shellEscape(tmpFile) + " 2>/dev/null";
         }
 
         std::string output = runShell(cmd);
+        if (!tmpFile.empty())
+            std::remove(tmpFile.c_str());
         if (output.empty()) {
             return jsonOk("{}");
         }
@@ -239,6 +269,27 @@ class Tool {
         Json::StreamWriterBuilder w;
         w["indentation"] = "";
         return Json::writeString(w, r);
+    }
+
+    std::string tempInputPath() const {
+        auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+        return (std::filesystem::temp_directory_path() /
+                ("cortex-tool-" + def_.name + "-" + std::to_string(now) + ".json"))
+            .string();
+    }
+
+    std::string ensureBuilt() const {
+        if (def_.buildCommand.empty() || !def_.autoBuild)
+            return "";
+        if (!def_.buildOutput.empty() && std::filesystem::exists(def_.buildOutput))
+            return "";
+        std::string cmd = def_.buildCommand;
+        if (!def_.buildCwd.empty())
+            cmd = "cd " + shellEscape(def_.buildCwd) + " && " + cmd;
+        std::string out = runShell(cmd + " 2>&1");
+        if (!def_.buildOutput.empty() && std::filesystem::exists(def_.buildOutput))
+            return "";
+        return "build failed for tool '" + def_.name + "': " + out;
     }
 
     static std::string runtimeCommand(const std::string& runtime, const std::string& entrypoint) {

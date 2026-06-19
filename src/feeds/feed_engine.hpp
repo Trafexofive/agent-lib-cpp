@@ -15,6 +15,7 @@
 #include <thread>
 #include <vector>
 
+#include "../core/mini_yaml.hpp"
 #include "feed.hpp"
 
 namespace cortex::mk3::feeds {
@@ -156,23 +157,22 @@ class FeedEngine {
             return mr;
         }
 
-        // Parse minimal YAML (kind: Feed, name:, runtime:, entrypoint:)
-        std::string line, name, runtime, entrypoint;
-        while (std::getline(f, line)) {
-            size_t colon = line.find(": ");
-            if (colon == std::string::npos)
-                continue;
-            std::string key = line.substr(0, colon);
-            size_t start = key.find_first_not_of(" \t");
-            if (start != std::string::npos)
-                key = key.substr(start);
-            std::string val = line.substr(colon + 2);
-            if (key == "name")
-                name = val;
-            else if (key == "runtime")
-                runtime = val;
-            else if (key == "entrypoint")
-                entrypoint = val;
+        std::string yaml((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        auto root = ManifestYaml::parse(yaml);
+        std::string name = ManifestYaml::get(root, "name");
+        std::string runtime = ManifestYaml::get(root, "runtime");
+        std::string entrypoint = ManifestYaml::get(root, "entrypoint");
+        std::string buildCommand;
+        std::string buildCwd;
+        std::string buildOutput;
+        bool autoBuild = true;
+        auto* build = ManifestYaml::find(root, "build");
+        if (build) {
+            buildCommand = ManifestYaml::get(*build, "command");
+            buildCwd = ManifestYaml::get(*build, "cwd");
+            buildOutput = ManifestYaml::get(*build, "output");
+            std::string autoVal = ManifestYaml::get(*build, "auto", "true");
+            autoBuild = !(autoVal == "false" || autoVal == "0" || autoVal == "no");
         }
 
         if (name.empty()) {
@@ -186,10 +186,11 @@ class FeedEngine {
 
         // Resolve entrypoint relative to manifest
         std::filesystem::path scriptPath;
-        if (!entrypoint.empty()) {
-            std::filesystem::path manifestDir = std::filesystem::path(path).parent_path();
+        std::filesystem::path manifestDir = std::filesystem::path(path).parent_path();
+        if (!entrypoint.empty())
             scriptPath = manifestDir / entrypoint;
-        }
+        std::filesystem::path buildDir = buildCwd.empty() ? manifestDir : manifestDir / buildCwd;
+        std::filesystem::path buildArtifact = buildOutput.empty() ? std::filesystem::path() : manifestDir / buildOutput;
 
         // Execute and capture output — pass CALL_TOOL env var so scripts can invoke tools.
         // runtime: process/binary/direct runs the entrypoint directly for compiled feeds.
@@ -197,6 +198,11 @@ class FeedEngine {
         if (runtime == "builtin") {
             mr.success = true;
             mr.summary = "builtin feed " + name;
+            return mr;
+        }
+
+        if (!ensureBuilt(buildCommand, buildDir.string(), buildArtifact.string(), autoBuild)) {
+            mr.error = "build failed for feed: " + name;
             return mr;
         }
 
@@ -225,10 +231,16 @@ class FeedEngine {
 
         // Register feed that re-executes on each poll (with tool-call support)
         std::string toolPath = callToolPath;
-        auto pollFn = [name, runtime, scriptPath, toolPath]() -> FeedResult {
+        auto pollFn = [name, runtime, scriptPath, toolPath, buildCommand, buildDir, buildArtifact,
+                       autoBuild]() -> FeedResult {
             FeedResult fr;
             fr.name = name;
             fr.ok = true;
+            if (!ensureBuilt(buildCommand, buildDir.string(), buildArtifact.string(), autoBuild)) {
+                fr.ok = false;
+                fr.summary = "build failed";
+                return fr;
+            }
             std::string out = runScriptWithEnvStatic(runtime, scriptPath.string(), toolPath);
             if (out.empty()) {
                 fr.summary = "(empty)";
@@ -282,6 +294,25 @@ class FeedEngine {
 
     static std::string runScriptStatic(const std::string& runtime, const std::string& script) {
         return runScriptWithEnvStatic(runtime, script, "");
+    }
+
+    static bool ensureBuilt(const std::string& command, const std::string& cwd,
+                            const std::string& output, bool autoBuild) {
+        if (command.empty() || !autoBuild)
+            return true;
+        if (!output.empty() && std::filesystem::exists(output))
+            return true;
+        std::string cmd = command;
+        if (!cwd.empty())
+            cmd = "cd " + shellEscape(cwd) + " && " + cmd;
+        FILE* p = popen((cmd + " 2>&1").c_str(), "r");
+        if (!p)
+            return false;
+        char buf[1024];
+        while (fgets(buf, sizeof(buf), p)) {
+        }
+        int rc = pclose(p);
+        return rc == 0 && (output.empty() || std::filesystem::exists(output));
     }
 
     static std::string runScriptWithEnvStatic(const std::string& runtime, const std::string& script,

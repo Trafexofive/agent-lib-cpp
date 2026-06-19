@@ -81,6 +81,41 @@ static std::string runtimeCommand(const std::string& runtime, const std::string&
     return rt + " " + ep;
 }
 
+static Json::Value ensureToolBuilt(const tools::Tool& tool) {
+    Json::Value ok;
+    ok["success"] = true;
+    if (tool.buildCommand().empty() || !tool.autoBuild())
+        return ok;
+    if (!tool.buildOutput().empty() && fs::exists(tool.buildOutput()))
+        return ok;
+
+    std::string cmd = tool.buildCommand();
+    if (!tool.buildCwd().empty())
+        cmd = "cd " + shellEscapeArg(tool.buildCwd()) + " && " + cmd;
+    auto start = std::chrono::steady_clock::now();
+    FILE* p = popen((cmd + " 2>&1").c_str(), "r");
+    std::string output;
+    if (p) {
+        char buf[4096];
+        while (fgets(buf, sizeof(buf), p))
+            output += buf;
+    }
+    int rc = p ? pclose(p) : -1;
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - start)
+                       .count();
+    if (rc == 0 && (tool.buildOutput().empty() || fs::exists(tool.buildOutput())))
+        return ok;
+
+    Json::Value err;
+    err["success"] = false;
+    err["error"] = "build failed for tool: " + tool.name();
+    err["exit_code"] = rc;
+    err["ms"] = (Json::Int64)elapsed;
+    err["output"] = output;
+    return err;
+}
+
 Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
     protocol::ParsedAction normalized = action;
     auto toolIt = tools_.find(action.name);
@@ -197,6 +232,10 @@ Json::Value Agent::executeScriptTool(const tools::Tool& tool, const Json::Value&
         err["error"] = blockReason;
         return err;
     }
+
+    Json::Value build = ensureToolBuilt(tool);
+    if (!build.get("success", false).asBool())
+        return build;
 
     std::string cmd = runtimeCommand(tool.scriptRuntime(), tool.scriptPath());
 
@@ -375,7 +414,15 @@ int Agent::reloadManifests(bool backup) {
         td.isNative = false;
         if (!schema.runtime.empty() && !schema.entrypoint.empty()) {
             td.scriptRuntime = schema.runtime;
-            td.scriptPath = (it->path().parent_path() / schema.entrypoint).string();
+            td.scriptPath = (it->path().parent_path() / schema.entrypoint).lexically_normal().string();
+            td.buildCommand = schema.buildCommand;
+            td.buildCwd = schema.buildCwd.empty()
+                              ? it->path().parent_path().string()
+                              : (it->path().parent_path() / schema.buildCwd).lexically_normal().string();
+            td.buildOutput = schema.buildOutput.empty()
+                                 ? ""
+                                 : (it->path().parent_path() / schema.buildOutput).lexically_normal().string();
+            td.autoBuild = schema.autoBuild;
         } else {
             // Not a script tool — skip
             continue;
@@ -404,6 +451,10 @@ void Agent::saveSessionTools() {
         t["description"] = tool.description();
         t["scriptRuntime"] = tool.scriptRuntime();
         t["scriptPath"] = tool.scriptPath();
+        t["buildCommand"] = tool.buildCommand();
+        t["buildCwd"] = tool.buildCwd();
+        t["buildOutput"] = tool.buildOutput();
+        t["autoBuild"] = tool.autoBuild();
         arr.append(t);
     }
     std::ofstream f(sessionDir + "/tools.json");
@@ -436,6 +487,10 @@ void Agent::loadSessionTools() {
         td.isNative = false;
         td.scriptRuntime = t.get("scriptRuntime", "").asString();
         td.scriptPath = t.get("scriptPath", "").asString();
+        td.buildCommand = t.get("buildCommand", "").asString();
+        td.buildCwd = t.get("buildCwd", "").asString();
+        td.buildOutput = t.get("buildOutput", "").asString();
+        td.autoBuild = t.get("autoBuild", true).asBool();
         if (!disabledBuiltins_.count(td.name))
             tools_[td.name] = tools::Tool(td, td.scriptPath, td.scriptRuntime);
     }

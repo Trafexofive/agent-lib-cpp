@@ -7,3 +7,8 @@ description: |
     ./build/cpp_status_feed
 runtime: process
 entrypoint: ./build/cpp_status_feed
+build:
+  command: make
+  cwd: .
+  output: ./build/cpp_status_feed
+  auto: true

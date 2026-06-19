@@ -67,7 +67,15 @@ class ManifestAutoload {
                 if (!schema.runtime.empty() && !schema.entrypoint.empty()) {
                     td.isNative = false;
                     td.scriptRuntime = schema.runtime;
-                    td.scriptPath = (p.parent_path() / schema.entrypoint).string();
+                    td.scriptPath = (p.parent_path() / schema.entrypoint).lexically_normal().string();
+                    td.buildCommand = schema.buildCommand;
+                    td.buildCwd = schema.buildCwd.empty()
+                                      ? p.parent_path().string()
+                                      : (p.parent_path() / schema.buildCwd).lexically_normal().string();
+                    td.buildOutput = schema.buildOutput.empty()
+                                         ? ""
+                                         : (p.parent_path() / schema.buildOutput).lexically_normal().string();
+                    td.autoBuild = schema.autoBuild;
                     agent.addTool(tools::Tool(td, td.scriptPath, td.scriptRuntime));
                 } else {
                     agent.addTool(tools::Tool(td));
