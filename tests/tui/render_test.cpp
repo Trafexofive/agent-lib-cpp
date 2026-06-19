@@ -92,6 +92,12 @@ int main() {
             if (line.find("fs_read") != std::string::npos)
                 occurrences++;
         check(contains(first, "fs_read"), "protocol renders action");
+        check(!first.empty() && visibleWidth(first.front()) == 80 &&
+                  first.front().find("fs_read") == std::string::npos,
+              "protocol action has top background padding");
+        check(first.size() >= 4 && visibleWidth(first[3]) == 80 &&
+                  first[3].find("README") == std::string::npos,
+              "protocol action has bottom background padding");
         check(contains(second, "Cortex-Prime MK3"), "protocol renders result");
         check(occurrences == 1, "protocol render is idempotent across frames");
     }

@@ -116,11 +116,13 @@ class ProtocolView {
     }
 
     void appendActionBlock(const ActionEvent& a, int width) {
+        cached_lines_.push_back(padRight(bgAction(), width));
         for (auto& line : actionHeaderLines(a, width))
             cached_lines_.push_back(line);
         for (auto& p : actionParams(a, width)) {
             cached_lines_.push_back(padRight(bgAction() + "      " + p, width));
         }
+        cached_lines_.push_back(padRight(bgAction(), width));
     }
 
     std::vector<std::string> actionHeaderLines(const ActionEvent& a, int width) const {
