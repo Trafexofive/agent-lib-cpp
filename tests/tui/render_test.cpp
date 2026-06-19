@@ -120,6 +120,9 @@ int main() {
         auto lines = r.render();
         check(contains(lines, "Let me plan"), "full renderer shows thought stream");
         check(contains(lines, "Done"), "full renderer still shows response");
+        r.setThought("");
+        lines = r.render();
+        check(!contains(lines, "Let me plan"), "full renderer clears thought stream");
     }
 
     // SessionView viewport should stay contiguous and anchored above bottom bars.

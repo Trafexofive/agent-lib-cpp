@@ -1939,9 +1939,14 @@ static int cmdRun(CliConfig& cli) {
             renderer.setResponse(response);
             if (!response.empty())
                 renderDirty = true;
-            if (phase == "waiting provider" || phase == "parsing protocol") {
-                renderer.setThought(thought);
-                if (!thought.empty())
+            const bool hasRenderedProtocol = !acts.empty() || !ress.empty();
+            const bool showLiveThought = !hasRenderedProtocol && response.empty() &&
+                                         (phase == "waiting provider" || phase == "parsing protocol");
+            if (showLiveThought) {
+                if (renderer.setThought(thought))
+                    renderDirty = true;
+            } else {
+                if (renderer.setThought(""))
                     renderDirty = true;
             }
         };

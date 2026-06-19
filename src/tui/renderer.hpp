@@ -36,9 +36,11 @@ class TuiRenderer {
         response_ += text;
         responseDirty_ = true;
     }  // streaming
-    void setThought(const std::string& text) {
-        if (thought_ != text)
-            thought_ = text;
+    bool setThought(const std::string& text) {
+        if (thought_ == text)
+            return false;
+        thought_ = text;
+        return true;
     }
 
     // ── Box/border styling ──
