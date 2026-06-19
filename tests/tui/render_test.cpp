@@ -62,9 +62,21 @@ int main() {
     // ANSI/wide char width accounting for box drawing rows.
     {
         std::string row = std::string("  ") + ansi::fg(0, 200, 0) + "╭─ Start ──╮" + ansi::reset();
-        check(visibleWidth(row) == 19, "visibleWidth counts box drawing as wide");
+        check(visibleWidth(row) == 14, "visibleWidth counts box drawing as terminal columns");
         std::string padded = padRight(row, 20);
         check(visibleWidth(padded) == 20, "padRight reaches terminal width");
+    }
+
+    // Markdown fenced code blocks must paint the full row before reset.
+    {
+        Markdown md;
+        md.setWidth(18);
+        md.setText("```\nabc\n```");
+        auto lines = md.render();
+        check(!lines.empty(), "markdown renders fenced code");
+        check(visibleWidth(lines[0]) == 20, "markdown code row fills terminal width");
+        check(lines[0].find(ansi::bg(20, 20, 40)) != std::string::npos,
+              "markdown code row keeps background styling");
     }
 
     // ProtocolView incremental action/result rendering.

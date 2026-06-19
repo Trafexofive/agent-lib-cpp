@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "../terminal.hpp"
+#include "../width.hpp"
 
 namespace cortex::mk3::tui {
 
@@ -97,23 +98,13 @@ class Markdown {
                     state = BlockState::Normal;
                     continue;
                 }
-                std::string padded = line;
-                size_t vis = 0;
-                bool esc = false;
-                for (char c : line) {
-                    if (c == '\033')
-                        esc = true;
-                    else if (esc) {
-                        if (c == 'm')
-                            esc = false;
-                    } else
-                        vis++;
-                }
-                while (vis++ < (size_t)width_)
-                    padded += ' ';
-                lines.push_back(ansi::bg(20, 20, 40) + ansi::dim() + ansi::fg(0, 150, 200) + "│ " +
-                                ansi::reset() + ansi::bg(20, 20, 40) + ansi::dim() + padded +
-                                ansi::reset());
+                const std::string prefix = "│ ";
+                std::string content = line;
+                int used = static_cast<int>(visibleWidth(content));
+                while (used++ < width_)
+                    content += ' ';
+                lines.push_back(ansi::bg(20, 20, 40) + ansi::dim() + ansi::fg(0, 150, 200) +
+                                prefix + content + ansi::reset());
                 continue;
             }
 

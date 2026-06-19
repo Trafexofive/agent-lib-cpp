@@ -17,8 +17,7 @@ inline bool isWideCodepoint(uint32_t c) {
         (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x20000 && c <= 0x2FFFD) ||
         (c >= 0x30000 && c <= 0x3FFFD))
         return true;
-    return (c >= 0x2500 && c <= 0x257F) || (c >= 0x2580 && c <= 0x259F) ||
-           (c >= 0x2190 && c <= 0x21FF);
+    return false;
 }
 
 inline uint32_t readUtf8(const std::string& s, size_t& i) {
