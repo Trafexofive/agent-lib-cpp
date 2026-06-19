@@ -9,6 +9,7 @@
 #include "../feeds/feed_engine.hpp"
 #include "../tools/dispatch.hpp"
 #include "../utils/ansi.hpp"
+#include "../utils/process.hpp"
 #include "agent.hpp"
 #include "dispatch.hpp"
 #include "manifest_loader.hpp"
@@ -71,14 +72,14 @@ static std::string shellEscapeArg(const std::string& input) {
     return out;
 }
 
-static std::string runtimeCommand(const std::string& runtime, const std::string& entrypoint) {
+static std::vector<std::string> runtimeArgv(const std::string& runtime, const std::string& entrypoint,
+                                            const std::string& inputFile) {
     std::string rt = runtime.empty() ? "python3" : runtime;
-    std::string ep = shellEscapeArg(entrypoint);
     if (rt == "process" || rt == "binary" || rt == "exec" || rt == "direct")
-        return ep;
+        return {entrypoint, inputFile};
     if (rt == "python")
         rt = "python3";
-    return rt + " " + ep;
+    return {rt, entrypoint, inputFile};
 }
 
 static Json::Value ensureToolBuilt(const tools::Tool& tool) {
@@ -237,51 +238,53 @@ Json::Value Agent::executeScriptTool(const tools::Tool& tool, const Json::Value&
     if (!build.get("success", false).asBool())
         return build;
 
-    std::string cmd = runtimeCommand(tool.scriptRuntime(), tool.scriptPath());
-
-    // Write params to tmpfile for script to read
-    std::string tmpFile = "/tmp/cortex-tool-" + toolName + ".json";
+    auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    fs::path tmpFile = fs::temp_directory_path() / ("cortex-tool-" + toolName + "-" + std::to_string(now) + ".json");
     {
         Json::StreamWriterBuilder w;
         w["indentation"] = "";
         std::ofstream tf(tmpFile);
         tf << Json::writeString(w, params);
     }
-    std::string cmdWithArg = cmd + " " + shellEscapeArg(tmpFile);
+
     bool allowAnsi = true;
     auto ansiIt = env_.find("__TOOL_ANSI__");
     if (ansiIt != env_.end() && (ansiIt->second == "false" || ansiIt->second == "0" ||
                                  ansiIt->second == "no" || ansiIt->second == "never"))
         allowAnsi = false;
-    std::string envPrefix = allowAnsi ? "FORCE_COLOR=1 CLICOLOR_FORCE=1 TERM=xterm-256color "
-                                      : "NO_COLOR=1 TERM=dumb ";
 
-    auto start = std::chrono::steady_clock::now();
-    FILE* p = popen((envPrefix + cmdWithArg + " 2>&1").c_str(), "r");
-    if (!p) {
-        unlink(tmpFile.c_str());
-        Json::Value err;
-        err["success"] = false;
-        err["error"] = "failed to launch: " + cmdWithArg;
-        return err;
-    }
-    std::string output;
-    char buf[4096];
-    while (fgets(buf, sizeof(buf), p))
-        output += buf;
-    int exitCode = pclose(p);
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::steady_clock::now() - start)
-                       .count();
-    unlink(tmpFile.c_str());
+    process::Spec spec;
+    spec.shell = false;
+    spec.argv = runtimeArgv(tool.scriptRuntime(), tool.scriptPath(), tmpFile.string());
+    spec.timeoutMs = std::max(1, config_.actionTimeoutSec) * 1000;
+    spec.maxStdout = 1024 * 1024;
+    spec.maxStderr = 256 * 1024;
+    spec.env = allowAnsi ? std::map<std::string, std::string>{{"FORCE_COLOR", "1"},
+                                                              {"CLICOLOR_FORCE", "1"},
+                                                              {"TERM", "xterm-256color"}}
+                         : std::map<std::string, std::string>{{"NO_COLOR", "1"}, {"TERM", "dumb"}};
+
+    process::Result pr = process::run(spec);
+    std::error_code ignored;
+    fs::remove(tmpFile, ignored);
 
     Json::Value r;
-    r["success"] = (exitCode == 0);
-    r["exit"] = exitCode;
-    r["ms"] = (Json::Int64)elapsed;
-    r["output"] = output;
-    if (exitCode != 0)
-        r["error"] = "exit code " + std::to_string(exitCode);
+    r["success"] = pr.success();
+    r["exit"] = pr.exitCode;
+    r["exit_code"] = pr.exitCode;
+    r["signal"] = pr.termSignal;
+    r["timed_out"] = pr.timedOut;
+    r["ms"] = (Json::Int64)pr.elapsedMs;
+    r["stdout"] = pr.stdoutText;
+    r["stderr"] = pr.stderrText;
+    r["output"] = pr.stdoutText + pr.stderrText;
+    r["stdout_truncated"] = pr.stdoutTruncated;
+    r["stderr_truncated"] = pr.stderrTruncated;
+    r["truncated"] = pr.stdoutTruncated || pr.stderrTruncated;
+    if (pr.timedOut)
+        r["error"] = "timed out";
+    else if (pr.exitCode != 0)
+        r["error"] = "exit code " + std::to_string(pr.exitCode);
     return r;
 }
 
