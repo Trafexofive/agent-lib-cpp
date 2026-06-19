@@ -34,6 +34,7 @@
 #include "src/sandbox/policy.hpp"
 #include "src/session/manager.hpp"
 #include "src/tui/dialog.hpp"
+#include "src/tui/frame_clock.hpp"
 #include "src/tui/input.hpp"
 #include "src/tui/renderer.hpp"
 #include "src/tui/session_view.hpp"
@@ -1528,12 +1529,10 @@ static int cmdRun(CliConfig& cli) {
     std::vector<std::string> historyLines;
     int scrollOffset = 0;      // lines scrolled above viewport
     bool showPrompts = false;  // /prompts toggle
-    auto lastRenderTime = std::chrono::steady_clock::now();
     bool streaming = false;                              // true during LLM call, false when idle
-    int spinnerFrame = 0;                                // animated spinner
     std::chrono::steady_clock::time_point streamStart_;  // for TTC
     static const char* spinnerFrames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
-    bool renderDirty = true;
+    tui::FrameClock frameClock;
     std::vector<std::string> tuiFrameLog;
     std::vector<std::string> tuiAnsiFrames;
     std::string streamPhase = "idle";
@@ -1547,7 +1546,7 @@ static int cmdRun(CliConfig& cli) {
             return std::string(ansi::dim) + "  Esc to cancel" + ansi::reset;
         }
         std::string spinner = streaming ? std::string("\033[38;2;255;200;50m") +
-                                              spinnerFrames[spinnerFrame] + "\033[0m "
+                                              spinnerFrames[frameClock.spinnerFrame()] + "\033[0m "
                                         : "";
         std::string ttc;
         if (streaming) {
@@ -1609,17 +1608,8 @@ static int cmdRun(CliConfig& cli) {
     };
     tui::SessionView sessionView(termW, termH);
     auto renderScreen = [&](bool force = false) {
-        if (streaming) {
-            if (!renderDirty && !force)
-                return;
-            auto now = std::chrono::steady_clock::now();
-            auto sinceRender =
-                std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRenderTime).count();
-            if (!force && sinceRender < 50)
-                return;
-            spinnerFrame = (spinnerFrame + 1) % 10;
-            lastRenderTime = now;
-        }
+        if (!frameClock.shouldRender(streaming, force))
+            return;
 
         std::vector<std::string> rendererLines;
         std::vector<std::string> dialogLines;
@@ -1651,7 +1641,7 @@ static int cmdRun(CliConfig& cli) {
             captureAnsiFrame(vp.visible, vp.startRow, vp.visibleCount, vp.displaySize);
 
         std::cout << sessionView.render(vp, statusBarText, promptLineText()) << std::flush;
-        renderDirty = false;
+        frameClock.didRender(streaming);
     };
 
     std::string cmd;
@@ -1675,23 +1665,23 @@ static int cmdRun(CliConfig& cli) {
         [](const std::string& prefix) { return tui::SlashCommands::complete(prefix); });
     input.scrollUp = [&] {
         scrollOffset += std::max(1, (termH - 2) / 2);
-        renderDirty = true;
+        frameClock.requestFrame();
         renderScreen(true);
     };
     input.scrollDown = [&] {
         scrollOffset -= std::max(1, (termH - 2) / 2);
-        renderDirty = true;
+        frameClock.requestFrame();
         renderScreen(true);
     };
     input.clearScreen = [&] {
         std::cout << "\033[2J\033[H" << std::flush;
-        renderDirty = true;
+        frameClock.requestFrame();
         renderScreen(true);
     };
 
     auto pushTuiLine = [&](const std::string& line) {
         historyLines.push_back(std::string("\033[2m\033[3m") + line + ansi::reset);
-        renderDirty = true;
+        frameClock.requestFrame();
     };
     auto pushTuiSection = [&](const std::string& title, const std::vector<std::string>& items) {
         pushTuiLine("[" + title + "] " + (items.empty() ? "none" : std::to_string(items.size())));
@@ -1813,7 +1803,7 @@ static int cmdRun(CliConfig& cli) {
             size_t beforeCp = input.cursorPos();
             input.poll();
             if (input.line() != before || input.cursorPos() != beforeCp) {
-                renderDirty = true;
+                frameClock.requestFrame();
                 renderScreen();
             }
         }
@@ -1925,7 +1915,7 @@ static int cmdRun(CliConfig& cli) {
         // Echo user prompt in history BEFORE streaming (visible during response)
         historyLines.push_back(std::string(ansi::bold) + "▸ " + promptText + ansi::reset);
         scrollOffset = 0;
-        renderDirty = true;
+        frameClock.requestFrame();
         renderScreen();
 
         size_t lastAct = 0, lastRes = 0;
@@ -1976,7 +1966,7 @@ static int cmdRun(CliConfig& cli) {
             askPending.store(false, std::memory_order_release);
             dialogActive.store(false, std::memory_order_release);
             input.clearActionInterceptor();
-            renderDirty = true;
+            frameClock.requestFrame();
             return out;
         });
 
@@ -2011,7 +2001,7 @@ static int cmdRun(CliConfig& cli) {
             while (lastAct < acts.size()) {
                 const auto& a = acts[lastAct++];
                 renderer.addProtocolAction(a.type, a.name, a.id, a.body, a.sync);
-                renderDirty = true;
+                frameClock.requestFrame();
             }
             while (lastRes < ress.size()) {
                 const auto& r = ress[lastRes++];
@@ -2025,22 +2015,22 @@ static int cmdRun(CliConfig& cli) {
                 }
                 renderer.addProtocolResult(r.id, r.ok, r.summary, tn, r.exitCode, r.elapsedMs,
                                            r.outputBytes);
-                renderDirty = true;
+                frameClock.requestFrame();
             }
             if (renderer.mode() != tui::RenderMode::FULL)
                 renderer.setRawStream(raw);
             renderer.setResponse(response);
             if (!response.empty())
-                renderDirty = true;
+                frameClock.requestFrame();
             const bool hasRenderedProtocol = !acts.empty() || !ress.empty();
             const bool showLiveThought = !hasRenderedProtocol && response.empty() &&
                                          (phase == "waiting provider" || phase == "parsing protocol");
             if (showLiveThought) {
                 if (renderer.setThought(thought))
-                    renderDirty = true;
+                    frameClock.requestFrame();
             } else {
                 if (renderer.setThought(""))
-                    renderDirty = true;
+                    frameClock.requestFrame();
             }
         };
 
@@ -2112,7 +2102,7 @@ static int cmdRun(CliConfig& cli) {
                     } else {
                         dialogActive.store(true, std::memory_order_release);
                         input.clearEscape();
-                        renderDirty = true;
+                        frameClock.requestFrame();
                         // ── Dialog input interceptor: j/k/arrows navigate,
                         //    y/n for confirm, everything else passes through ──
                         input.setActionInterceptor([&](int act, char outChar) -> bool {
@@ -2131,7 +2121,7 @@ static int cmdRun(CliConfig& cli) {
                                     if (askDialog->state.selectedOption <
                                         (int)card->options.size() - 1)
                                         askDialog->state.selectedOption++;
-                                    renderDirty = true;
+                                    frameClock.requestFrame();
                                     return true;
                                 }
                             }
@@ -2143,7 +2133,7 @@ static int cmdRun(CliConfig& cli) {
                                     card->type == "ranker") {
                                     if (askDialog->state.selectedOption > 0)
                                         askDialog->state.selectedOption--;
-                                    renderDirty = true;
+                                    frameClock.requestFrame();
                                     return true;
                                 }
                             }
@@ -2152,28 +2142,28 @@ static int cmdRun(CliConfig& cli) {
                                 act == (int)cortex::mk3::tui::KeyAction::CHAR) {
                                 if (outChar == 'y' || outChar == 'Y') {
                                     cortex::mk3::tui::advanceDialog(askDialog->state, true);
-                                    renderDirty = true;
+                                    frameClock.requestFrame();
                                     if (askDialog->state.done()) {
                                         askDialog->complete = true;
                                         askDialog->result = askDialog->state.results;
                                         askDialog->active = false;
                                         dialogActive.store(false, std::memory_order_release);
                                         input.clearActionInterceptor();
-                                                        renderDirty = true;
+                                                        frameClock.requestFrame();
                                         askCv.notify_one();
                                     }
                                     return true;
                                 }
                                 if (outChar == 'n' || outChar == 'N') {
                                     cortex::mk3::tui::advanceDialog(askDialog->state, false);
-                                    renderDirty = true;
+                                    frameClock.requestFrame();
                                     if (askDialog->state.done()) {
                                         askDialog->complete = true;
                                         askDialog->result = askDialog->state.results;
                                         askDialog->active = false;
                                         dialogActive.store(false, std::memory_order_release);
                                         input.clearActionInterceptor();
-                                                        renderDirty = true;
+                                                        frameClock.requestFrame();
                                         askCv.notify_one();
                                     }
                                     return true;
@@ -2200,7 +2190,7 @@ static int cmdRun(CliConfig& cli) {
             bool hadInput = input.poll();
             bool inputChanged = (input.line() != beforeInput || input.cursorPos() != beforeCursor);
             if (inputChanged)
-                renderDirty = true;
+                frameClock.requestFrame();
 
             // Escape → cancel dialog (if active) or cancel agent
             if (input.escapePressed()) {
@@ -2209,9 +2199,9 @@ static int cmdRun(CliConfig& cli) {
                     askDialog->active = false;
                     dialogActive.store(false, std::memory_order_release);
                     input.clearActionInterceptor();
-                    renderDirty = true;
+                    frameClock.requestFrame();
                     input.clearEscape();
-                    renderDirty = true;
+                    frameClock.requestFrame();
                     askCv.notify_one();
                 } else {
                     cortex::mk3::g_running = false;
@@ -2225,14 +2215,14 @@ static int cmdRun(CliConfig& cli) {
                 dialogInputLine.clear();
                 bool done = cortex::mk3::tui::handleDialogLine(askDialog->state, line);
                 input.clearEscape();
-                renderDirty = true;
+                frameClock.requestFrame();
                 if (done) {
                     askDialog->complete = true;
                     askDialog->result = askDialog->state.results;
                     askDialog->active = false;
                     dialogActive.store(false, std::memory_order_release);
                     input.clearActionInterceptor();
-                    renderDirty = true;
+                    frameClock.requestFrame();
                     askCv.notify_one();
                 }
             }
@@ -2252,7 +2242,7 @@ static int cmdRun(CliConfig& cli) {
                     termH = ws.ws_row;
                     renderer.setWidth(termW);
                     sessionView.setWidthHeight(termW, termH);
-                    renderDirty = true;
+                    frameClock.requestFrame();
                 }
             }
 
@@ -2262,18 +2252,7 @@ static int cmdRun(CliConfig& cli) {
             // independent frame clock. Otherwise the spinner/timer only moves when
             // stream text changes, which looks like the loader is blocked while the
             // model is just waiting on first bytes.
-            bool uiTick = false;
-            if (streaming) {
-                auto now = std::chrono::steady_clock::now();
-                auto sinceRender = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                       now - lastRenderTime)
-                                       .count();
-                if (sinceRender >= 100) {
-                    renderDirty = true;
-                    uiTick = true;
-                }
-            }
-
+            bool uiTick = frameClock.heartbeatDue(streaming);
             renderScreen(inputChanged || uiTick);
 
             // Small sleep to avoid busy-wait CPU spin; skip on any input activity.
@@ -2320,7 +2299,7 @@ static int cmdRun(CliConfig& cli) {
         }
         renderer.clear();
         streamPhase = "idle";
-        renderDirty = true;
+        frameClock.requestFrame();
         // AC15 — agent.prompt() owns persistence; do not save again here.
         renderScreen();
     }
