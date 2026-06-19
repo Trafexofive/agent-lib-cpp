@@ -26,3 +26,15 @@ import:
     - list
   relics:
     - ../../relics/diagram-workspace
+
+retry:
+  # Resilience for OpenRouter free models that intermittently emit empty
+  # content. Three attempts total (1 + 2 retries) with exponential backoff.
+  empty_response_max_retries: 2
+  empty_response_initial_backoff_ms: 1000
+  empty_response_max_backoff_ms: 15000
+  empty_response_backoff_multiplier: 3.0
+  retry_on_finish_reason_length: true
+  retry_on_finish_reason_content_filter: true
+  retry_on_finish_reasons:
+    - refusal

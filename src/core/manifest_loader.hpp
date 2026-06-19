@@ -220,6 +220,40 @@ class ManifestLoader {
             cfg.sandboxImage = ManifestYaml::get(*sandbox, "image", "");
         }
 
+        // Retry / resilience — exponential backoff for transient upstream
+        // failures. Optional block; defaults from AgentConfig apply when
+        // omitted. Useful for OpenRouter/free models that intermittently
+        // emit empty content.
+        auto* retry = ManifestYaml::find(root, "retry");
+        if (retry) {
+            std::string maxRetries = ManifestYaml::get(*retry, "empty_response_max_retries");
+            if (!maxRetries.empty())
+                cfg.emptyResponseMaxRetries = std::stoi(maxRetries);
+            std::string initial = ManifestYaml::get(*retry, "empty_response_initial_backoff_ms");
+            if (!initial.empty())
+                cfg.emptyResponseInitialBackoffMs = std::stoi(initial);
+            std::string maxBack = ManifestYaml::get(*retry, "empty_response_max_backoff_ms");
+            if (!maxBack.empty())
+                cfg.emptyResponseMaxBackoffMs = std::stoi(maxBack);
+            std::string mult = ManifestYaml::get(*retry, "empty_response_backoff_multiplier");
+            if (!mult.empty())
+                cfg.emptyResponseBackoffMultiplier = std::stod(mult);
+            std::string lenFlag = ManifestYaml::get(*retry, "retry_on_finish_reason_length");
+            if (!lenFlag.empty())
+                cfg.retryOnFinishReasonLength = promptFlagEnabled(lenFlag);
+            std::string filterFlag =
+                ManifestYaml::get(*retry, "retry_on_finish_reason_content_filter");
+            if (!filterFlag.empty())
+                cfg.retryOnFinishReasonContentFilter = promptFlagEnabled(filterFlag);
+            auto* reasons = ManifestYaml::find(*retry, "retry_on_finish_reasons");
+            if (reasons) {
+                cfg.retryOnFinishReasons.clear();
+                for (auto& c : reasons->children)
+                    if (!c.value.empty())
+                        cfg.retryOnFinishReasons.push_back(c.value);
+            }
+        }
+
         // Manifest directory for resolving relative paths
         cfg.manifestDir = fs::path(manifestPath).parent_path().string();
 

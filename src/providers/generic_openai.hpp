@@ -7,12 +7,14 @@
 // =============================================================================
 
 #include <curl/curl.h>
+#include <json/json.h>
 
 #include <cstdlib>
 #include <fstream>
 #include <map>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "../core/provider.hpp"
@@ -120,6 +122,12 @@ class GenericOpenAIClient : public ILlmProvider {
 
     // Model discovery
     std::vector<ModelInfo> listModels() override;
+    static ModelInfo modelInfoFromJson(const OpenAIProviderConfig& cfg, const Json::Value& m);
+
+    // Stream diagnostics — see provider.hpp
+    StreamStats lastStreamStats() const override {
+        return lastStats_;
+    }
 
    private:
     OpenAIProviderConfig config_;
@@ -149,11 +157,17 @@ class GenericOpenAIClient : public ILlmProvider {
         std::string lastErrorBody;  // preserved for HTTP error responses
         bool codexResponses = false;
         bool codexSawTextDelta = false;
+        bool anyContent = false;       // true if any non-thinking token reached cb
+        std::string finishReason;      // last finish_reason seen in SSE deltas
+        long httpStatus = 0;           // HTTP status of the streaming response
     };
+
+    mutable StreamStats lastStats_;
 
     // Model cache
     mutable std::vector<ModelInfo> cachedModels_;
     mutable bool modelsFetched_ = false;
+    mutable std::unordered_map<std::string, bool> modelTopKSupport_;
     int maxRetries_ = 3;
     bool quietLogs_ = false;
 
@@ -195,7 +209,7 @@ inline OpenAIProviderConfig openrouterConfig() {
                 {"X-Title", "Cortex-MK3"},
             },
             true,
-            true,
+            false,  // OpenRouter is model-specific; direct runs omit top_k unless /models says it is supported.
             "/chat/completions",
             "/models",
             "",

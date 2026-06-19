@@ -51,6 +51,20 @@ class ILlmProvider {
     virtual std::vector<ModelInfo> listModels() {
         return {};
     }
+
+    // Stream diagnostics — populated after each generateStream call so the
+    // agent loop can distinguish a normal empty response from a model that
+    // silently returned nothing (refusal, filter, or dead upstream).
+    struct StreamStats {
+        bool anyContent = false;
+        std::string finishReason;
+        std::string lastError;
+        long httpStatus = 0;
+    };
+    virtual StreamStats lastStreamStats() const {
+        return {};
+    }
+
 };
 
 using LlmProviderPtr = std::shared_ptr<ILlmProvider>;

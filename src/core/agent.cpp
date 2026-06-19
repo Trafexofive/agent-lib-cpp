@@ -775,31 +775,106 @@ std::string Agent::runLoop(AgentContext& ctx) {
             }
         });
 
-        // Call LLM
-        try {
-            provider_->generateStream(msgs, [&](const std::string& token, bool isFinal) {
-                if (taskComplete)
-                    return;
-                // Route thinking tokens (\x01 prefix) to thought stream —
-                // live dimmed
-                if (!token.empty() && token[0] == '\x01') {
-                    thoughtOutput_ += token.substr(1);
-                    if (ctx.onToken)
-                        ctx.onToken("", false);  // trigger render
-                    return;
+        // Call LLM with exponential-backoff retry on transient empty/filtered
+        // responses. Network exceptions are surfaced immediately (existing
+        // behavior); only successful-but-empty streams are retried.
+        ILlmProvider::StreamStats streamStats;
+        int maxAttempts = std::max(1, 1 + config_.emptyResponseMaxRetries);
+        int attempt = 0;
+        int backoffMs = config_.emptyResponseInitialBackoffMs;
+        for (;;) {
+            if (attempt > 0) {
+                // Reset per-iteration state for the retry attempt so the
+                // next stream's tokens don't mix with the prior attempt.
+                llmOutput.clear();
+                actionTranscriptOutput.clear();
+                iterationRawOutput.clear();
+                iterationRuntimeOutput.clear();
+                responseOutput_.clear();
+                thoughtOutput_.clear();
+                parser.reset();
+
+                int delay = std::min(backoffMs, config_.emptyResponseMaxBackoffMs);
+                if (ctx.debug) {
+                    std::cerr << "[MK3:RETRY] empty-response attempt=" << attempt
+                              << " delay_ms=" << delay << " finish_reason=\""
+                              << streamStats.finishReason << "\" any_content="
+                              << (streamStats.anyContent ? "true" : "false") << "\n";
                 }
-                rawLlOutput_ += token;        // cumulative model/runtime trace
-                iterationRawOutput += token;  // exact model bytes this iteration
-                if (ctx.raw)
-                    rawOutput += token;
-                parser.feed(token, isFinal);
-            });
-        } catch (const std::exception& e) {
-            std::string err = std::string("Error: ") + e.what();
-            rawLlOutput_ += err;
-            iterationRawOutput += err;
-            iterationOutputs_.push_back(err);
-            return err;
+                auto deadline = std::chrono::steady_clock::now() +
+                                std::chrono::milliseconds(delay);
+                while (g_running && std::chrono::steady_clock::now() < deadline) {
+                    auto step = std::min(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            deadline - std::chrono::steady_clock::now()),
+                        std::chrono::milliseconds(100));
+                    if (step.count() > 0)
+                        std::this_thread::sleep_for(step);
+                }
+                if (!g_running)
+                    break;
+                backoffMs = std::min(
+                    static_cast<int>(backoffMs * config_.emptyResponseBackoffMultiplier),
+                    config_.emptyResponseMaxBackoffMs);
+            }
+
+            try {
+                provider_->generateStream(msgs, [&](const std::string& token, bool isFinal) {
+                    if (taskComplete)
+                        return;
+                    // Route thinking tokens (\x01 prefix) to thought stream —
+                    // live dimmed
+                    if (!token.empty() && token[0] == '\x01') {
+                        thoughtOutput_ += token.substr(1);
+                        if (ctx.onToken)
+                            ctx.onToken("", false);  // trigger render
+                        return;
+                    }
+                    rawLlOutput_ += token;        // cumulative model/runtime trace
+                    iterationRawOutput += token;  // exact model bytes this iteration
+                    if (ctx.raw)
+                        rawOutput += token;
+                    parser.feed(token, isFinal);
+                });
+            } catch (const std::exception& e) {
+                std::string err = std::string("Error: ") + e.what();
+                rawLlOutput_ += err;
+                iterationRawOutput += err;
+                iterationOutputs_.push_back(err);
+                return err;
+            }
+
+            streamStats = provider_ ? provider_->lastStreamStats()
+                                    : ILlmProvider::StreamStats{};
+
+            // Decide whether to retry. Don't retry on legitimate content;
+            // only on upstream-side transient failures (empty / filtered /
+            // length-truncated / configured reasons).
+            bool shouldRetry = (attempt + 1 < maxAttempts);
+            if (shouldRetry) {
+                if (streamStats.anyContent) {
+                    bool retryForReason = false;
+                    if (config_.retryOnFinishReasonLength &&
+                        streamStats.finishReason == "length")
+                        retryForReason = true;
+                    if (config_.retryOnFinishReasonContentFilter &&
+                        (streamStats.finishReason == "content_filter" ||
+                         streamStats.finishReason == "empty"))
+                        retryForReason = true;
+                    for (const auto& r : config_.retryOnFinishReasons) {
+                        if (streamStats.finishReason == r) {
+                            retryForReason = true;
+                            break;
+                        }
+                    }
+                    shouldRetry = retryForReason;
+                }
+                // else: !anyContent → always retry
+            }
+
+            if (!shouldRetry)
+                break;
+            ++attempt;
         }
 
         if (!parser.waitForActions(std::chrono::seconds(config_.actionTimeoutSec))) {
@@ -828,26 +903,48 @@ std::string Agent::runLoop(AgentContext& ctx) {
         }
 
         if (results.empty() && !taskComplete) {
-            // No parsed actions and no response tags — LLM produced bare text.
-            // Inject one-time reminder into history so it persists in context.
-            history_.push_back("Agent: " + iterationRawOutput);
-            if (!bareTextReminded_ && !iterationRawOutput.empty()) {
-                std::string trimmed = iterationRawOutput;
-                size_t first = trimmed.find_first_not_of(" \t\n\r");
-                if (first != std::string::npos && trimmed[first] != '<') {
-                    bareTextReminded_ = true;
-                    std::string preview =
-                        trimmed.size() > 60 ? trimmed.substr(0, 60) + "..." : trimmed;
-                    history_.push_back(
-                        "System: \342\232\240 BARE TEXT STRIPPED: \"" + preview +
-                        "\" — "
-                        "Wrap ALL responses in <response final=\"true\">...</response>. "
-                        "This reminder is sent once — it stays in your context.");
+            // No parsed actions and no response tags. Decide whether the model
+            // produced a legitimate empty reply or whether the upstream failed
+            // silently. The empty-response case must surface a visible error
+            // so the loop never silently closes a turn on a dead/refusing model.
+            if (!streamStats.anyContent) {
+                std::string detail;
+                if (!streamStats.finishReason.empty())
+                    detail += " (finish_reason=" + streamStats.finishReason + ")";
+                if (!streamStats.lastError.empty())
+                    detail += " — " + streamStats.lastError.substr(0, 200);
+                if (streamStats.httpStatus > 0)
+                    detail += " [http " + std::to_string(streamStats.httpStatus) + "]";
+                std::string visibleError =
+                    "⚠ Model returned an empty response" + detail +
+                    ". The agent loop is aborting this turn rather than silently finishing. "
+                    "Retry with a different model if this persists.";
+                history_.push_back("System: [EMPTY RESPONSE] " + detail);
+                history_.push_back("Agent: " + visibleError);
+                responseOutput_ = visibleError;
+                taskComplete = true;
+            } else {
+                // LLM produced bare text. Inject one-time reminder into
+                // history so it persists in context.
+                history_.push_back("Agent: " + iterationRawOutput);
+                if (!bareTextReminded_ && !iterationRawOutput.empty()) {
+                    std::string trimmed = iterationRawOutput;
+                    size_t first = trimmed.find_first_not_of(" \t\n\r");
+                    if (first != std::string::npos && trimmed[first] != '<') {
+                        bareTextReminded_ = true;
+                        std::string preview =
+                            trimmed.size() > 60 ? trimmed.substr(0, 60) + "..." : trimmed;
+                        history_.push_back(
+                            "System: \342\232\240 BARE TEXT STRIPPED: \"" + preview +
+                            "\" — "
+                            "Wrap ALL responses in <response final=\"true\">...</response>. "
+                            "This reminder is sent once — it stays in your context.");
+                    }
                 }
+                taskComplete = true;
+                if (responseOutput_.empty())
+                    responseOutput_ = sanitize(llmOutput);
             }
-            taskComplete = true;
-            if (responseOutput_.empty())
-                responseOutput_ = sanitize(llmOutput);
         }
 
         // Capture exact model output plus runtime-injected results for debugging.

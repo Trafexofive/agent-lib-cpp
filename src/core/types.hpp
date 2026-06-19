@@ -161,6 +161,18 @@ struct AgentConfig {
     int actionTimeoutSec = 30;  // max seconds to wait for dispatched actions
     int historyCap = 40;
 
+    // Resilience — retry behavior for transient upstream failures (empty
+    // stream, finish_reason=length, content_filter, transient HTTP errors).
+    // Retries use exponential backoff between attempts and stop on the first
+    // response that carries any non-thinking content.
+    int emptyResponseMaxRetries = 2;             // additional attempts after the first
+    int emptyResponseInitialBackoffMs = 1000;    // first backoff
+    int emptyResponseMaxBackoffMs = 30000;       // cap for exponential growth
+    double emptyResponseBackoffMultiplier = 2.0; // delay multiplier per attempt
+    bool retryOnFinishReasonLength = true;       // length-truncated responses
+    bool retryOnFinishReasonContentFilter = true;// filtered/empty content
+    std::vector<std::string> retryOnFinishReasons; // extra reasons to retry (e.g. "refusal")
+
     // Paths
     std::string systemPromptPath;
     std::string systemPromptText;  // if set, overrides systemPromptPath (inline prompt)

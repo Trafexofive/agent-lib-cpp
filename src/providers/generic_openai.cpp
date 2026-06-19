@@ -182,7 +182,11 @@ Json::Value GenericOpenAIClient::buildRequestBody(const ChatMessages& msgs, bool
     body["model"] = model_;
     body["temperature"] = temperature_;
     body["top_p"] = topP_;
-    if (topK_ > 0 && config_.supportsTopK)
+    bool allowTopK = config_.supportsTopK;
+    auto topKIt = modelTopKSupport_.find(model_);
+    if (topKIt != modelTopKSupport_.end())
+        allowTopK = topKIt->second;
+    if (topK_ > 0 && allowTopK)
         body["top_k"] = topK_;
     if (!config_.reasoningEffort.empty())
         body["reasoning_effort"] = config_.reasoningEffort;
@@ -237,15 +241,28 @@ std::string GenericOpenAIClient::generate(const ChatMessages& msgs) {
             errMsg = err["message"].asString();
         else if (err.isString())
             errMsg = err.asString();
+        lastStats_.anyContent = false;
+        lastStats_.finishReason = "error";
+        lastStats_.lastError = errMsg;
         throw std::runtime_error("API error: " + errMsg);
     }
 
     auto& choices = root["choices"];
     if (choices.size() > 0) {
         auto& msg = choices[0]["message"];
-        return msg["content"].asString();
+        std::string content = msg["content"].asString();
+        lastStats_.anyContent = !content.empty();
+        if (choices[0].isMember("finish_reason") && !choices[0]["finish_reason"].isNull())
+            lastStats_.finishReason = choices[0]["finish_reason"].asString();
+        else
+            lastStats_.finishReason = content.empty() ? "empty" : "stop";
+        lastStats_.lastError.clear();
+        return content;
     }
 
+    lastStats_.anyContent = false;
+    lastStats_.finishReason = "empty";
+    lastStats_.lastError.clear();
     return "";
 }
 
@@ -253,8 +270,16 @@ std::string GenericOpenAIClient::generate(const ChatMessages& msgs) {
 // Streaming generate
 // ---------------------------------------------------------------------------
 void GenericOpenAIClient::generateStream(const ChatMessages& msgs, StreamCallback cb) {
+    lastStats_ = StreamStats{};
     Json::Value body = buildRequestBody(msgs, true);
     httpPost(config_.baseUrl + config_.chatEndpoint, body, cb, true);
+    if (cb && !lastStats_.anyContent) {
+        // Ensure the consumer's parser/loop sees a final flush even when the
+        // upstream never emitted any content. Without this, an empty response
+        // (refusal, content_filter, dead model) leaves the agent loop with no
+        // observable signal and it silently completes the turn.
+        cb("", true);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +298,8 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
             throw std::runtime_error("Failed to initialize CURL");
 
         std::string responseBuffer;
-        StreamCtx ctx{cb, {}, {}, config_.apiMode == "openai-codex-responses", false};
+        StreamCtx ctx{cb, {}, {}, config_.apiMode == "openai-codex-responses", false,
+                      /*anyContent=*/false, /*finishReason=*/{}, /*httpStatus=*/0};
 
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -314,6 +340,7 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
         CURLcode res = curl_easy_perform(curl);
         long httpCode = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        ctx.httpStatus = httpCode;
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
 
@@ -332,6 +359,10 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
                     throw std::runtime_error("cancelled during retry backoff");
                 continue;
             }
+            lastStats_.anyContent = false;
+            lastStats_.finishReason = "curl_error";
+            lastStats_.lastError = curl_easy_strerror(res);
+            lastStats_.httpStatus = httpCode;
             throw std::runtime_error(std::string("CURL error: ") + curl_easy_strerror(res));
         }
 
@@ -354,9 +385,16 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
                     throw std::runtime_error("cancelled during retry backoff");
                 continue;
             }
+            lastStats_.anyContent = ctx.anyContent;
+            lastStats_.finishReason = "http_" + std::to_string(httpCode);
+            lastStats_.lastError = errorBody.substr(0, 500);
+            lastStats_.httpStatus = httpCode;
             throw std::runtime_error("HTTP " + std::to_string(httpCode) +
                                      " — response: " + errorBody.substr(0, 500));
         }
+        lastStats_.anyContent = ctx.anyContent;
+        lastStats_.finishReason = ctx.finishReason.empty() ? std::string("stop") : ctx.finishReason;
+        lastStats_.httpStatus = httpCode;
         return responseBuffer;
     }  // retry loop
     throw std::runtime_error("max retries exceeded");
@@ -467,9 +505,23 @@ size_t GenericOpenAIClient::streamCb(void* ptr, size_t sz, size_t nmemb, void* u
                 continue;
             }
 
+            // Capture finish_reason from response lifecycle events so empty
+            // codex streams still surface a meaningful reason.
+            if (root.isMember("response") && root["response"].isObject()) {
+                const Json::Value& resp = root["response"];
+                if (resp.isMember("status") && resp["status"].isString())
+                    ctx->finishReason = resp["status"].asString();
+                if (resp.isMember("incomplete_details") && resp["incomplete_details"].isObject() &&
+                    resp["incomplete_details"].isMember("reason") &&
+                    resp["incomplete_details"]["reason"].isString())
+                    ctx->finishReason = resp["incomplete_details"]["reason"].asString();
+            }
+
             if ((type == "response.output_text.delta" || type == "response.refusal.delta") &&
                 root.isMember("delta") && root["delta"].isString()) {
                 std::string codexDelta = root["delta"].asString();
+                if (!codexDelta.empty())
+                    ctx->anyContent = true;
                 ctx->codexSawTextDelta = true;
                 ctx->cb(codexDelta, false);
             } else if (type == "response.content_part.added" && root.isMember("part") &&
@@ -484,12 +536,14 @@ size_t GenericOpenAIClient::streamCb(void* ptr, size_t sz, size_t nmemb, void* u
                     text = part["refusal"].asString();
                 }
                 if (!text.empty()) {
+                    ctx->anyContent = true;
                     ctx->codexSawTextDelta = true;
                     ctx->cb(text, false);
                 }
             } else if (!ctx->codexSawTextDelta && type == "response.output_text.done" &&
                        root.isMember("text") && root["text"].isString() &&
                        !root["text"].asString().empty()) {
+                ctx->anyContent = true;
                 ctx->cb(root["text"].asString(), false);
             } else if (!ctx->codexSawTextDelta && type == "response.content_part.done" &&
                        root.isMember("part") && root["part"].isObject()) {
@@ -502,8 +556,10 @@ size_t GenericOpenAIClient::streamCb(void* ptr, size_t sz, size_t nmemb, void* u
                            part.isMember("refusal") && part["refusal"].isString()) {
                     text = part["refusal"].asString();
                 }
-                if (!text.empty())
+                if (!text.empty()) {
+                    ctx->anyContent = true;
                     ctx->cb(text, false);
+                }
             } else if (!ctx->codexSawTextDelta && type == "response.output_item.done" &&
                        root.isMember("item") && root["item"].isObject()) {
                 const Json::Value& item = root["item"];
@@ -520,8 +576,10 @@ size_t GenericOpenAIClient::streamCb(void* ptr, size_t sz, size_t nmemb, void* u
                                  p["refusal"].isString())
                             text += p["refusal"].asString();
                     }
-                    if (!text.empty())
+                    if (!text.empty()) {
+                        ctx->anyContent = true;
                         ctx->cb(text, false);
+                    }
                 }
             } else if (type == "response.completed" || type == "response.done" ||
                        type == "response.failed" || type == "response.cancelled" ||
@@ -556,9 +614,25 @@ size_t GenericOpenAIClient::streamCb(void* ptr, size_t sz, size_t nmemb, void* u
             if (choices[0].isMember("finish_reason") && !choices[0]["finish_reason"].isNull())
                 finishReason = choices[0]["finish_reason"].asString();
 
+            // Track for stream diagnostics. anyContent only counts non-thinking
+            // tokens so a model that emits only reasoning still surfaces as
+            // empty to the agent loop.
+            if (!isThinking)
+                ctx->anyContent = true;
+            if (!finishReason.empty())
+                ctx->finishReason = finishReason;
+
             bool isFinal = (finishReason == "stop" || finishReason == "length" ||
                             finishReason == "tool_calls");
             ctx->cb(token, isFinal);
+        } else {
+            // Even when content is empty, capture finish_reason (last chunk in a
+            // stream often carries only finish_reason + null content).
+            if (choices[0].isMember("finish_reason") && !choices[0]["finish_reason"].isNull()) {
+                std::string fr = choices[0]["finish_reason"].asString();
+                if (!fr.empty())
+                    ctx->finishReason = fr;
+            }
         }
     }
     return total;
@@ -636,6 +710,15 @@ static int knownContextWindow(const std::string& provider, const std::string& mo
         {"big-pickle", 65536},
     };
 
+    static const std::unordered_map<std::string, int> openrouter = {
+        {"nvidia/nemotron-3-ultra-550b-a55b:free", 1000000},
+        {"nvidia/nemotron-3-ultra-550b-a55b", 1000000},
+        {"nvidia/nemotron-3-ultra-550b-a55b-20260604", 1000000},
+        {"nvidia/nemotron-3-super-120b-a12b:free", 1000000},
+        {"nvidia/nemotron-3-super-120b-a12b", 1000000},
+        {"nvidia/nemotron-3-super-120b-a12b-20230311", 1000000},
+    };
+
     std::string key = modelId;
     std::transform(key.begin(), key.end(), key.begin(),
                    [](unsigned char c) { return std::tolower(c); });
@@ -645,7 +728,51 @@ static int knownContextWindow(const std::string& provider, const std::string& mo
         if (it != opencodeGo.end())
             return it->second;
     }
+    if (provider == "openrouter") {
+        auto it = openrouter.find(key);
+        if (it != openrouter.end())
+            return it->second;
+    }
     return fallback;
+}
+
+static int intMember(const Json::Value& root, const std::string& key) {
+    if (!root.isMember(key))
+        return 0;
+    const Json::Value& v = root[key];
+    if (v.isNumeric())
+        return v.asInt();
+    if (v.isString()) {
+        try {
+            return std::stoi(v.asString());
+        } catch (...) {
+            return 0;
+        }
+    }
+    return 0;
+}
+
+static int parseModelContextWindow(const Json::Value& m, int fallback) {
+    int context = intMember(m, "context_length");
+    if (context <= 0 && m.isMember("top_provider") && m["top_provider"].isObject())
+        context = intMember(m["top_provider"], "context_length");
+    return context > 0 ? context : fallback;
+}
+
+static bool arrayContainsString(const Json::Value& arr, const std::string& needle) {
+    if (!arr.isArray())
+        return false;
+    for (const auto& item : arr) {
+        if (item.isString() && item.asString() == needle)
+            return true;
+    }
+    return false;
+}
+
+static bool parseModelSupportsTopK(const Json::Value& m, bool providerSupportsTopK) {
+    if (!m.isMember("supported_parameters"))
+        return providerSupportsTopK;
+    return arrayContainsString(m["supported_parameters"], "top_k");
 }
 
 std::vector<ILlmProvider::ModelInfo> GenericOpenAIClient::listModels() {
@@ -704,31 +831,46 @@ std::vector<ILlmProvider::ModelInfo> GenericOpenAIClient::listModels() {
     for (auto& m : data) {
         if (!m.isObject() || !m.isMember("id") || !m["id"].isString())
             continue;
-        ModelInfo info;
-        info.id = m["id"].asString();
-        info.name = (m.isMember("name") && m["name"].isString()) ? m["name"].asString() : info.id;
-        int fallbackContext = config_.name == "openai-codex" ? 272000 : 65536;
-        info.contextWindow = knownContextWindow(config_.name, info.id, fallbackContext);
-        info.isFree = (info.id.find(":free") != std::string::npos ||
-                       info.name.find(":free") != std::string::npos);
-        if (!info.isFree && m.isMember("pricing") && m["pricing"].isObject()) {
-            auto zeroish = [](const Json::Value& v) {
-                if (v.isString())
-                    return v.asString() == "0" || v.asString() == "0.0";
-                if (v.isNumeric())
-                    return v.asDouble() == 0.0;
-                return false;
-            };
-            bool promptFree = m["pricing"].isMember("prompt") && zeroish(m["pricing"]["prompt"]);
-            bool completionFree =
-                m["pricing"].isMember("completion") && zeroish(m["pricing"]["completion"]);
-            info.isFree = promptFree && completionFree;
-        }
+        ModelInfo info = modelInfoFromJson(config_, m);
+        modelTopKSupport_[info.id] = info.supportsTopK;
         cachedModels_.push_back(info);
     }
 
     modelsFetched_ = true;
     return cachedModels_;
+}
+
+ILlmProvider::ModelInfo GenericOpenAIClient::modelInfoFromJson(const OpenAIProviderConfig& cfg,
+                                                                const Json::Value& m) {
+    if (!m.isObject() || !m.isMember("id") || !m["id"].isString()) {
+        ModelInfo empty;
+        empty.id.clear();
+        return empty;
+    }
+
+    ModelInfo info;
+    info.id = m["id"].asString();
+    info.name = (m.isMember("name") && m["name"].isString()) ? m["name"].asString() : info.id;
+    int fallbackContext = cfg.name == "openai-codex" ? 272000 : 65536;
+    int parsedContext = parseModelContextWindow(m, fallbackContext);
+    info.contextWindow = knownContextWindow(cfg.name, info.id, parsedContext);
+    info.isFree = (info.id.find(":free") != std::string::npos ||
+                   info.name.find(":free") != std::string::npos);
+    if (!info.isFree && m.isMember("pricing") && m["pricing"].isObject()) {
+        auto zeroish = [](const Json::Value& v) {
+            if (v.isString())
+                return v.asString() == "0" || v.asString() == "0.0";
+            if (v.isNumeric())
+                return v.asDouble() == 0.0;
+            return false;
+        };
+        bool promptFree = m["pricing"].isMember("prompt") && zeroish(m["pricing"]["prompt"]);
+        bool completionFree =
+            m["pricing"].isMember("completion") && zeroish(m["pricing"]["completion"]);
+        info.isFree = promptFree && completionFree;
+    }
+    info.supportsTopK = parseModelSupportsTopK(m, cfg.supportsTopK);
+    return info;
 }
 
 }  // namespace cortex::mk3::providers
