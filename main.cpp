@@ -72,6 +72,7 @@ struct CliConfig {
     std::string sessionId;
     bool continueSession = false;
     std::string resumeSessionId;
+    bool listSessions = false;
     std::string systemPromptPath;
     std::string harnessPromptPath;
     bool ephemeral = false;
@@ -198,6 +199,7 @@ Global flags:
   --verbose, -V        Verbose: dump full prompts each iteration
   --debug              Enable debug output
   --raw                Pipe-clean output (no formatting, no banner)
+  -r, --sessions       List saved sessions
   --tui-debug-dump <path> Auto-write TUI render/debug state (env: MK3_TUI_DEBUG_DUMP)
   --dry-run            Validate config + prompt without calling LLM
   --help               Show this help
@@ -232,8 +234,9 @@ Flags:
   --harness <path>       Harness prompt (XML protocol spec)
   --system <path>        System prompt override
   --session <id>         Session ID for persistence
-  --continue, -c         Continue the most recent session
-  --resume <id>, -r <id> Resume a specific session
+  -c, --continue         Continue the most recent session
+  --resume <id>          Resume a specific session
+  -r, --sessions         List saved sessions
   --ephemeral            Don't save session
   --repl                 Force interactive mode even with --prompt
   --tui-debug-dump <path> Auto-write TUI render/debug state
@@ -355,7 +358,8 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"sandbox-ro", no_argument, 0, 'R'},
                                        {"verbose", no_argument, 0, 'V'},
                                        {"debug", no_argument, 0, 'D'},
-                                       {"raw", no_argument, 0, 'r'},
+                                       {"raw", no_argument, 0, 1003},
+                                       {"sessions", no_argument, 0, 'r'},
                                        {"tui-debug-dump", required_argument, 0, 1001},
                                        {"dry-run", no_argument, 0, 'n'},
                                        {"help", no_argument, 0, 'h'},
@@ -430,7 +434,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
     int opt;
     bool sawProviderFlag = false;
     bool providerFlagHadArg = false;
-    while ((opt = getopt_long(argc, argv, "C:G:P:M:p:f:m:H:y:s:VhrSReEDnX:", longOpts, nullptr)) !=
+    while ((opt = getopt_long(argc, argv, "C:G:P:M:p:f:m:H:y:s:VhrSReEDnX:c", longOpts, nullptr)) !=
            -1) {
         switch (opt) {
             // Global
@@ -476,6 +480,9 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 cli.iterations = std::stoi(optarg);
                 break;
             case 'r':
+                cli.listSessions = true;
+                break;
+            case 1003:
                 cli.raw = true;
                 break;
             case 1001:
@@ -659,6 +666,28 @@ static int cmdHelp(const CliConfig& cli) {
         std::cout << "Unknown command: " << cli.helpCommand << "\n";
         printHelpGeneral();
     }
+    return 0;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Command: sessions
+// ═══════════════════════════════════════════════════════════════════════
+static int cmdSessions() {
+    session::SessionManager sm;
+    auto sessions = sm.list();
+    std::sort(sessions.begin(), sessions.end(),
+              [](const auto& a, const auto& b) { return a.updated > b.updated; });
+    if (sessions.empty()) {
+        std::cout << "No saved sessions.\n";
+        return 0;
+    }
+    std::cout << "Saved sessions:\n\n";
+    for (const auto& s : sessions) {
+        std::cout << "  " << s.id << "  " << s.updated << "  " << s.turnCount << " turns";
+        if (!s.model.empty()) std::cout << "  " << s.model;
+        std::cout << "\n";
+    }
+    std::cout << "\nResume with: cortex-mk3 --resume <id>\n";
     return 0;
 }
 
@@ -2337,6 +2366,8 @@ int main(int argc, char* argv[]) {
         return cmdVersion();
     if (cli.command == "help")
         return cmdHelp(cli);
+    if (cli.listSessions)
+        return cmdSessions();
     if (cli.command == "list")
         return cmdList(cli);
     if (cli.command == "config")
