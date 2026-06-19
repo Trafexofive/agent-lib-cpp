@@ -673,16 +673,31 @@ static int cmdHelp(const CliConfig& cli) {
 // ═══════════════════════════════════════════════════════════════════════
 // Command: sessions
 // ═══════════════════════════════════════════════════════════════════════
+static std::string resolveSessionId(const CliConfig& cli, bool defaultIfEmpty) {
+    if (!cli.resumeSessionId.empty())
+        return cli.resumeSessionId;
+    if (cli.continueSession) {
+        session::SessionManager sm;
+        auto sessions = sm.list();
+        std::sort(sessions.begin(), sessions.end(),
+                  [](const auto& a, const auto& b) { return a.updated > b.updated; });
+        return sessions.empty() ? "default" : sessions[0].id;
+    }
+    if (!cli.sessionId.empty())
+        return cli.sessionId;
+    return defaultIfEmpty ? "default" : "";
+}
+
 static int cmdSessions() {
     session::SessionManager sm;
     auto sessions = sm.list();
     std::sort(sessions.begin(), sessions.end(),
               [](const auto& a, const auto& b) { return a.updated > b.updated; });
     if (sessions.empty()) {
-        std::cout << "No saved sessions.\n";
+        std::cout << "No saved sessions in " << sm.baseDir() << ".\n";
         return 0;
     }
-    std::cout << "Saved sessions:\n\n";
+    std::cout << "Saved sessions in " << sm.baseDir() << ":\n\n";
     for (const auto& s : sessions) {
         std::cout << "  " << s.id << "  " << s.updated << "  " << s.turnCount << " turns";
         if (!s.model.empty()) std::cout << "  " << s.model;
@@ -1359,7 +1374,7 @@ static int cmdRun(CliConfig& cli) {
             spinner.start("Thinking...");
         }
 
-        std::string result = agent.prompt(cli.prompt, cli.sessionId, cli.ephemeral);
+        std::string result = agent.prompt(cli.prompt, resolveSessionId(cli, false), cli.ephemeral);
         spinner.stop();
 
         if (!cli.raw) {
@@ -1558,17 +1573,7 @@ static int cmdRun(CliConfig& cli) {
     std::string cmd;
     bool quit = false;
     session::SessionManager sm;
-    std::string sessionId;
-    if (!cli.resumeSessionId.empty()) {
-        sessionId = cli.resumeSessionId;
-    } else if (cli.continueSession) {
-        auto sessions = sm.list();
-        std::sort(sessions.begin(), sessions.end(),
-                  [](const auto& a, const auto& b) { return a.updated > b.updated; });
-        sessionId = sessions.empty() ? "default" : sessions[0].id;
-    } else {
-        sessionId = cli.sessionId.empty() ? "default" : cli.sessionId;
-    }
+    std::string sessionId = resolveSessionId(cli, true);
     auto sess = sm.exists(sessionId) ? sm.load(sessionId)
                                      : sm.create(sessionId, "mk3", cli.model, cli.provider);
     input.start([&](const std::string& s) {
@@ -1985,7 +1990,7 @@ static int cmdRun(CliConfig& cli) {
                         snapDirty = true;
                     }
                 },
-                cli.sessionId, cli.ephemeral);
+                sessionId, cli.ephemeral);
             {
                 std::lock_guard<std::mutex> lk(streamMtx);
                 snapActions = agent.protocolActions();
