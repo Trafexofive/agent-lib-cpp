@@ -2257,7 +2257,24 @@ static int cmdRun(CliConfig& cli) {
             }
 
             applyStreamSnapshot();
-            renderScreen();
+
+            // The provider/model runs in its own thread, but the TUI still needs an
+            // independent frame clock. Otherwise the spinner/timer only moves when
+            // stream text changes, which looks like the loader is blocked while the
+            // model is just waiting on first bytes.
+            bool uiTick = false;
+            if (streaming) {
+                auto now = std::chrono::steady_clock::now();
+                auto sinceRender = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       now - lastRenderTime)
+                                       .count();
+                if (sinceRender >= 100) {
+                    renderDirty = true;
+                    uiTick = true;
+                }
+            }
+
+            renderScreen(inputChanged || uiTick);
 
             // Small sleep to avoid busy-wait CPU spin; skip on any input activity.
             if (!hadInput && !inputChanged)
