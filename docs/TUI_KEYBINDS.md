@@ -100,7 +100,9 @@ These are shell flags, not TUI keybinds:
 
 | Command | Action |
 |---|---|
-| `cortex-mk3 -r run` / `cortex-mk3 --resume run` | Select a session to resume |
-| `cortex-mk3 -c run` / `cortex-mk3 --continue run` | Continue the most recently updated session |
+| `cortex-mk3 -r run` / `cortex-mk3 --resume run` | Select a project-local session to resume |
+| `cortex-mk3 -c run` / `cortex-mk3 --continue run` | Continue the most recently updated project-local session |
 | `cortex-mk3 --session <id> run` | Use a specific session id |
 | `cortex-mk3 --no-session run` | Ephemeral run; do not save session |
+
+By default, non-ephemeral runs autosave under the current project’s `.cortex/sessions/` and state checkpoints under `.cortex/state/`. Resume reconstructs the runtime surface from session metadata before loading the checkpoint.

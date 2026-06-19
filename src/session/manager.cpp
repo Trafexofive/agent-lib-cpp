@@ -54,7 +54,7 @@ static SessionRecord::Role parseRole(const std::string& s) {
 
 // ─── SessionManager ───────────────────────────────────────────────────
 SessionManager::SessionManager(const std::string& baseDir)
-    : baseDir_(baseDir.empty() ? std::string(std::getenv("HOME") ?: "/tmp") + "/.cortex/sessions"
+    : baseDir_(baseDir.empty() ? (std::filesystem::current_path() / ".cortex" / "sessions").string()
                                : baseDir) {
 }
 

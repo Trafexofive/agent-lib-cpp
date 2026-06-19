@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -680,10 +681,33 @@ static std::vector<session::SessionManager::SessionInfo> sortedSessions() {
     return sessions;
 }
 
+static std::string slugPart(std::string s) {
+    for (char& c : s) {
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                  c == '-' || c == '_';
+        if (!ok)
+            c = '-';
+    }
+    while (!s.empty() && s.front() == '-')
+        s.erase(s.begin());
+    while (!s.empty() && s.back() == '-')
+        s.pop_back();
+    return s.empty() ? "project" : s;
+}
+
+static std::string newSessionId() {
+    auto now = std::chrono::system_clock::now().time_since_epoch();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+    std::string project = slugPart(fs::current_path().filename().string());
+    std::ostringstream id;
+    id << project << "-" << ms;
+    return id.str();
+}
+
 static std::string pickSessionInteractive(bool defaultIfEmpty) {
     auto sessions = sortedSessions();
     if (sessions.empty())
-        return defaultIfEmpty ? "default" : "";
+        return defaultIfEmpty ? newSessionId() : "";
     if (!isatty(STDIN_FILENO))
         return sessions[0].id;
 
@@ -719,11 +743,59 @@ static std::string resolveSessionId(const CliConfig& cli, bool defaultIfEmpty) {
         return pickSessionInteractive(defaultIfEmpty);
     if (cli.continueSession) {
         auto sessions = sortedSessions();
-        return sessions.empty() ? "default" : sessions[0].id;
+        return sessions.empty() ? (defaultIfEmpty ? newSessionId() : "") : sessions[0].id;
     }
     if (!cli.sessionId.empty())
         return cli.sessionId;
-    return defaultIfEmpty ? "default" : "";
+    return defaultIfEmpty ? newSessionId() : "";
+}
+
+static void applySessionMetadata(CliConfig& cli, const std::string& sessionId) {
+    if (sessionId.empty())
+        return;
+    session::SessionManager sm;
+    if (!sm.exists(sessionId))
+        return;
+    auto session = sm.load(sessionId);
+    auto get = [&](const std::string& key) -> std::string {
+        auto it = session.metadata.find(key);
+        return it == session.metadata.end() ? "" : it->second;
+    };
+    if (cli.manifestPath.empty())
+        cli.manifestPath = get("manifest_path");
+    if (cli.harnessPromptPath.empty())
+        cli.harnessPromptPath = get("harness_path");
+    if (cli.systemPromptPath.empty())
+        cli.systemPromptPath = get("system_prompt_path");
+    if (!cli.providerSet && !get("provider").empty())
+        cli.provider = get("provider");
+    if (!cli.modelSet && !get("model").empty())
+        cli.model = get("model");
+}
+
+static void persistSessionMetadata(const std::string& sessionId, const CliConfig& cli,
+                                   const AgentConfig& acfg) {
+    if (sessionId.empty())
+        return;
+    session::SessionManager sm;
+    auto session = sm.exists(sessionId) ? sm.load(sessionId)
+                                        : sm.create(sessionId, acfg.name, acfg.model, acfg.provider);
+    session.agentName = acfg.name;
+    session.model = acfg.model;
+    session.provider = acfg.provider;
+    session.metadata["cwd"] = fs::current_path().string();
+    session.metadata["provider"] = acfg.provider;
+    session.metadata["model"] = acfg.model;
+    if (!cli.manifestPath.empty())
+        session.metadata["manifest_path"] = cli.manifestPath;
+    if (!acfg.harnessPath.empty())
+        session.metadata["harness_path"] = acfg.harnessPath;
+    if (!acfg.systemPromptPath.empty())
+        session.metadata["system_prompt_path"] = acfg.systemPromptPath;
+    if (!acfg.personaPath.empty())
+        session.metadata["persona_path"] = acfg.personaPath;
+    session.updated = session::SessionManager::iso8601();
+    sm.save(session);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1235,6 +1307,16 @@ static int cmdRun(CliConfig& cli) {
         cli.prompt = ss.str();
     }
 
+    // Resuming should restore the runtime surface before agent construction.
+    std::string activeSessionId;
+    if (!cli.ephemeral && (cli.resumePicker || cli.continueSession || !cli.sessionId.empty())) {
+        activeSessionId = resolveSessionId(cli, true);
+        applySessionMetadata(cli, activeSessionId);
+        cli.sessionId = activeSessionId;
+        cli.resumePicker = false;
+        cli.continueSession = false;
+    }
+
     // Dry run: validate and exit
     if (cli.dryRun) {
         std::cout << "[dry-run] Validating configuration...\n";
@@ -1393,7 +1475,10 @@ static int cmdRun(CliConfig& cli) {
             spinner.start("Thinking...");
         }
 
-        std::string result = agent.prompt(cli.prompt, resolveSessionId(cli, false), cli.ephemeral);
+        std::string promptSessionId = cli.ephemeral ? "" : (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId);
+        if (!cli.ephemeral)
+            persistSessionMetadata(promptSessionId, cli, acfg);
+        std::string result = agent.prompt(cli.prompt, promptSessionId, cli.ephemeral);
         spinner.stop();
 
         if (!cli.raw) {
@@ -1451,7 +1536,6 @@ static int cmdRun(CliConfig& cli) {
     bool renderDirty = true;
     std::vector<std::string> tuiFrameLog;
     std::vector<std::string> tuiAnsiFrames;
-    auto lastStatusTime = std::chrono::steady_clock::now();
     std::string streamPhase = "idle";
     size_t streamActionCount = 0;
     size_t streamResultCount = 0;
@@ -1486,12 +1570,8 @@ static int cmdRun(CliConfig& cli) {
         std::string model = acfg.provider + "/" + acfg.model;
         return spinner + ttc + telemetry + ansi::dim + "  " + mode + " · " + model + ansi::reset;
     };
-    auto inputLineText = [&]() -> std::string {
+    auto promptLineText = [&]() -> std::string {
         std::ostringstream out;
-        // ── Status bar (one line above prompt) ──
-        out << "\033[" << (termH - 1) << ";1H\033[2K" << statusBarText(0);
-        // ── Prompt line ──
-        out << "\033[" << termH << ";1H\033[2K";
         if (dialogActive.load(std::memory_order_acquire)) {
             out << ansi::dim << "  Enter to submit" << ansi::reset;
             return out.str();
@@ -1510,18 +1590,6 @@ static int cmdRun(CliConfig& cli) {
         out << ansi::reset << " ";
         return out.str();
     };
-    auto redrawStatusOnly = [&](bool force = false) {
-        if (!streaming)
-            return;
-        auto now = std::chrono::steady_clock::now();
-        if (!force &&
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStatusTime).count() <
-                100)
-            return;
-        lastStatusTime = now;
-        spinnerFrame = (spinnerFrame + 1) % 10;
-        std::cout << inputLineText() << std::flush;
-    };
     auto captureAnsiFrame = [&](const std::vector<std::string>& visible, int startRow,
                                 int visibleCount, int displaySize) {
         std::vector<std::string> frame(termH);
@@ -1531,10 +1599,7 @@ static int cmdRun(CliConfig& cli) {
                 frame[row] = visible[i];
         }
         frame[termH - 2] = statusBarText(displaySize);
-        // inputLineText now includes both status + prompt; just use it for the
-        // last two lines for the frame capture.
-        std::string fullInput = inputLineText();
-        frame[termH - 1] = fullInput;
+        frame[termH - 1] = promptLineText();
         std::ostringstream ss;
         for (const auto& line : frame)
             ss << line << "\n";
@@ -1543,14 +1608,14 @@ static int cmdRun(CliConfig& cli) {
             tuiAnsiFrames.erase(tuiAnsiFrames.begin());
     };
     tui::SessionView sessionView(termW, termH);
-    auto renderScreen = [&]() {
+    auto renderScreen = [&](bool force = false) {
         if (streaming) {
-            if (!renderDirty)
+            if (!renderDirty && !force)
                 return;
             auto now = std::chrono::steady_clock::now();
             auto sinceRender =
                 std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRenderTime).count();
-            if (sinceRender < 50)
+            if (!force && sinceRender < 50)
                 return;
             spinnerFrame = (spinnerFrame + 1) % 10;
             lastRenderTime = now;
@@ -1585,16 +1650,16 @@ static int cmdRun(CliConfig& cli) {
         if (!cli.tuiDebugDumpPath.empty())
             captureAnsiFrame(vp.visible, vp.startRow, vp.visibleCount, vp.displaySize);
 
-        std::cout << sessionView.render(vp, statusBarText, inputLineText()) << std::flush;
+        std::cout << sessionView.render(vp, statusBarText, promptLineText()) << std::flush;
         renderDirty = false;
     };
 
     std::string cmd;
     bool quit = false;
-    session::SessionManager sm;
-    std::string sessionId = resolveSessionId(cli, true);
-    auto sess = sm.exists(sessionId) ? sm.load(sessionId)
-                                     : sm.create(sessionId, "mk3", cli.model, cli.provider);
+    const bool persistSession = !cli.ephemeral;
+    std::string sessionId = persistSession ? (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId) : "";
+    if (persistSession && !sessionId.empty())
+        persistSessionMetadata(sessionId, cli, acfg);
     input.start([&](const std::string& s) {
         if (dialogActive.load(std::memory_order_acquire))
             dialogInputLine = s;
@@ -1609,16 +1674,19 @@ static int cmdRun(CliConfig& cli) {
     input.setCompleter(
         [](const std::string& prefix) { return tui::SlashCommands::complete(prefix); });
     input.scrollUp = [&] {
-        scrollOffset += (termH - 2) / 2;
-        renderScreen();
+        scrollOffset += std::max(1, (termH - 2) / 2);
+        renderDirty = true;
+        renderScreen(true);
     };
     input.scrollDown = [&] {
-        scrollOffset -= (termH - 2) / 2;
-        renderScreen();
+        scrollOffset -= std::max(1, (termH - 2) / 2);
+        renderDirty = true;
+        renderScreen(true);
     };
     input.clearScreen = [&] {
         std::cout << "\033[2J\033[H" << std::flush;
-        renderScreen();
+        renderDirty = true;
+        renderScreen(true);
     };
 
     auto pushTuiLine = [&](const std::string& line) {
@@ -1807,7 +1875,8 @@ static int cmdRun(CliConfig& cli) {
                     }
                 }
             } else if (cmd == "/sessions") {
-                auto list = sm.list();
+                session::SessionManager sessionMgr;
+                auto list = sessionMgr.list();
                 historyLines.push_back(std::string("\033[2m\033[3m") + "─── Sessions ───" +
                                        ansi::reset);
                 for (auto& s : list)
@@ -2189,7 +2258,6 @@ static int cmdRun(CliConfig& cli) {
 
             applyStreamSnapshot();
             renderScreen();
-            redrawStatusOnly(inputChanged);
 
             // Small sleep to avoid busy-wait CPU spin; skip on any input activity.
             if (!hadInput && !inputChanged)
@@ -2236,10 +2304,7 @@ static int cmdRun(CliConfig& cli) {
         renderer.clear();
         streamPhase = "idle";
         renderDirty = true;
-        // AC15 — agent.prompt() already persisted the turn via Agent::saveSession.
-        // Writing here again with a separate `sess` clobbered tool-call records;
-        // refresh the local copy from disk instead so display/list stays current.
-        sess = sm.load(sessionId);
+        // AC15 — agent.prompt() owns persistence; do not save again here.
         renderScreen();
     }
 

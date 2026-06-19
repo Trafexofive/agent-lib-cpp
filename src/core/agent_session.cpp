@@ -25,9 +25,7 @@ static std::string safeCheckpointPart(const std::string& value) {
 }
 
 static fs::path stateCheckpointPath(const std::string& sessionId) {
-    const char* home = std::getenv("HOME");
-    fs::path base = home ? fs::path(home) : fs::temp_directory_path();
-    return base / ".cortex" / "state" / (safeCheckpointPart(sessionId) + ".json");
+    return fs::current_path() / ".cortex" / "state" / (safeCheckpointPart(sessionId) + ".json");
 }
 
 static Json::Value stringSetToJson(const std::set<std::string>& values) {
