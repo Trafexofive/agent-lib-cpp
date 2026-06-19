@@ -108,16 +108,9 @@ class TuiRenderer {
    private:
     std::vector<std::string> renderFull() {
         std::vector<std::string> lines;
-        // Model thinking (TTC) — stream dimmed, no header, appears first
-        if (!thought_.empty()) {
-            std::istringstream ts(thought_);
-            std::string tl;
-            while (std::getline(ts, tl)) {
-                if (!tl.empty() && tl.back() == '\r')
-                    tl.pop_back();
-                lines.push_back(ansi::dim() + tl + ansi::reset());
-            }
-        }
+        // FULL mode is transcript-safe: never render raw/thought/planning text.
+        // Status/telemetry lives in the bottom bar; final user-visible content
+        // comes from parsed protocol events and sanitized response only.
         // Protocol events (actions + results)
         for (auto& l : pv_.render(width_))
             lines.push_back(l);
