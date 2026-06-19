@@ -75,7 +75,6 @@ class ManifestAutoload {
                     td.buildOutput = schema.buildOutput.empty()
                                          ? ""
                                          : (p.parent_path() / schema.buildOutput).lexically_normal().string();
-                    td.autoBuild = schema.autoBuild;
                     agent.addTool(tools::Tool(td, td.scriptPath, td.scriptRuntime));
                 } else {
                     agent.addTool(tools::Tool(td));

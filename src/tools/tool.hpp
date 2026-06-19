@@ -83,9 +83,6 @@ class Tool {
     const std::string& buildOutput() const noexcept {
         return def_.buildOutput;
     }
-    bool autoBuild() const noexcept {
-        return def_.autoBuild;
-    }
     const std::string& inputType() const noexcept {
         return def_.inputType;
     }
@@ -180,7 +177,6 @@ class Tool {
             j["build_command"] = def_.buildCommand;
             j["build_cwd"] = def_.buildCwd;
             j["build_output"] = def_.buildOutput;
-            j["auto_build"] = def_.autoBuild;
         }
         Json::Value paramArray(Json::arrayValue);
         for (const auto& p : def_.params) {
@@ -279,7 +275,7 @@ class Tool {
     }
 
     std::string ensureBuilt() const {
-        if (def_.buildCommand.empty() || !def_.autoBuild)
+        if (def_.buildCommand.empty())
             return "";
         if (!def_.buildOutput.empty() && std::filesystem::exists(def_.buildOutput))
             return "";

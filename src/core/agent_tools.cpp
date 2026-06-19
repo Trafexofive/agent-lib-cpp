@@ -84,7 +84,7 @@ static std::string runtimeCommand(const std::string& runtime, const std::string&
 static Json::Value ensureToolBuilt(const tools::Tool& tool) {
     Json::Value ok;
     ok["success"] = true;
-    if (tool.buildCommand().empty() || !tool.autoBuild())
+    if (tool.buildCommand().empty())
         return ok;
     if (!tool.buildOutput().empty() && fs::exists(tool.buildOutput()))
         return ok;
@@ -422,7 +422,6 @@ int Agent::reloadManifests(bool backup) {
             td.buildOutput = schema.buildOutput.empty()
                                  ? ""
                                  : (it->path().parent_path() / schema.buildOutput).lexically_normal().string();
-            td.autoBuild = schema.autoBuild;
         } else {
             // Not a script tool — skip
             continue;
@@ -454,7 +453,6 @@ void Agent::saveSessionTools() {
         t["buildCommand"] = tool.buildCommand();
         t["buildCwd"] = tool.buildCwd();
         t["buildOutput"] = tool.buildOutput();
-        t["autoBuild"] = tool.autoBuild();
         arr.append(t);
     }
     std::ofstream f(sessionDir + "/tools.json");
@@ -490,7 +488,6 @@ void Agent::loadSessionTools() {
         td.buildCommand = t.get("buildCommand", "").asString();
         td.buildCwd = t.get("buildCwd", "").asString();
         td.buildOutput = t.get("buildOutput", "").asString();
-        td.autoBuild = t.get("autoBuild", true).asBool();
         if (!disabledBuiltins_.count(td.name))
             tools_[td.name] = tools::Tool(td, td.scriptPath, td.scriptRuntime);
     }

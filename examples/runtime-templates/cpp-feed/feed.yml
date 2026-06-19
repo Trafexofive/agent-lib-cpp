@@ -11,4 +11,3 @@ build:
   command: make
   cwd: .
   output: ./build/cpp_status_feed
-  auto: true

@@ -17,7 +17,6 @@ implementation:
     command: make
     cwd: .
     output: ./build/my_tool
-    auto: true
 ```
 
 MK3 invokes Agent script tools as:
@@ -42,7 +41,6 @@ build:
   command: make
   cwd: .
   output: ./build/my_feed
-  auto: true
 ```
 
 MK3 invokes feeds as:

@@ -40,7 +40,6 @@ struct ToolSchema {
     std::string buildCommand;        // optional build command
     std::string buildCwd;            // optional build cwd
     std::string buildOutput;         // optional build artifact
-    bool autoBuild = true;           // auto-run build when output missing
     std::string inputType = "json";  // action body mode: json | text
     std::string textParam;           // where text body lands for text mode
 };
@@ -344,7 +343,6 @@ class ManifestLoader {
                         td.buildOutput = schema.buildOutput.empty()
                                              ? ""
                                              : (toolPath.parent_path() / schema.buildOutput).lexically_normal().string();
-                        td.autoBuild = schema.autoBuild;
                         agent.addTool(tools::Tool(td, td.scriptPath, td.scriptRuntime));
                     } else {
                         agent.addTool(tools::Tool(td));
@@ -686,8 +684,6 @@ class ManifestLoader {
                 s.buildCommand = ManifestYaml::get(*build, "command", s.buildCommand);
                 s.buildCwd = ManifestYaml::get(*build, "cwd", s.buildCwd);
                 s.buildOutput = ManifestYaml::get(*build, "output", s.buildOutput);
-                std::string autoBuild = ManifestYaml::get(*build, "auto", "true");
-                s.autoBuild = promptFlagEnabled(autoBuild);
             }
         }
         // Fallback: some tool manifests use top-level runtime/entrypoint
@@ -700,8 +696,6 @@ class ManifestLoader {
             s.buildCommand = ManifestYaml::get(*topBuild, "command", s.buildCommand);
             s.buildCwd = ManifestYaml::get(*topBuild, "cwd", s.buildCwd);
             s.buildOutput = ManifestYaml::get(*topBuild, "output", s.buildOutput);
-            std::string autoBuild = ManifestYaml::get(*topBuild, "auto", "true");
-            s.autoBuild = promptFlagEnabled(autoBuild);
         }
         s.inputType =
             ManifestYaml::get(root, "input_type", s.inputType.empty() ? "json" : s.inputType);

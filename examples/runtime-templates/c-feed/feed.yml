@@ -11,4 +11,3 @@ build:
   command: make
   cwd: .
   output: ./build/c_status_feed
-  auto: true

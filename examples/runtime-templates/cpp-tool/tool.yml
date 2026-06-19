@@ -12,7 +12,6 @@ implementation:
     command: make
     cwd: .
     output: ./build/cpp_echo_tool
-    auto: true
 input_schema:
   type: object
   properties:

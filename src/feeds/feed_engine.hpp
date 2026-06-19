@@ -165,14 +165,11 @@ class FeedEngine {
         std::string buildCommand;
         std::string buildCwd;
         std::string buildOutput;
-        bool autoBuild = true;
         auto* build = ManifestYaml::find(root, "build");
         if (build) {
             buildCommand = ManifestYaml::get(*build, "command");
             buildCwd = ManifestYaml::get(*build, "cwd");
             buildOutput = ManifestYaml::get(*build, "output");
-            std::string autoVal = ManifestYaml::get(*build, "auto", "true");
-            autoBuild = !(autoVal == "false" || autoVal == "0" || autoVal == "no");
         }
 
         if (name.empty()) {
@@ -201,7 +198,7 @@ class FeedEngine {
             return mr;
         }
 
-        if (!ensureBuilt(buildCommand, buildDir.string(), buildArtifact.string(), autoBuild)) {
+        if (!ensureBuilt(buildCommand, buildDir.string(), buildArtifact.string())) {
             mr.error = "build failed for feed: " + name;
             return mr;
         }
@@ -231,12 +228,12 @@ class FeedEngine {
 
         // Register feed that re-executes on each poll (with tool-call support)
         std::string toolPath = callToolPath;
-        auto pollFn = [name, runtime, scriptPath, toolPath, buildCommand, buildDir, buildArtifact,
-                       autoBuild]() -> FeedResult {
+        auto pollFn = [name, runtime, scriptPath, toolPath, buildCommand, buildDir,
+                       buildArtifact]() -> FeedResult {
             FeedResult fr;
             fr.name = name;
             fr.ok = true;
-            if (!ensureBuilt(buildCommand, buildDir.string(), buildArtifact.string(), autoBuild)) {
+            if (!ensureBuilt(buildCommand, buildDir.string(), buildArtifact.string())) {
                 fr.ok = false;
                 fr.summary = "build failed";
                 return fr;
@@ -297,8 +294,8 @@ class FeedEngine {
     }
 
     static bool ensureBuilt(const std::string& command, const std::string& cwd,
-                            const std::string& output, bool autoBuild) {
-        if (command.empty() || !autoBuild)
+                            const std::string& output) {
+        if (command.empty())
             return true;
         if (!output.empty() && std::filesystem::exists(output))
             return true;

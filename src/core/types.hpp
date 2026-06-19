@@ -85,7 +85,6 @@ struct ToolDef {
     std::string buildCommand;        // optional build command for process/script tools
     std::string buildCwd;            // directory to run buildCommand in
     std::string buildOutput;         // output artifact used to skip rebuild when present
-    bool autoBuild = true;           // run buildCommand automatically when needed
     std::string inputType = "json";  // action body mode: json | text
     std::string textParam;           // for text body mode: content/input/instruction
 
