@@ -101,8 +101,10 @@ class KeyMap {
         bindings_["\x1bOB"] = KeyAction::HISTORY_DOWN;
         bindings_["\x1bOC"] = KeyAction::CURSOR_RIGHT;
         bindings_["\x1bOD"] = KeyAction::CURSOR_LEFT;
-        // Scroll (Ctrl-O — reliable raw byte)
-        bindings_["\x0f"] = KeyAction::SCROLL_UP;  // Ctrl-O
+        // Scroll. Keep Ctrl-P/Ctrl-N for readline history; laptop-friendly scroll uses
+        // Ctrl-O/Ctrl-G and Alt-K/Alt-J so it does not overlap prompt history.
+        bindings_["\x0f"] = KeyAction::SCROLL_UP;    // Ctrl-O
+        bindings_["\x07"] = KeyAction::SCROLL_DOWN;  // Ctrl-G
         // Page keys
         bindings_["\x1b[5~"] = KeyAction::SCROLL_UP;    // PageUp
         bindings_["\x1b[6~"] = KeyAction::SCROLL_DOWN;  // PageDown
@@ -115,6 +117,8 @@ class KeyMap {
              "f"] = KeyAction::WORD_RIGHT;               // Alt-F
         bindings_["\x1b[1;5D"] = KeyAction::WORD_LEFT;   // Ctrl+Left
         bindings_["\x1b[1;5C"] = KeyAction::WORD_RIGHT;  // Ctrl+Right
+        bindings_["\x1bk"] = KeyAction::SCROLL_UP;       // Alt-K
+        bindings_["\x1bj"] = KeyAction::SCROLL_DOWN;     // Alt-J
 
         // History navigation (readline)
         bindings_["\x10"] = KeyAction::HISTORY_UP;    // Ctrl-P

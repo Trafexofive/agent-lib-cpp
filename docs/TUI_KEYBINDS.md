@@ -48,8 +48,8 @@ If `run -p/--prompt` is used without `--repl`, MK3 runs one-shot mode instead of
 
 | Key | Action |
 |---|---|
-| `PageUp`, `Ctrl-O` | Scroll output/history up |
-| `PageDown` | Scroll output/history down |
+| `PageUp`, `Ctrl-O`, `Alt-K` | Scroll output/history up |
+| `PageDown`, `Ctrl-G`, `Alt-J` | Scroll output/history down |
 | `Ctrl-L` | Clear/redraw the screen |
 | Terminal resize | Recalculates layout and redraws |
 

@@ -1,6 +1,7 @@
 // tests/tui/terminal_test.cpp — T1: Terminal ANSI escape sequence tests
 
 #include "../../src/tui/terminal.hpp"
+#include "../../src/tui/keys.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -85,6 +86,18 @@ int main() {
         // Shouldn't crash, just produce the escape
         std::string s = ansi::moveTo(999, 999);
         check(!s.empty() && s.find("999") != std::string::npos, "moveTo large values");
+    }
+
+    // ── T1.10: laptop-friendly scroll keys do not overlap readline history ──
+    {
+        KeyMap km;
+        char out = 0;
+        check(km.resolve("\x10", out) == KeyAction::HISTORY_UP, "Ctrl-P remains history up");
+        check(km.resolve("\x0e", out) == KeyAction::HISTORY_DOWN, "Ctrl-N remains history down");
+        check(km.resolve("\x0f", out) == KeyAction::SCROLL_UP, "Ctrl-O scrolls up");
+        check(km.resolve("\x07", out) == KeyAction::SCROLL_DOWN, "Ctrl-G scrolls down");
+        check(km.resolve("\x1bk", out) == KeyAction::SCROLL_UP, "Alt-K scrolls up");
+        check(km.resolve("\x1bj", out) == KeyAction::SCROLL_DOWN, "Alt-J scrolls down");
     }
 
     std::cout << "\n═══ " << (failures ? "FAILED" : "ALL PASSED") << " (" << failures
