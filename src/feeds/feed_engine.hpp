@@ -191,7 +191,8 @@ class FeedEngine {
             scriptPath = manifestDir / entrypoint;
         }
 
-        // Execute and capture output — pass CALL_TOOL env var so scripts can invoke tools
+        // Execute and capture output — pass CALL_TOOL env var so scripts can invoke tools.
+        // runtime: process/binary/direct runs the entrypoint directly for compiled feeds.
         std::string output;
         if (runtime == "builtin") {
             mr.success = true;
@@ -199,18 +200,8 @@ class FeedEngine {
             return mr;
         }
 
-        // Set CALL_TOOL env for script subprocess — enables feed scripts to call tools
         std::string callToolPath = findCallTool();
-        if (runtime == "python3" || runtime == "python") {
-            output = runScriptWithEnv("python3", scriptPath.string(), callToolPath);
-        } else if (runtime == "bash" || runtime == "sh") {
-            output = runScriptWithEnv("bash", scriptPath.string(), callToolPath);
-        } else if (runtime == "node") {
-            output = runScriptWithEnv("node", scriptPath.string(), callToolPath);
-        } else {
-            mr.error = "unknown runtime: " + runtime;
-            return mr;
-        }
+        output = runScriptWithEnv(runtime, scriptPath.string(), callToolPath);
 
         if (output.empty()) {
             registerFeed(name, [name]() -> FeedResult { return {name, "", "{}", true}; });
@@ -295,14 +286,21 @@ class FeedEngine {
 
     static std::string runScriptWithEnvStatic(const std::string& runtime, const std::string& script,
                                               const std::string& callToolPath) {
-        std::string cmd = runtime + " " + script + " 2>/dev/null";
-        FILE* p = popen(cmd.c_str(), "r");
-        if (!p)
-            return "";
-
-        // Set CALL_TOOL env for the subprocess
-        if (!callToolPath.empty()) {
+        std::string cmd = runtimeCommand(runtime, script) + " 2>/dev/null";
+        std::string oldCallTool;
+        const char* old = getenv("CALL_TOOL");
+        if (old)
+            oldCallTool = old;
+        if (!callToolPath.empty())
             setenv("CALL_TOOL", callToolPath.c_str(), 1);
+
+        FILE* p = popen(cmd.c_str(), "r");
+        if (!p) {
+            if (!oldCallTool.empty())
+                setenv("CALL_TOOL", oldCallTool.c_str(), 1);
+            else
+                unsetenv("CALL_TOOL");
+            return "";
         }
 
         std::string output;
@@ -310,9 +308,35 @@ class FeedEngine {
         while (fgets(buf, sizeof(buf), p))
             output += buf;
         pclose(p);
+        if (!oldCallTool.empty())
+            setenv("CALL_TOOL", oldCallTool.c_str(), 1);
+        else
+            unsetenv("CALL_TOOL");
         while (!output.empty() && (output.back() == '\n' || output.back() == '\r'))
             output.pop_back();
         return output;
+    }
+
+    static std::string runtimeCommand(const std::string& runtime, const std::string& entrypoint) {
+        std::string rt = runtime.empty() ? "python3" : runtime;
+        std::string ep = shellEscape(entrypoint);
+        if (rt == "process" || rt == "binary" || rt == "exec" || rt == "direct")
+            return ep;
+        if (rt == "python")
+            rt = "python3";
+        return rt + " " + ep;
+    }
+
+    static std::string shellEscape(const std::string& input) {
+        std::string out(1, '\'');
+        for (char c : input) {
+            if (c == '\'')
+                out += "'\\''";
+            else
+                out += c;
+        }
+        out += '\'';
+        return out;
     }
 
     static std::string findCallTool() {

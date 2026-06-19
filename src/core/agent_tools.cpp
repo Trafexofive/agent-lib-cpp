@@ -59,6 +59,28 @@ static bool isConfigStagingDir(const std::string& dir) {
            p.parent_path().filename() == "config";
 }
 
+static std::string shellEscapeArg(const std::string& input) {
+    std::string out(1, '\'');
+    for (char c : input) {
+        if (c == '\'')
+            out += "'\\''";
+        else
+            out += c;
+    }
+    out += '\'';
+    return out;
+}
+
+static std::string runtimeCommand(const std::string& runtime, const std::string& entrypoint) {
+    std::string rt = runtime.empty() ? "python3" : runtime;
+    std::string ep = shellEscapeArg(entrypoint);
+    if (rt == "process" || rt == "binary" || rt == "exec" || rt == "direct")
+        return ep;
+    if (rt == "python")
+        rt = "python3";
+    return rt + " " + ep;
+}
+
 Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
     protocol::ParsedAction normalized = action;
     auto toolIt = tools_.find(action.name);
@@ -176,7 +198,7 @@ Json::Value Agent::executeScriptTool(const tools::Tool& tool, const Json::Value&
         return err;
     }
 
-    std::string cmd = tool.scriptRuntime() + " " + tool.scriptPath();
+    std::string cmd = runtimeCommand(tool.scriptRuntime(), tool.scriptPath());
 
     // Write params to tmpfile for script to read
     std::string tmpFile = "/tmp/cortex-tool-" + toolName + ".json";
@@ -186,7 +208,7 @@ Json::Value Agent::executeScriptTool(const tools::Tool& tool, const Json::Value&
         std::ofstream tf(tmpFile);
         tf << Json::writeString(w, params);
     }
-    std::string cmdWithArg = cmd + " " + tmpFile;
+    std::string cmdWithArg = cmd + " " + shellEscapeArg(tmpFile);
     bool allowAnsi = true;
     auto ansiIt = env_.find("__TOOL_ANSI__");
     if (ansiIt != env_.end() && (ansiIt->second == "false" || ansiIt->second == "0" ||

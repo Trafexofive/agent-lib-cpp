@@ -202,20 +202,16 @@ class Tool {
             return jsonError("No script path for: " + def_.name);
         }
 
-        // Build command
-        std::string runtime = scriptRuntime_.empty() ? "python3" : scriptRuntime_;
-        std::string cmd;
+        std::string cmd = runtimeCommand(scriptRuntime_, scriptPath_);
 
         if (def_.inputType == "text" && !def_.textParam.empty()) {
-            // Text body mode: pass the named param as stdin text
             std::string textInput = args.get(def_.textParam, "").asString();
-            cmd = runtime + " " + scriptPath_ + " " + shellEscape(textInput) + " 2>/dev/null";
+            cmd += " " + shellEscape(textInput) + " 2>/dev/null";
         } else {
-            // JSON body mode: pass args as JSON string argument
             Json::StreamWriterBuilder w;
             w["indentation"] = "";
             std::string jsonArgs = Json::writeString(w, args);
-            cmd = runtime + " " + scriptPath_ + " " + shellEscape(jsonArgs) + " 2>/dev/null";
+            cmd += " " + shellEscape(jsonArgs) + " 2>/dev/null";
         }
 
         std::string output = runShell(cmd);
@@ -243,6 +239,16 @@ class Tool {
         Json::StreamWriterBuilder w;
         w["indentation"] = "";
         return Json::writeString(w, r);
+    }
+
+    static std::string runtimeCommand(const std::string& runtime, const std::string& entrypoint) {
+        std::string rt = runtime.empty() ? "python3" : runtime;
+        std::string ep = shellEscape(entrypoint);
+        if (rt == "process" || rt == "binary" || rt == "exec" || rt == "direct")
+            return ep;
+        if (rt == "python")
+            rt = "python3";
+        return rt + " " + ep;
     }
 
     static std::string shellEscape(const std::string& input) {
