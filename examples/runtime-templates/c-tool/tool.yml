@@ -1,0 +1,23 @@
+kind: Tool
+name: c_echo_tool
+version: "1.0"
+summary: "C process-runtime tool boilerplate"
+description: |
+  Minimal compiled C tool with no external JSON dependency. MK3 invokes it as:
+    ./build/c_echo_tool <input.json>
+  Replace the tiny extraction helper with your preferred C JSON library when needed.
+implementation:
+  runtime: process
+  entrypoint: ./build/c_echo_tool
+input_schema:
+  type: object
+  properties:
+    message:
+      type: string
+      default: "hello"
+output_schema:
+  type: object
+  properties:
+    success: {type: boolean}
+    output: {type: string}
+    input_bytes: {type: integer}

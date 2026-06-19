@@ -1,0 +1,58 @@
+# Runtime templates: compiled tools and feeds
+
+These templates show the lightweight compiled-runtime convention.
+
+## Runtime contract
+
+Use `runtime: process` (aliases: `binary`, `direct`, `exec`) when the entrypoint is already executable.
+
+### Tool
+
+```yaml
+kind: Tool
+implementation:
+  runtime: process
+  entrypoint: ./build/my_tool
+```
+
+MK3 invokes Agent script tools as:
+
+```text
+./build/my_tool <input.json>
+```
+
+The tool should print one JSON object to stdout:
+
+```json
+{"success": true, "output": "..."}
+```
+
+### Feed
+
+```yaml
+kind: Feed
+runtime: process
+entrypoint: ./build/my_feed
+```
+
+MK3 invokes feeds as:
+
+```text
+./build/my_feed
+```
+
+The feed should print JSON or plain text to stdout. JSON object keys become feed summary lines.
+
+## Templates
+
+- `cpp-tool/` — C++ tool using jsoncpp
+- `c-tool/` — C tool, no external JSON dependency
+- `cpp-feed/` — C++ feed using jsoncpp
+- `c-feed/` — C feed, no external dependency
+
+Each folder supports:
+
+```bash
+make
+make smoke
+```

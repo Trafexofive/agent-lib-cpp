@@ -1,0 +1,25 @@
+kind: Tool
+name: cpp_echo_tool
+version: "1.0"
+summary: "C++ process-runtime tool boilerplate"
+description: |
+  Minimal compiled C++ tool. MK3 invokes process-runtime tools as:
+    ./build/cpp_echo_tool <input.json>
+implementation:
+  runtime: process
+  entrypoint: ./build/cpp_echo_tool
+input_schema:
+  type: object
+  properties:
+    message:
+      type: string
+      default: "hello"
+output_schema:
+  type: object
+  properties:
+    success: {type: boolean}
+    output: {type: string}
+    input_bytes: {type: integer}
+examples:
+  - description: "Echo a message"
+    params: {message: "hello from c++"}

@@ -1,0 +1,9 @@
+kind: Feed
+name: c_status_feed
+version: "1.0"
+summary: "C process-runtime feed boilerplate"
+description: |
+  Minimal compiled C feed with no external dependencies. MK3 invokes it as:
+    ./build/c_status_feed
+runtime: process
+entrypoint: ./build/c_status_feed

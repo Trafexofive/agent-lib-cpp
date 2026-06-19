@@ -1,0 +1,9 @@
+kind: Feed
+name: cpp_status_feed
+version: "1.0"
+summary: "C++ process-runtime feed boilerplate"
+description: |
+  Minimal compiled C++ feed. MK3 invokes process-runtime feeds as:
+    ./build/cpp_status_feed
+runtime: process
+entrypoint: ./build/cpp_status_feed
