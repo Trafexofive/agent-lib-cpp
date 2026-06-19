@@ -78,6 +78,9 @@ def build_command(params: dict[str, Any]) -> list[str]:
     for key, flag in BOOL_FLAGS.items():
         if params.get(key):
             cmd.append(flag)
+    if "color" not in params:
+        cmd += ["--color", "always"]
+
     for key, flag in VALUE_FLAGS.items():
         value = params.get(key)
         if value is not None and value != "":

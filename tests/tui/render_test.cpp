@@ -70,7 +70,7 @@ int main() {
     // Markdown fenced code blocks must paint the full row before reset.
     {
         Markdown md;
-        md.setWidth(18);
+        md.setWidth(16);  // mirrors TuiRenderer terminal width 20 -> markdown width 16
         md.setText("```\nabc\n```");
         auto lines = md.render();
         check(!lines.empty(), "markdown renders fenced code");

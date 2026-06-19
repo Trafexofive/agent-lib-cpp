@@ -101,7 +101,8 @@ class Markdown {
                 const std::string prefix = "│ ";
                 std::string content = line;
                 int used = static_cast<int>(visibleWidth(content));
-                while (used++ < width_)
+                const int contentWidth = width_ + 2;  // TuiRenderer gives markdown terminal_width - 4.
+                while (used++ < contentWidth)
                     content += ' ';
                 lines.push_back(ansi::bg(20, 20, 40) + ansi::dim() + ansi::fg(0, 150, 200) +
                                 prefix + content + ansi::reset());
