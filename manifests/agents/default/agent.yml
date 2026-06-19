@@ -31,6 +31,9 @@ import:
     - list
     - fs_read
     - fs_write
+    - json
+    - web_fetch
+    - sleep
     - context_pin
     - context_peek
     - context_unpin
