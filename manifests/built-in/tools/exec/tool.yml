@@ -1,63 +1,43 @@
 kind: Tool
 name: exec
 version: "2.0"
-summary: "Execute a shell command"
-description: "See input_schema for parameters"
-  Execute a shell command and return stdout/stderr with exit code.
-  
-  **Rules:**
-  - Commands run in a subshell. State is NOT preserved between calls.
-  - Non-zero exit codes are errors. Check `exit_code` before assuming success.
-  - Commands that hang will be killed after `timeout` seconds (default 30).
-  - Pipe output through `head`, `tail`, or `grep` for large results. Full output is truncated.
-  - Working directory defaults to the agent's CWD.
-
-  **DO:**
-  - Use for file operations (mkdir, cp, mv), git, build commands, package installs
-  - Pipe long output: `ls -la | head -20`
-  - Chain with `&&`: `cd /tmp && ./script.sh`
-
-  **DON'T:**
-  - Use `exec` when `list`, `grep`, or a context tool is not the better fit
-  - Run `rm -rf` without explicit user approval
-  - Run interactive commands (`vim`, `top`)
-  - Run commands that require user input
-category: system
-tags: [exec, shell, command, run]
+summary: "Run a shell command with timeout and bounded output"
+description: |
+  Executes a command through /bin/sh -c. Use only when a more specific builtin
+  cannot do the job. Supports cwd, hard timeout, output byte limit, and reports
+  exit_code/timed_out/elapsed_ms/truncated.
+category: runtime
+tags: [exec, shell, command, process]
 input_schema:
   type: object
   required: [command]
   properties:
     command:
       type: string
-      description: "Shell command to execute"
+      description: "Shell command to run"
     cwd:
       type: string
       description: "Working directory for the command"
     timeout:
       type: integer
-      description: "Max seconds before kill (default 30)"
+      description: "Timeout in seconds, clamped to 1..600"
+      default: 30
+    max_bytes:
+      type: integer
+      description: "Maximum captured stdout+stderr bytes"
+      default: 524288
 output_schema:
   type: object
   properties:
-    exit_code:
-      type: integer
-      description: "0 = success, non-zero = failure"
-    output:
-      type: string
-      description: "stdout + stderr combined, truncated at ~8KB"
+    success: {type: boolean}
+    exit_code: {type: integer}
+    timed_out: {type: boolean}
+    elapsed_ms: {type: integer}
+    truncated: {type: boolean}
+    bytes: {type: integer}
+    output: {type: string}
 examples:
-  - description: "List files"
-    params:
-      command: "ls -la"
-  - description: "Check git status in repo"
-    params:
-      command: "git status --short"
-      cwd: "/workspace"
-  - description: "Build with make"
-    params:
-      command: "make -j4"
-      timeout: 120
-  - description: "Count Python files"
-    params:
-      command: "find . -name '*.py' | wc -l"
+  - description: "Run tests"
+    params: {command: "make test", timeout: 120, max_bytes: 200000}
+  - description: "Run command in a directory"
+    params: {command: "git status --short", cwd: "/workspace/project"}

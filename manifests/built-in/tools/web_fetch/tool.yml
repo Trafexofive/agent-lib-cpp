@@ -1,0 +1,61 @@
+kind: Tool
+name: web_fetch
+version: "2.0"
+summary: "Fetch HTTP(S) resources with bounded output"
+description: |
+  Performs HTTP(S) requests with method/header support, timeouts, redirect limit,
+  and max_bytes response bounding. Use for small deterministic fetches, not broad
+  web research.
+category: network
+tags: [http, fetch, web, curl]
+input_schema:
+  type: object
+  required: [url]
+  properties:
+    url:
+      type: string
+      description: "http:// or https:// URL"
+    method:
+      type: string
+      enum: [GET, POST, PUT, PATCH, DELETE, HEAD]
+      default: GET
+    data:
+      type: string
+      description: "Request body"
+    headers:
+      type: object
+      additionalProperties: {type: string}
+    timeout:
+      type: integer
+      description: "Total timeout seconds, clamped to 1..120"
+      default: 30
+    connect_timeout:
+      type: integer
+      description: "Connect timeout seconds"
+      default: 10
+    max_bytes:
+      type: integer
+      description: "Maximum response bytes, clamped to 1..10485760"
+      default: 1048576
+    follow_redirects:
+      type: boolean
+      default: true
+    user_agent:
+      type: string
+      default: cortex-mk3/1.0
+output_schema:
+  type: object
+  properties:
+    success: {type: boolean}
+    status: {type: integer}
+    method: {type: string}
+    url: {type: string}
+    content: {type: string}
+    bytes: {type: integer}
+    truncated: {type: boolean}
+    elapsed_ms: {type: integer}
+    content_type: {type: string}
+    error: {type: string}
+examples:
+  - description: "Fetch JSON with a byte cap"
+    params: {url: "https://example.com/data.json", max_bytes: 200000}

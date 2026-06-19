@@ -367,13 +367,13 @@ class ManifestLoader {
         return schemas;
     }
 
-    // Grant the standard built-in tool set (exec, grep, list, context_pin,
-    // context_peek, context_unpin, ask_tool) to an agent and return their
+    // Grant the standard built-in tool set to an agent and return their
     // schemas. Used by the no-manifest CLI path so bare `run` still has a
     // working tool surface instead of an empty <action_available>.
     static std::vector<ToolSchema> loadBuiltinTools(Agent& agent) {
         static const std::vector<std::string> builtin = {
-            "exec", "grep", "list", "context_pin", "context_peek", "context_unpin", "ask_tool",
+            "exec", "grep", "list", "fs_read", "fs_write", "json", "web_fetch", "sleep",
+            "context_pin", "context_peek", "context_unpin", "ask_tool",
         };
         std::vector<ToolSchema> schemas;
         for (const auto& name : builtin) {

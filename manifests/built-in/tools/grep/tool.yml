@@ -1,52 +1,61 @@
 kind: Tool
 name: grep
 version: "2.0"
-summary: "Search files with regex"
-description: "See input_schema for parameters"
-  Searches for regex patterns in files. Supports context lines,
-  file glob filtering, and line-number output. Returns matches
-  grouped by file with line numbers and surrounding context.
-category: search
-tags: [grep, search, regex, find, pattern]
+summary: "Search files with regex or literal matching and structured results"
+description: |
+  Searches a file or directory recursively using native C++ matching. Supports
+  regex or literal search, case-insensitive search, filename glob filtering,
+  bounded max_matches, and context lines. Returns structured match items plus
+  grep-style output.
+category: filesystem
+tags: [grep, search, find, regex]
 input_schema:
   type: object
   required: [pattern]
   properties:
     pattern:
       type: string
-      description: "Regex pattern to search for"
+      description: "Regex or literal text to search for"
     path:
       type: string
-      description: "File or directory to search"
+      description: "File or directory path"
       default: "."
     glob:
       type: string
-      description: "File glob filter (e.g. '*.py')"
+      description: "Filename glob filter"
+      default: "*"
+    pattern_glob:
+      type: string
+      description: "Alias for glob"
+    literal:
+      type: boolean
+      description: "Treat pattern as literal text instead of regex"
+      default: false
+    ignore_case:
+      type: boolean
+      description: "Case-insensitive search"
+      default: false
     context:
       type: integer
-      description: "Context lines before/after match"
+      description: "Context lines before/after each match, clamped to 0..20"
       default: 0
+    max_matches:
+      type: integer
+      description: "Maximum match/context items returned, clamped to 1..5000"
+      default: 100
 output_schema:
   type: object
   properties:
-    matches:
-      type: array
-      items:
-        type: object
-        properties:
-          file:
-            type: string
-          line:
-            type: integer
-          text:
-            type: string
+    success: {type: boolean}
+    path: {type: string}
+    pattern: {type: string}
+    matches: {type: integer}
+    truncated: {type: boolean}
+    items: {type: array}
+    results: {type: string}
+    output: {type: string}
 examples:
   - description: "Find TODO comments"
-    params:
-      pattern: "TODO|FIXME"
-      path: "/src"
-  - description: "Search Python files with context"
-    params:
-      pattern: "def main"
-      glob: "*.py"
-      context: 2
+    params: {pattern: "TODO", path: "src", glob: "*.cpp", literal: true}
+  - description: "Regex search with context"
+    params: {pattern: "class\\s+Agent", path: "src", glob: "*.hpp", context: 2}

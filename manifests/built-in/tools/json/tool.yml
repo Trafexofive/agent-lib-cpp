@@ -1,0 +1,42 @@
+kind: Tool
+name: json
+version: "2.0"
+summary: "Parse, query, validate, and inspect JSON"
+description: |
+  Works with JSON strings or already-structured JSON values. Supports dot paths
+  and JSON Pointer paths. Use for deterministic JSON inspection instead of ad-hoc
+  shell parsing.
+category: data
+tags: [json, parse, query, validate]
+input_schema:
+  type: object
+  required: [op, data]
+  properties:
+    op:
+      type: string
+      enum: [parse, query, validate, pretty, minify, keys, length, type]
+    data:
+      description: "JSON string or structured JSON value"
+    path:
+      type: string
+      description: "Dot path or JSON Pointer path"
+    query:
+      type: string
+      description: "Alias for path"
+output_schema:
+  type: object
+  properties:
+    success: {type: boolean}
+    value: {}
+    type: {type: string}
+    keys: {type: array}
+    length: {type: integer}
+    formatted: {type: string}
+    valid: {type: boolean}
+examples:
+  - description: "Query with dot path"
+    params: {op: query, data: '{"a":{"b":2}}', path: "a.b"}
+  - description: "Query with JSON Pointer"
+    params: {op: query, data: '{"a/b": [1]}', path: "/a~1b/0"}
+  - description: "List object keys"
+    params: {op: keys, data: '{"a":1,"b":2}'}

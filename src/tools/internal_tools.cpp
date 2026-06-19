@@ -44,6 +44,7 @@ void registerDefaults() {
     reg.registerFn("simple_fs_write", builtins::fs_write);
     reg.registerFn("json", builtins::json);
     reg.registerFn("web_fetch", builtins::web_fetch);
+    reg.registerFn("sleep", builtins::sleep);
     // context_pin / peek / unpin are handled directly in Agent::dispatchTool because
     // they mutate Agent state (pinned_/peeking_ maps). Registering a stateless fallback
     // here would shadow that path.

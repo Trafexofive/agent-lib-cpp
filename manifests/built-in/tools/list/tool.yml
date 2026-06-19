@@ -1,10 +1,11 @@
 kind: Tool
 name: list
 version: "2.0"
-summary: "List files and directories"
-description: "See input_schema for parameters"
-  Lists files and directories at a given path. Supports recursive listing,
-  pattern filtering, and detail level (names only vs full stat).
+summary: "List files and directories with structured entries"
+description: |
+  Lists a file or directory using native filesystem traversal. Returns both a
+  human-readable results string and structured entries. Supports recursion,
+  filename glob filtering, type filtering, relative paths, and max_entries.
 category: filesystem
 tags: [list, ls, files, directory]
 input_schema:
@@ -12,7 +13,7 @@ input_schema:
   properties:
     path:
       type: string
-      description: "Directory path to list"
+      description: "File or directory path to list"
       default: "."
     recursive:
       type: boolean
@@ -20,33 +21,35 @@ input_schema:
       default: false
     pattern:
       type: string
-      description: "Glob pattern filter (e.g. '*.py')"
-    detail:
+      description: "Filename glob filter, e.g. '*.cpp'"
+      default: "*"
+    glob:
       type: string
-      enum: [names, compact, full]
-      description: "Level of detail"
-      default: compact
-
+      description: "Alias for pattern"
+    type:
+      type: string
+      enum: [all, file, dir, directory, symlink]
+      default: all
+    relative:
+      type: boolean
+      description: "Return paths relative to the listed root"
+      default: true
+    max_entries:
+      type: integer
+      description: "Maximum entries to return, clamped to 1..5000"
+      default: 200
 output_schema:
   type: object
   properties:
-    entries:
-      type: array
-      items:
-        type: object
-        properties:
-          name:
-            type: string
-          type:
-            type: string
-          size:
-            type: integer
+    success: {type: boolean}
+    path: {type: string}
+    count: {type: integer}
+    truncated: {type: boolean}
+    entries: {type: array}
+    results: {type: string}
+    output: {type: string}
 examples:
   - description: "List current directory"
-    params:
-      path: "."
-  - description: "Find all Python files recursively"
-    params:
-      path: "/src"
-      recursive: true
-      pattern: "*.py"
+    params: {path: ".", max_entries: 100}
+  - description: "Find C++ files recursively"
+    params: {path: "src", recursive: true, pattern: "*.cpp", type: file}

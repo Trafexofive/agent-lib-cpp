@@ -8,6 +8,7 @@ description: |
   Returns a bounded diff with line numbers so changes can be reviewed like a patch.
 category: filesystem
 tags: [write, edit, patch, atomic, line-range]
+
 input_schema:
   type: object
   required: [path]
@@ -17,7 +18,17 @@ input_schema:
       description: "File path to write/edit"
     op:
       type: string
-      enum: [write, append, prepend, replace_text, replace_range, delete_range, insert_before, insert_after]
+      enum:
+        [
+          write,
+          append,
+          prepend,
+          replace_text,
+          replace_range,
+          delete_range,
+          insert_before,
+          insert_after,
+        ]
       description: "Operation to perform. Defaults to write, or append when append=true."
       default: write
     content:
@@ -50,22 +61,43 @@ input_schema:
     end_line:
       type: integer
       description: "1-indexed inclusive end line for replace_range/delete_range"
+
 output_schema:
   type: object
   properties:
-    success: {type: boolean}
-    path: {type: string}
-    op: {type: string}
-    changed: {type: boolean}
-    bytes_written: {type: integer}
-    diff: {type: string}
-    output: {type: string}
+    success: { type: boolean }
+    path: { type: string }
+    op: { type: string }
+    changed: { type: boolean }
+    bytes_written: { type: integer }
+    diff: { type: string }
+    output: { type: string }
+
 examples:
   - description: "Create or replace a file atomically"
-    params: {path: "tmp/notes.txt", op: write, content: "hello\n"}
+    params: { path: "tmp/notes.txt", op: write, content: "hello\n" }
   - description: "Replace a line range"
-    params: {path: "src/app.cpp", op: replace_range, start_line: 10, end_line: 14, content: "new block\n"}
+    params:
+      {
+        path: "src/app.cpp",
+        op: replace_range,
+        start_line: 10,
+        end_line: 14,
+        content: "new block\n",
+      }
   - description: "Insert before a line"
-    params: {path: "README.md", op: insert_before, line: 5, content: "New section\n"}
+    params:
+      {
+        path: "README.md",
+        op: insert_before,
+        line: 5,
+        content: "New section\n",
+      }
   - description: "Exact text replacement"
-    params: {path: "config.yml", op: replace_text, old_text: "debug: true", new_text: "debug: false"}
+    params:
+      {
+        path: "config.yml",
+        op: replace_text,
+        old_text: "debug: true",
+        new_text: "debug: false",
+      }

@@ -1,0 +1,44 @@
+kind: Tool
+name: sleep
+version: "1.0"
+summary: "Pause execution for a bounded duration"
+description: |
+  Sleeps for a requested duration. Use for explicit wait/backoff steps, polling
+  loops, or rate-sensitive workflows. The tool is bounded by max_ms and returns
+  requested/elapsed timing.
+category: runtime
+tags: [sleep, wait, delay, backoff, polling]
+input_schema:
+  type: object
+  properties:
+    duration:
+      description: "Duration as milliseconds number, seconds number, or string like '250ms'/'2s'"
+    ms:
+      type: integer
+      description: "Duration in milliseconds"
+    milliseconds:
+      type: integer
+      description: "Duration in milliseconds"
+    seconds:
+      type: number
+      description: "Duration in seconds"
+    max_ms:
+      type: integer
+      description: "Maximum allowed duration for this call"
+      default: 30000
+    reason:
+      type: string
+      description: "Why the wait is needed"
+output_schema:
+  type: object
+  properties:
+    success: {type: boolean}
+    requested_ms: {type: integer}
+    elapsed_ms: {type: integer}
+    reason: {type: string}
+    output: {type: string}
+examples:
+  - description: "Wait 500ms before polling again"
+    params: {ms: 500, reason: "wait for service startup"}
+  - description: "Back off for 2 seconds"
+    params: {duration: "2s", max_ms: 5000}
