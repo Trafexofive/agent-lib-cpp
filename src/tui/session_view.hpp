@@ -1,5 +1,6 @@
-// src/tui/session_view.hpp — Reusable viewport renderer for the MK3 REPL TUI.
-// Uses full redraws when the viewport moves/resizes, incremental row writes otherwise.
+// src/tui/session_view.hpp — Reusable full-frame viewport for the MK3 REPL TUI.
+// Full redraws are slower but deterministic. Incremental diffing regressed into
+// overlap/duplicate rows when live state moved or changed shape.
 #pragma once
 
 #include <algorithm>
@@ -80,43 +81,7 @@ class SessionView {
     std::string render(const SessionViewport& vp,
                        const std::function<std::string(int)>& statusLine,
                        const std::string& promptLine) {
-        const bool viewportMoved = !hasLast_ || vp.startRow != last_.startRow ||
-                                   vp.visibleCount != last_.visibleCount ||
-                                   vp.displaySize != last_.displaySize;
-        if (viewportMoved) {
-            last_ = vp;
-            hasLast_ = true;
-            return renderFull(vp, statusLine, promptLine);
-        }
-
-        std::ostringstream out;
-        int firstChange = -1;
-        int lastChange = -1;
-        const int rows = static_cast<int>(vp.visible.size());
-        for (int i = 0; i < rows; ++i) {
-            const std::string oldLine = i < static_cast<int>(last_.visible.size()) ? last_.visible[i] : "";
-            if (oldLine != vp.visible[i]) {
-                if (firstChange < 0)
-                    firstChange = i;
-                lastChange = i;
-            }
-        }
-
-        if (firstChange >= 0) {
-            for (int row = firstChange; row <= lastChange; ++row) {
-                out << ansi::moveTo(vp.startRow + row, 1) << ansi::clearLine()
-                    << padRight(vp.visible[row], width_);
-            }
-        }
-        if (rows < static_cast<int>(last_.visible.size())) {
-            for (int row = rows; row < static_cast<int>(last_.visible.size()); ++row)
-                out << ansi::moveTo(vp.startRow + row, 1) << ansi::clearLine();
-        }
-        writeBottom(out, vp, statusLine, promptLine);
-
-        last_ = vp;
-        hasLast_ = true;
-        return out.str();
+        return renderFull(vp, statusLine, promptLine);
     }
 
    private:
@@ -138,8 +103,6 @@ class SessionView {
         }
     }
 
-    SessionViewport last_;
-    bool hasLast_ = false;
     int width_ = 80;
     int height_ = 24;
 };

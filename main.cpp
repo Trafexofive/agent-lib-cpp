@@ -1516,7 +1516,7 @@ static int cmdRun(CliConfig& cli) {
             auto now = std::chrono::steady_clock::now();
             auto sinceRender =
                 std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRenderTime).count();
-            if (sinceRender < 16)
+            if (sinceRender < 50)
                 return;
             spinnerFrame = (spinnerFrame + 1) % 10;
             lastRenderTime = now;
