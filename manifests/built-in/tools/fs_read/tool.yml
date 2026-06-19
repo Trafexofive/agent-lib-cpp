@@ -1,0 +1,75 @@
+kind: Tool
+name: fs_read
+version: "2.0"
+summary: "Read files with line numbers or intake directory trees"
+description: |
+  Reads a file or directory. File reads include line numbers by default so follow-up
+  edits can target exact ranges. Directory reads return a bounded tree; set
+  include_content=true to intake matching file contents with line numbers.
+category: filesystem
+tags: [read, file, directory, line-numbers, context]
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "File or directory path to read"
+    offset:
+      type: integer
+      description: "1-indexed starting line for file reads"
+      default: 1
+    start_line:
+      type: integer
+      description: "Alias for offset"
+    limit:
+      type: integer
+      description: "Maximum lines for file reads; 0 means all"
+      default: 0
+    line_numbers:
+      type: boolean
+      description: "Include '<line> | ' prefixes in content"
+      default: true
+    recursive:
+      type: boolean
+      description: "Recurse into subdirectories for directory reads"
+      default: false
+    pattern:
+      type: string
+      description: "Filename glob for directory content intake"
+      default: "*"
+    glob:
+      type: string
+      description: "Alias for pattern"
+    include_content:
+      type: boolean
+      description: "For directories, include matching file contents after the tree"
+      default: false
+    max_entries:
+      type: integer
+      description: "Maximum directory entries to list"
+      default: 200
+    max_files:
+      type: integer
+      description: "Maximum files to include when include_content=true"
+      default: 25
+    per_file_limit:
+      type: integer
+      description: "Maximum lines per included file"
+      default: 120
+output_schema:
+  type: object
+  properties:
+    success: {type: boolean}
+    kind: {type: string, enum: [file, directory]}
+    path: {type: string}
+    content: {type: string}
+    line_numbers: {type: boolean}
+    truncated: {type: boolean}
+examples:
+  - description: "Read a file with line numbers"
+    params: {path: "src/main.cpp", offset: 1, limit: 80}
+  - description: "Inspect a directory tree"
+    params: {path: "src/tools", recursive: true, max_entries: 100}
+  - description: "Intake Python files in a folder"
+    params: {path: "playground", recursive: true, glob: "*.py", include_content: true, per_file_limit: 80}

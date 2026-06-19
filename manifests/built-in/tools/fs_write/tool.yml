@@ -1,0 +1,71 @@
+kind: Tool
+name: fs_write
+version: "2.0"
+summary: "Atomic file writer with line-aware edit operations and diff output"
+description: |
+  Writes and edits files atomically. Supports whole-file write/append/prepend,
+  exact text replacement, line-range replacement/deletion, and line insertion.
+  Returns a bounded diff with line numbers so changes can be reviewed like a patch.
+category: filesystem
+tags: [write, edit, patch, atomic, line-range]
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "File path to write/edit"
+    op:
+      type: string
+      enum: [write, append, prepend, replace_text, replace_range, delete_range, insert_before, insert_after]
+      description: "Operation to perform. Defaults to write, or append when append=true."
+      default: write
+    content:
+      type: string
+      description: "Content for write/append/prepend/range insertion/replacement"
+      default: ""
+    append:
+      type: boolean
+      description: "Backward-compatible alias for op=append"
+      default: false
+    create:
+      type: boolean
+      description: "Allow creating a missing file"
+    old_text:
+      type: string
+      description: "Exact text to replace for op=replace_text"
+    new_text:
+      type: string
+      description: "Replacement text alias for content"
+    all:
+      type: boolean
+      description: "Replace all old_text matches instead of requiring a unique match"
+      default: false
+    line:
+      type: integer
+      description: "Target line for insert_before/insert_after"
+    start_line:
+      type: integer
+      description: "1-indexed start line for replace_range/delete_range"
+    end_line:
+      type: integer
+      description: "1-indexed inclusive end line for replace_range/delete_range"
+output_schema:
+  type: object
+  properties:
+    success: {type: boolean}
+    path: {type: string}
+    op: {type: string}
+    changed: {type: boolean}
+    bytes_written: {type: integer}
+    diff: {type: string}
+    output: {type: string}
+examples:
+  - description: "Create or replace a file atomically"
+    params: {path: "tmp/notes.txt", op: write, content: "hello\n"}
+  - description: "Replace a line range"
+    params: {path: "src/app.cpp", op: replace_range, start_line: 10, end_line: 14, content: "new block\n"}
+  - description: "Insert before a line"
+    params: {path: "README.md", op: insert_before, line: 5, content: "New section\n"}
+  - description: "Exact text replacement"
+    params: {path: "config.yml", op: replace_text, old_text: "debug: true", new_text: "debug: false"}
