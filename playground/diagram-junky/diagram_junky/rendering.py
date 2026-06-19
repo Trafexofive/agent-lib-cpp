@@ -719,6 +719,8 @@ def color_enabled(mode: str) -> bool:
         return False
     if os.environ.get("NO_COLOR"):
         return False
+    if os.environ.get("FORCE_COLOR") or os.environ.get("CLICOLOR_FORCE"):
+        return True
     return sys.stdout.isatty()
 
 

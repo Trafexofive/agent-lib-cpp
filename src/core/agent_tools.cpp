@@ -187,9 +187,16 @@ Json::Value Agent::executeScriptTool(const tools::Tool& tool, const Json::Value&
         tf << Json::writeString(w, params);
     }
     std::string cmdWithArg = cmd + " " + tmpFile;
+    bool allowAnsi = true;
+    auto ansiIt = env_.find("__TOOL_ANSI__");
+    if (ansiIt != env_.end() && (ansiIt->second == "false" || ansiIt->second == "0" ||
+                                 ansiIt->second == "no" || ansiIt->second == "never"))
+        allowAnsi = false;
+    std::string envPrefix = allowAnsi ? "FORCE_COLOR=1 CLICOLOR_FORCE=1 TERM=xterm-256color "
+                                      : "NO_COLOR=1 TERM=dumb ";
 
     auto start = std::chrono::steady_clock::now();
-    FILE* p = popen((cmdWithArg + " 2>&1").c_str(), "r");
+    FILE* p = popen((envPrefix + cmdWithArg + " 2>&1").c_str(), "r");
     if (!p) {
         unlink(tmpFile.c_str());
         Json::Value err;

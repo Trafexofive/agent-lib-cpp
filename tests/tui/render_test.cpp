@@ -102,6 +102,22 @@ int main() {
         check(occurrences == 1, "protocol render is idempotent across frames");
     }
 
+    // Tool output ANSI is preserved by default and can be disabled.
+    {
+        ProtocolView pv;
+        std::string red = ansi::fg(255, 0, 0) + "RED" + ansi::reset();
+        pv.addResult({"c1", true, red, "diagram_render", 0, 0, red.size()});
+        auto colored = pv.render(80);
+        check(contains(colored, ansi::fg(255, 0, 0)), "protocol preserves tool output ANSI");
+
+        ProtocolView plain;
+        plain.setAnsiPassthrough(false);
+        plain.addResult({"c1", true, red, "diagram_render", 0, 0, red.size()});
+        auto stripped = plain.render(80);
+        check(!contains(stripped, ansi::fg(255, 0, 0)), "protocol can strip tool output ANSI");
+        check(contains(stripped, "RED"), "protocol keeps stripped tool output text");
+    }
+
     // Multiline JSON params must be summarized into single terminal rows.
     {
         ProtocolView pv;

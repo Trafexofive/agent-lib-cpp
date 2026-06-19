@@ -79,6 +79,7 @@ struct CliConfig {
     std::string harnessPromptPath;
     bool ephemeral = false;
     bool raw = false;
+    bool toolAnsi = true;
     bool replMode = false;
     std::string tuiDebugDumpPath;
 
@@ -201,6 +202,7 @@ Global flags:
   --verbose, -V        Verbose: dump full prompts each iteration
   --debug              Enable debug output
   --raw                Pipe-clean output (no formatting, no banner)
+  --no-tool-ansi       Strip ANSI/color escapes from tool result rendering
   -c, --continue       Continue previous session
   -r, --resume         Select a session to resume
   --session <id>       Use specific session id
@@ -243,6 +245,7 @@ Flags:
   -r, --resume           Select a session to resume
   --no-session           Don't save session (ephemeral)
   --ephemeral            Alias for --no-session
+  --no-tool-ansi         Strip ANSI/color escapes from tool result rendering
   --repl                 Force interactive mode even with --prompt
   --tui-debug-dump <path> Auto-write TUI render/debug state
 )";
@@ -364,6 +367,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"verbose", no_argument, 0, 'V'},
                                        {"debug", no_argument, 0, 'D'},
                                        {"raw", no_argument, 0, 1003},
+                                       {"no-tool-ansi", no_argument, 0, 1004},
                                        {"tui-debug-dump", required_argument, 0, 1001},
                                        {"dry-run", no_argument, 0, 'n'},
                                        {"help", no_argument, 0, 'h'},
@@ -489,6 +493,9 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 break;
             case 1003:
                 cli.raw = true;
+                break;
+            case 1004:
+                cli.toolAnsi = false;
                 break;
             case 1001:
                 cli.tuiDebugDumpPath = optarg;
@@ -1415,6 +1422,7 @@ static int cmdRun(CliConfig& cli) {
     if (cli.iterations > 0)
         agent.setIterationCap(cli.iterations);
     tui::TuiRenderer renderer(80);
+    renderer.setToolAnsiPassthrough(cli.toolAnsi);
 
     // Manifest catalog semantics: ./manifests is a lookup catalog, not an
     // implicit capability surface. Capabilities are loaded only from the active
@@ -1449,6 +1457,7 @@ static int cmdRun(CliConfig& cli) {
 
     if (cli.debug)
         agent.setEnv("__DEBUG_MODE__", "true");
+    agent.setEnv("__TOOL_ANSI__", cli.toolAnsi ? "true" : "false");
     if (cli.raw)
         agent.setRaw(true);
     if (cli.verbose)

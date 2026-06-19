@@ -120,6 +120,7 @@ Usage: cortex-mk3 [options]
   --system-prompt <path>  Override system prompt
   --harness-prompt <path> Tuning harness prompt
   --raw                   Raw XML output (no sanitization)
+  --no-tool-ansi          Strip ANSI/color escapes from tool result rendering
   --verbose, -V           Dump full prompts each iteration
   --debug                 Iteration-level stats
   -c, --continue          Continue previous session

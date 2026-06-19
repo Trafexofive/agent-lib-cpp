@@ -43,6 +43,10 @@ class TuiRenderer {
         return true;
     }
 
+    void setToolAnsiPassthrough(bool enabled) {
+        pv_.setAnsiPassthrough(enabled);
+    }
+
     // ── Box/border styling ──
 
     // Protocol actions/results (for FULL and SEMI modes)

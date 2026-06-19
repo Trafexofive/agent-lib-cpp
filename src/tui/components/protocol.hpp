@@ -66,6 +66,13 @@ class ProtocolView {
         renderedBlocks_.push_back(lines);
     }
 
+    void setAnsiPassthrough(bool enabled) {
+        if (ansiPassthrough_ == enabled)
+            return;
+        ansiPassthrough_ = enabled;
+        needsRebuild_ = true;
+    }
+
     void clear() {
         actions_.clear();
         results_.clear();
@@ -280,7 +287,7 @@ class ProtocolView {
     // ── Result lines ──
     std::vector<std::string> resultLines(const ResultEvent& r, int width) const {
         std::vector<std::string> lines;
-        std::string body = r.summary;
+        std::string body = toolOutputText(r.summary);
         std::string mark =
             r.ok ? ansi::fg(0, 200, 0) + "✓ " + fgReset() : ansi::fg(200, 50, 0) + "✗ " + fgReset();
 
@@ -348,7 +355,7 @@ class ProtocolView {
                                           int width) const {
         std::vector<std::string> lines;
         auto& tn = r.toolName;
-        std::string body = r.summary;
+        std::string body = toolOutputText(r.summary);
         (void)width;
 
         if (tn == "bash" || tn == "exec") {
@@ -380,6 +387,30 @@ class ProtocolView {
             first = "(empty)";
         lines.push_back(mark + fgDim() + first + fgReset());
         return lines;
+    }
+
+    std::string toolOutputText(const std::string& s) const {
+        return ansiPassthrough_ ? s : stripAnsi(s);
+    }
+
+    static std::string stripAnsi(const std::string& s) {
+        std::string out;
+        out.reserve(s.size());
+        bool esc = false;
+        for (size_t i = 0; i < s.size(); ++i) {
+            unsigned char c = static_cast<unsigned char>(s[i]);
+            if (!esc && c == 0x1b) {
+                esc = true;
+                continue;
+            }
+            if (esc) {
+                if (c >= 0x40 && c <= 0x7e)
+                    esc = false;
+                continue;
+            }
+            out.push_back(static_cast<char>(c));
+        }
+        return out;
     }
 
     static std::string jsonToYaml(const std::string& json, int indent) {
@@ -432,6 +463,7 @@ class ProtocolView {
     int width_ = 0;
     size_t lastAction_ = 0, lastResult_ = 0, lastBlock_ = 0, cursor_ = 0;
     bool needsRebuild_ = false;
+    bool ansiPassthrough_ = true;
 };
 
 }  // namespace cortex::mk3::tui
