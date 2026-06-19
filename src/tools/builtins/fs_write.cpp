@@ -2,7 +2,10 @@
 #include "builtins.hpp"
 #include "common.hpp"
 
+#include <filesystem>
 #include <fstream>
+
+namespace fs = std::filesystem;
 
 namespace cortex::mk3::tools::builtins {
 
@@ -12,16 +15,24 @@ std::string fs_write(const Json::Value& p) {
     if (path.empty())
         return jsonErr("path is required");
     bool append = p.get("append", false).asBool();
-    auto lastSlash = path.rfind('/');
-    if (lastSlash != std::string::npos) {
-        std::string unused;
-        runCmd("mkdir -p " + shellEscape(path.substr(0, lastSlash)), unused, 5);
+
+    std::error_code ec;
+    fs::path target(path);
+    if (target.has_parent_path()) {
+        fs::create_directories(target.parent_path(), ec);
+        if (ec)
+            return jsonErr("failed to create parent directory: " + target.parent_path().string() +
+                           " — " + ec.message());
     }
+
     std::ofstream f(path, append ? std::ios::app : std::ios::out);
     if (!f)
         return jsonErr("failed to write: " + path);
     f << content;
     f.close();
+    if (!f)
+        return jsonErr("failed while writing: " + path);
+
     Json::Value r;
     r["success"] = true;
     r["path"] = path;
