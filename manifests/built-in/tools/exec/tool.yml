@@ -1,43 +1,90 @@
 kind: Tool
 name: exec
-version: "2.0"
-summary: "Run a shell command with timeout and bounded output"
+version: "3.0"
+summary: "Run shell commands or direct argv processes with bounded I/O"
 description: |
-  Executes a command through /bin/sh -c. Use only when a more specific builtin
-  cannot do the job. Supports cwd, hard timeout, output byte limit, and reports
-  exit_code/timed_out/elapsed_ms/truncated.
+  Production process runner. Supports shell mode (`/bin/sh -c command`) and
+  direct argv mode (`shell:false`, `argv:[...]`). Captures stdout/stderr
+  separately, supports stdin/env/cwd, enforces timeout, kills the child process
+  group on timeout, and bounds captured output.
 category: runtime
-tags: [exec, shell, command, process]
+tags: [exec, shell, command, process, argv]
 input_schema:
   type: object
-  required: [command]
   properties:
     command:
       type: string
-      description: "Shell command to run"
+      description: "Shell command for shell=true. Aliases: cmd, input."
+    cmd:
+      type: string
+      description: "Alias for command"
+    input:
+      type: string
+      description: "Alias for command"
+    shell:
+      type: boolean
+      description: "Run through /bin/sh -c. Defaults true unless argv is provided."
+    argv:
+      type: array
+      items: {type: string}
+      description: "Direct executable argv for shell=false, e.g. ['git','status','--short']"
     cwd:
       type: string
-      description: "Working directory for the command"
+      description: "Working directory; must already exist"
+    stdin:
+      type: string
+      description: "Text sent to process stdin"
+    env:
+      type: object
+      additionalProperties: {type: string}
+      description: "Environment overrides/additions"
+    clear_env:
+      type: boolean
+      description: "Start with empty environment before applying env"
+      default: false
     timeout:
       type: integer
       description: "Timeout in seconds, clamped to 1..600"
       default: 30
+    timeout_ms:
+      type: integer
+      description: "Timeout in milliseconds, overrides timeout"
     max_bytes:
       type: integer
-      description: "Maximum captured stdout+stderr bytes"
+      description: "Default cap for stdout/stderr bytes"
       default: 524288
+    max_stdout:
+      type: integer
+      description: "Stdout byte cap"
+    max_stderr:
+      type: integer
+      description: "Stderr byte cap"
 output_schema:
   type: object
   properties:
     success: {type: boolean}
     exit_code: {type: integer}
+    signal: {type: integer}
     timed_out: {type: boolean}
     elapsed_ms: {type: integer}
+    stdout_truncated: {type: boolean}
+    stderr_truncated: {type: boolean}
     truncated: {type: boolean}
+    stdout_bytes: {type: integer}
+    stderr_bytes: {type: integer}
     bytes: {type: integer}
+    stdout: {type: string}
+    stderr: {type: string}
     output: {type: string}
+    error: {type: string}
 examples:
-  - description: "Run tests"
+  - description: "Run a shell command"
     params: {command: "make test", timeout: 120, max_bytes: 200000}
-  - description: "Run command in a directory"
-    params: {command: "git status --short", cwd: "/workspace/project"}
+  - description: "Run direct argv without shell quoting"
+    params: {shell: false, argv: ["git", "status", "--short"], cwd: "/workspace/project"}
+  - description: "Pass stdin and env"
+    params:
+      shell: false
+      argv: ["python3", "-c", "import os,sys; print(os.getenv('NAME')); print(sys.stdin.read())"]
+      stdin: "hello"
+      env: {NAME: "mk3"}
