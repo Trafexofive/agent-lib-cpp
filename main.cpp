@@ -39,7 +39,8 @@
 #include "src/tui/renderer.hpp"
 #include "src/tui/session_view.hpp"
 #include "src/tui/slash_commands.hpp"
-#include "src/utils/ansi.hpp"
+#include "src/tui/status_prompt.hpp"
+#include "src/utils/ansi.hpp"},{
 
 using namespace cortex::mk3;
 
@@ -1540,7 +1541,6 @@ static int cmdRun(CliConfig& cli) {
     bool showPrompts = false;  // /prompts toggle
     bool streaming = false;                              // true during LLM call, false when idle
     std::chrono::steady_clock::time_point streamStart_;  // for TTC
-    static const char* spinnerFrames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
     tui::FrameClock frameClock;
     std::vector<std::string> tuiFrameLog;
     std::vector<std::string> tuiAnsiFrames;
@@ -1549,54 +1549,28 @@ static int cmdRun(CliConfig& cli) {
     size_t streamResultCount = 0;
     size_t streamRespBytes = 0;
     size_t streamRawBytes = 0;
+
+    auto statusState = [&]() {
+        tui::StatusBarState state;
+        state.dialogActive = dialogActive.load(std::memory_order_acquire);
+        state.streaming = streaming;
+        state.spinnerFrame = frameClock.spinnerFrame();
+        state.streamStart = streamStart_;
+        state.phase = streamPhase;
+        state.actionCount = streamActionCount;
+        state.resultCount = streamResultCount;
+        state.responseBytes = streamRespBytes;
+        state.mode = renderer.mode();
+        state.provider = acfg.provider;
+        state.model = acfg.model;
+        return state;
+    };
     auto statusBarText = [&](int displaySize) -> std::string {
         (void)displaySize;
-        if (dialogActive.load(std::memory_order_acquire)) {
-            return std::string(ansi::dim) + "  Esc to cancel" + ansi::reset;
-        }
-        std::string spinner = streaming ? std::string("\033[38;2;255;200;50m") +
-                                              spinnerFrames[frameClock.spinnerFrame()] + "\033[0m "
-                                        : "";
-        std::string ttc;
-        if (streaming) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                               std::chrono::steady_clock::now() - streamStart_)
-                               .count();
-            if (elapsed >= 1000)
-                ttc = std::to_string(elapsed / 1000) + "." +
-                      std::to_string((elapsed % 1000) / 100) + "s";
-            else if (elapsed >= 100)
-                ttc = "0." + std::to_string(elapsed / 100) + "s";
-        }
-        std::string telemetry;
-        if (streaming) {
-            telemetry = " " + streamPhase + " act=" + std::to_string(streamActionCount) +
-                        " done=" + std::to_string(streamResultCount) + " " +
-                        std::to_string(streamRespBytes) + "b";
-        }
-        std::string mode = tui::TuiRenderer::modeName(renderer.mode());
-        std::string model = acfg.provider + "/" + acfg.model;
-        return spinner + ttc + telemetry + ansi::dim + "  " + mode + " · " + model + ansi::reset;
+        return tui::StatusPromptRenderer::statusBar(statusState());
     };
     auto promptLineText = [&]() -> std::string {
-        std::ostringstream out;
-        if (dialogActive.load(std::memory_order_acquire)) {
-            out << ansi::dim << "  Enter to submit" << ansi::reset;
-            return out.str();
-        }
-        out << ansi::bold << "▸ " << ansi::reset << "\033[2m";
-        if (input.searching()) {
-            out << tui::ansi::fg(255, 200, 0) << input.searchLine();
-        } else {
-            size_t cp = input.cursorPos();
-            std::string l = input.line();
-            out << l.substr(0, cp);
-            out << "\033[7m" << (cp < l.size() ? std::string(1, l[cp]) : " ") << "\033[27m";
-            if (cp < l.size())
-                out << l.substr(cp + 1);
-        }
-        out << ansi::reset << " ";
-        return out.str();
+        return tui::StatusPromptRenderer::promptLine(input, dialogActive.load(std::memory_order_acquire));
     };
     auto captureAnsiFrame = [&](const std::vector<std::string>& visible, int startRow,
                                 int visibleCount, int displaySize) {
