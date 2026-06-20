@@ -249,12 +249,21 @@ class ProtocolView {
         }
     }
 
+    static std::string trimDisplayBody(const std::string& s) {
+        const char* ws = " \t\r\n";
+        size_t first = s.find_first_not_of(ws);
+        if (first == std::string::npos)
+            return "";
+        size_t last = s.find_last_not_of(ws);
+        return s.substr(first, last - first + 1);
+    }
+
     // ── Action params ──
     std::vector<std::string> actionParams(const ActionEvent& a, int width) const {
         std::vector<std::string> lines;
-        if (a.body.empty())
+        std::string body = trimDisplayBody(a.body);
+        if (body.empty())
             return lines;
-        std::string body = a.body;
         if (body[0] == '{') {
             Json::Value root;
             Json::CharReaderBuilder b;

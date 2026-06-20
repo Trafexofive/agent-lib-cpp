@@ -2027,11 +2027,9 @@ static int cmdRun(CliConfig& cli) {
             renderer.setResponse(response);
             if (!response.empty())
                 frameClock.requestFrame();
-            // Live thought is only safe before protocol UI exists. Once an action
-            // appears, render the action/result cards first and stop letting a
-            // growing thought buffer resize/stack over the protocol region.
-            const bool hasRenderedProtocol = !acts.empty() || !ress.empty();
-            const bool showLiveThought = !hasRenderedProtocol && response.empty() && !thought.empty();
+            // Renderer places thought below protocol cards, so keeping it visible
+            // no longer stacks over the action/result region.
+            const bool showLiveThought = !thought.empty();
             if (showLiveThought) {
                 if (renderer.setThought(thought))
                     frameClock.requestFrame();
