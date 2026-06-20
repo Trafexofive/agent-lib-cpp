@@ -99,7 +99,18 @@ class TuiRenderer {
     // Stateless ordered transcript render. The agent runtime owns the order.
     std::vector<std::string> renderTranscript(const std::vector<ProtocolEvent>& events,
                                              const std::string& responseText, int width) const {
+        // Subtle transcript background — same for thought and response blocks.
+        // Action/result cards draw their own (darker) background, so this shows
+        // through only on non-card areas.
+        const std::string bg = "\033[48;2;18;22;32m";
+        const std::string bgReset = "\033[49m";
+        const std::string pad = bg + std::string(width, ' ') + bgReset;
+
         std::vector<std::string> lines;
+        if (events.empty() && responseText.empty())
+            return lines;
+        lines.push_back(pad);
+
         for (const auto& ev : events) {
             switch (ev.kind) {
                 case ProtocolEventKind::THOUGHT: {
@@ -110,7 +121,8 @@ class TuiRenderer {
                             tl.pop_back();
                         if (tl.empty())
                             continue;
-                        lines.push_back(ansi::dim() + tl + ansi::reset());
+                        std::string line = bg + ansi::dim() + tl + ansi::reset() + bgReset;
+                        lines.push_back(padRight(line, width));
                     }
                     break;
                 }
@@ -153,15 +165,21 @@ class TuiRenderer {
                     }
             }
             if (hasContent && !rendered.empty()) {
-                lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
-                lines.insert(lines.end(), rendered.begin(), rendered.end());
+                lines.push_back(bg + ansi::dim() + std::string("── Response ──") + ansi::reset() +
+                                bgReset);
+                for (auto& l : rendered) {
+                    lines.push_back(bg + l + bgReset);
+                }
             } else if (!response_.empty()) {
-                lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
+                lines.push_back(bg + ansi::dim() + std::string("── Response ──") + ansi::reset() +
+                                bgReset);
             } else if (!responseText.empty()) {
-                lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
-                lines.push_back(responseText);
+                lines.push_back(bg + ansi::dim() + std::string("── Response ──") + ansi::reset() +
+                                bgReset);
+                lines.push_back(bg + responseText + bgReset);
             }
         }
+        lines.push_back(pad);
         return lines;
     }
 
