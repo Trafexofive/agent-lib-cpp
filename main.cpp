@@ -2298,7 +2298,14 @@ static int cmdRun(CliConfig& cli) {
             std::lock_guard<std::mutex> lk(streamMtx);
             curEvents = snapEvents;
             curResponse = snapResponse;
+            // After archiving, the snapshot must be cleared so the next
+            // renderScreen does not re-render the same turn on top of
+            // historyLines (which already contains the same content).
+            snapEvents.clear();
+            snapResponse.clear();
+            snapDirty = false;
         }
+        lastEventCount = 0;
         auto turnLines = renderer.renderTranscript(curEvents, curResponse, termW);
         // User prompt already in historyLines (added before streaming started)
         historyLines.insert(historyLines.end(), turnLines.begin(), turnLines.end());
