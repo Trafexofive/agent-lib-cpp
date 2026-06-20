@@ -1,14 +1,16 @@
 // src/tui/renderer.hpp — TuiRenderer: 3-mode output renderer
-// Mode 1 FULL RENDER: protocol events + markdown response (no raw XML)
+// Mode 1 FULL RENDER: ordered transcript events (thought/action/result/response)
 // Mode 2 SEMI:        raw stream on left, protocol markers on right
 // Mode 3 RAW:         raw LLM stream only
-// Decoupled: receives text buffers, doesn't know about parser events
-// MK3 TUI Framework
+// Stateless transcript rendering: the runtime owns the event order, the
+// renderer just draws what actually happened.
 #pragma once
 
+#include <sstream>
 #include <string>
 #include <vector>
 
+#include "../core/agent.hpp"
 #include "components/markdown.hpp"
 #include "components/protocol.hpp"
 #include "terminal.hpp"
@@ -16,6 +18,32 @@
 namespace cortex::mk3::tui {
 
 enum class RenderMode { FULL = 0, SEMI = 1, RAW = 2 };
+
+inline ActionType actionTypeFromName(const std::string& type) {
+    if (type == "agent")
+        return ActionType::AGENT;
+    if (type == "relic")
+        return ActionType::RELIC;
+    if (type == "feed")
+        return ActionType::FEED;
+    return ActionType::TOOL;
+}
+
+inline ActionEvent toActionEvent(const ProtocolAction& a) {
+    return {actionTypeFromName(a.type), a.name, a.id, a.body, a.sync};
+}
+
+inline ResultEvent toResultEvent(const ProtocolResult& r) {
+    ResultEvent ev;
+    ev.id = r.id;
+    ev.ok = r.ok;
+    ev.summary = r.summary;
+    ev.toolName = r.toolName;
+    ev.exitCode = r.exitCode;
+    ev.elapsedMs = r.elapsedMs;
+    ev.outputBytes = r.outputBytes;
+    return ev;
+}
 
 class TuiRenderer {
    public:
@@ -25,16 +53,13 @@ class TuiRenderer {
 
     // ── Set content (called after each prompt) ──
     void setRawStream(const std::string& raw) {
-        if (raw_ != raw)
-            raw_ = raw;
+        raw_ = raw;
     }
     void setResponse(const std::string& text) {
-        if (response_ != text)
-            response_ = text;
+        response_ = text;
     }
     void appendResponse(const std::string& text) {
         response_ += text;
-        responseDirty_ = true;
     }  // streaming
     bool setThought(const std::string& text) {
         if (thought_ == text)
@@ -45,27 +70,6 @@ class TuiRenderer {
 
     void setToolAnsiPassthrough(bool enabled) {
         pv_.setAnsiPassthrough(enabled);
-    }
-
-    // ── Box/border styling ──
-
-    // Protocol actions/results (for FULL and SEMI modes)
-    void addProtocolAction(const std::string& type, const std::string& name, const std::string& id,
-                           const std::string& body, bool sync) {
-        ActionType at = ActionType::TOOL;
-        if (type == "agent")
-            at = ActionType::AGENT;
-        else if (type == "relic")
-            at = ActionType::RELIC;
-        else if (type == "feed")
-            at = ActionType::FEED;
-        pv_.addAction({at, name, id, body, sync});
-    }
-
-    void addProtocolResult(const std::string& id, bool ok, const std::string& summary,
-                           const std::string& toolName = "", int exitCode = 0, double elapsedMs = 0,
-                           size_t outputBytes = 0) {
-        pv_.addResult({id, ok, summary, toolName, exitCode, elapsedMs, outputBytes});
     }
 
     // ── Mode control ──
@@ -89,44 +93,57 @@ class TuiRenderer {
 
     // ── Render based on mode ──
     std::vector<std::string> render() {
-        switch (mode_) {
-            case RenderMode::RAW:
-                return renderRaw();
-            default:
-                return renderFull();
-        }
+        return renderTranscript({}, response_, width_);
     }
 
-    void clear() {
-        raw_.clear();
-        response_.clear();
-        thought_.clear();
-        lastMarkdownText_.clear();
-        responseDirty_ = true;
-        pv_.clear();
-    }
-
-    void setWidth(int w) {
-        width_ = w;
-        md_.setWidth(w - 4);
-    }
-
-   private:
-    std::vector<std::string> renderFull() {
+    // Stateless ordered transcript render. The agent runtime owns the order.
+    std::vector<std::string> renderTranscript(const std::vector<ProtocolEvent>& events,
+                                             const std::string& responseText, int width) const {
         std::vector<std::string> lines;
-        // Protocol events + response are the transcript. Thought is deliberately
-        // rendered outside this flow (status surface) so it cannot split
-        // action/result/response continuity or be archived as conversation text.
-        for (auto& l : pv_.render(width_))
-            lines.push_back(l);
-        // Response with live markdown rendering
-        if (!response_.empty()) {
-            if (responseDirty_ || lastMarkdownText_ != response_) {
-                md_.setText(response_);
-                lastMarkdownText_ = response_;
-                responseDirty_ = false;
+        for (const auto& ev : events) {
+            switch (ev.kind) {
+                case ProtocolEventKind::THOUGHT: {
+                    std::istringstream ts(ev.text);
+                    std::string tl;
+                    while (std::getline(ts, tl)) {
+                        if (!tl.empty() && tl.back() == '\r')
+                            tl.pop_back();
+                        if (tl.empty())
+                            continue;
+                        lines.push_back(ansi::dim() + tl + ansi::reset());
+                    }
+                    break;
+                }
+                case ProtocolEventKind::ACTION: {
+                    auto card = pv_.renderActionCard(toActionEvent(ev.action), width);
+                    lines.insert(lines.end(), card.begin(), card.end());
+                    break;
+                }
+                case ProtocolEventKind::RESULT: {
+                    ResultEvent re = toResultEvent(ev.result);
+                    if (re.sourceType != ActionType::AGENT) {
+                        for (const auto& e : events) {
+                            if (e.kind == ProtocolEventKind::ACTION && e.action.id == re.id) {
+                                re.sourceType = actionTypeFromName(e.action.type);
+                                break;
+                            }
+                        }
+                    }
+                    auto card = pv_.renderResultCard(re, width);
+                    lines.insert(lines.end(), card.begin(), card.end());
+                    break;
+                }
+                case ProtocolEventKind::RESPONSE: {
+                    // Rendered at the end if responseText non-empty; skip here.
+                    break;
+                }
             }
-            auto rendered = md_.render();
+        }
+        if (!responseText.empty()) {
+            Markdown localMd;
+            localMd.setWidth(width - 4);
+            localMd.setText(responseText);
+            auto rendered = localMd.render();
             bool hasContent = false;
             for (auto& l : rendered) {
                 for (auto c : l)
@@ -138,20 +155,31 @@ class TuiRenderer {
             if (hasContent && !rendered.empty()) {
                 lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
                 lines.insert(lines.end(), rendered.begin(), rendered.end());
-            } else if (!rendered.empty()) {
-                // Rendered output exists but was all whitespace — header only
-                lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
             } else if (!response_.empty()) {
-                // Markdown rendered nothing — fall back to raw response text
                 lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
-                lines.push_back(response_);
+            } else if (!responseText.empty()) {
+                lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
+                lines.push_back(responseText);
             }
         }
         return lines;
     }
 
+    void clear() {
+        raw_.clear();
+        response_.clear();
+        thought_.clear();
+        lastMarkdownText_.clear();
+        pv_.clear();
+    }
+
+    void setWidth(int w) {
+        width_ = w;
+        md_.setWidth(w - 4);
+    }
+
+   private:
     std::vector<std::string> renderRaw() {
-        // Clean RAW mode — just show what the LLM generated
         std::vector<std::string> lines;
         std::istringstream rs(raw_);
         std::string rl;
@@ -170,7 +198,6 @@ class TuiRenderer {
     std::string response_;  // sanitized response
     std::string thought_;   // thought content
     std::string lastMarkdownText_;
-    mutable bool responseDirty_ = true;
 };
 
 }  // namespace cortex::mk3::tui

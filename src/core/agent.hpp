@@ -42,6 +42,15 @@ struct ProtocolResult {
     size_t outputBytes = 0;
 };
 
+enum class ProtocolEventKind { THOUGHT, ACTION, RESULT, RESPONSE };
+
+struct ProtocolEvent {
+    ProtocolEventKind kind = ProtocolEventKind::THOUGHT;
+    std::string text;
+    ProtocolAction action;
+    ProtocolResult result;
+};
+
 // ── Pending tool execution (threaded popen, streams output live) ──
 class Agent {
    public:
@@ -86,6 +95,9 @@ class Agent {
     }
     const std::vector<ProtocolResult>& protocolResults() const {
         return protocolResults_;
+    }
+    const std::vector<ProtocolEvent>& protocolEvents() const {
+        return protocolEvents_;
     }
 
     // Threaded tool execution: harvest completed tools, push results to protocolResults_
@@ -237,6 +249,7 @@ class Agent {
     std::vector<std::string> subAgentTraces_;    // delegated agent traces for parent dumps
     std::vector<ProtocolAction> protocolActions_;
     std::vector<ProtocolResult> protocolResults_;
+    std::vector<ProtocolEvent> protocolEvents_;
     std::map<std::string, std::shared_ptr<Agent>> subAgents_;
     std::map<std::string, Json::Value>
         actionResults_;  // persistent results table for ${id.field} expansion

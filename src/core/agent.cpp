@@ -429,6 +429,7 @@ std::string Agent::runLoop(AgentContext& ctx) {
     subAgentTraces_.clear();
     protocolActions_.clear();
     protocolResults_.clear();
+    protocolEvents_.clear();
 
     // Push user input to history once at start (NOT per-iteration)
     history_.push_back("User: " + ctx.userInput);
@@ -685,9 +686,15 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 } else {
                     summary = action.name + " — " + result.get("error", "?").asString();
                 }
-                protocolResults_.push_back(
-                    {action.id, ok, summary, action.name, result.get("exit_code", 0).asInt(),
-                     result.get("_elapsed_ms", 0.0).asDouble(), (size_t)summary.size()});
+                ProtocolResult protocolResult{action.id,
+                                              ok,
+                                              summary,
+                                              action.name,
+                                              result.get("exit_code", 0).asInt(),
+                                              result.get("_elapsed_ms", 0.0).asDouble(),
+                                              (size_t)summary.size()};
+                protocolResults_.push_back(protocolResult);
+                protocolEvents_.push_back({ProtocolEventKind::RESULT, "", {}, protocolResult});
                 // Notify callback so TUI can stream tool results immediately
                 if (ctx.onToken && ctx.streaming)
                     ctx.onToken("", false);
@@ -705,14 +712,29 @@ std::string Agent::runLoop(AgentContext& ctx) {
         parser.onEvent([&](const protocol::TokenEvent& ev) {
             switch (ev.type) {
                 case protocol::TokenEvent::TEXT:
-                    // Bare text outside XML tags → thought stream (dimmed, not in
-                    // history)
+                    // Bare text outside XML tags → ordered thought/protocol stream.
                     thoughtOutput_ += ev.content;
+                    if (!ev.content.empty()) {
+                        if (!protocolEvents_.empty() &&
+                            protocolEvents_.back().kind == ProtocolEventKind::THOUGHT) {
+                            protocolEvents_.back().text += ev.content;
+                        } else {
+                            protocolEvents_.push_back({ProtocolEventKind::THOUGHT, ev.content, {}, {}});
+                        }
+                    }
                     break;
 
                 case protocol::TokenEvent::RESPONSE:
                     llmOutput += ev.content;
                     responseOutput_ += ev.content;
+                    if (!ev.content.empty()) {
+                        if (!protocolEvents_.empty() &&
+                            protocolEvents_.back().kind == ProtocolEventKind::RESPONSE) {
+                            protocolEvents_.back().text += ev.content;
+                        } else {
+                            protocolEvents_.push_back({ProtocolEventKind::RESPONSE, ev.content, {}, {}});
+                        }
+                    }
                     if (ctx.onToken)
                         ctx.onToken(ev.content, false);
                     if (ev.metadata.count("is_final") && ev.metadata.at("is_final") == "true") {
@@ -722,6 +744,14 @@ std::string Agent::runLoop(AgentContext& ctx) {
 
                 case protocol::TokenEvent::THOUGHT:
                     thoughtOutput_ += ev.content;
+                    if (!ev.content.empty()) {
+                        if (!protocolEvents_.empty() &&
+                            protocolEvents_.back().kind == ProtocolEventKind::THOUGHT) {
+                            protocolEvents_.back().text += ev.content;
+                        } else {
+                            protocolEvents_.push_back({ProtocolEventKind::THOUGHT, ev.content, {}, {}});
+                        }
+                    }
                     break;
 
                 case protocol::TokenEvent::ACTION_START:
@@ -752,9 +782,11 @@ std::string Agent::runLoop(AgentContext& ctx) {
                             wb["indentation"] = "";
                             body = Json::writeString(wb, ev.action->params);
                         }
-                        protocolActions_.push_back(
-                            {typeStr, ev.action->name, ev.action->id, body,
-                             ev.action->mode == protocol::ExecutionMode::SYNC});
+                        ProtocolAction protocolAction{typeStr, ev.action->name, ev.action->id, body,
+                                                      ev.action->mode == protocol::ExecutionMode::SYNC};
+                        protocolActions_.push_back(protocolAction);
+                        protocolEvents_.push_back(
+                            {ProtocolEventKind::ACTION, "", protocolAction, {}});
                         // Notify the TUI immediately on ACTION_START, before
                         // sync dispatch blocks on tools/sub-agents. The action
                         // card must render first; results arrive later.
@@ -837,6 +869,7 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 iterationRuntimeOutput.clear();
                 responseOutput_.clear();
                 thoughtOutput_.clear();
+                protocolEvents_.clear();
                 parser.reset();
 
                 int delay = std::min(backoffMs, config_.emptyResponseMaxBackoffMs);
@@ -870,7 +903,17 @@ std::string Agent::runLoop(AgentContext& ctx) {
                     // Route thinking tokens (\x01 prefix) to thought stream —
                     // live dimmed
                     if (!token.empty() && token[0] == '\x01') {
-                        thoughtOutput_ += token.substr(1);
+                        std::string thoughtChunk = token.substr(1);
+                        thoughtOutput_ += thoughtChunk;
+                        if (!thoughtChunk.empty()) {
+                            if (!protocolEvents_.empty() &&
+                                protocolEvents_.back().kind == ProtocolEventKind::THOUGHT) {
+                                protocolEvents_.back().text += thoughtChunk;
+                            } else {
+                                protocolEvents_.push_back(
+                                    {ProtocolEventKind::THOUGHT, thoughtChunk, {}, {}});
+                            }
+                        }
                         if (ctx.onToken)
                             ctx.onToken("", false);  // trigger render
                         return;

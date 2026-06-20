@@ -85,6 +85,28 @@ class ProtocolView {
         lastResult_ = 0;
     }
 
+    std::vector<std::string> renderActionCard(const ActionEvent& a, int width) const {
+        std::vector<std::string> lines;
+        lines.push_back(padRight(bgAction(), width));
+        for (auto& line : actionHeaderLines(a, width))
+            lines.push_back(line);
+        for (auto& p : actionParams(a, width))
+            lines.push_back(padRight(bgAction() + "      " + p, width));
+        lines.push_back(padRight(bgAction(), width));
+        return lines;
+    }
+
+    std::vector<std::string> renderResultCard(const ResultEvent& r, int width) const {
+        if (r.sourceType == ActionType::AGENT)
+            return agentResultBox(r, width);
+        std::vector<std::string> lines;
+        lines.push_back(padRight("", width));
+        for (auto& line : resultLines(r, width))
+            lines.push_back(padRight(line, width));
+        lines.push_back(padRight("", width));
+        return lines;
+    }
+
     // Incremental: only renders NEW actions/results since last call.
     std::vector<std::string> render(int width) {
         if (width_ != width)
@@ -126,13 +148,8 @@ class ProtocolView {
     }
 
     void appendActionBlock(const ActionEvent& a, int width) {
-        cached_lines_.push_back(padRight(bgAction(), width));
-        for (auto& line : actionHeaderLines(a, width))
-            cached_lines_.push_back(line);
-        for (auto& p : actionParams(a, width)) {
-            cached_lines_.push_back(padRight(bgAction() + "      " + p, width));
-        }
-        cached_lines_.push_back(padRight(bgAction(), width));
+        auto lines = renderActionCard(a, width);
+        cached_lines_.insert(cached_lines_.end(), lines.begin(), lines.end());
     }
 
     std::vector<std::string> actionHeaderLines(const ActionEvent& a, int width) const {
@@ -154,15 +171,8 @@ class ProtocolView {
     }
 
     void appendResultBlock(const ResultEvent& r, int width) {
-        if (r.sourceType == ActionType::AGENT) {
-            for (auto& line : agentResultBox(r, width))
-                cached_lines_.push_back(line);
-            return;
-        }
-        cached_lines_.push_back(padRight("", width));
-        for (auto& line : resultLines(r, width))
-            cached_lines_.push_back(padRight(line, width));
-        cached_lines_.push_back(padRight("", width));
+        auto lines = renderResultCard(r, width);
+        cached_lines_.insert(cached_lines_.end(), lines.begin(), lines.end());
     }
 
     void appendRenderedBlocks() {

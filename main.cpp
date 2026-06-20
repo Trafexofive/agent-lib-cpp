@@ -1572,6 +1572,14 @@ static int cmdRun(CliConfig& cli) {
     size_t streamRespBytes = 0;
     size_t streamRawBytes = 0;
     std::string streamThoughtPreview;
+    size_t lastEventCount = 0;
+    std::atomic<bool> agentDone{false};
+    std::mutex streamMtx;
+    std::vector<cortex::mk3::ProtocolEvent> snapEvents;
+    std::string snapResponse, snapRaw, snapPhase = "waiting provider";
+    bool snapDirty = false;
+    bool snapClearRenderer = false;
+    bool firstToken = true;
 
     auto statusState = [&]() {
         tui::StatusBarState state;
@@ -1640,7 +1648,14 @@ static int cmdRun(CliConfig& cli) {
                 }
             }
         } else {
-            rendererLines = renderer.render();
+            std::vector<cortex::mk3::ProtocolEvent> events;
+            std::string response;
+            {
+                std::lock_guard<std::mutex> lk(streamMtx);
+                events = snapEvents;
+                response = snapResponse;
+            }
+            rendererLines = renderer.renderTranscript(events, response, termW);
         }
 
         tui::SessionViewport vp = sessionView.build(historyLines, rendererLines, dialogLines, showDialog, scrollOffset);
@@ -1700,7 +1715,14 @@ static int cmdRun(CliConfig& cli) {
         if (path.empty())
             return false;
         std::ofstream f(path);
-        auto lines = renderer.render();
+        std::vector<cortex::mk3::ProtocolEvent> curEvents;
+        std::string curResponse;
+        {
+            std::lock_guard<std::mutex> lk(streamMtx);
+            curEvents = snapEvents;
+            curResponse = snapResponse;
+        }
+        auto lines = renderer.renderTranscript(curEvents, curResponse, termW);
         if (!f) {
             if (notify)
                 pushTuiLine("Failed to write " + path);
@@ -1837,7 +1859,14 @@ static int cmdRun(CliConfig& cli) {
                 std::string all;
                 for (auto& l : historyLines)
                     all += l + "\n";
-                auto rl = renderer.render();
+                std::vector<cortex::mk3::ProtocolEvent> curEvents;
+                std::string curResponse;
+                {
+                    std::lock_guard<std::mutex> lk(streamMtx);
+                    curEvents = snapEvents;
+                    curResponse = snapResponse;
+                }
+                auto rl = renderer.renderTranscript(curEvents, curResponse, termW);
                 for (auto& l : rl)
                     all += l + "\n";
                 // Try both clipboard tools
@@ -1926,16 +1955,6 @@ static int cmdRun(CliConfig& cli) {
         frameClock.requestFrame();
         renderScreen();
 
-        size_t lastAct = 0, lastRes = 0;
-        std::atomic<bool> agentDone{false};
-        std::mutex streamMtx;
-        std::vector<cortex::mk3::ProtocolAction> snapActions;
-        std::vector<cortex::mk3::ProtocolResult> snapResults;
-        std::string snapResponse, snapRaw, snapThought, snapPhase = "waiting provider";
-        bool snapDirty = false;
-        bool snapClearRenderer = false;
-        bool firstToken = true;
-
         // ── ask_tool bridge: shared pending-dialog state ──
         std::mutex askMtx;
         std::condition_variable askCv;
@@ -1979,19 +1998,16 @@ static int cmdRun(CliConfig& cli) {
         });
 
         auto applyStreamSnapshot = [&]() {
-            std::vector<cortex::mk3::ProtocolAction> acts;
-            std::vector<cortex::mk3::ProtocolResult> ress;
-            std::string response, raw, thought, phase;
+            std::vector<cortex::mk3::ProtocolEvent> events;
+            std::string response, raw, phase;
             bool clearRenderer = false;
             {
                 std::lock_guard<std::mutex> lk(streamMtx);
                 if (!snapDirty)
                     return;
-                acts = snapActions;
-                ress = snapResults;
+                events = snapEvents;
                 response = snapResponse;
                 raw = snapRaw;
-                thought = snapThought;
                 phase = snapPhase;
                 clearRenderer = snapClearRenderer;
                 snapClearRenderer = false;
@@ -2000,39 +2016,23 @@ static int cmdRun(CliConfig& cli) {
 
             if (clearRenderer)
                 renderer.clear();
-            streamActionCount = acts.size();
-            streamResultCount = ress.size();
+            size_t actions = 0, results = 0;
+            for (const auto& ev : events) {
+                if (ev.kind == cortex::mk3::ProtocolEventKind::ACTION)
+                    ++actions;
+                else if (ev.kind == cortex::mk3::ProtocolEventKind::RESULT)
+                    ++results;
+            }
+            streamActionCount = actions;
+            streamResultCount = results;
             streamRespBytes = response.size();
             streamRawBytes = raw.size();
             streamPhase = phase;
-            streamThoughtPreview = thought;
-
-            while (lastAct < acts.size()) {
-                const auto& a = acts[lastAct++];
-                renderer.addProtocolAction(a.type, a.name, a.id, a.body, a.sync);
+            if (events.size() != lastEventCount) {
+                lastEventCount = events.size();
                 frameClock.requestFrame();
             }
-            while (lastRes < ress.size()) {
-                const auto& r = ress[lastRes++];
-                std::string tn = r.toolName;
-                if (tn.empty()) {
-                    for (const auto& a : acts)
-                        if (a.id == r.id) {
-                            tn = a.name;
-                            break;
-                        }
-                }
-                renderer.addProtocolResult(r.id, r.ok, r.summary, tn, r.exitCode, r.elapsedMs,
-                                           r.outputBytes);
-                frameClock.requestFrame();
-            }
-            if (renderer.mode() != tui::RenderMode::FULL)
-                renderer.setRawStream(raw);
-            renderer.setResponse(response);
             if (!response.empty())
-                frameClock.requestFrame();
-            // Thought is shown in the status surface, not the transcript renderer.
-            if (renderer.setThought(""))
                 frameClock.requestFrame();
         };
 
@@ -2044,12 +2044,18 @@ static int cmdRun(CliConfig& cli) {
                 [&](const std::string& /*token*/, bool) {
                     if (!cortex::mk3::g_running)
                         return;
-                    auto& acts = agent.protocolActions();
-                    auto& ress = agent.protocolResults();
+                    const std::vector<cortex::mk3::ProtocolEvent>& events = agent.protocolEvents();
                     const std::string& response = agent.responseOutput();
                     const std::string& raw = agent.rawLlOutput();
                     std::string phase = "waiting provider";
-                    if (!acts.empty() && ress.size() < acts.size())
+                    size_t actions = 0, results = 0;
+                    for (const auto& ev : events) {
+                        if (ev.kind == cortex::mk3::ProtocolEventKind::ACTION)
+                            ++actions;
+                        else if (ev.kind == cortex::mk3::ProtocolEventKind::RESULT)
+                            ++results;
+                    }
+                    if (actions > results)
                         phase = "running tools";
                     else if (!response.empty())
                         phase = "streaming response";
@@ -2061,11 +2067,9 @@ static int cmdRun(CliConfig& cli) {
                             snapClearRenderer = true;
                             firstToken = false;
                         }
-                        snapActions = acts;
-                        snapResults = ress;
+                        snapEvents = events;
                         snapResponse = response;
                         snapRaw = raw;
-                        snapThought = agent.thoughtOutput();
                         snapPhase = phase;
                         snapDirty = true;
                     }
@@ -2073,11 +2077,9 @@ static int cmdRun(CliConfig& cli) {
                 sessionId, cli.ephemeral);
             {
                 std::lock_guard<std::mutex> lk(streamMtx);
-                snapActions = agent.protocolActions();
-                snapResults = agent.protocolResults();
+                snapEvents = agent.protocolEvents();
                 snapResponse = agent.responseOutput();
                 snapRaw = agent.rawLlOutput();
-                snapThought = agent.thoughtOutput();
                 snapPhase = "complete";
                 snapDirty = true;
             }
@@ -2290,7 +2292,14 @@ static int cmdRun(CliConfig& cli) {
         }
 
         // Archive this turn's rendered output to history
-        auto turnLines = renderer.render();
+        std::vector<cortex::mk3::ProtocolEvent> curEvents;
+        std::string curResponse;
+        {
+            std::lock_guard<std::mutex> lk(streamMtx);
+            curEvents = snapEvents;
+            curResponse = snapResponse;
+        }
+        auto turnLines = renderer.renderTranscript(curEvents, curResponse, termW);
         // User prompt already in historyLines (added before streaming started)
         historyLines.insert(historyLines.end(), turnLines.begin(), turnLines.end());
         if (historyLines.empty())
