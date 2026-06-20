@@ -41,6 +41,7 @@ struct ResultEvent {
     size_t outputBytes = 0;  // byte count
     bool dirty = false;      // set on streaming update — rebuild deferred
     bool isDelta = true;     // summary is a chunk, not accumulated (streaming contract)
+    ActionType sourceType = ActionType::TOOL;
 };
 
 class ProtocolView {
@@ -49,18 +50,20 @@ class ProtocolView {
         actions_.push_back(a);
     }
     void addResult(const ResultEvent& r) {
+        ResultEvent incoming = r;
+        inferResultSource(incoming);
         // Check if this is an update to an existing result (progressive streaming)
         for (size_t i = 0; i < results_.size(); i++) {
-            if (results_[i].id == r.id) {
+            if (results_[i].id == incoming.id) {
                 // Progressive streaming: summary is a delta (chunk), not the full string.
                 // If your caller accumulates, set r.isDelta = false and assign, don't append.
-                results_[i].summary += "\n" + r.summary;  // append delta lines
+                results_[i].summary += "\n" + incoming.summary;  // append delta lines
                 results_[i].dirty = true;
                 needsRebuild_ = true;
                 return;
             }
         }
-        results_.push_back(r);
+        results_.push_back(incoming);
     }
     void addRenderedLines(const std::vector<std::string>& lines) {
         renderedBlocks_.push_back(lines);
@@ -151,8 +154,15 @@ class ProtocolView {
     }
 
     void appendResultBlock(const ResultEvent& r, int width) {
+        if (r.sourceType == ActionType::AGENT) {
+            for (auto& line : agentResultBox(r, width))
+                cached_lines_.push_back(line);
+            return;
+        }
+        cached_lines_.push_back(padRight("", width));
         for (auto& line : resultLines(r, width))
-            cached_lines_.push_back(line);
+            cached_lines_.push_back(padRight(line, width));
+        cached_lines_.push_back(padRight("", width));
     }
 
     void appendRenderedBlocks() {
@@ -184,6 +194,17 @@ class ProtocolView {
     }
 
    private:
+    void inferResultSource(ResultEvent& r) const {
+        for (const auto& a : actions_) {
+            if (a.id == r.id) {
+                r.sourceType = a.type;
+                if (r.toolName.empty())
+                    r.toolName = a.name;
+                return;
+            }
+        }
+    }
+
     // ── ANSI helpers (foreground-only, never reset background) ──
     static std::string bgAction() {
         return "\033[48;2;30;30;40m";
@@ -205,6 +226,12 @@ class ProtocolView {
     }
     static std::string fgBold() {
         return "\033[1m\033[97m";
+    }
+    static std::string fgGreen() {
+        return "\033[38;2;80;220;120m";
+    }
+    static std::string fgGreenDim() {
+        return "\033[38;2;70;150;95m";
     }
 
     static std::string actionIcon(const ActionEvent& a) {
@@ -284,6 +311,54 @@ class ProtocolView {
         if ((int)val.size() > maxLen)
             val = val.substr(0, maxLen - 3) + "...";
         return val;
+    }
+
+    std::string resultMeta(const ResultEvent& r) const {
+        std::ostringstream meta;
+        meta << (r.ok ? "✓" : "✗");
+        if (r.elapsedMs > 0)
+            meta << " " << std::fixed << std::setprecision(0) << r.elapsedMs << "ms";
+        if (r.exitCode != 0)
+            meta << " exit:" << r.exitCode;
+        if (r.outputBytes > 0) {
+            meta << " ";
+            if (r.outputBytes >= 1024)
+                meta << std::fixed << std::setprecision(1) << (r.outputBytes / 1024.0) << "KB";
+            else
+                meta << r.outputBytes << "B";
+        }
+        return meta.str();
+    }
+
+    std::vector<std::string> agentResultBox(const ResultEvent& r, int width) const {
+        std::vector<std::string> lines;
+        auto bg = []() { return "\033[48;2;20;50;30m"; };
+        auto row = [&](const std::string& content = "") {
+            return padRight(std::string(bg()) + "  " + content, width);
+        };
+
+        lines.push_back(row());
+        lines.push_back(row(fgGreen() + resultMeta(r) + fgReset()));
+
+        std::string body = toolOutputText(r.summary);
+        if (body.empty())
+            body = r.ok ? "(empty reply)" : "failed";
+        std::istringstream bs(body);
+        std::string bl;
+        while (std::getline(bs, bl)) {
+            std::string content = styleToolLine(bl);
+            int contentWidth = std::max(8, width - 4);
+            if (static_cast<int>(visibleWidth(content)) > contentWidth) {
+                std::string plain = stripAnsi(bl);
+                if (static_cast<int>(plain.size()) > contentWidth - 3)
+                    plain = plain.substr(0, std::max(0, contentWidth - 3)) + "...";
+                content = styleToolLine(plain);
+            }
+            lines.push_back(row(content));
+        }
+
+        lines.push_back(row());
+        return lines;
     }
 
     // ── Result lines ──

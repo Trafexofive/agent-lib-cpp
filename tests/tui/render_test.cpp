@@ -99,7 +99,20 @@ int main() {
                   first[3].find("README") == std::string::npos,
               "protocol action has bottom background padding");
         check(contains(second, "Cortex-Prime MK3"), "protocol renders result");
+        check(contains(second, "✓"), "protocol renders result status");
         check(occurrences == 1, "protocol render is idempotent across frames");
+    }
+
+    // Agent results render as green background cards with breathing room.
+    {
+        ProtocolView pv;
+        pv.addAction({ActionType::AGENT, "default", "a1", "ping", true});
+        pv.addResult({"a1", true, "default agent online.", "default", 0, 1973, 21});
+        auto lines = pv.render(80);
+        check(contains(lines, "\033[48;2;20;50;30m"), "agent result uses green background card");
+        check(contains(lines, "✓ 1973ms 21B"), "agent result card includes metadata");
+        check(contains(lines, "default agent online."), "agent result card includes reply");
+        check(!contains(lines, "╭") && !contains(lines, "╰"), "agent result avoids border glyphs");
     }
 
     // Agent action icon must not reset the background inside the card.

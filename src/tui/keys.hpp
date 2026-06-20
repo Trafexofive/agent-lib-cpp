@@ -101,8 +101,10 @@ class KeyMap {
         bindings_["\x1bOB"] = KeyAction::HISTORY_DOWN;
         bindings_["\x1bOC"] = KeyAction::CURSOR_RIGHT;
         bindings_["\x1bOD"] = KeyAction::CURSOR_LEFT;
-        // Scroll. Keep Ctrl-P/Ctrl-N for readline history; laptop-friendly scroll uses
-        // Ctrl-O/Ctrl-G and Alt-K/Alt-J so it does not overlap prompt history.
+        // Scroll/navigation. Ctrl-P/Ctrl-N are the primary laptop-friendly
+        // viewport navigation keys; prompt history remains on Up/Down arrows.
+        bindings_["\x10"] = KeyAction::SCROLL_UP;    // Ctrl-P
+        bindings_["\x0e"] = KeyAction::SCROLL_DOWN;  // Ctrl-N
         bindings_["\x0f"] = KeyAction::SCROLL_UP;    // Ctrl-O
         bindings_["\x07"] = KeyAction::SCROLL_DOWN;  // Ctrl-G
         // Page keys
@@ -120,9 +122,8 @@ class KeyMap {
         bindings_["\x1bk"] = KeyAction::SCROLL_UP;       // Alt-K
         bindings_["\x1bj"] = KeyAction::SCROLL_DOWN;     // Alt-J
 
-        // History navigation (readline)
-        bindings_["\x10"] = KeyAction::HISTORY_UP;    // Ctrl-P
-        bindings_["\x0e"] = KeyAction::HISTORY_DOWN;  // Ctrl-N
+        // History navigation is intentionally arrow-key based in the TUI so
+        // Ctrl-P/Ctrl-N can move the viewport like terminal pagers.
     }
 };
 

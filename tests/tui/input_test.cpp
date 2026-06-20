@@ -37,10 +37,10 @@ int main() {
     // KeyMap
     KeyMap km;
     char out = 0;
-    ok(km.resolve("\x08", out) == KeyAction::CURSOR_LEFT, "Ctrl-H → left");
-    ok(km.resolve("\x0a", out) == KeyAction::HISTORY_DOWN, "Ctrl-J → down");
-    ok(km.resolve("\x0b", out) == KeyAction::HISTORY_UP, "Ctrl-K → up");
-    ok(km.resolve("\x0c", out) == KeyAction::CURSOR_RIGHT, "Ctrl-L → right");
+    ok(km.resolve("\x08", out) == KeyAction::BACKSPACE, "Ctrl-H → backspace");
+    ok(km.resolve("\x10", out) == KeyAction::SCROLL_UP, "Ctrl-P → viewport up");
+    ok(km.resolve("\x0e", out) == KeyAction::SCROLL_DOWN, "Ctrl-N → viewport down");
+    ok(km.resolve("\x0c", out) == KeyAction::CLEAR_SCREEN, "Ctrl-L → clear screen");
     ok(km.resolve("h", out) == KeyAction::CHAR && out == 'h', "plain h is char");
     ok(km.resolve("j", out) == KeyAction::CHAR && out == 'j', "plain j is char");
     ok(km.resolve("\x1b[A", out) == KeyAction::HISTORY_UP, "ANSI up");
