@@ -16,6 +16,7 @@
 #include <iostream>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_set>
 
 #include "../feeds/feed_engine.hpp"
@@ -106,6 +107,8 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
             while (std::getline(hf, line))
                 oss << "    " << line << "\n";
             harnessText_ = oss.str();
+        } else if (!config_.harnessPath.empty()) {
+            throw std::runtime_error("harness prompt not found: " + config_.harnessPath);
         }
     }
 

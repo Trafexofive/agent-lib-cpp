@@ -1329,40 +1329,62 @@ static int cmdRun(CliConfig& cli) {
     // Dry run: validate and exit
     if (cli.dryRun) {
         std::cout << "[dry-run] Validating configuration...\n";
-        std::cout << "  provider: " << cli.provider << "\n";
-        std::cout << "  model:    " << cli.model << "\n";
 
-        auto provider = providers::createProvider(cli.provider, cli.model);
+        AgentConfig dryCfg;
+        dryCfg.provider = cli.provider;
+        dryCfg.model = cli.model;
+        dryCfg.harnessPath = cli.harnessPromptPath;
+        dryCfg.systemPromptPath = cli.systemPromptPath;
+        dryCfg.personaPath = "manifests/persona/default.md";
+
+        if (!cli.manifestPath.empty()) {
+            std::ifstream mf(cli.manifestPath);
+            if (!mf.good()) {
+                std::cerr << "  ✗ Manifest not found: " << cli.manifestPath << "\n";
+                return 1;
+            }
+            dryCfg = ManifestLoader::loadAgentConfig(cli.manifestPath);
+            ManifestLoader::loadEnv(cli.manifestPath, dryCfg);
+            if (cli.providerSet)
+                dryCfg.provider = cli.provider;
+            if (cli.modelSet)
+                dryCfg.model = cli.model;
+            if (!cli.harnessPromptPath.empty())
+                dryCfg.harnessPath = cli.harnessPromptPath;
+        } else {
+            if (dryCfg.harnessPath.empty())
+                dryCfg.harnessPath = "manifests/harness/default.md";
+            if (dryCfg.systemPromptPath.empty())
+                dryCfg.systemPromptPath = "manifests/system/default.md";
+        }
+
+        std::cout << "  provider: " << dryCfg.provider << "\n";
+        std::cout << "  model:    " << dryCfg.model << "\n";
+
+        auto provider = providers::createProvider(dryCfg.provider, dryCfg.model);
         if (!provider) {
-            std::cerr << "  ✗ Invalid provider: " << cli.provider << "\n";
+            std::cerr << "  ✗ Invalid provider: " << dryCfg.provider << "\n";
             return 1;
         }
         std::cout << "  ✓ Provider resolved\n";
 
-        if (!cli.harnessPromptPath.empty()) {
-            std::ifstream f(cli.harnessPromptPath);
+        auto requireFile = [](const std::string& label, const std::string& path) -> bool {
+            if (path.empty())
+                return true;
+            std::ifstream f(path);
             if (!f.good()) {
-                std::cerr << "  ✗ Harness prompt not found: " << cli.harnessPromptPath << "\n";
-                return 1;
+                std::cerr << "  ✗ " << label << " not found: " << path << "\n";
+                return false;
             }
-            std::cout << "  ✓ Harness prompt: " << cli.harnessPromptPath << "\n";
-        }
-
-        if (!cli.systemPromptPath.empty()) {
-            std::ifstream f(cli.systemPromptPath);
-            if (!f.good() && cli.manifestPath.empty()) {
-                std::cerr << "  ✗ System prompt not found: " << cli.systemPromptPath << "\n";
-                return 1;
-            }
-            std::cout << "  ✓ System prompt: " << cli.systemPromptPath << "\n";
-        }
+            std::cout << "  ✓ " << label << ": " << path << "\n";
+            return true;
+        };
+        if (!requireFile("Harness prompt", dryCfg.harnessPath) ||
+            !requireFile("System prompt", dryCfg.systemPromptPath) ||
+            !requireFile("Persona prompt", dryCfg.personaPath))
+            return 1;
 
         if (!cli.manifestPath.empty()) {
-            std::ifstream f(cli.manifestPath);
-            if (!f.good()) {
-                std::cerr << "  ✗ Manifest not found: " << cli.manifestPath << "\n";
-                return 1;
-            }
             std::cout << "  ✓ Manifest: " << cli.manifestPath << "\n";
         }
 
