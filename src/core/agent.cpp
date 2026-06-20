@@ -755,6 +755,11 @@ std::string Agent::runLoop(AgentContext& ctx) {
                         protocolActions_.push_back(
                             {typeStr, ev.action->name, ev.action->id, body,
                              ev.action->mode == protocol::ExecutionMode::SYNC});
+                        // Notify the TUI immediately on ACTION_START, before
+                        // sync dispatch blocks on tools/sub-agents. The action
+                        // card must render first; results arrive later.
+                        if (ctx.onToken && ctx.streaming)
+                            ctx.onToken("", false);
                         std::ostringstream ax;
                         ax << "<action type=\""
                            << (ev.action->type == protocol::ActionType::TOOL       ? "tool"
@@ -875,6 +880,8 @@ std::string Agent::runLoop(AgentContext& ctx) {
                     if (ctx.raw)
                         rawOutput += token;
                     parser.feed(token, isFinal);
+                    if (ctx.onToken)
+                        ctx.onToken("", isFinal);
                 });
             } catch (const std::exception& e) {
                 std::string err = std::string("Error: ") + e.what();
