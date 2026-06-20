@@ -43,6 +43,7 @@ struct FeedManifestTest {
         testFeedTools();
         testUnknownDottedFeedToolDispatch();
         testFeedManifestTools();
+        testFeedManifestToolInvocation();
         cleanup();
 
         std::cout << "\n  " << passed << "/" << (passed + failed) << " passed\n";
@@ -277,6 +278,91 @@ struct FeedManifestTest {
         if (!nameless.empty())
             check(nameless[0].name == "keep",
                   "only the named tool survives manifest-tools parse");
+    }
+
+    // ── Test: manifest-declared tool is wired to a real invocation handler ──
+    void testFeedManifestToolInvocation() {
+        // Standalone feed manifest with a tool whose entrypoint is a shell
+        // script that echoes a JSON document. No C++-registered handlers
+        // exist for this feed, so the manifest handler should be installed
+        // and callFeedTool should invoke the entrypoint.
+        fs::path feedDir = testDir / "feeds" / "manifest_tools_wired";
+        fs::create_directories(feedDir);
+
+        // tool.py — reads FEED_TOOL_PARAMS, echoes back a success JSON with
+        // a derived field. Exits 0. Python is a more reliable JSON producer
+        // than bash heredocs with embedded JSON values.
+        {
+            std::ofstream f(feedDir / "tool.py");
+            f << "#!/usr/bin/env python3\n";
+            f << "import json, os\n";
+            f << "params = os.environ.get('FEED_TOOL_PARAMS', '{}')\n";
+            f << "try:\n";
+            f << "    parsed = json.loads(params) if params else {}\n";
+            f << "except Exception:\n";
+            f << "    parsed = {'_raw': params}\n";
+            f << "out = {'success': True, 'echo': parsed, 'ran': 'tool'}\n";
+            f << "print(json.dumps(out))\n";
+        }
+        fs::permissions(feedDir / "tool.py",
+                        fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
+                        fs::perm_options::add);
+
+        {
+            std::ofstream f(feedDir / "feed.yml");
+            f << "kind: Feed\n";
+            f << "name: wired_feed\n";
+            f << "runtime: builtin\n";  // builtin = no actual feed execution
+            f << "tools:\n";
+            f << "  - name: run_tool\n";
+            f << "    description: Invokes ./tool.py with params\n";
+            f << "    runtime: python3\n";
+            f << "    entrypoint: ./tool.py\n";
+        }
+
+        auto loadResult =
+            feeds::FeedEngine::instance().loadFeedManifest((feedDir / "feed.yml").string());
+        check(loadResult.success, "wired feed manifest loads");
+
+        auto& engine = feeds::FeedEngine::instance();
+        check(engine.feedHasTool("wired_feed", "run_tool"),
+              "wired manifest tool is registered with engine");
+
+        Json::Value params(Json::objectValue);
+        params["name"] = "mlam";
+        auto result = engine.callFeedTool("wired_feed", "run_tool", params);
+        check(result.get("success", false).asBool(),
+              "wired manifest tool returns success");
+        check(result.get("ran", "").asString() == "tool",
+              "wired manifest tool ran the entrypoint");
+        check(result.isMember("echo"),
+              "wired manifest tool received and returned the params");
+
+        // Spec should now also be exposed via feedToolSpecs() so the prompt
+        // can advertise it.
+        auto specs = engine.feedToolSpecs();
+        bool sawWiredSpec = false;
+        if (auto it = specs.find("wired_feed"); it != specs.end()) {
+            for (const auto& s : it->second) {
+                if (s.name == "run_tool") {
+                    sawWiredSpec = true;
+                    check(s.description == "Invokes ./tool.py with params",
+                          "wired manifest tool spec carries the manifest description");
+                }
+            }
+        }
+        check(sawWiredSpec, "wired manifest tool spec appears in feedToolSpecs()");
+
+        // Manifest tool handler should not collide with C++-registered ones.
+        // system_clock.refresh is C++-registered; the feed has no manifest
+        // tools, so the C++ handler must still be the one called.
+        check(engine.feedHasTool("system_clock", "refresh"),
+              "C++-registered refresh tool still present on system_clock");
+        auto clk = engine.callFeedTool("system_clock", "refresh", Json::Value());
+        check(clk.get("success", false).asBool(),
+              "C++-registered refresh tool still succeeds");
+        check(!clk.isMember("ran"),
+              "C++-registered refresh tool did not run a manifest handler");
     }
 
     // ── Test: feed injection into prompt produces XML ──

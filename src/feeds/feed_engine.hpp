@@ -304,6 +304,19 @@ class FeedEngine {
         // runtime: process/binary/direct runs the entrypoint directly for compiled feeds.
         std::string output;
         if (runtime == "builtin") {
+            // Builtin manifests still register a Feed so manifest-declared
+            // tools can be wired onto it. The poll function is a no-op since
+            // builtin feeds poll through their C++ registration path, not
+            // through the manifest.
+            registerFeed(name, [name]() -> FeedResult {
+                FeedResult fr;
+                fr.name = name;
+                fr.ok = true;
+                fr.summary = "";
+                fr.json = "{}";
+                return fr;
+            });
+            registerManifestToolHandlers(feeds_.at(name), mr.tools, manifestDir);
             mr.success = true;
             mr.summary = "builtin feed " + name;
             return mr;
@@ -319,6 +332,7 @@ class FeedEngine {
 
         if (output.empty()) {
             registerFeed(name, [name]() -> FeedResult { return {name, "", "{}", true}; });
+            registerManifestToolHandlers(feeds_.at(name), mr.tools, manifestDir);
             mr.success = true;
             mr.summary = "";
             return mr;
@@ -332,6 +346,7 @@ class FeedEngine {
         if (!Json::parseFromStream(r, ss, &parsed, &errs)) {
             registerFeed(name,
                          [name, output]() -> FeedResult { return {name, output, "{}", true}; });
+            registerManifestToolHandlers(feeds_.at(name), mr.tools, manifestDir);
             mr.success = true;
             mr.summary = output;
             return mr;
@@ -380,9 +395,115 @@ class FeedEngine {
         };
 
         registerFeed(name, pollFn);
+        registerManifestToolHandlers(feeds_.at(name), mr.tools, manifestDir);
         mr.success = true;
         mr.summary = "loaded feed with tool-call support from " + scriptPath.string();
         return mr;
+    }
+
+    /// Register a default invocation handler for each parsed manifest tool on
+    /// the feed. C++-registered handlers win (they're tested and known good);
+    /// manifest handlers are skipped when the name collides with a built-in.
+    /// The handler invokes the tool's runtime + entrypoint, passing params as
+    /// JSON via the FEED_TOOL_PARAMS env var. Stdout is parsed as JSON when
+    /// possible; otherwise returned as raw `output`. Exit status drives
+    /// `success` and populates `error` on non-zero.
+    void registerManifestToolHandlers(Feed& feed,
+                                      const std::vector<ManifestFeedTool>& tools,
+                                      const std::filesystem::path& manifestDir) {
+        for (const auto& tool : tools) {
+            if (tool.name.empty())
+                continue;
+            if (feed.hasTool(tool.name))
+                continue;  // C++-registered handler wins.
+
+            feed.registerToolSpec({tool.name, tool.description});
+
+            std::filesystem::path entrypointPath;
+            if (!tool.entrypoint.empty())
+                entrypointPath = manifestDir / tool.entrypoint;
+            else
+                entrypointPath = manifestDir / tool.name;
+
+            std::string toolName = tool.name;
+            std::string toolRuntime = tool.runtime;
+            std::string toolBuildCommand = tool.buildCommand;
+            std::string toolBuildCwd = tool.buildCwd;
+            std::string toolBuildOutput = tool.buildOutput;
+
+            feed.registerTool(
+                tool.name,
+                [toolName, toolRuntime, toolBuildCommand, toolBuildCwd, toolBuildOutput,
+                 entrypointPath](const Json::Value& params) -> Json::Value {
+                    if (!toolBuildCommand.empty()) {
+                        std::filesystem::path bCwd = toolBuildCwd.empty()
+                                                        ? entrypointPath.parent_path()
+                                                        : std::filesystem::path(toolBuildCwd);
+                        if (!ensureBuilt(toolBuildCommand, bCwd.string(),
+                                         toolBuildOutput)) {
+                            Json::Value err;
+                            err["success"] = false;
+                            err["error"] = "build failed for feed tool: " + toolName;
+                            return err;
+                        }
+                    }
+
+                    Json::StreamWriterBuilder w;
+                    w["indentation"] = "";
+                    std::string paramsJson = Json::writeString(w, params);
+
+                    // Save/restore FEED_TOOL_PARAMS around the invocation so
+                    // concurrent tool calls don't stomp each other on this
+                    // process-global env. (Follow-up slice moves the feed
+                    // runtime onto process::run's per-call env map.)
+                    const char* old = getenv("FEED_TOOL_PARAMS");
+                    std::string oldParams = old ? old : "";
+                    setenv("FEED_TOOL_PARAMS", paramsJson.c_str(), 1);
+
+                    std::string cmd = runtimeCommand(toolRuntime, entrypointPath.string()) +
+                                       " 2>/dev/null";
+                    FILE* p = popen(cmd.c_str(), "r");
+
+                    if (!oldParams.empty())
+                        setenv("FEED_TOOL_PARAMS", oldParams.c_str(), 1);
+                    else
+                        unsetenv("FEED_TOOL_PARAMS");
+
+                    if (!p) {
+                        Json::Value err;
+                        err["success"] = false;
+                        err["error"] = "popen failed for feed tool: " + toolName;
+                        return err;
+                    }
+
+                    std::string output;
+                    char buf[4096];
+                    while (fgets(buf, sizeof(buf), p))
+                        output += buf;
+                    int rc = pclose(p);
+                    while (!output.empty() && (output.back() == '\n' || output.back() == '\r'))
+                        output.pop_back();
+
+                    Json::CharReaderBuilder reader;
+                    std::string errs;
+                    std::istringstream ss(output);
+                    Json::Value parsed;
+                    if (Json::parseFromStream(reader, ss, &parsed, &errs)) {
+                        if (!parsed.isMember("success"))
+                            parsed["success"] = (rc == 0);
+                        if (rc != 0 && !parsed.isMember("error"))
+                            parsed["error"] = "tool exit code " + std::to_string(rc);
+                        return parsed;
+                    }
+
+                    Json::Value result;
+                    result["success"] = (rc == 0);
+                    result["output"] = output;
+                    if (rc != 0)
+                        result["error"] = "tool exit code " + std::to_string(rc);
+                    return result;
+                });
+        }
     }
 
     /// Manifest-declared tools for a feed. Empty for feeds with no `tools:` block
