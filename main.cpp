@@ -1950,14 +1950,15 @@ static int cmdRun(CliConfig& cli) {
         input.clearEscape();
 
         // Echo user prompt in history BEFORE streaming (visible during response).
-        // Gray-bg block with 1px top/bottom padding, same shape as action/result
-        // cards. The content line itself has no bg, so any user ANSI inside the
-        // prompt renders normally.
+        // Gray-bg block with 1px top/bottom padding and 1col left/right content
+        // padding, matching action/result card visual style. The content line's
+        // bg is bg-active 1col on each side; user-typed ANSI inside the prompt
+        // renders normally.
         {
             const std::string promptBg = "\033[48;2;45;45;50m";
             historyLines.push_back(tui::padRight(promptBg, termW));
             historyLines.push_back(tui::padRight(
-                std::string(ansi::bold) + "▸ " + promptText, termW));
+                promptBg + " " + std::string(ansi::bold) + "▸ " + promptText + " ", termW));
             historyLines.push_back(tui::padRight(promptBg, termW));
         }
         scrollOffset = 0;

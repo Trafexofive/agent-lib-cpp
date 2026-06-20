@@ -116,9 +116,10 @@ class TuiRenderer {
                             tl.pop_back();
                         if (tl.empty())
                             continue;
-                        // padRight appends spaces under the active bg then resets,
-                        // so the row fills the full width with no bg holes.
-                        std::string line = bg + ansi::dim() + tl;
+                        // 1col left + 1col right padding under bg, then padRight
+                        // fills the rest of the row with bg-active spaces before
+                        // closing reset. Content ANSI inside is preserved.
+                        std::string line = bg + " " + ansi::dim() + tl + " ";
                         lines.push_back(padRight(line, width));
                     }
                     lines.push_back(padRight(bg, width));
@@ -168,12 +169,12 @@ class TuiRenderer {
             }
             lines.push_back(padRight(respBg, width));
             if (hasContent && !rendered.empty()) {
+                // 1col left/right bg padding per content row. Markdown rendering
+                // keeps full ANSI compliance — its own fg styles remain intact.
                 for (auto& l : rendered)
-                    lines.push_back(l);
-            } else if (!response_.empty()) {
-                // marker-only response
+                    lines.push_back(padRight(respBg + " " + l + " ", width));
             } else if (!responseText.empty()) {
-                lines.push_back(responseText);
+                lines.push_back(padRight(respBg + " " + responseText + " ", width));
             }
             lines.push_back(padRight(respBg, width));
         }
