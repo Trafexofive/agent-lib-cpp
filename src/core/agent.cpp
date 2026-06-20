@@ -661,6 +661,7 @@ std::string Agent::runLoop(AgentContext& ctx) {
         std::string llmOutput;
         std::string actionTranscriptOutput;  // model actions only, no premature responses
         bool taskComplete = false;
+        bool nonFinalProtocolRetry = false;
 
         parser.onEvent([&](const protocol::TokenEvent& ev) {
             switch (ev.type) {
@@ -903,10 +904,10 @@ std::string Agent::runLoop(AgentContext& ctx) {
         }
 
         if (results.empty() && !taskComplete) {
-            // No parsed actions and no response tags. Decide whether the model
-            // produced a legitimate empty reply or whether the upstream failed
-            // silently. The empty-response case must surface a visible error
-            // so the loop never silently closes a turn on a dead/refusing model.
+            // No parsed actions and no final response. This is NOT completion.
+            // Either the upstream returned no content, or the model emitted
+            // bare/non-protocol text. In both cases continue the loop unless
+            // we're surfacing a hard runtime failure after retries are exhausted.
             if (!streamStats.anyContent) {
                 std::string detail;
                 if (!streamStats.finishReason.empty())
@@ -922,10 +923,11 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 history_.push_back("System: [EMPTY RESPONSE] " + detail);
                 history_.push_back("Agent: " + visibleError);
                 responseOutput_ = visibleError;
-                taskComplete = true;
+                taskComplete = true;  // runtime failure, not model final
             } else {
-                // LLM produced bare text. Inject one-time reminder into
-                // history so it persists in context.
+                // LLM produced bare/non-protocol text. Record it and force a
+                // follow-up. Do NOT complete the turn: only
+                // <response final=\"true\"> completes normally.
                 history_.push_back("Agent: " + iterationRawOutput);
                 if (!bareTextReminded_ && !iterationRawOutput.empty()) {
                     std::string trimmed = iterationRawOutput;
@@ -937,13 +939,18 @@ std::string Agent::runLoop(AgentContext& ctx) {
                         history_.push_back(
                             "System: \342\232\240 BARE TEXT STRIPPED: \"" + preview +
                             "\" — "
-                            "Wrap ALL responses in <response final=\"true\">...</response>. "
-                            "This reminder is sent once — it stays in your context.");
+                            "This did NOT complete the turn. Emit exactly one of: "
+                            "<response final=\"true\">...</response> or "
+                            "<action type=\"tool\" ...>...</action>. Bare text is invisible.");
                     }
+                } else {
+                    history_.push_back(
+                        "System: [PROTOCOL RETRY] Previous model output had no action and no "
+                        "<response final=\"true\">. Continue now with a valid protocol tag.");
                 }
-                taskComplete = true;
-                if (responseOutput_.empty())
-                    responseOutput_ = sanitize(llmOutput);
+                nonFinalProtocolRetry = true;
+                taskComplete = false;
+                responseOutput_.clear();
             }
         }
 
@@ -983,8 +990,11 @@ std::string Agent::runLoop(AgentContext& ctx) {
             break;
         }
 
-        // Prepare next iteration — push agent output, then system results
-        history_.push_back("Agent: " + historyOutput);
+        // Prepare next iteration — push agent output, then system results.
+        // Bare/non-final protocol retries already pushed the raw model output
+        // plus a strict system correction above; don't add an empty duplicate.
+        if (!nonFinalProtocolRetry)
+            history_.push_back("Agent: " + historyOutput);
         if (!results.empty()) {
             for (auto& [id, result] : results) {
                 std::ostringstream sysMsg;
@@ -994,6 +1004,12 @@ std::string Agent::runLoop(AgentContext& ctx) {
         }
         parser.clearResults();  // prevent result leakage to next iteration
         tickContextCycles();    // decrement peek cycles; auto-evict at 0
+    }
+
+    if (fullResponse.empty()) {
+        fullResponse =
+            "⚠ Agent stopped without emitting <response final=\"true\">. "
+            "The runtime refused to treat non-final/bare output as completion.";
     }
 
     if (!ctx.ephemeral && !ctx.sessionId.empty()) {
