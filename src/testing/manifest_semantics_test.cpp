@@ -269,6 +269,48 @@ cognitive_engine:
     PASS();
 }
 
+void test_global_subagent_resolution_and_prompt_metadata() {
+    TEST("global sub-agent import renders metadata");
+    fs::path root = fs::temp_directory_path() / "mk3-manifest-semantics-global-subagent";
+    fs::remove_all(root);
+    writeFile(root / "agent.yml", R"YAML(kind: Agent
+name: root-agent
+version: "1.0"
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-chat
+import:
+  agents: [default]
+)YAML");
+
+    auto rootCfg = ManifestLoader::loadAgentConfig((root / "agent.yml").string());
+    auto provider = providers::createProvider(rootCfg.provider, rootCfg.model);
+    CHECK(provider, "could not create root provider");
+    Agent rootAgent(rootCfg, provider);
+    ManifestLoader::loadSubAgents((root / "agent.yml").string(), rootAgent, rootCfg.provider);
+
+    CHECK(rootAgent.hasSubAgent("default"), "global default sub-agent not loaded");
+    Agent* sub = rootAgent.getSubAgent("default");
+    CHECK(sub, "getSubAgent(default) returned null");
+    CHECK(sub->findTool("exec") != nullptr, "global sub-agent tools were not loaded");
+
+    std::string prompt = rootAgent.renderSystemPrompt();
+    CHECK(prompt.find("<sub_agents>") != std::string::npos, "prompt missing <sub_agents>");
+    CHECK(prompt.find("<sub_agent name=\"default\"") != std::string::npos,
+          "prompt missing default <sub_agent>");
+    CHECK(prompt.find("<tool name=\"exec\"") != std::string::npos,
+          "prompt missing sub-agent tool metadata");
+    size_t subStart = prompt.find("<sub_agents>");
+    size_t subEnd = prompt.find("</sub_agents>");
+    CHECK(subStart != std::string::npos && subEnd != std::string::npos && subEnd > subStart,
+          "sub_agents block bounds invalid");
+    std::string subBlock = prompt.substr(subStart, subEnd - subStart);
+    CHECK(subBlock.find("<params>") == std::string::npos,
+          "sub-agent tool metadata should not include schemas");
+    PASS();
+}
+
 int main() {
     std::cout.setf(std::ios::unitbuf);
     std::cout << "\n╔══════════════════════════════════════════╗\n";
@@ -283,6 +325,7 @@ int main() {
     test_builtin_tool_schemas_render_for_prompt_surface();
     test_session_tools_do_not_autoload_without_manifest_import();
     test_subagent_keeps_own_provider_and_model();
+    test_global_subagent_resolution_and_prompt_metadata();
 
     std::cout << "\n──────────────────────────────────────────\n";
     std::cout << "  " << passed << " passed, " << failed << " failed\n";

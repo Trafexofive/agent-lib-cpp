@@ -447,6 +447,33 @@ class ManifestLoader {
         return schemas;
     }
 
+    static fs::path resolveSubAgentManifest(const fs::path& parentManifest,
+                                            const std::string& name) {
+        fs::path base = parentManifest.parent_path();
+        fs::path requested(name);
+        std::vector<fs::path> candidates;
+
+        if (requested.is_absolute()) {
+            candidates.push_back(requested);
+        } else if (name.find('/') != std::string::npos || name.find('\\') != std::string::npos ||
+                   requested.extension() == ".yml") {
+            candidates.push_back(base / requested);
+        } else {
+            candidates.push_back(base / "agents" / name / "agent.yml");
+            candidates.push_back(base.parent_path() / name / "agent.yml");
+            candidates.push_back(fs::path("config/agents") / name / "agent.yml");
+            candidates.push_back(fs::path("manifests/agents") / name / "agent.yml");
+        }
+
+        for (const auto& candidate : candidates) {
+            std::error_code ec;
+            fs::path normalized = candidate.lexically_normal();
+            if (fs::exists(normalized, ec) && fs::is_regular_file(normalized, ec))
+                return normalized;
+        }
+        return {};
+    }
+
     // Load sub-agents from import list
     static void loadSubAgents(const std::string& manifestPath, Agent& agent,
                               const std::string& providerName) {
@@ -461,15 +488,9 @@ class ManifestLoader {
 
         auto agentNames = ManifestYaml::getList(*importNode, "agents");
         for (auto& name : agentNames) {
-            // Look for sub-agent: ./agents/<name>/agent.yml first, then ../<name>/agent.yml
-            fs::path base = fs::path(manifestPath).parent_path();
-            fs::path agentManifest = base / "agents" / name / "agent.yml";
-            if (!fs::exists(agentManifest)) {
-                agentManifest = base.parent_path() / name / "agent.yml";
-            }
-            if (!fs::exists(agentManifest)) {
+            fs::path agentManifest = resolveSubAgentManifest(fs::path(manifestPath), name);
+            if (agentManifest.empty())
                 continue;
-            }
 
             auto subCfg = loadAgentConfig(agentManifest.string());
             // Sub-agents are explicit manifest scopes. Their cognitive_engine

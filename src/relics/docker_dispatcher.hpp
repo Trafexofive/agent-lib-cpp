@@ -7,6 +7,8 @@
 #include <curl/curl.h>
 #include <json/json.h>
 
+#include <unistd.h>
+
 #include <cstdio>
 #include <filesystem>
 #include <fstream>

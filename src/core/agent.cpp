@@ -1170,15 +1170,41 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
     }
 
     if (!subAgents_.empty()) {
-        ss << "    <agents>\n        <description>Delegatable agents callable with <action "
-              "type=\"agent\">.</description>\n";
+        ss << "    <sub_agents>\n"
+              "        <description>Delegatable agents callable with <action type=\"agent\" "
+              "name=\"AGENT_NAME\" id=\"a1\" mode=\"sync\">plain text instruction</action>. "
+              "Inputs and outputs are plain text unless the sub-agent says otherwise.</description>\n";
         for (const auto& [name, agent] : subAgents_) {
-            ss << "        <agent name=\"" << xmlAttr(name) << "\"";
-            if (!agent->config().summary.empty())
-                ss << " summary=\"" << xmlAttr(agent->config().summary) << "\"";
-            ss << "/>\n";
+            const auto& cfg = agent->config();
+            ss << "        <sub_agent name=\"" << xmlAttr(name) << "\"";
+            if (!cfg.version.empty())
+                ss << " version=\"" << xmlAttr(cfg.version) << "\"";
+            if (!cfg.summary.empty())
+                ss << " summary=\"" << xmlAttr(cfg.summary) << "\"";
+            if (!cfg.provider.empty())
+                ss << " provider=\"" << xmlAttr(cfg.provider) << "\"";
+            if (!cfg.model.empty())
+                ss << " model=\"" << xmlAttr(cfg.model) << "\"";
+            if (!cfg.manifestDir.empty())
+                ss << " manifest_dir=\"" << xmlAttr(cfg.manifestDir) << "\"";
+            ss << ">\n";
+
+            auto names = agent->toolNames();
+            if (!names.empty()) {
+                ss << "            <tools>\n";
+                for (const auto& toolName : names) {
+                    const auto* tool = agent->findTool(toolName);
+                    ss << "                <tool name=\"" << xmlAttr(toolName) << "\"";
+                    if (tool && !tool->description().empty() &&
+                        tool->description() != "See input_schema for parameters")
+                        ss << " desc=\"" << xmlAttr(tool->description()) << "\"";
+                    ss << "/>\n";
+                }
+                ss << "            </tools>\n";
+            }
+            ss << "        </sub_agent>\n";
         }
-        ss << "    </agents>\n";
+        ss << "    </sub_agents>\n";
     }
 
     auto wfIt = env_.find("__WORKFLOW_XML__");
