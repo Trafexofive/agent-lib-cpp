@@ -45,6 +45,7 @@ struct FeedManifestTest {
         testFeedManifestTools();
         testFeedManifestToolInvocation();
         testFeedRuntimePerCallEnv();
+        testFeedToolPerCallEnv();
         cleanup();
 
         std::cout << "\n  " << passed << "/" << (passed + failed) << " passed\n";
@@ -425,6 +426,70 @@ struct FeedManifestTest {
               "CALL_TOOL still not leaked after subsequent poll");
 
         unsetenv("CALL_TOOL");
+    }
+
+    // ── Test: feed tool handler uses per-call env (no global setenv leak) ──
+    void testFeedToolPerCallEnv() {
+        fs::path feedDir = testDir / "feeds" / "tool_per_call_env";
+        fs::create_directories(feedDir);
+
+        // tool.py: reads FEED_TOOL_PARAMS, echoes it as JSON. Exits 0.
+        {
+            std::ofstream f(feedDir / "tool.py");
+            f << "#!/usr/bin/env python3\n";
+            f << "import json, os\n";
+            f << "params = os.environ.get('FEED_TOOL_PARAMS', 'unset')\n";
+            f << "print(json.dumps({'success': True, 'params_seen': params}))\n";
+        }
+        fs::permissions(feedDir / "tool.py",
+                        fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
+                        fs::perm_options::add);
+
+        {
+            std::ofstream f(feedDir / "feed.yml");
+            f << "kind: Feed\n";
+            f << "name: tool_per_call_env_feed\n";
+            f << "runtime: builtin\n";
+            f << "tools:\n";
+            f << "  - name: see_params\n";
+            f << "    description: Reads FEED_TOOL_PARAMS\n";
+            f << "    runtime: python3\n";
+            f << "    entrypoint: ./tool.py\n";
+        }
+
+        // Parent env must start clean.
+        unsetenv("FEED_TOOL_PARAMS");
+
+        auto& engine = feeds::FeedEngine::instance();
+        auto r = engine.loadFeedManifest((feedDir / "feed.yml").string());
+        check(r.success, "tool per-call env feed manifest loads");
+
+        // Call the tool with a known param value.
+        Json::Value params(Json::objectValue);
+        params["token"] = "first-call";
+        auto result = engine.callFeedTool("tool_per_call_env_feed", "see_params", params);
+        check(result.get("success", false).asBool(),
+              "tool per-call env tool returns success");
+        check(result.get("params_seen", "").asString().find("first-call") != std::string::npos,
+              "tool per-call env tool saw FEED_TOOL_PARAMS set to first-call");
+
+        // Parent env must not be polluted.
+        check(getenv("FEED_TOOL_PARAMS") == nullptr,
+              "FEED_TOOL_PARAMS is not leaked to parent process after tool call");
+
+        // Second call with a different value: must not see leakage from the
+        // first call (would have been a real bug under the old setenv path).
+        Json::Value params2(Json::objectValue);
+        params2["token"] = "second-call";
+        auto result2 = engine.callFeedTool("tool_per_call_env_feed", "see_params", params2);
+        check(result2.get("success", false).asBool(),
+              "tool per-call env second call returns success");
+        check(result2.get("params_seen", "").asString().find("second-call") != std::string::npos,
+              "second tool call sees fresh FEED_TOOL_PARAMS, not stale first-call");
+        check(result2.get("params_seen", "").asString().find("first-call") == std::string::npos,
+              "second tool call did not see stale first-call FEED_TOOL_PARAMS");
+
+        unsetenv("FEED_TOOL_PARAMS");
     }
 
     // ── Test: feed injection into prompt produces XML ──

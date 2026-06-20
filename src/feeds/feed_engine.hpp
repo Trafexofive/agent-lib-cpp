@@ -448,61 +448,7 @@ class FeedEngine {
                             return err;
                         }
                     }
-
-                    Json::StreamWriterBuilder w;
-                    w["indentation"] = "";
-                    std::string paramsJson = Json::writeString(w, params);
-
-                    // Save/restore FEED_TOOL_PARAMS around the invocation so
-                    // concurrent tool calls don't stomp each other on this
-                    // process-global env. (Follow-up slice moves the feed
-                    // runtime onto process::run's per-call env map.)
-                    const char* old = getenv("FEED_TOOL_PARAMS");
-                    std::string oldParams = old ? old : "";
-                    setenv("FEED_TOOL_PARAMS", paramsJson.c_str(), 1);
-
-                    std::string cmd = runtimeCommand(toolRuntime, entrypointPath.string()) +
-                                       " 2>/dev/null";
-                    FILE* p = popen(cmd.c_str(), "r");
-
-                    if (!oldParams.empty())
-                        setenv("FEED_TOOL_PARAMS", oldParams.c_str(), 1);
-                    else
-                        unsetenv("FEED_TOOL_PARAMS");
-
-                    if (!p) {
-                        Json::Value err;
-                        err["success"] = false;
-                        err["error"] = "popen failed for feed tool: " + toolName;
-                        return err;
-                    }
-
-                    std::string output;
-                    char buf[4096];
-                    while (fgets(buf, sizeof(buf), p))
-                        output += buf;
-                    int rc = pclose(p);
-                    while (!output.empty() && (output.back() == '\n' || output.back() == '\r'))
-                        output.pop_back();
-
-                    Json::CharReaderBuilder reader;
-                    std::string errs;
-                    std::istringstream ss(output);
-                    Json::Value parsed;
-                    if (Json::parseFromStream(reader, ss, &parsed, &errs)) {
-                        if (!parsed.isMember("success"))
-                            parsed["success"] = (rc == 0);
-                        if (rc != 0 && !parsed.isMember("error"))
-                            parsed["error"] = "tool exit code " + std::to_string(rc);
-                        return parsed;
-                    }
-
-                    Json::Value result;
-                    result["success"] = (rc == 0);
-                    result["output"] = output;
-                    if (rc != 0)
-                        result["error"] = "tool exit code " + std::to_string(rc);
-                    return result;
+                    return runFeedTool(toolName, toolRuntime, entrypointPath, params);
                 });
         }
     }
@@ -522,6 +468,89 @@ class FeedEngine {
     std::thread refreshThread_;
 
     // ── Script execution helpers (kept for manifest loading) ──
+
+    // Shared substrate for running feed scripts. All feed-side process
+    // invocations go through this so per-call env, timeout, output caps,
+    // and exit status are consistent across polls and tool calls.
+    static process::Result runFeedScript(const std::string& runtime,
+                                          const std::filesystem::path& entrypoint,
+                                          std::map<std::string, std::string> extraEnv = {},
+                                          int timeoutMs = 30000) {
+        process::Spec spec;
+        spec.shell = true;
+        spec.command = runtimeCommand(runtime, entrypoint.string());
+        spec.env = std::move(extraEnv);
+        spec.timeoutMs = timeoutMs;
+        spec.maxStdout = 1024 * 1024;
+        spec.maxStderr = 64 * 1024;
+        return process::run(spec);
+    }
+
+    // Feed poll view: returns trimmed stdout text. Empty string on timeout
+    // (caller decides whether empty means "no data" or "error"). The child
+    // sees the env additions but the parent process env is not mutated.
+    static std::string runFeedPoll(const std::string& runtime,
+                                    const std::filesystem::path& script,
+                                    const std::string& callToolPath) {
+        std::map<std::string, std::string> env;
+        if (!callToolPath.empty())
+            env["CALL_TOOL"] = callToolPath;
+        process::Result pr = runFeedScript(runtime, script, std::move(env));
+        if (pr.timedOut)
+            return "";
+        std::string out = pr.stdoutText;
+        while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
+            out.pop_back();
+        return out;
+    }
+
+    // Feed tool view: passes params as FEED_TOOL_PARAMS env, parses stdout
+    // as JSON when possible, otherwise returns it as raw `output`. Exit
+    // status drives `success` and `error`. Timeout becomes a clean error
+    // (no global setenv; no env leak between calls).
+    static Json::Value runFeedTool(const std::string& toolName,
+                                    const std::string& runtime,
+                                    const std::filesystem::path& entrypoint,
+                                    const Json::Value& params,
+                                    int timeoutMs = 30000) {
+        Json::StreamWriterBuilder w;
+        w["indentation"] = "";
+        std::map<std::string, std::string> env;
+        env["FEED_TOOL_PARAMS"] = Json::writeString(w, params);
+
+        process::Result pr = runFeedScript(runtime, entrypoint, std::move(env), timeoutMs);
+
+        Json::Value result;
+        if (pr.timedOut) {
+            result["success"] = false;
+            result["error"] = "feed tool timed out: " + toolName;
+            return result;
+        }
+
+        std::string out = pr.stdoutText;
+        while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
+            out.pop_back();
+
+        Json::CharReaderBuilder reader;
+        std::string errs;
+        std::istringstream ss(out);
+        Json::Value parsed;
+        if (Json::parseFromStream(reader, ss, &parsed, &errs)) {
+            if (!parsed.isMember("success"))
+                parsed["success"] = (pr.exitCode == 0);
+            if (pr.exitCode != 0 && !parsed.isMember("error"))
+                parsed["error"] = "tool exit code " + std::to_string(pr.exitCode);
+            return parsed;
+        }
+
+        result["success"] = (pr.exitCode == 0);
+        result["output"] = out;
+        if (pr.stdoutTruncated)
+            result["stdout_truncated"] = true;
+        if (pr.exitCode != 0)
+            result["error"] = "tool exit code " + std::to_string(pr.exitCode);
+        return result;
+    }
 
     static std::string runScript(const std::string& runtime, const std::string& script) {
         return runScriptStatic(runtime, script);
@@ -557,28 +586,7 @@ class FeedEngine {
 
     static std::string runScriptWithEnvStatic(const std::string& runtime, const std::string& script,
                                               const std::string& callToolPath) {
-        // Substrate moved to process::run for per-call env, bounded I/O, and
-        // timeout. Behavior is preserved: callers see stdout text (or empty
-        // string on timeout / fork failure). Non-zero exit still returns the
-        // captured stdout — the caller decides whether empty vs non-empty
-        // output means success.
-        process::Spec spec;
-        spec.shell = true;
-        spec.command = runtimeCommand(runtime, script);
-        if (!callToolPath.empty())
-            spec.env["CALL_TOOL"] = callToolPath;
-        // Feed scripts are short-lived polls; cap to 30s to avoid hangs.
-        spec.timeoutMs = 30000;
-        spec.maxStdout = 1024 * 1024;
-        spec.maxStderr = 64 * 1024;
-
-        process::Result pr = process::run(spec);
-        if (pr.timedOut)
-            return "";
-        std::string out = pr.stdoutText;
-        while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
-            out.pop_back();
-        return out;
+        return runFeedPoll(runtime, std::filesystem::path(script), callToolPath);
     }
 
     static std::string runtimeCommand(const std::string& runtime, const std::string& entrypoint) {
