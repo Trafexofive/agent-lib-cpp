@@ -29,6 +29,17 @@ struct FeedResult {
 // ── Poll function signature ──
 using FeedFn = std::function<FeedResult()>;
 
+// ── Feed tool handler signature — receives params (Json::Value), returns
+// a result (Json::Value). Used to reconfigure the feed resource itself
+// (pin/unpin, watchdog url list, etc.) — distinct from a poll.
+using FeedToolFn = std::function<Json::Value(const Json::Value&)>;
+
+// ── Feed tool descriptor — exposed to the model via the <feeds> prompt block
+struct FeedToolSpec {
+    std::string name;
+    std::string description;
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Feed — sovereign class for one feed source
 // ═══════════════════════════════════════════════════════════════════════════
@@ -136,6 +147,65 @@ class Feed {
         return {name_, "", "{}", false};
     }
 
+    // ── Tools — reconfigure the feed resource itself (pin/unpin, watchdog, …) ──
+
+    /// Register a tool handler. Multiple tools per feed are allowed.
+    void registerTool(const std::string& name, FeedToolFn handler) {
+        std::lock_guard<std::mutex> lock(toolsMu_);
+        tools_[name] = std::move(handler);
+    }
+
+    /// Register a tool descriptor (prompt-side metadata only).
+    void registerToolSpec(const FeedToolSpec& spec) {
+        std::lock_guard<std::mutex> lock(specsMu_);
+        specs_[spec.name] = spec;
+    }
+
+    /// Check if a tool is registered.
+    bool hasTool(const std::string& name) const {
+        std::lock_guard<std::mutex> lock(toolsMu_);
+        return tools_.count(name) > 0;
+    }
+
+    /// Call a tool. Returns {success, output, error} Json::Value.
+    Json::Value callTool(const std::string& name, const Json::Value& params) {
+        FeedToolFn fn;
+        {
+            std::lock_guard<std::mutex> lock(toolsMu_);
+            auto it = tools_.find(name);
+            if (it == tools_.end()) {
+                Json::Value err;
+                err["success"] = false;
+                err["error"] = "feed has no tool: " + name_;
+                return err;
+            }
+            fn = it->second;
+        }
+        Json::Value result;
+        try {
+            result = fn(params);
+        } catch (const std::exception& e) {
+            result["success"] = false;
+            result["error"] = std::string("tool threw: ") + e.what();
+        } catch (...) {
+            result["success"] = false;
+            result["error"] = "tool threw: unknown";
+        }
+        if (!result.isMember("success"))
+            result["success"] = true;
+        return result;
+    }
+
+    /// List registered tool specs (prompt-side metadata).
+    std::vector<FeedToolSpec> toolSpecs() const {
+        std::lock_guard<std::mutex> lock(specsMu_);
+        std::vector<FeedToolSpec> out;
+        out.reserve(specs_.size());
+        for (const auto& [_, s] : specs_)
+            out.push_back(s);
+        return out;
+    }
+
     /// Check if cache is fresh (polled within N seconds)
     bool isFresh(int maxAgeSecs = 5) const {
         std::lock_guard<std::mutex> lock(cacheMu_);
@@ -197,6 +267,12 @@ class Feed {
     mutable std::mutex cacheMu_;
     std::optional<FeedResult> latest_;
     std::chrono::steady_clock::time_point lastPoll_;
+
+    mutable std::mutex toolsMu_;
+    std::map<std::string, FeedToolFn> tools_;
+
+    mutable std::mutex specsMu_;
+    std::map<std::string, FeedToolSpec> specs_;
 };
 
 }  // namespace cortex::mk3::feeds

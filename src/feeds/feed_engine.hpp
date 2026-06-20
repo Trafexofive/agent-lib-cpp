@@ -47,6 +47,64 @@ class FeedEngine {
         return true;
     }
 
+    /// Register a tool handler on an existing feed. Returns false if the feed
+    /// is unknown. Backward-compatible — feeds without tools still poll.
+    bool registerFeedTool(const std::string& feedName, const std::string& toolName,
+                          FeedToolFn handler) {
+        auto it = feeds_.find(feedName);
+        if (it == feeds_.end())
+            return false;
+        it->second.registerTool(toolName, std::move(handler));
+        return true;
+    }
+
+    /// Register a tool descriptor (prompt-side metadata) on an existing feed.
+    bool registerFeedToolSpec(const std::string& feedName, const FeedToolSpec& spec) {
+        auto it = feeds_.find(feedName);
+        if (it == feeds_.end())
+            return false;
+        it->second.registerToolSpec(spec);
+        return true;
+    }
+
+    /// Call a tool on a feed by name. Returns {success, output, error} or an
+    /// error Json::Value if the feed or tool is unknown.
+    Json::Value callFeedTool(const std::string& feedName, const std::string& toolName,
+                             const Json::Value& params) {
+        auto it = feeds_.find(feedName);
+        if (it == feeds_.end()) {
+            Json::Value err;
+            err["success"] = false;
+            err["error"] = "unknown feed: " + feedName;
+            return err;
+        }
+        if (!it->second.hasTool(toolName)) {
+            Json::Value err;
+            err["success"] = false;
+            err["error"] = "feed has no tool: " + toolName;
+            return err;
+        }
+        return it->second.callTool(toolName, params);
+    }
+
+    /// Returns true if the feed has a registered tool with the given name.
+    bool feedHasTool(const std::string& feedName, const std::string& toolName) const {
+        auto it = feeds_.find(feedName);
+        return (it != feeds_.end()) && it->second.hasTool(toolName);
+    }
+
+    /// Snapshot of all registered tool specs, grouped by feed name. Useful for
+    /// prompt injection so the model knows what it can reconfigure.
+    std::map<std::string, std::vector<FeedToolSpec>> feedToolSpecs() const {
+        std::map<std::string, std::vector<FeedToolSpec>> out;
+        for (const auto& [name, feed] : feeds_) {
+            auto specs = feed.toolSpecs();
+            if (!specs.empty())
+                out[name] = std::move(specs);
+        }
+        return out;
+    }
+
     /// Register a feed by name + poll function (backward-compat convenience)
     void registerFeed(const std::string& name, FeedFn fn) {
         if (has(name))

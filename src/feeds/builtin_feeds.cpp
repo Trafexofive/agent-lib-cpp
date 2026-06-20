@@ -163,6 +163,59 @@ void registerFeeds() {
     engine.registerFeed("system_clock", pollSystemClock);
     engine.registerFeed("system_stats", pollSystemStats);
     engine.registerFeed("working_directory", pollWorkingDirectory);
+
+    // ── Demo feed tools — prove the feed-tool surface wiring works ──
+    // Feeds without tools keep their old poll-only behavior. Feeds with tools
+    // expose BOTH poll (existing) and tool calls (new). The model uses
+    // <action type="feed" name="<feed>.<tool>" .../> to call a tool.
+
+    // working_directory.refresh — forces a re-poll (useful when the model
+    // suspects cwd or git state changed mid-turn).
+    engine.registerFeedToolSpec("working_directory",
+                                {"refresh", "Force a fresh poll of cwd / git state"});
+    engine.registerFeedTool("working_directory", "refresh",
+                            [](const Json::Value& /*params*/) -> Json::Value {
+                                Json::Value r;
+                                auto fr = FeedEngine::instance().pollOne("working_directory", true);
+                                r["success"] = fr.ok;
+                                if (fr.ok) {
+                                    r["output"] = fr.summary;
+                                    r["data"] = fr.json;
+                                } else {
+                                    r["error"] = fr.summary;
+                                }
+                                return r;
+                            });
+
+    // working_directory.touch — no-op demo that just echoes its params; shows
+    // the tool receives the model's parameters and can return structured data.
+    engine.registerFeedToolSpec("working_directory",
+                                {"touch", "Echo back params (no-op demo tool)"});
+    engine.registerFeedTool("working_directory", "touch",
+                            [](const Json::Value& params) -> Json::Value {
+                                Json::Value r;
+                                r["success"] = true;
+                                r["output"] = "touched";
+                                r["params"] = params;
+                                return r;
+                            });
+
+    // system_clock.refresh — same idea, forces a re-poll.
+    engine.registerFeedToolSpec("system_clock",
+                                {"refresh", "Force a fresh poll of the system clock"});
+    engine.registerFeedTool("system_clock", "refresh",
+                            [](const Json::Value& /*params*/) -> Json::Value {
+                                Json::Value r;
+                                auto fr = FeedEngine::instance().pollOne("system_clock", true);
+                                r["success"] = fr.ok;
+                                if (fr.ok) {
+                                    r["output"] = fr.summary;
+                                    r["data"] = fr.json;
+                                } else {
+                                    r["error"] = fr.summary;
+                                }
+                                return r;
+                            });
 }
 
 }  // namespace cortex::mk3::feeds

@@ -1426,6 +1426,7 @@ std::string Agent::buildDynamicContextPrompt() const {
 
     if (!feeds_.empty()) {
         auto feedResults = feeds::FeedEngine::instance().pollAll();
+        auto toolSpecs = feeds::FeedEngine::instance().feedToolSpecs();
         bool any = false;
         for (auto& fr : feedResults) {
             if (!feeds_.count(fr.name))
@@ -1434,11 +1435,22 @@ std::string Agent::buildDynamicContextPrompt() const {
                 if (ss.tellp() > 0)
                     ss << "\n";
                 ss << "<feeds>\n  <description>Dynamic system context refreshed each turn. "
-                      "Bottom-loaded for prompt-cache stability.</description>\n";
+                      "Bottom-loaded for prompt-cache stability. "
+                      "Each feed may also expose tools — invoke via "
+                      "<action type=\"feed\" name=\"<feed>.<tool>\" .../>.</description>\n";
                 any = true;
             }
             ss << "  <" << fr.name << ">\n";
             ss << "  " << fr.summary << "\n";
+            auto specIt = toolSpecs.find(fr.name);
+            if (specIt != toolSpecs.end() && !specIt->second.empty()) {
+                ss << "    <tools>\n";
+                for (const auto& spec : specIt->second) {
+                    ss << "      <tool name=\"" << spec.name << "\" description=\""
+                       << spec.description << "\"/>\n";
+                }
+                ss << "    </tools>\n";
+            }
             ss << "  </" << fr.name << ">\n";
         }
         if (any)

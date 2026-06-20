@@ -125,7 +125,27 @@ inline Json::Value dispatchAgent(const protocol::ParsedAction& action, AgentDisp
 }
 
 // ── Feed dispatcher — agent calls feed as action, triggers poll with optional params ──
+// If action.name contains a '.' the part before is the feed name and the part
+// after is a tool name registered on that feed (e.g. "workspace.pin"). Otherwise
+// the action is treated as a poll (existing behavior).
 inline Json::Value dispatchFeed(const protocol::ParsedAction& action) {
+    auto& engine = feeds::FeedEngine::instance();
+
+    // Tool call path: name = "<feed>.<tool>"
+    auto dot = action.name.find('.');
+    if (dot != std::string::npos) {
+        std::string feedName = action.name.substr(0, dot);
+        std::string toolName = action.name.substr(dot + 1);
+        if (!toolName.empty() && engine.feedHasTool(feedName, toolName)) {
+            Json::Value result = engine.callFeedTool(feedName, toolName, action.params);
+            result["feed"] = feedName;
+            result["tool"] = toolName;
+            return result;
+        }
+        // Fall through to poll if the dotted form wasn't a known tool.
+    }
+
+    // Poll path: name = "<feed>" (existing behavior)
     // Pass action params to feed script as FEED_PARAMS env var
     std::string paramsJson;
     if (!action.params.isNull() && !action.params.empty()) {
@@ -137,7 +157,7 @@ inline Json::Value dispatchFeed(const protocol::ParsedAction& action) {
     }
     setenv("FEED_PARAMS", paramsJson.c_str(), 1);
 
-    auto fr = feeds::FeedEngine::instance().pollOne(action.name, true);
+    auto fr = engine.pollOne(action.name, true);
 
     Json::Value result;
     result["success"] = fr.ok;

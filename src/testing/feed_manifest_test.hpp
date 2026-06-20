@@ -39,6 +39,7 @@ struct FeedManifestTest {
         testLoadPythonFeed();
         testFeedOutputFormat();
         testFeedInjectionIntoPrompt();
+        testFeedTools();
         cleanup();
 
         std::cout << "\n  " << passed << "/" << (passed + failed) << " passed\n";
@@ -75,6 +76,44 @@ struct FeedManifestTest {
         check(hasClock, "system_clock feed exists");
         check(hasStats, "system_stats feed exists");
         check(hasCwd, "working_directory feed exists");
+    }
+
+    // ── Test: Feed tools — register, expose, dispatch via engine ──
+    void testFeedTools() {
+        auto& engine = feeds::FeedEngine::instance();
+
+        // Built-in feeds were registered with demo tools.
+        check(engine.feedHasTool("working_directory", "refresh"),
+              "working_directory.refresh tool exists");
+        check(engine.feedHasTool("working_directory", "touch"),
+              "working_directory.touch tool exists");
+        check(engine.feedHasTool("system_clock", "refresh"),
+              "system_clock.refresh tool exists");
+        check(!engine.feedHasTool("system_clock", "missing"),
+              "unknown tool reported as missing");
+
+        // Tool descriptors should be exposed for prompt injection.
+        auto specs = engine.feedToolSpecs();
+        check(specs.count("working_directory") > 0, "working_directory tool specs exposed");
+        check(specs.count("system_clock") > 0, "system_clock tool specs exposed");
+
+        // Dispatching a tool returns success + structured data.
+        Json::Value params(Json::objectValue);
+        params["message"] = "hello";
+        auto result = engine.callFeedTool("working_directory", "touch", params);
+        check(result.get("success", false).asBool(), "touch tool returns success");
+        check(result.isMember("output"), "touch tool returns output");
+        check(result.isMember("params"), "touch tool returns params");
+
+        // refresh tool returns success + data
+        auto refresh = engine.callFeedTool("system_clock", "refresh", Json::Value());
+        check(refresh.get("success", false).asBool(), "refresh tool returns success");
+        check(refresh.isMember("data"), "refresh tool returns data");
+
+        // Unknown feed/tool returns clean error.
+        auto err = engine.callFeedTool("nope", "missing", Json::Value());
+        check(!err.get("success", true).asBool(), "unknown feed returns success=false");
+        check(err.isMember("error"), "unknown feed returns error message");
     }
 
     // ── Test: Python feed loads from manifest ──
