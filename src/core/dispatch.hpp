@@ -128,6 +128,10 @@ inline Json::Value dispatchAgent(const protocol::ParsedAction& action, AgentDisp
 // If action.name contains a '.' the part before is the feed name and the part
 // after is a tool name registered on that feed (e.g. "workspace.pin"). Otherwise
 // the action is treated as a poll (existing behavior).
+//
+// Dotted form is always interpreted as a tool call — it never silently falls
+// through to polling the dotted literal as a feed name. This keeps errors
+// unambiguous when the model misspells a feed tool.
 inline Json::Value dispatchFeed(const protocol::ParsedAction& action) {
     auto& engine = feeds::FeedEngine::instance();
 
@@ -136,13 +140,40 @@ inline Json::Value dispatchFeed(const protocol::ParsedAction& action) {
     if (dot != std::string::npos) {
         std::string feedName = action.name.substr(0, dot);
         std::string toolName = action.name.substr(dot + 1);
-        if (!toolName.empty() && engine.feedHasTool(feedName, toolName)) {
-            Json::Value result = engine.callFeedTool(feedName, toolName, action.params);
-            result["feed"] = feedName;
-            result["tool"] = toolName;
-            return result;
+
+        // Empty tool name (trailing dot) is always an error.
+        if (toolName.empty()) {
+            Json::Value err;
+            err["success"] = false;
+            err["feed"] = feedName;
+            err["error"] = "feed action name '" + action.name + "' has empty tool name";
+            return err;
         }
-        // Fall through to poll if the dotted form wasn't a known tool.
+
+        // Unknown feed must be reported, not silently polled.
+        if (!engine.has(feedName)) {
+            Json::Value err;
+            err["success"] = false;
+            err["feed"] = feedName;
+            err["tool"] = toolName;
+            err["error"] = "unknown feed: " + feedName;
+            return err;
+        }
+
+        // Known feed but unknown tool — report missing tool, don't poll.
+        if (!engine.feedHasTool(feedName, toolName)) {
+            Json::Value err;
+            err["success"] = false;
+            err["feed"] = feedName;
+            err["tool"] = toolName;
+            err["error"] = "unknown feed tool: " + action.name;
+            return err;
+        }
+
+        Json::Value result = engine.callFeedTool(feedName, toolName, action.params);
+        result["feed"] = feedName;
+        result["tool"] = toolName;
+        return result;
     }
 
     // Poll path: name = "<feed>" (existing behavior)

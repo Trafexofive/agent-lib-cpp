@@ -12,6 +12,7 @@
 #include <iostream>
 #include <string>
 
+#include "../core/dispatch.hpp"
 #include "../feeds/feed_engine.hpp"
 
 namespace cortex::mk3::tests {
@@ -40,6 +41,7 @@ struct FeedManifestTest {
         testFeedOutputFormat();
         testFeedInjectionIntoPrompt();
         testFeedTools();
+        testUnknownDottedFeedToolDispatch();
         cleanup();
 
         std::cout << "\n  " << passed << "/" << (passed + failed) << " passed\n";
@@ -106,6 +108,24 @@ struct FeedManifestTest {
         auto err = engine.callFeedTool("nope", "missing", Json::Value());
         check(!err.get("success", true).asBool(), "unknown feed returns success=false");
         check(err.isMember("error"), "unknown feed returns error message");
+    }
+
+    // ── Test: Dotted feed tool syntax hard-errors for unknown tools ──
+    void testUnknownDottedFeedToolDispatch() {
+        protocol::ParsedAction action;
+        action.type = protocol::ActionType::FEED;
+        action.name = "working_directory.missing_tool";
+        action.params = Json::Value(Json::objectValue);
+
+        Json::Value result = dispatch::dispatchFeed(action);
+        check(!result.get("success", true).asBool(),
+              "unknown dotted feed tool returns success=false");
+        check(result.get("feed", "").asString() == "working_directory",
+              "unknown dotted feed tool reports feed name");
+        check(result.get("tool", "").asString() == "missing_tool",
+              "unknown dotted feed tool reports tool name");
+        check(result.get("error", "").asString().find("unknown feed tool") != std::string::npos,
+              "unknown dotted feed tool reports tool error");
     }
 
     // ── Test: Python feed loads from manifest ──
