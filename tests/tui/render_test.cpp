@@ -102,6 +102,23 @@ int main() {
         check(occurrences == 1, "protocol render is idempotent across frames");
     }
 
+    // Agent action icon must not reset the background inside the card.
+    {
+        ProtocolView pv;
+        pv.addAction({ActionType::AGENT, "default", "a1", "ping", true});
+        auto lines = pv.render(80);
+        bool badReset = false;
+        for (const auto& line : lines) {
+            auto arrow = line.find("→");
+            auto name = line.find("default");
+            auto reset = line.find("\033[0m");
+            if (arrow != std::string::npos && name != std::string::npos &&
+                reset != std::string::npos && reset > arrow && reset < name)
+                badReset = true;
+        }
+        check(!badReset, "agent action icon does not reset card background");
+    }
+
     // Tool output ANSI is preserved by default and can be disabled.
     {
         ProtocolView pv;

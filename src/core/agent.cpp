@@ -662,8 +662,9 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 iterationRuntimeOutput += resultTag + "\n";
             }
 
-            // Store protocol result
-            if (!ctx.debug && !ctx.raw) {
+            // Store protocol result for TUI timeline. Debug mode must still show
+            // action/result cards; only raw mode suppresses structured UI.
+            if (!ctx.raw) {
                 bool ok = result.get("success", false).asBool();
                 std::string summary;
                 if (ok) {

@@ -2027,9 +2027,10 @@ static int cmdRun(CliConfig& cli) {
             renderer.setResponse(response);
             if (!response.empty())
                 frameClock.requestFrame();
-            const bool hasRenderedProtocol = !acts.empty() || !ress.empty();
-            const bool showLiveThought = !hasRenderedProtocol && response.empty() &&
-                                         (phase == "waiting provider" || phase == "parsing protocol");
+            // Thought stream is a first-class live surface. Keep it visible by
+            // default until the final response starts; do not clear it merely
+            // because an action/result card has rendered.
+            const bool showLiveThought = response.empty() && !thought.empty();
             if (showLiveThought) {
                 if (renderer.setThought(thought))
                     frameClock.requestFrame();

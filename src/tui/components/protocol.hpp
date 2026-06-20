@@ -210,7 +210,9 @@ class ProtocolView {
     static std::string actionIcon(const ActionEvent& a) {
         switch (a.type) {
             case ActionType::AGENT:
-                return "\033[38;2;255;180;0m→ \033[0m";
+                // Do not use \033[0m here: it resets background color and creates
+                // a visible gap after the arrow inside the action card.
+                return "\033[38;2;255;180;0m→ " + fgReset();
             default:
                 return fgDim() +
                        std::string(a.type == ActionType::TOOL    ? "⚙ "
