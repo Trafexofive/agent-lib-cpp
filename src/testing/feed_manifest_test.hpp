@@ -82,11 +82,11 @@ struct FeedManifestTest {
     void testFeedTools() {
         auto& engine = feeds::FeedEngine::instance();
 
-        // Built-in feeds were registered with demo tools.
+        // Built-in feeds expose real refresh tools only; no fake/no-op demo tools.
         check(engine.feedHasTool("working_directory", "refresh"),
               "working_directory.refresh tool exists");
-        check(engine.feedHasTool("working_directory", "touch"),
-              "working_directory.touch tool exists");
+        check(!engine.feedHasTool("working_directory", "touch"),
+              "working_directory.touch demo tool is not exposed");
         check(engine.feedHasTool("system_clock", "refresh"),
               "system_clock.refresh tool exists");
         check(!engine.feedHasTool("system_clock", "missing"),
@@ -96,14 +96,6 @@ struct FeedManifestTest {
         auto specs = engine.feedToolSpecs();
         check(specs.count("working_directory") > 0, "working_directory tool specs exposed");
         check(specs.count("system_clock") > 0, "system_clock tool specs exposed");
-
-        // Dispatching a tool returns success + structured data.
-        Json::Value params(Json::objectValue);
-        params["message"] = "hello";
-        auto result = engine.callFeedTool("working_directory", "touch", params);
-        check(result.get("success", false).asBool(), "touch tool returns success");
-        check(result.isMember("output"), "touch tool returns output");
-        check(result.isMember("params"), "touch tool returns params");
 
         // refresh tool returns success + data
         auto refresh = engine.callFeedTool("system_clock", "refresh", Json::Value());

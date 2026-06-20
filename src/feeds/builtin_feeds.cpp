@@ -164,9 +164,9 @@ void registerFeeds() {
     engine.registerFeed("system_stats", pollSystemStats);
     engine.registerFeed("working_directory", pollWorkingDirectory);
 
-    // ── Demo feed tools — prove the feed-tool surface wiring works ──
+    // ── Feed tools ──
     // Feeds without tools keep their old poll-only behavior. Feeds with tools
-    // expose BOTH poll (existing) and tool calls (new). The model uses
+    // expose BOTH poll (existing) and tool calls. The model uses
     // <action type="feed" name="<feed>.<tool>" .../> to call a tool.
 
     // working_directory.refresh — forces a re-poll (useful when the model
@@ -184,19 +184,6 @@ void registerFeeds() {
                                 } else {
                                     r["error"] = fr.summary;
                                 }
-                                return r;
-                            });
-
-    // working_directory.touch — no-op demo that just echoes its params; shows
-    // the tool receives the model's parameters and can return structured data.
-    engine.registerFeedToolSpec("working_directory",
-                                {"touch", "Echo back params (no-op demo tool)"});
-    engine.registerFeedTool("working_directory", "touch",
-                            [](const Json::Value& params) -> Json::Value {
-                                Json::Value r;
-                                r["success"] = true;
-                                r["output"] = "touched";
-                                r["params"] = params;
                                 return r;
                             });
 
