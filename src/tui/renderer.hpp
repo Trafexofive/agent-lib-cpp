@@ -99,21 +99,16 @@ class TuiRenderer {
     // Stateless ordered transcript render. The agent runtime owns the order.
     std::vector<std::string> renderTranscript(const std::vector<ProtocolEvent>& events,
                                              const std::string& responseText, int width) const {
-        // Subtle transcript background — same for thought and response blocks.
-        // Action/result cards draw their own (darker) background, so this shows
-        // through only on non-card areas.
+        // Subtle background applied ONLY to thought blocks. Same 1-row padding
+        // as action/result cards so thought reads as a card too. Background
+        // spans the full terminal width via padRight, no end-of-line holes.
         const std::string bg = "\033[48;2;18;22;32m";
-        const std::string bgReset = "\033[49m";
-        const std::string pad = bg + std::string(width, ' ') + bgReset;
-
         std::vector<std::string> lines;
-        if (events.empty() && responseText.empty())
-            return lines;
-        lines.push_back(pad);
 
         for (const auto& ev : events) {
             switch (ev.kind) {
                 case ProtocolEventKind::THOUGHT: {
+                    lines.push_back(padRight(bg, width));
                     std::istringstream ts(ev.text);
                     std::string tl;
                     while (std::getline(ts, tl)) {
@@ -121,9 +116,12 @@ class TuiRenderer {
                             tl.pop_back();
                         if (tl.empty())
                             continue;
-                        std::string line = bg + ansi::dim() + tl + ansi::reset() + bgReset;
+                        // padRight appends spaces under the active bg then resets,
+                        // so the row fills the full width with no bg holes.
+                        std::string line = bg + ansi::dim() + tl;
                         lines.push_back(padRight(line, width));
                     }
+                    lines.push_back(padRight(bg, width));
                     break;
                 }
                 case ProtocolEventKind::ACTION: {
@@ -165,21 +163,15 @@ class TuiRenderer {
                     }
             }
             if (hasContent && !rendered.empty()) {
-                lines.push_back(bg + ansi::dim() + std::string("── Response ──") + ansi::reset() +
-                                bgReset);
-                for (auto& l : rendered) {
-                    lines.push_back(bg + l + bgReset);
-                }
+                lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
+                lines.insert(lines.end(), rendered.begin(), rendered.end());
             } else if (!response_.empty()) {
-                lines.push_back(bg + ansi::dim() + std::string("── Response ──") + ansi::reset() +
-                                bgReset);
+                lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
             } else if (!responseText.empty()) {
-                lines.push_back(bg + ansi::dim() + std::string("── Response ──") + ansi::reset() +
-                                bgReset);
-                lines.push_back(bg + responseText + bgReset);
+                lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
+                lines.push_back(responseText);
             }
         }
-        lines.push_back(pad);
         return lines;
     }
 
