@@ -44,6 +44,7 @@ struct FeedManifestTest {
         testUnknownDottedFeedToolDispatch();
         testFeedManifestTools();
         testFeedManifestToolInvocation();
+        testFeedRuntimePerCallEnv();
         cleanup();
 
         std::cout << "\n  " << passed << "/" << (passed + failed) << " passed\n";
@@ -363,6 +364,67 @@ struct FeedManifestTest {
               "C++-registered refresh tool still succeeds");
         check(!clk.isMember("ran"),
               "C++-registered refresh tool did not run a manifest handler");
+    }
+
+    // ── Test: feed poll runs on the hardened process::run substrate ─────
+    // The key correctness benefit over the old popen path is per-call env:
+    // the child sees CALL_TOOL set, but the parent process env is not
+    // mutated. This test would have failed under the old setenv-based
+    // implementation if a prior call left the env in a weird state.
+    void testFeedRuntimePerCallEnv() {
+        fs::path feedDir = testDir / "feeds" / "per_call_env";
+        fs::create_directories(feedDir);
+
+        {
+            std::ofstream f(feedDir / "check.sh");
+            f << "#!/usr/bin/env bash\n";
+            f << "if [ -z \"${CALL_TOOL:-}\" ]; then\n";
+            f << "  echo 'no_call_tool'\n";
+            f << "else\n";
+            f << "  echo 'has_call_tool'\n";
+            f << "fi\n";
+        }
+        fs::permissions(feedDir / "check.sh",
+                        fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
+                        fs::perm_options::add);
+
+        {
+            std::ofstream f(feedDir / "feed.yml");
+            f << "kind: Feed\n";
+            f << "name: per_call_env_feed\n";
+            f << "runtime: bash\n";
+            f << "entrypoint: ./check.sh\n";
+        }
+
+        unsetenv("CALL_TOOL");
+
+        auto& engine = feeds::FeedEngine::instance();
+        auto r = engine.loadFeedManifest((feedDir / "feed.yml").string());
+        check(r.success, "per-call env feed manifest loads");
+        check(r.summary == "has_call_tool",
+              "feed poll child sees CALL_TOOL set in its env");
+
+        // Parent process env must not be polluted.
+        check(getenv("CALL_TOOL") == nullptr,
+              "CALL_TOOL is not leaked to parent process after feed poll");
+
+        // Subsequent poll must still work and not be affected by any state
+        // the first call might have left behind.
+        auto results = engine.pollAll();
+        bool found = false;
+        for (const auto& fr : results) {
+            if (fr.name == "per_call_env_feed") {
+                found = true;
+                check(fr.summary == "has_call_tool",
+                      "per-call env feed re-poll still has CALL_TOOL set");
+                break;
+            }
+        }
+        check(found, "per-call env feed present in pollAll");
+        check(getenv("CALL_TOOL") == nullptr,
+              "CALL_TOOL still not leaked after subsequent poll");
+
+        unsetenv("CALL_TOOL");
     }
 
     // ── Test: feed injection into prompt produces XML ──

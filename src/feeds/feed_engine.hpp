@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "../core/mini_yaml.hpp"
+#include "../utils/process.hpp"
 #include "feed.hpp"
 
 namespace cortex::mk3::feeds {
@@ -556,35 +557,28 @@ class FeedEngine {
 
     static std::string runScriptWithEnvStatic(const std::string& runtime, const std::string& script,
                                               const std::string& callToolPath) {
-        std::string cmd = runtimeCommand(runtime, script) + " 2>/dev/null";
-        std::string oldCallTool;
-        const char* old = getenv("CALL_TOOL");
-        if (old)
-            oldCallTool = old;
+        // Substrate moved to process::run for per-call env, bounded I/O, and
+        // timeout. Behavior is preserved: callers see stdout text (or empty
+        // string on timeout / fork failure). Non-zero exit still returns the
+        // captured stdout — the caller decides whether empty vs non-empty
+        // output means success.
+        process::Spec spec;
+        spec.shell = true;
+        spec.command = runtimeCommand(runtime, script);
         if (!callToolPath.empty())
-            setenv("CALL_TOOL", callToolPath.c_str(), 1);
+            spec.env["CALL_TOOL"] = callToolPath;
+        // Feed scripts are short-lived polls; cap to 30s to avoid hangs.
+        spec.timeoutMs = 30000;
+        spec.maxStdout = 1024 * 1024;
+        spec.maxStderr = 64 * 1024;
 
-        FILE* p = popen(cmd.c_str(), "r");
-        if (!p) {
-            if (!oldCallTool.empty())
-                setenv("CALL_TOOL", oldCallTool.c_str(), 1);
-            else
-                unsetenv("CALL_TOOL");
+        process::Result pr = process::run(spec);
+        if (pr.timedOut)
             return "";
-        }
-
-        std::string output;
-        char buf[4096];
-        while (fgets(buf, sizeof(buf), p))
-            output += buf;
-        pclose(p);
-        if (!oldCallTool.empty())
-            setenv("CALL_TOOL", oldCallTool.c_str(), 1);
-        else
-            unsetenv("CALL_TOOL");
-        while (!output.empty() && (output.back() == '\n' || output.back() == '\r'))
-            output.pop_back();
-        return output;
+        std::string out = pr.stdoutText;
+        while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
+            out.pop_back();
+        return out;
     }
 
     static std::string runtimeCommand(const std::string& runtime, const std::string& entrypoint) {
