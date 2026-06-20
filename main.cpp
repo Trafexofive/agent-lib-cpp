@@ -1940,6 +1940,18 @@ static int cmdRun(CliConfig& cli) {
         cmd.clear();
         cortex::mk3::g_running = true;
         streaming = true;
+        agentDone.store(false, std::memory_order_release);
+        firstToken = true;
+        lastEventCount = 0;
+        {
+            std::lock_guard<std::mutex> lk(streamMtx);
+            snapEvents.clear();
+            snapResponse.clear();
+            snapRaw.clear();
+            snapPhase = "waiting provider";
+            snapDirty = false;
+            snapClearRenderer = false;
+        }
         streamPhase = "waiting provider";
         streamActionCount = 0;
         streamResultCount = 0;
