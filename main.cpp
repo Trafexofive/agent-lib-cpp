@@ -1571,6 +1571,7 @@ static int cmdRun(CliConfig& cli) {
     size_t streamResultCount = 0;
     size_t streamRespBytes = 0;
     size_t streamRawBytes = 0;
+    std::string streamThoughtPreview;
 
     auto statusState = [&]() {
         tui::StatusBarState state;
@@ -1585,6 +1586,7 @@ static int cmdRun(CliConfig& cli) {
         state.mode = renderer.mode();
         state.provider = acfg.provider;
         state.model = acfg.model;
+        state.thoughtPreview = streamThoughtPreview;
         return state;
     };
     auto statusBarText = [&](int displaySize) -> std::string {
@@ -1914,6 +1916,7 @@ static int cmdRun(CliConfig& cli) {
         streamResultCount = 0;
         streamRespBytes = 0;
         streamRawBytes = 0;
+        streamThoughtPreview.clear();
         streamStart_ = std::chrono::steady_clock::now();
         input.clearEscape();
 
@@ -2002,6 +2005,7 @@ static int cmdRun(CliConfig& cli) {
             streamRespBytes = response.size();
             streamRawBytes = raw.size();
             streamPhase = phase;
+            streamThoughtPreview = thought;
 
             while (lastAct < acts.size()) {
                 const auto& a = acts[lastAct++];
@@ -2027,16 +2031,9 @@ static int cmdRun(CliConfig& cli) {
             renderer.setResponse(response);
             if (!response.empty())
                 frameClock.requestFrame();
-            // Renderer places thought below protocol cards, so keeping it visible
-            // no longer stacks over the action/result region.
-            const bool showLiveThought = !thought.empty();
-            if (showLiveThought) {
-                if (renderer.setThought(thought))
-                    frameClock.requestFrame();
-            } else {
-                if (renderer.setThought(""))
-                    frameClock.requestFrame();
-            }
+            // Thought is shown in the status surface, not the transcript renderer.
+            if (renderer.setThought(""))
+                frameClock.requestFrame();
         };
 
         // Run agent in background thread. The provider callback must never render

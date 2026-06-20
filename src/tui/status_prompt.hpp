@@ -2,6 +2,7 @@
 #pragma once
 
 #include <chrono>
+#include <algorithm>
 #include <sstream>
 #include <string>
 
@@ -23,6 +24,7 @@ struct StatusBarState {
     RenderMode mode = RenderMode::FULL;
     std::string provider;
     std::string model;
+    std::string thoughtPreview;
 };
 
 class StatusPromptRenderer {
@@ -51,8 +53,38 @@ class StatusPromptRenderer {
         }
 
         out << ansi::dim() << "  " << TuiRenderer::modeName(state.mode) << " · "
-            << state.provider << "/" << state.model << ansi::reset();
+            << state.provider << "/" << state.model;
+        if (!state.thoughtPreview.empty()) {
+            std::string preview = oneLine(state.thoughtPreview);
+            if (preview.size() > 90)
+                preview = preview.substr(0, 87) + "...";
+            out << " · thinking: " << preview;
+        }
+        out << ansi::reset();
         return out.str();
+    }
+
+    static std::string oneLine(std::string s) {
+        for (char& c : s) {
+            if (c == '\n' || c == '\r' || c == '\t')
+                c = ' ';
+        }
+        size_t first = s.find_first_not_of(' ');
+        if (first == std::string::npos)
+            return "";
+        size_t last = s.find_last_not_of(' ');
+        s = s.substr(first, last - first + 1);
+        std::string compact;
+        compact.reserve(s.size());
+        bool prevSpace = false;
+        for (char c : s) {
+            bool sp = c == ' ';
+            if (sp && prevSpace)
+                continue;
+            compact.push_back(c);
+            prevSpace = sp;
+        }
+        return compact;
     }
 
     static std::string promptLine(const Input& input, bool dialogActive) {

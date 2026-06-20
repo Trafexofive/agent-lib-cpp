@@ -114,22 +114,11 @@ class TuiRenderer {
    private:
     std::vector<std::string> renderFull() {
         std::vector<std::string> lines;
-        // Protocol events render first. This prevents a growing thought stream
-        // from stacking above and visually pushing/overlapping action cards.
+        // Protocol events + response are the transcript. Thought is deliberately
+        // rendered outside this flow (status surface) so it cannot split
+        // action/result/response continuity or be archived as conversation text.
         for (auto& l : pv_.render(width_))
             lines.push_back(l);
-        // Model thinking remains visible, but below protocol cards so action
-        // calls appear immediately and stay anchored.
-        if (!thought_.empty()) {
-            std::istringstream ts(thought_);
-            std::string tl;
-            while (std::getline(ts, tl)) {
-                if (!tl.empty() && tl.back() == '\r')
-                    tl.pop_back();
-                if (!tl.empty())
-                    lines.push_back(ansi::dim() + tl + ansi::reset());
-            }
-        }
         // Response with live markdown rendering
         if (!response_.empty()) {
             if (responseDirty_ || lastMarkdownText_ != response_) {
