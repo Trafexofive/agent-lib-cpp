@@ -6,6 +6,8 @@
 
 #include "agent.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -187,6 +189,34 @@ static std::string formatDelegatedTrace(const std::string& agentName,
         }
     }
     return os.str();
+}
+
+static bool jsonBool(const Json::Value& params, const std::string& key, bool def = false) {
+    if (!params.isObject() || !params.isMember(key))
+        return def;
+    const Json::Value& v = params[key];
+    if (v.isBool())
+        return v.asBool();
+    if (v.isString()) {
+        std::string s = v.asString();
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return s == "true" || s == "1" || s == "yes" || s == "on";
+    }
+    if (v.isNumeric())
+        return v.asInt() != 0;
+    return def;
+}
+
+static Json::Value makeSubAgentResult(const std::string& output, const std::string& trace,
+                                      bool dumpContext) {
+    Json::Value r;
+    r["success"] = true;
+    r["output"] = output;
+    if (dumpContext)
+        r["trace"] = trace;
+    return r;
 }
 
 static std::vector<std::string> splitPath(const std::string& path) {
@@ -468,8 +498,9 @@ std::string Agent::runLoop(AgentContext& ctx) {
 
         dispatch::ActionDispatcher d;
         // Wire agent delegation to sub-agent prompt
-        d.agentDelegate = [this, &ctx](const std::string& agentName,
+        d.agentDelegate = [this, &ctx](const protocol::ParsedAction& action,
                                        const std::string& instruction) -> Json::Value {
+            const std::string& agentName = action.name;
             auto it = subAgents_.find(agentName);
             if (it == subAgents_.end()) {
                 Json::Value err;
@@ -477,17 +508,21 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 err["error"] = "Unknown sub-agent: " + agentName;
                 return err;
             }
-            std::string childSessionId = deriveSubAgentSessionId(ctx, config_, agentName);
+
+            bool forceEphemeral = jsonBool(action.params, "ephemeral", false);
+            bool dumpContext = jsonBool(action.params, "dump_context", false);
+            std::string childSessionId =
+                forceEphemeral ? "" : deriveSubAgentSessionId(ctx, config_, agentName);
             std::string result = childSessionId.empty()
-                                     ? it->second->prompt(instruction)
+                                     ? it->second->prompt(instruction, "", forceEphemeral)
                                      : it->second->prompt(instruction, childSessionId, false);
-            subAgentTraces_.push_back(formatDelegatedTrace(agentName, instruction,
-                                                           it->second->iterationPrompts(),
-                                                           it->second->iterationOutputs()));
-            Json::Value r;
-            r["success"] = true;
-            r["output"] = result;
-            return r;
+            std::string trace;
+            if (dumpContext) {
+                trace = formatDelegatedTrace(agentName, instruction, it->second->iterationPrompts(),
+                                             it->second->iterationOutputs());
+                subAgentTraces_.push_back(trace);
+            }
+            return makeSubAgentResult(result, trace, dumpContext);
         };
 
         // Wire workflow execution — creates a WorkflowRuntime with tool + agent callbacks
@@ -1172,8 +1207,11 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
     if (!subAgents_.empty()) {
         ss << "    <sub_agents>\n"
               "        <description>Delegatable agents callable with <action type=\"agent\" "
-              "name=\"AGENT_NAME\" id=\"a1\" mode=\"sync\">plain text instruction</action>. "
-              "Inputs and outputs are plain text unless the sub-agent says otherwise.</description>\n";
+              "name=\"AGENT_NAME\" id=\"a1\" mode=\"sync\" ephemeral=\"true|false\" "
+              "dump_context=\"true|false\">plain text instruction</action>. "
+              "Inputs and outputs are plain text unless the sub-agent says otherwise. "
+              "Default result contains only the sub-agent final response. Set dump_context=\"true\" "
+              "only when you explicitly need its prompts/runtime trace.</description>\n";
         for (const auto& [name, agent] : subAgents_) {
             const auto& cfg = agent->config();
             ss << "        <sub_agent name=\"" << xmlAttr(name) << "\"";

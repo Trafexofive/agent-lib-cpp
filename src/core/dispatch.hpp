@@ -75,10 +75,11 @@ inline Json::Value dispatchRelic(const protocol::ParsedAction& action) {
     }
 }
 
-// ── Agent dispatcher (placeholder — sub-agent delegation) ──
-// Called with a callback to the parent agent for sub-agent execution
+// ── Agent dispatcher — sub-agent delegation.
+// Callback receives the full ParsedAction so XML modifiers such as
+// ephemeral="true" and dump_context="true" survive into runtime behavior.
 using AgentDispatchFn =
-    std::function<Json::Value(const std::string& agentName, const std::string& instruction)>;
+    std::function<Json::Value(const protocol::ParsedAction& action, const std::string& instruction)>;
 
 inline Json::Value dispatchAgent(const protocol::ParsedAction& action, AgentDispatchFn delegate) {
     if (!delegate) {
@@ -103,7 +104,7 @@ inline Json::Value dispatchAgent(const protocol::ParsedAction& action, AgentDisp
         if (instruction.empty())
             instruction = "Execute task";
     }
-    Json::Value subResult = delegate(action.name, instruction);
+    Json::Value subResult = delegate(action, instruction);
     Json::Value result;
     if (subResult.isString()) {
         // Sub returned a plain string — DP01: empty string is still a valid

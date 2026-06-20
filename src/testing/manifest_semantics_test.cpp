@@ -299,6 +299,10 @@ import:
     CHECK(prompt.find("<sub_agents>") != std::string::npos, "prompt missing <sub_agents>");
     CHECK(prompt.find("<sub_agent name=\"default\"") != std::string::npos,
           "prompt missing default <sub_agent>");
+    CHECK(prompt.find("ephemeral=\"true|false\"") != std::string::npos,
+          "prompt missing sub-agent ephemeral modifier");
+    CHECK(prompt.find("dump_context=\"true|false\"") != std::string::npos,
+          "prompt missing sub-agent dump_context modifier");
     CHECK(prompt.find("<tool name=\"exec\"") != std::string::npos,
           "prompt missing sub-agent tool metadata");
     size_t subStart = prompt.find("<sub_agents>");
