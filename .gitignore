@@ -32,6 +32,7 @@ sandbox-context-test
 policy-test
 ask-tool-test
 workflow-engine-test
+provider-model-info-test
 iterations.md
 raw.md
 .pi/
@@ -53,7 +54,6 @@ modules/
 docs/architecture/
 docs/design/
 docs/manifests/
-docs/TICKETS.md
 
 # Test results
 tests/results/
