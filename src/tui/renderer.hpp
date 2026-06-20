@@ -159,12 +159,12 @@ class TuiRenderer {
             }
         }
         if (!responseText.empty()) {
-            // Response: top/bottom bg delimiter rows. Inside stays bg-free so
-            // markdown rendering keeps full ANSI compliance (its internal
-            // resets don't break our background).
+            // Response: no extra top blank row. Body gets a 1col left inset;
+            // bottom delimiter remains bg-only. Body stays bg-free so markdown
+            // rendering keeps full ANSI compliance.
             const std::string respBg = "\033[48;2;28;25;38m";
             Markdown localMd;
-            localMd.setWidth(width - 4);
+            localMd.setWidth(width - 5);
             localMd.setText(responseText);
             auto rendered = localMd.render();
             bool hasContent = false;
@@ -175,12 +175,11 @@ class TuiRenderer {
                         break;
                     }
             }
-            lines.push_back(padRight(respBg, width));
             if (hasContent && !rendered.empty()) {
                 for (auto& l : rendered)
-                    lines.push_back(l);
+                    lines.push_back(" " + l);
             } else if (!responseText.empty()) {
-                lines.push_back(responseText);
+                lines.push_back(" " + responseText);
             }
             lines.push_back(padRight(respBg, width));
         }
