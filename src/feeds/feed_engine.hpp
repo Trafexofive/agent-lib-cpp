@@ -20,6 +20,21 @@
 
 namespace cortex::mk3::feeds {
 
+// ── Parsed manifest-side feed tool descriptor ────────────────────────────────
+// Stored from feed.yml's `tools:` block. Distinct from FeedToolSpec, which is
+// the prompt-side descriptor for C++-registered feed tools. These two
+// sources are kept separate so manifest-declared tools that haven't been
+// wired to a runtime handler are not advertised to the model as callable.
+struct ManifestFeedTool {
+    std::string name;
+    std::string description;
+    std::string runtime;    // optional — defaults to feed runtime
+    std::string entrypoint; // optional — required for non-builtin tools
+    std::string buildCommand;
+    std::string buildCwd;
+    std::string buildOutput;
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // FeedEngine — orchestrates Feed objects, provides manifest loading
 // ═══════════════════════════════════════════════════════════════════════════
@@ -205,6 +220,7 @@ class FeedEngine {
         std::string name;
         std::string summary;
         std::string error;
+        std::vector<ManifestFeedTool> tools;
     };
 
     ManifestResult loadFeedManifest(const std::string& path) {
@@ -237,7 +253,44 @@ class FeedEngine {
         if (runtime.empty())
             runtime = "builtin";
 
+        // Parse the optional `tools:` block. Manifest-declared feed tools are
+        // stored separately and are NOT advertised to the model until a runtime
+        // handler exists for them. That keeps the prompt truthful and lets
+        // callers distinguish "unknown feed tool" from "feed tool not yet wired".
+        std::vector<ManifestFeedTool> tools;
+        if (auto* toolsNode = ManifestYaml::find(root, "tools")) {
+            for (const auto& entry : toolsNode->children) {
+                ManifestFeedTool tool;
+                // Block-style list items put the first `key: value` on the
+                // item node itself (entry.key / entry.value), not as a
+                // child — so `- name: foo` surfaces "foo" on entry.value.
+                // Fall back to that so authors can write the conventional
+                // shape without an extra child `name:` key.
+                tool.name = ManifestYaml::get(entry, "name");
+                if (tool.name.empty() && entry.key == "name")
+                    tool.name = entry.value;
+                tool.description = ManifestYaml::get(entry, "description");
+                tool.runtime = ManifestYaml::get(entry, "runtime", runtime);
+                tool.entrypoint = ManifestYaml::get(entry, "entrypoint");
+                if (auto* buildNode = ManifestYaml::find(entry, "build")) {
+                    tool.buildCommand = ManifestYaml::get(*buildNode, "command");
+                    tool.buildCwd = ManifestYaml::get(*buildNode, "cwd");
+                    tool.buildOutput = ManifestYaml::get(*buildNode, "output");
+                }
+                if (!tool.name.empty())
+                    tools.push_back(std::move(tool));
+            }
+        }
+
         mr.name = name;
+
+        // Record any manifest-declared tools on the engine so callers can
+        // retrieve them later (e.g. for prompt wiring + runtime binding).
+        // This is independent of feed registration success — manifest-declared
+        // tools are stored as parsed spec data, not as runtime handlers.
+        mr.tools = tools;
+        if (!tools.empty())
+            manifestFeedTools_[name] = std::move(tools);
 
         // Resolve entrypoint relative to manifest
         std::filesystem::path scriptPath;
@@ -332,8 +385,18 @@ class FeedEngine {
         return mr;
     }
 
+    /// Manifest-declared tools for a feed. Empty for feeds with no `tools:` block
+    /// or for feeds loaded before this slice shipped.
+    std::vector<ManifestFeedTool> feedManifestTools(const std::string& name) const {
+        auto it = manifestFeedTools_.find(name);
+        if (it == manifestFeedTools_.end())
+            return {};
+        return it->second;
+    }
+
    private:
     std::map<std::string, Feed> feeds_;
+    std::map<std::string, std::vector<ManifestFeedTool>> manifestFeedTools_;
     std::thread refreshThread_;
 
     // ── Script execution helpers (kept for manifest loading) ──

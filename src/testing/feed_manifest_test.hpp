@@ -42,6 +42,7 @@ struct FeedManifestTest {
         testFeedInjectionIntoPrompt();
         testFeedTools();
         testUnknownDottedFeedToolDispatch();
+        testFeedManifestTools();
         cleanup();
 
         std::cout << "\n  " << passed << "/" << (passed + failed) << " passed\n";
@@ -202,6 +203,80 @@ struct FeedManifestTest {
             check(r.summary.find('\n') != 0 || r.summary.size() < 500,
                   "feed " + r.name + " summary is reasonable size");
         }
+    }
+
+    // ── Test: feed.yml tools: block parses into engine-side spec store ──
+    void testFeedManifestTools() {
+        // Create a feed manifest with a tools: block.
+        fs::path feedDir = testDir / "feeds" / "manifest_tools";
+        fs::create_directories(feedDir);
+
+        {
+            std::ofstream f(feedDir / "feed.yml");
+            f << "kind: Feed\n";
+            f << "name: manifest_tools_feed\n";
+            f << "runtime: builtin\n";
+            f << "tools:\n";
+            f << "  - name: refresh\n";
+            f << "    description: Force a fresh poll\n";
+            f << "  - name: reset\n";
+            f << "    description: Reset feed state\n";
+            f << "    runtime: process\n";
+            f << "    entrypoint: ./reset.sh\n";
+        }
+
+        auto result = feeds::FeedEngine::instance().loadFeedManifest((feedDir / "feed.yml").string());
+        check(result.success, "feed with tools: block loads");
+
+        auto tools = feeds::FeedEngine::instance().feedManifestTools("manifest_tools_feed");
+        check(tools.size() == 2, "feed with tools: block stores 2 tools");
+
+        bool sawRefresh = false, sawReset = false;
+        for (const auto& t : tools) {
+            if (t.name == "refresh") {
+                sawRefresh = true;
+                check(t.description == "Force a fresh poll",
+                      "refresh tool description parsed");
+                check(t.runtime == "builtin",
+                      "refresh tool inherits feed runtime");
+            } else if (t.name == "reset") {
+                sawReset = true;
+                check(t.description == "Reset feed state",
+                      "reset tool description parsed");
+                check(t.runtime == "process",
+                      "reset tool overrides runtime");
+                check(t.entrypoint == "./reset.sh",
+                      "reset tool entrypoint parsed");
+            }
+        }
+        check(sawRefresh, "refresh tool in manifest feed tools");
+        check(sawReset, "reset tool in manifest feed tools");
+
+        // Unknown feed returns empty tool list (no false positives).
+        auto empty = feeds::FeedEngine::instance().feedManifestTools("does_not_exist");
+        check(empty.empty(), "unknown feed has no manifest tools");
+
+        // Tools without a `name` field are silently dropped (can't address
+        // them, so storing them would just be noise).
+        fs::path namelessDir = testDir / "feeds" / "nameless_tools";
+        fs::create_directories(namelessDir);
+        {
+            std::ofstream f(namelessDir / "feed.yml");
+            f << "kind: Feed\n";
+            f << "name: nameless_tools_feed\n";
+            f << "runtime: builtin\n";
+            f << "tools:\n";
+            f << "  - description: nameless tool entry\n";
+            f << "  - name: keep\n";
+            f << "    description: named tool entry\n";
+        }
+        feeds::FeedEngine::instance().loadFeedManifest((namelessDir / "feed.yml").string());
+        auto nameless =
+            feeds::FeedEngine::instance().feedManifestTools("nameless_tools_feed");
+        check(nameless.size() == 1, "feed with nameless tool entry keeps only named tool");
+        if (!nameless.empty())
+            check(nameless[0].name == "keep",
+                  "only the named tool survives manifest-tools parse");
     }
 
     // ── Test: feed injection into prompt produces XML ──
