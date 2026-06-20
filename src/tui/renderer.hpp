@@ -30,7 +30,15 @@ inline ActionType actionTypeFromName(const std::string& type) {
 }
 
 inline ActionEvent toActionEvent(const ProtocolAction& a) {
-    return {actionTypeFromName(a.type), a.name, a.id, a.body, a.sync};
+    ActionEvent ev;
+    ev.type = actionTypeFromName(a.type);
+    ev.name = a.name;
+    ev.id = a.id;
+    ev.body = a.body;
+    ev.sync = a.sync;
+    ev.mode = a.mode;
+    ev.modifiers = a.modifiers;
+    return ev;
 }
 
 inline ResultEvent toResultEvent(const ProtocolResult& r) {
@@ -151,9 +159,9 @@ class TuiRenderer {
             }
         }
         if (!responseText.empty()) {
-            // Response is a colored-bg block (different shade from thought) with
-            // 1px top/bottom delimiter rows. Inside stays bg-free so markdown
-            // rendering and any tool/user ANSI keeps full compliance.
+            // Response: top/bottom bg delimiter rows. Inside stays bg-free so
+            // markdown rendering keeps full ANSI compliance (its internal
+            // resets don't break our background).
             const std::string respBg = "\033[48;2;28;25;38m";
             Markdown localMd;
             localMd.setWidth(width - 4);
@@ -169,12 +177,10 @@ class TuiRenderer {
             }
             lines.push_back(padRight(respBg, width));
             if (hasContent && !rendered.empty()) {
-                // 1col left/right bg padding per content row. Markdown rendering
-                // keeps full ANSI compliance — its own fg styles remain intact.
                 for (auto& l : rendered)
-                    lines.push_back(padRight(respBg + " " + l + " ", width));
+                    lines.push_back(l);
             } else if (!responseText.empty()) {
-                lines.push_back(padRight(respBg + " " + responseText + " ", width));
+                lines.push_back(responseText);
             }
             lines.push_back(padRight(respBg, width));
         }

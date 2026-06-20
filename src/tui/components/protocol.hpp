@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <iomanip>
+#include <map>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -30,6 +31,8 @@ struct ActionEvent {
     ActionType type = ActionType::TOOL;
     std::string name, id, body;
     bool sync = true;
+    std::string mode = "sync";
+    std::map<std::string, std::string> modifiers;  // extra XML attrs (ephemeral, dump_context, …)
 };
 
 struct ResultEvent {
@@ -154,9 +157,55 @@ class ProtocolView {
 
     std::vector<std::string> actionHeaderLines(const ActionEvent& a, int width) const {
         std::vector<std::string> lines;
-        std::string meta = actionIcon(a) + fgBold() + a.name + fgReset();
+        std::string verb = "Calling";
+        std::string noun = "tool";
+        switch (a.type) {
+            case ActionType::AGENT:
+                verb = "Spawning Agent";
+                noun = "";
+                break;
+            case ActionType::TOOL:
+                verb = "Calling tool";
+                noun = "";
+                break;
+            case ActionType::RELIC:
+                verb = "Querying relic";
+                noun = "";
+                break;
+            case ActionType::FEED:
+                verb = "Polling feed";
+                noun = "";
+                break;
+        }
+        std::string meta = actionIcon(a) + fgBold();
+        if (a.type == ActionType::AGENT) {
+            meta += verb;
+            if (!a.name.empty())
+                meta += " " + fgBold() + a.name + fgReset() + fgBold();
+        } else {
+            meta += verb;
+            if (!a.name.empty())
+                meta += ": " + a.name;
+        }
+        meta += fgReset();
+
+        // Mode
+        std::string modeStr;
+        if (a.mode == "async")
+            modeStr = " asynchronously";
+        else if (a.mode == "fire_and_forget")
+            modeStr = " (fire-and-forget)";
+        else
+            modeStr = " synchronously";
+        meta += fgDim() + modeStr + fgReset();
+
         if (!a.id.empty() && a.id != a.name)
-            meta += fgDim() + "#" + a.id + fgReset();
+            meta += fgDim() + "  #" + a.id + fgReset();
+
+        // Modifiers (agent ephemeral/dump_context, etc.)
+        for (const auto& [k, v] : a.modifiers) {
+            meta += fgDim() + "  " + k + "=" + v + fgReset();
+        }
         lines.push_back(padRight(bgAction() + "  " + meta, width));
         return lines;
     }

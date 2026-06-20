@@ -782,8 +782,32 @@ std::string Agent::runLoop(AgentContext& ctx) {
                             wb["indentation"] = "";
                             body = Json::writeString(wb, ev.action->params);
                         }
+                        std::string modeStr;
+                        switch (ev.action->mode) {
+                            case protocol::ExecutionMode::ASYNC:
+                                modeStr = "async";
+                                break;
+                            case protocol::ExecutionMode::FIRE_AND_FORGET:
+                                modeStr = "fire_and_forget";
+                                break;
+                            default:
+                                modeStr = "sync";
+                                break;
+                        }
+                        std::map<std::string, std::string> modifiers;
+                        if (ev.action->params.isObject()) {
+                            static const std::unordered_set<std::string> reserved = {
+                                "type", "name", "id", "mode", "depends_on", "timeout"};
+                            for (const auto& key : ev.action->params.getMemberNames()) {
+                                if (reserved.count(key))
+                                    continue;
+                                Json::StreamWriterBuilder aw;
+                                aw["indentation"] = "";
+                                modifiers[key] = Json::writeString(aw, ev.action->params[key]);
+                            }
+                        }
                         ProtocolAction protocolAction{typeStr, ev.action->name, ev.action->id, body,
-                                                      ev.action->mode == protocol::ExecutionMode::SYNC};
+                                                      modeStr == "sync", modeStr, modifiers};
                         protocolActions_.push_back(protocolAction);
                         protocolEvents_.push_back(
                             {ProtocolEventKind::ACTION, "", protocolAction, {}});

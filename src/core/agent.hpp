@@ -30,6 +30,8 @@ extern std::atomic<bool> g_running;
 struct ProtocolAction {
     std::string type, name, id, body;
     bool sync = true;
+    std::string mode = "sync";
+    std::map<std::string, std::string> modifiers;
 };
 
 struct ProtocolResult {
