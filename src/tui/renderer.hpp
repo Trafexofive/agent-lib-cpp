@@ -150,6 +150,10 @@ class TuiRenderer {
             }
         }
         if (!responseText.empty()) {
+            // Response is a colored-bg block (different shade from thought) with
+            // 1px top/bottom delimiter rows. Inside stays bg-free so markdown
+            // rendering and any tool/user ANSI keeps full compliance.
+            const std::string respBg = "\033[48;2;28;25;38m";
             Markdown localMd;
             localMd.setWidth(width - 4);
             localMd.setText(responseText);
@@ -162,15 +166,16 @@ class TuiRenderer {
                         break;
                     }
             }
+            lines.push_back(padRight(respBg, width));
             if (hasContent && !rendered.empty()) {
-                lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
-                lines.insert(lines.end(), rendered.begin(), rendered.end());
+                for (auto& l : rendered)
+                    lines.push_back(l);
             } else if (!response_.empty()) {
-                lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
+                // marker-only response
             } else if (!responseText.empty()) {
-                lines.push_back(ansi::dim() + std::string("── Response ──") + ansi::reset());
                 lines.push_back(responseText);
             }
+            lines.push_back(padRight(respBg, width));
         }
         return lines;
     }

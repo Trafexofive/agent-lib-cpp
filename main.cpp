@@ -1949,8 +1949,17 @@ static int cmdRun(CliConfig& cli) {
         streamStart_ = std::chrono::steady_clock::now();
         input.clearEscape();
 
-        // Echo user prompt in history BEFORE streaming (visible during response)
-        historyLines.push_back(std::string(ansi::bold) + "▸ " + promptText + ansi::reset);
+        // Echo user prompt in history BEFORE streaming (visible during response).
+        // Gray-bg block with 1px top/bottom padding, same shape as action/result
+        // cards. The content line itself has no bg, so any user ANSI inside the
+        // prompt renders normally.
+        {
+            const std::string promptBg = "\033[48;2;45;45;50m";
+            historyLines.push_back(tui::padRight(promptBg, termW));
+            historyLines.push_back(tui::padRight(
+                std::string(ansi::bold) + "▸ " + promptText, termW));
+            historyLines.push_back(tui::padRight(promptBg, termW));
+        }
         scrollOffset = 0;
         frameClock.requestFrame();
         renderScreen();
