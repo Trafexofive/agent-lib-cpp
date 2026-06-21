@@ -7,6 +7,7 @@
 #include <curl/curl.h>
 #include <json/json.h>
 
+#include "../core/mini_yaml.hpp"
 #include <unistd.h>
 
 #include <cstdio>
@@ -63,41 +64,25 @@ class DockerRelicDispatcher {
         if (!f)
             return false;
 
+        std::string yaml((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        auto root = ManifestYaml::parse(yaml);
+
         def = DockerRelicDef{};
         def.composeDir = relicDir;
-
-        std::string line;
-        while (std::getline(f, line)) {
-            // Simple YAML key: value parser
-            size_t colon = line.find(": ");
-            if (colon == std::string::npos)
-                continue;
-            std::string key = line.substr(0, colon);
-            // trim left
-            size_t start = key.find_first_not_of(" \t");
-            if (start != std::string::npos)
-                key = key.substr(start);
-            std::string val = line.substr(colon + 2);
-            // trim quotes
-            if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
-                val = val.substr(1, val.size() - 2);
-
-            if (key == "name")
-                def.name = val;
-            else if (key == "mode")
-                def.mode = val;
-            else if (key == "summary")
-                def.summary = val;
-            else if (key == "port")
-                def.port = std::stoi(val);
-            else if (key == "compose_file")
-                def.composeFile = val;
-            else if (key == "env_file")
-                def.envFile = val;
-            else if (key == "project_name")
-                def.projectName = val;
-            else if (key == "health_path")
-                def.healthPath = val;
+        def.name = ManifestYaml::get(root, "name");
+        def.mode = ManifestYaml::get(root, "mode");
+        def.summary = ManifestYaml::get(root, "summary");
+        def.composeFile = ManifestYaml::get(root, "compose_file");
+        def.envFile = ManifestYaml::get(root, "env_file");
+        def.projectName = ManifestYaml::get(root, "project_name");
+        def.healthPath = ManifestYaml::get(root, "health_path", "/health");
+        std::string portStr = ManifestYaml::get(root, "port", "0");
+        if (!portStr.empty()) {
+            try {
+                def.port = std::stoi(portStr);
+            } catch (...) {
+                def.port = 0;
+            }
         }
 
         if (def.name.empty() || def.mode.empty())

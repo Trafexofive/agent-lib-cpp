@@ -14,6 +14,7 @@
 
 #include "src/relics/relic.hpp"
 #include "src/relics/reliquary.hpp"
+#include "src/relics/docker_dispatcher.hpp"
 
 namespace cortex::mk3::tests {
 namespace fs = std::filesystem;
@@ -38,6 +39,7 @@ struct DockerRelicTest {
         testHealthCheckRouting();
         testRelicDispatchFlow();
         testReliquaryRegistry();
+        testDockerRelicYamlParserRobust();
         std::cout << "\n  " << passed << "/" << (passed + failed) << " passed\n";
         return failed == 0;
     }
@@ -225,6 +227,57 @@ struct DockerRelicTest {
         check(health["alpha"] && health["beta"], "both mock relics report healthy");
 
         reg.clear();
+    }
+
+    // ── Test: DockerRelicDef parser uses ManifestYaml (handles real-world quirks) ──
+    void testDockerRelicYamlParserRobust() {
+        using namespace cortex::mk3::relics;
+        namespace fs = std::filesystem;
+
+        // Standalone relic dir with edge-case YAML: quoted strings, comments
+        // after values, block-style fields that should be ignored, mixed
+        // indents, and a port value that has a comment.
+        fs::path dir = fs::temp_directory_path() / "yaml_parser_relic_test";
+        fs::create_directories(dir);
+
+        {
+            std::ofstream f(dir / "relic.yml");
+            f << "# comment-only first line\n";
+            f << "kind: Relic\n";
+            f << "version: \"1.0\"\n";
+            f << "name: \"quoted_name\"   # inline comment\n";
+            f << "mode: managed\n";
+            f << "summary: 'single-quoted summary with spaces'\n";
+            f << "port: 8123 # default port\n";
+            f << "compose_file: \"./compose.yml\"\n";
+            f << "health_path: \"/healthz\"\n";
+            f << "\n";
+            f << "deployment:   # block we should ignore gracefully\n";
+            f << "  type: docker\n";
+            f << "  file: compose.yml\n";
+            f << "\n";
+            f << "endpoints:    # block we should also ignore\n";
+            f << "  - name: ping\n";
+            f << "    path: /ping\n";
+        }
+
+        DockerRelicDef def;
+        bool ok = DockerRelicDispatcher::loadDefFromDir(dir.string(), def);
+        check(ok, "loadDefFromDir parses valid relic.yml");
+        check(def.name == "quoted_name",
+              "quoted string is unquoted by ManifestYaml");
+        check(def.mode == "managed",
+              "mode parsed correctly");
+        check(def.summary == "single-quoted summary with spaces",
+              "single-quoted summary unquoted by ManifestYaml");
+        check(def.port == 8123,
+              "port int parsed correctly (inline comment ignored)");
+        check(def.composeFile == "./compose.yml",
+              "compose_file parsed correctly");
+        check(def.healthPath == "/healthz",
+              "health_path parsed correctly (overrides default)");
+
+        fs::remove_all(dir);
     }
 };
 
