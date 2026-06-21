@@ -46,6 +46,7 @@ struct FeedManifestTest {
         testFeedManifestToolInvocation();
         testFeedRuntimePerCallEnv();
         testFeedToolPerCallEnv();
+        testFeedEmptyOutputFailsWithoutAllowEmpty();
         cleanup();
 
         std::cout << "\n  " << passed << "/" << (passed + failed) << " passed\n";
@@ -490,6 +491,51 @@ struct FeedManifestTest {
               "second tool call did not see stale first-call FEED_TOOL_PARAMS");
 
         unsetenv("FEED_TOOL_PARAMS");
+    }
+
+    // ── Test: empty feed output is a load failure unless allow_empty: true ──
+    void testFeedEmptyOutputFailsWithoutAllowEmpty() {
+        fs::path feedDir = testDir / "feeds" / "empty_output";
+        fs::create_directories(feedDir);
+
+        {
+            std::ofstream f(feedDir / "silent.sh");
+            f << "#!/usr/bin/env bash\n";
+            f << "exit 0\n";
+        }
+        fs::permissions(feedDir / "silent.sh",
+                        fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
+                        fs::perm_options::add);
+
+        {
+            std::ofstream f(feedDir / "strict.yml");
+            f << "kind: Feed\n";
+            f << "name: strict_empty\n";
+            f << "runtime: bash\n";
+            f << "entrypoint: ./silent.sh\n";
+        }
+        {
+            std::ofstream f(feedDir / "permissive.yml");
+            f << "kind: Feed\n";
+            f << "name: permissive_empty\n";
+            f << "runtime: bash\n";
+            f << "entrypoint: ./silent.sh\n";
+            f << "allow_empty: true\n";
+        }
+
+        auto& engine = feeds::FeedEngine::instance();
+
+        auto strict = engine.loadFeedManifest((feedDir / "strict.yml").string());
+        check(!strict.success, "strict empty-output feed should fail to load");
+        check(strict.error.find("allow_empty") != std::string::npos,
+              "strict failure error should mention allow_empty");
+        check(!engine.has("strict_empty"),
+              "strict empty-output feed must not be registered");
+
+        auto permissive = engine.loadFeedManifest((feedDir / "permissive.yml").string());
+        check(permissive.success, "permissive empty-output feed should load");
+        check(engine.has("permissive_empty"),
+              "permissive empty-output feed should be registered");
     }
 
     // ── Test: feed injection into prompt produces XML ──

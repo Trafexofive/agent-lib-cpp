@@ -6,6 +6,7 @@
 #include <json/json.h>
 
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -247,6 +248,18 @@ class FeedEngine {
             buildOutput = ManifestYaml::get(*build, "output");
         }
 
+        // Default off — empty output from a feed script is a real bug
+        // surface, not a valid "nothing to report" state. Authors opt in
+        // with `allow_empty: true` if their feed genuinely should be
+        // considered successful when the script returns nothing.
+        bool allowEmpty = false;
+        std::string allowEmptyRaw = ManifestYaml::get(root, "allow_empty");
+        if (!allowEmptyRaw.empty()) {
+            std::string lower = allowEmptyRaw;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            allowEmpty = (lower == "true" || lower == "1" || lower == "yes");
+        }
+
         if (name.empty()) {
             mr.error = "no name in manifest";
             return mr;
@@ -332,6 +345,12 @@ class FeedEngine {
         output = runScriptWithEnv(runtime, scriptPath.string(), callToolPath);
 
         if (output.empty()) {
+            if (!allowEmpty) {
+                mr.success = false;
+                mr.error = "feed script returned empty output (set allow_empty: true to allow)";
+                mr.summary = "";
+                return mr;
+            }
             registerFeed(name, [name]() -> FeedResult { return {name, "", "{}", true}; });
             registerManifestToolHandlers(feeds_.at(name), mr.tools, manifestDir);
             mr.success = true;
