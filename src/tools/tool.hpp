@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include "../utils/process.hpp"
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -312,18 +313,29 @@ class Tool {
         return out;
     }
 
+    // Shared bounded shell runner for tools. Routes through process::run so
+    // every script execution gets per-call isolation, timeout, and output
+    // caps. The legacy popen path had none of those.
+    //
+    // If the command contains `2>&1` we append stderr to the returned text
+    // to match the old behavior (caller expected merged output). When the
+    // command uses `2>/dev/null` (or no stderr redirection at all) we
+    // return only stdout.
     static std::string runShell(const std::string& cmd) {
-        FILE* p = popen(cmd.c_str(), "r");
-        if (!p)
-            return "";
-        std::string output;
-        char buf[4096];
-        while (fgets(buf, sizeof(buf), p))
-            output += buf;
-        pclose(p);
-        while (!output.empty() && (output.back() == '\n' || output.back() == '\r'))
-            output.pop_back();
-        return output;
+        process::Spec spec;
+        spec.shell = true;
+        spec.command = cmd;
+        spec.timeoutMs = 30000;
+        spec.maxStdout = 1024 * 1024;
+        spec.maxStderr = 64 * 1024;
+        process::Result pr = process::run(spec);
+
+        std::string out = pr.stdoutText;
+        if (cmd.find("2>&1") != std::string::npos)
+            out += pr.stderrText;
+        while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
+            out.pop_back();
+        return out;
     }
 };
 
