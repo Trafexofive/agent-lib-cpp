@@ -469,6 +469,39 @@ class WorkflowEngine {
     }
 
     // ── Execute a single agent step ──
+    // Read an optional bool field from a JSON params blob, defaulting to
+    // false. Accepts `true`/`false` strings and real booleans.
+    static bool readBoolParam(const Json::Value& params, const std::string& key) {
+        if (!params.isMember(key))
+            return false;
+        const auto& v = params[key];
+        if (v.isBool())
+            return v.asBool();
+        if (v.isString()) {
+            const auto& s = v.asString();
+            return s == "true" || s == "1" || s == "yes";
+        }
+        return false;
+    }
+
+    // Build a WorkflowAgentInvocation from a step's resolved params. The
+    // instruction field falls back to "query" or "Execute task" so existing
+    // step definitions keep working.
+    static WorkflowAgentInvocation makeAgentInvocation(const std::string& name,
+                                                        const Json::Value& params) {
+        WorkflowAgentInvocation inv;
+        inv.name = name;
+        if (params.isMember("instruction") && params["instruction"].isString())
+            inv.instruction = params["instruction"].asString();
+        else if (params.isMember("query") && params["query"].isString())
+            inv.instruction = params["query"].asString();
+        else
+            inv.instruction = "Execute task";
+        inv.ephemeral = readBoolParam(params, "ephemeral");
+        inv.dumpContext = readBoolParam(params, "dump_context");
+        return inv;
+    }
+
     StepOutcome executeAgentStep(const WorkflowStep& step, const Json::Value& params,
                                  const WorkflowRuntime& rt,
                                  std::map<std::string, Json::Value>& symbols) {
@@ -479,11 +512,8 @@ class WorkflowEngine {
                 out.error = "no agent executor configured";
                 return out;
             }
-            std::string instruction = params.isMember("instruction")
-                                          ? params["instruction"].asString()
-                                      : params.isMember("query") ? params["query"].asString()
-                                                                 : "Execute task";
-            Json::Value result = rt.executeAgent(step.agent, instruction);
+            WorkflowAgentInvocation inv = makeAgentInvocation(step.agent, params);
+            Json::Value result = rt.executeAgent(inv);
             bool ok = result.get("success", false).asBool();
 
             if (ok) {
@@ -511,8 +541,8 @@ class WorkflowEngine {
                     Json::Value r = rt.executeTool(step.tool, resolved);
                     return std::make_pair(step.id, r);
                 } else if (step.type == "agent" && rt.executeAgent) {
-                    std::string instr = resolved.get("instruction", "Execute task").asString();
-                    Json::Value r = rt.executeAgent(step.agent, instr);
+                    WorkflowAgentInvocation inv = makeAgentInvocation(step.agent, resolved);
+                    Json::Value r = rt.executeAgent(inv);
                     return std::make_pair(step.id, r);
                 }
                 Json::Value err;

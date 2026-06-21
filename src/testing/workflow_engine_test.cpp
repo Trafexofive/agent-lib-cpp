@@ -209,6 +209,77 @@ steps:
     PASS();
 }
 
+void test_agent_step_propagates_modifiers_to_callback() {
+    TEST("agent step passes ephemeral + dump_context to callback");
+
+    fs::path wfPath = fixturePath("agent-modifiers.yml");
+    writeFile(wfPath, R"YAML(kind: Workflow
+version: "1.0"
+name: agent-modifiers
+steps:
+  - id: think
+    type: agent
+    agent: planner
+    params:
+      instruction: "outline a plan"
+      ephemeral: true
+      dump_context: true
+  - id: follow_up
+    type: agent
+    agent: planner
+    params:
+      instruction: "execute the plan"
+)YAML");
+
+    WorkflowEngine engine;
+    auto& workflow = engine.load(wfPath.string());
+    CHECK(workflow.isValid(), "agent-modifiers workflow did not load");
+
+    std::vector<WorkflowAgentInvocation> invocations;
+    WorkflowRuntime rt;
+    rt.executeAgent = [&](const WorkflowAgentInvocation& inv) -> Json::Value {
+        invocations.push_back(inv);
+        Json::Value r;
+        r["success"] = true;
+        r["output"] = "ok:" + inv.instruction;
+        if (inv.dumpContext)
+            r["trace"] = "trace-for:" + inv.name;
+        return r;
+    };
+
+    auto result = engine.execute(workflow, rt);
+    CHECK(result.success, "agent-modifiers workflow did not succeed");
+    CHECK(invocations.size() == 2, "expected two agent invocations");
+
+    // First step: ephemeral + dump_context true, instruction carried.
+    CHECK(invocations[0].name == "planner", "first invocation name");
+    CHECK(invocations[0].instruction == "outline a plan",
+          "first invocation instruction");
+    CHECK(invocations[0].ephemeral == true,
+          "first invocation ephemeral not propagated");
+    CHECK(invocations[0].dumpContext == true,
+          "first invocation dump_context not propagated");
+
+    // Second step: defaults — both modifiers false.
+    CHECK(invocations[1].name == "planner", "second invocation name");
+    CHECK(invocations[1].instruction == "execute the plan",
+          "second invocation instruction");
+    CHECK(invocations[1].ephemeral == false,
+          "second invocation should default ephemeral to false");
+    CHECK(invocations[1].dumpContext == false,
+          "second invocation should default dump_context to false");
+
+    // First step's output should include the trace the callback returned
+    // when dump_context was honored.
+    auto& thinkOut = result.outputs["think"];
+    CHECK(thinkOut.isMember("trace"),
+          "first agent step should expose trace when dump_context=true");
+    CHECK(thinkOut["trace"].asString() == "trace-for:planner",
+          "first agent step trace content");
+
+    PASS();
+}
+
 int main() {
     std::cout.setf(std::ios::unitbuf);
     std::cout << "\n╔══════════════════════════════════════════╗\n";
@@ -218,6 +289,7 @@ int main() {
     test_yaml_workflow_executes_tool_steps_with_variable_resolution();
     test_on_error_skip_continues_after_failed_step();
     test_on_error_abort_stops_after_failed_step();
+    test_agent_step_propagates_modifiers_to_callback();
 
     std::cout << "\n──────────────────────────────────────────\n";
     std::cout << "  " << passed << " passed, " << failed << " failed\n";

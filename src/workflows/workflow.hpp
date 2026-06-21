@@ -82,11 +82,21 @@ struct WorkflowResult {
 };
 
 // ── Workflow runtime callbacks ──
+// Parameters passed to the agent callback. Modifiers mirror the XML attrs
+// that direct <action type="agent"> supports, so workflow agent steps can
+// request the same behavior parity (ephemeral session, dump trace context).
+struct WorkflowAgentInvocation {
+    std::string name;        // sub-agent name to invoke
+    std::string instruction; // task instruction (resolved from step params)
+    bool ephemeral = false;  // do not persist child session
+    bool dumpContext = false; // return trace context alongside the response
+};
+
 // Wired by the agent at dispatch time — the Workflow doesn't own tools/agents.
 struct WorkflowRuntime {
     using ToolFn = std::function<Json::Value(const std::string& name, const Json::Value& params)>;
     using AgentFn =
-        std::function<Json::Value(const std::string& name, const std::string& instruction)>;
+        std::function<Json::Value(const WorkflowAgentInvocation& invocation)>;
     using WorkflowFn =
         std::function<WorkflowResult(const std::string& name, const Json::Value& params)>;
 

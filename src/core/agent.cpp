@@ -544,20 +544,36 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 return dispatchTool(a);
             };
 
-            // Agent callback: delegate to a sub-agent
-            rt.executeAgent = [this, &ctx](const std::string& name,
-                                           const std::string& instruction) -> Json::Value {
-                auto it = subAgents_.find(name);
+            // Agent callback: delegate to a sub-agent. Honors the
+            // ephemeral / dump_context modifiers from the workflow step so
+            // workflow agent actions match the behavior of direct
+            // <action type="agent" ...> actions.
+            rt.executeAgent = [this, &ctx](const workflows::WorkflowAgentInvocation& inv) -> Json::Value {
+                auto it = subAgents_.find(inv.name);
                 if (it == subAgents_.end()) {
                     Json::Value err;
                     err["success"] = false;
-                    err["error"] = "Unknown sub-agent: " + name;
+                    err["error"] = "Unknown sub-agent: " + inv.name;
                     return err;
                 }
-                std::string childSessionId = deriveSubAgentSessionId(ctx, config_, name);
+                std::string childSessionId = inv.ephemeral
+                                                 ? std::string()
+                                                 : deriveSubAgentSessionId(ctx, config_, inv.name);
                 std::string result = childSessionId.empty()
-                                         ? it->second->prompt(instruction)
-                                         : it->second->prompt(instruction, childSessionId, false);
+                                         ? it->second->prompt(inv.instruction, "", inv.ephemeral)
+                                         : it->second->prompt(inv.instruction, childSessionId, false);
+                if (inv.dumpContext) {
+                    std::string trace = formatDelegatedTrace(
+                        inv.name, inv.instruction,
+                        it->second->iterationPrompts(),
+                        it->second->iterationOutputs());
+                    subAgentTraces_.push_back(trace);
+                    Json::Value r;
+                    r["success"] = true;
+                    r["output"] = result;
+                    r["trace"] = trace;
+                    return r;
+                }
                 Json::Value r;
                 r["success"] = true;
                 r["output"] = result;
@@ -577,19 +593,32 @@ std::string Agent::runLoop(AgentContext& ctx) {
                     a.params = tp;
                     return dispatchTool(a);
                 };
-                subRt.executeAgent = [this, &ctx](const std::string& an,
-                                                  const std::string& instr) -> Json::Value {
-                    auto it = subAgents_.find(an);
+                subRt.executeAgent = [this, &ctx](const workflows::WorkflowAgentInvocation& inv) -> Json::Value {
+                    auto it = subAgents_.find(inv.name);
                     if (it == subAgents_.end()) {
                         Json::Value err;
                         err["success"] = false;
-                        err["error"] = "Unknown sub-agent: " + an;
+                        err["error"] = "Unknown sub-agent: " + inv.name;
                         return err;
                     }
-                    std::string childSessionId = deriveSubAgentSessionId(ctx, config_, an);
+                    std::string childSessionId = inv.ephemeral
+                                                     ? std::string()
+                                                     : deriveSubAgentSessionId(ctx, config_, inv.name);
                     std::string result = childSessionId.empty()
-                                             ? it->second->prompt(instr)
-                                             : it->second->prompt(instr, childSessionId, false);
+                                             ? it->second->prompt(inv.instruction, "", inv.ephemeral)
+                                             : it->second->prompt(inv.instruction, childSessionId, false);
+                    if (inv.dumpContext) {
+                        std::string trace = formatDelegatedTrace(
+                            inv.name, inv.instruction,
+                            it->second->iterationPrompts(),
+                            it->second->iterationOutputs());
+                        subAgentTraces_.push_back(trace);
+                        Json::Value r;
+                        r["success"] = true;
+                        r["output"] = result;
+                        r["trace"] = trace;
+                        return r;
+                    }
                     Json::Value r;
                     r["success"] = true;
                     r["output"] = result;
