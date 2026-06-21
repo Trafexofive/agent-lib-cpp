@@ -1,0 +1,7 @@
+kind: Feed
+name: my_minimal_feed
+version: "1.0"
+summary: "Smallest valid feed. Python poll, no tools."
+
+runtime: python3
+entrypoint: ./poll.py

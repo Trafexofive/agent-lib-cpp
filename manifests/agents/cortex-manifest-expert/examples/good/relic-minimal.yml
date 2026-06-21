@@ -1,0 +1,8 @@
+kind: Relic
+name: my_minimal_relic
+version: "1.0"
+summary: "Smallest valid managed-relic manifest."
+
+mode: managed
+port: 8123
+health_path: "/health"
