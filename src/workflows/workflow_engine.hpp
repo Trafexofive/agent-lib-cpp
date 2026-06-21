@@ -534,8 +534,12 @@ class WorkflowEngine {
         std::map<std::string, Json::Value> results;
         std::vector<std::future<std::pair<std::string, Json::Value>>> futures;
 
+        // Symbols is captured by value (a const copy) so parallel tasks
+        // can read it without contending on the parent's map. Writes to
+        // symbols happen only after every future has completed and the
+        // results have been collected into the local `results` map.
         for (auto& step : steps) {
-            futures.push_back(std::async(std::launch::async, [&rt, step, &symbols]() {
+            futures.push_back(std::async(std::launch::async, [&rt, step, symbols]() {
                 Json::Value resolved = resolveParams(step.params, symbols);
                 if (step.type == "tool" && rt.executeTool) {
                     Json::Value r = rt.executeTool(step.tool, resolved);

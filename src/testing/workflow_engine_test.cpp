@@ -6,10 +6,14 @@
 // ${step.*} variables, and honor on_error policy.
 // =============================================================================
 
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "src/workflows/workflow_engine.hpp"
@@ -280,6 +284,79 @@ steps:
     PASS();
 }
 
+void test_parallel_step_resolves_symbols_isolated_per_task() {
+    TEST("parallel step resolves symbols safely (no shared-map data race)");
+
+    fs::path wfPath = fixturePath("parallel-symbols.yml");
+    writeFile(wfPath, R"YAML(kind: Workflow
+version: "1.0"
+name: parallel-symbols
+steps:
+  - id: race
+    type: parallel
+    steps:
+      - id: a
+        type: tool
+        tool: echo
+        params:
+          message: "from ${input.name}"
+      - id: b
+        type: tool
+        tool: echo
+        params:
+          message: "from ${input.name}"
+      - id: c
+        type: tool
+        tool: echo
+        params:
+          message: "from ${input.name}"
+)YAML");
+
+    WorkflowEngine engine;
+    auto& workflow = engine.load(wfPath.string());
+    CHECK(workflow.isValid(), "parallel-symbols workflow did not load");
+
+    std::atomic<int> inFlight{0};
+    std::atomic<int> maxInFlight{0};
+    std::vector<std::string> messages;
+    std::mutex m;
+    WorkflowRuntime rt;
+    rt.executeTool = [&](const std::string& name, const Json::Value& params) -> Json::Value {
+        if (name == "echo") {
+            int now = ++inFlight;
+            int prev = maxInFlight.load();
+            while (now > prev && !maxInFlight.compare_exchange_weak(prev, now)) {
+            }
+            // Hold the slot briefly so the other tasks can pile up.
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            inFlight--;
+            std::lock_guard<std::mutex> lk(m);
+            messages.push_back(params["message"].asString());
+            Json::Value r;
+            r["success"] = true;
+            r["output"] = "ok";
+            return r;
+        }
+        Json::Value r;
+        r["success"] = false;
+        r["error"] = "unknown tool";
+        return r;
+    };
+
+    Json::Value input;
+    input["name"] = "race-target";
+    auto result = engine.execute(workflow, rt, input);
+    CHECK(result.success, "parallel-symbols workflow did not succeed");
+    CHECK(messages.size() == 3, "expected three parallel tool calls");
+    CHECK(maxInFlight.load() >= 2,
+          "expected at least 2 parallel tasks in-flight simultaneously");
+    for (const auto& m : messages)
+        CHECK(m == "from race-target",
+              "parallel task should resolve input.name from snapshot");
+
+    PASS();
+}
+
 int main() {
     std::cout.setf(std::ios::unitbuf);
     std::cout << "\n╔══════════════════════════════════════════╗\n";
@@ -290,6 +367,7 @@ int main() {
     test_on_error_skip_continues_after_failed_step();
     test_on_error_abort_stops_after_failed_step();
     test_agent_step_propagates_modifiers_to_callback();
+    test_parallel_step_resolves_symbols_isolated_per_task();
 
     std::cout << "\n──────────────────────────────────────────\n";
     std::cout << "  " << passed << " passed, " << failed << " failed\n";
