@@ -8,6 +8,7 @@
 #include <json/json.h>
 
 #include "../core/mini_yaml.hpp"
+#include "../utils/process.hpp"
 #include <unistd.h>
 
 #include <cstdio>
@@ -206,15 +207,15 @@ class DockerRelicDispatcher {
         return out;
     }
 
-    // Ensure Docker container is running for a managed relic
+    // Ensure Docker container is running for a managed relic. Routes
+    // through process::run so the docker compose up call gets timeout,
+    // bounded I/O, and structured error info — same substrate as
+    // feeds/tools/workflow step execution.
     bool ensureContainerUp(const DockerRelicDef& def) {
-        // Check if already running via health endpoint
         std::string healthUrl = "http://localhost:" + std::to_string(def.port) + def.healthPath;
-        auto r = httpCall(healthUrl, Json::Value());
-        if (r.success)
+        if (httpCall(healthUrl, Json::Value()).success)
             return true;
 
-        // Container not running — start it via docker compose/docker-compose
         std::string composeCmd = "docker compose";
         std::string projectArg =
             def.projectName.empty() ? "" : " --project-name " + shellQuote(def.projectName);
@@ -222,24 +223,21 @@ class DockerRelicDispatcher {
         std::string envArg = def.envFile.empty() ? "" : " --env-file " + shellQuote(def.envFile);
         std::string cmd = "cd " + shellQuote(def.composeDir) + " && " + composeCmd + projectArg +
                           envArg + fileArg + " up -d 2>&1";
-        FILE* p = popen(cmd.c_str(), "r");
-        if (!p)
-            return false;
 
-        char buf[1024];
-        std::string output;
-        while (fgets(buf, sizeof(buf), p))
-            output += buf;
-        int rc = pclose(p);
-
-        if (rc != 0)
+        process::Spec spec;
+        spec.shell = true;
+        spec.command = cmd;
+        spec.timeoutMs = 120000;  // container start can be slow
+        spec.maxStdout = 256 * 1024;
+        spec.maxStderr = 64 * 1024;
+        process::Result pr = process::run(spec);
+        if (!pr.success())
             return false;
 
         // Wait for health check (retry up to 10 times, 500ms apart)
         for (int i = 0; i < 10; i++) {
             usleep(500000);
-            auto r = httpCall(healthUrl, Json::Value());
-            if (r.success)
+            if (httpCall(healthUrl, Json::Value()).success)
                 return true;
         }
         return false;
