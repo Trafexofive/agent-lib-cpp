@@ -5,11 +5,15 @@
 #pragma once
 #include <json/json.h>
 
+#include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+
+#include "src/relics/relic.hpp"
+#include "src/relics/reliquary.hpp"
 
 namespace cortex::mk3::tests {
 namespace fs = std::filesystem;
@@ -33,6 +37,7 @@ struct DockerRelicTest {
         testManagedVsRemote();
         testHealthCheckRouting();
         testRelicDispatchFlow();
+        testReliquaryRegistry();
         std::cout << "\n  " << passed << "/" << (passed + failed) << " passed\n";
         return failed == 0;
     }
@@ -148,6 +153,78 @@ struct DockerRelicTest {
         // Test unknown endpoint
         auto r4 = dispatch("artifact_store", "nonexistent", Json::Value());
         check(!r4.success, "unknown endpoint returns error");
+    }
+
+    // ── Test: Reliquary unified registry dispatches to registered Relics ──
+    void testReliquaryRegistry() {
+        using namespace cortex::mk3::relics;
+
+        // Mock Relic implementation for testing.
+        struct MockRelic : public Relic {
+            std::string n_;
+            std::string lastEndpoint;
+            int callCount = 0;
+            MockRelic(std::string n) : n_(std::move(n)) {}
+            const std::string& name() const override { return n_; }
+            std::string description() const override { return "mock:" + n_; }
+            std::vector<std::string> endpoints() const override {
+                return {"ping", "health"};
+            }
+            RelicResult handle(const std::string& endpoint,
+                               const Json::Value&) override {
+                ++callCount;
+                lastEndpoint = endpoint;
+                if (endpoint == "ping")
+                    return RelicResult::ok(Json::Value("pong:" + n_));
+                if (endpoint == "health")
+                    return RelicResult::ok();
+                return RelicResult::fail("unknown endpoint: " + endpoint);
+            }
+            bool isHealthy() const override { return true; }
+        };
+
+        auto& reg = Reliquary::instance();
+        reg.clear();  // start clean for test isolation
+
+        auto a = std::make_shared<MockRelic>("alpha");
+        auto b = std::make_shared<MockRelic>("beta");
+        check(reg.registerRelic(a), "register alpha");
+        check(reg.registerRelic(b), "register beta");
+        check(!reg.registerRelic(std::make_shared<MockRelic>("alpha")),
+              "duplicate registration is rejected");
+
+        check(reg.has("alpha") && reg.has("beta"),
+              "registered relics are findable");
+        check(!reg.has("gamma"), "unregistered relic not findable");
+
+        auto names = reg.names();
+        check(names.size() == 2, "names() returns 2 entries");
+        check(std::find(names.begin(), names.end(), "alpha") != names.end() &&
+                  std::find(names.begin(), names.end(), "beta") != names.end(),
+              "names() contains alpha + beta");
+
+        // Dispatch goes to the right instance.
+        auto r1 = reg.dispatch("alpha", "ping", Json::Value());
+        check(r1.success, "alpha.ping succeeds");
+        check(a->callCount == 1, "alpha was actually invoked");
+        check(a->lastEndpoint == "ping", "alpha recorded the endpoint");
+
+        auto r2 = reg.dispatch("beta", "ping", Json::Value());
+        check(r2.success, "beta.ping succeeds");
+        check(b->callCount == 1, "beta was actually invoked");
+
+        // Unknown relic returns a fail() result, not a crash.
+        auto r3 = reg.dispatch("ghost", "ping", Json::Value());
+        check(!r3.success, "unknown relic returns fail");
+        check(r3.error.find("Unknown relic") != std::string::npos,
+              "unknown relic error mentions Unknown relic");
+
+        // Health check enumerates every relic.
+        auto health = reg.healthCheckAll();
+        check(health.size() == 2, "health check covers all 2 relics");
+        check(health["alpha"] && health["beta"], "both mock relics report healthy");
+
+        reg.clear();
     }
 };
 
