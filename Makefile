@@ -215,8 +215,8 @@ test-feeds: $(FEED_MANIFEST_TEST_BIN)
 DOCKER_RELIC_TEST_SRC = src/testing/docker_relic_runner.cpp
 DOCKER_RELIC_TEST_BIN = docker-relic-test
 
-$(DOCKER_RELIC_TEST_BIN): $(DOCKER_RELIC_TEST_SRC)
-	$(CXX) $(CXXFLAGS) $(DOCKER_RELIC_TEST_SRC) -o $@ $(LDFLAGS)
+$(DOCKER_RELIC_TEST_BIN): $(DOCKER_RELIC_TEST_SRC) build/src/utils/process.o
+	$(CXX) $(CXXFLAGS) $(DOCKER_RELIC_TEST_SRC) build/src/utils/process.o -o $@ $(LDFLAGS)
 
 test-relics: $(DOCKER_RELIC_TEST_BIN)
 	@./$(DOCKER_RELIC_TEST_BIN)
@@ -233,6 +233,15 @@ $(ASK_CARDS_TEST_BIN): $(ASK_CARDS_TEST_SRC) $(OBJS)
 	$(CXX) $(CXXFLAGS) $(ASK_CARDS_TEST_SRC) $(OBJS) -o $@ $(LDFLAGS)
 test-ask-cards: $(ASK_CARDS_TEST_BIN)
 	@./$(ASK_CARDS_TEST_BIN)
+
+# Provider model metadata tests
+PROVIDER_MODEL_INFO_TEST_SRC = src/testing/provider_model_info_test.cpp
+PROVIDER_MODEL_INFO_TEST_BIN = provider-model-info-test
+$(PROVIDER_MODEL_INFO_TEST_BIN): $(PROVIDER_MODEL_INFO_TEST_SRC) $(BUILD_DIR)/src/providers/generic_openai.o
+	$(CXX) $(CXXFLAGS) $(PROVIDER_MODEL_INFO_TEST_SRC) $(BUILD_DIR)/src/providers/generic_openai.o -o $@ $(LDFLAGS)
+
+test-provider-model-info: $(PROVIDER_MODEL_INFO_TEST_BIN)
+	@./$(PROVIDER_MODEL_INFO_TEST_BIN)
 
 run: $(BIN_CLI)
 	./$(BIN_CLI)

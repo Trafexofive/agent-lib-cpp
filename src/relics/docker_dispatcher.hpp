@@ -53,14 +53,17 @@ class DockerRelicDispatcher {
         return d;
     }
 
-    // Load relic definition from manifest directory
-    bool loadRelic(const std::string& relicDir) {
+    // Static: parse a relic directory and produce a DockerRelicDef. Used
+    // by both the legacy loadRelic() path and the unified
+    // DockerManagedRelic (Reliquary) path. The def is fully self-contained
+    // — callers can copy or move it freely.
+    static bool loadDefFromDir(const std::string& relicDir, DockerRelicDef& def) {
         fs::path manifestPath = fs::path(relicDir) / "relic.yml";
         std::ifstream f(manifestPath);
         if (!f)
             return false;
 
-        DockerRelicDef def;
+        def = DockerRelicDef{};
         def.composeDir = relicDir;
 
         std::string line;
@@ -121,8 +124,15 @@ class DockerRelicDispatcher {
                 }
             }
         }
+        return true;
+    }
 
-        relics_[def.name] = def;
+    // Load relic definition from manifest directory
+    bool loadRelic(const std::string& relicDir) {
+        DockerRelicDef def;
+        if (!loadDefFromDir(relicDir, def))
+            return false;
+        relics_[def.name] = std::move(def);
         return true;
     }
 

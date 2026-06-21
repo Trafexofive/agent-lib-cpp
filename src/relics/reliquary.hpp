@@ -14,10 +14,13 @@
 
 #include <json/json.h>
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "docker_dispatcher.hpp"
+#include "docker_relic.hpp"
 #include "relic.hpp"
 
 namespace cortex::mk3::relics {
@@ -85,6 +88,32 @@ class Reliquary {
     // Test-only: clear all registered relics.
     void clear() {
         relics_.clear();
+    }
+
+    // Load all Docker-managed relics from a directory tree. Each
+    // subdirectory of relicsRoot must contain a relic.yml. The directory
+    // is parsed via DockerRelicDispatcher::loadDefFromDir and the result
+    // is registered as a DockerManagedRelic (a Relic subclass).
+    //
+    // Returns the number of relics successfully registered. Subdirs that
+    // don't contain a valid relic.yml are silently skipped (consistent
+    // with the legacy DockerRelicDispatcher::loadAllFrom behavior).
+    size_t loadDockerRelicsFrom(const std::string& relicsRoot) {
+        namespace fs = std::filesystem;
+        size_t registered = 0;
+        if (!fs::exists(relicsRoot))
+            return 0;
+        for (auto& entry : fs::directory_iterator(relicsRoot)) {
+            if (!entry.is_directory())
+                continue;
+            DockerRelicDef def;
+            if (!DockerRelicDispatcher::loadDefFromDir(entry.path().string(), def))
+                continue;
+            auto relic = std::make_shared<DockerManagedRelic>(std::move(def));
+            if (registerRelic(relic))
+                registered++;
+        }
+        return registered;
     }
 
    private:
