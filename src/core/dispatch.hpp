@@ -11,6 +11,7 @@
 
 #include "../protocol/parser.hpp"
 #include "../relics/docker_dispatcher.hpp"
+#include "../relics/reliquary.hpp"
 #include "../tools/registry.hpp"
 #include "../workflows/workflow_engine.hpp"
 
@@ -42,37 +43,36 @@ inline Json::Value dispatchTool(const protocol::ParsedAction& action) {
 }
 
 // ── Relic dispatcher ──
+// Single dispatch path: goes through the unified Reliquary registry,
+// which holds both in-process Relic instances and DockerManagedRelic
+// wrappers. The legacy DockerRelicDispatcher is kept alive for direct
+// callers but no longer participates in the agent dispatch surface.
 inline Json::Value dispatchRelic(const protocol::ParsedAction& action) {
-    // Try Docker relic dispatcher first (handles managed + remote)
-    auto& drd = relics::DockerRelicDispatcher::instance();
-    if (drd.getRelic(action.name)) {
-        Json::Value relicParams = action.params;
-        std::string endpoint = relicParams.get("endpoint", action.name).asString();
-        if (endpoint == action.name && !action.content.empty()) {
-            endpoint = action.content;
-        }
-        if (relicParams.isMember("body") && relicParams["body"].isObject())
-            relicParams = relicParams["body"];
-        relicParams.removeMember("endpoint");
-        relicParams.removeMember("method");
-        auto rr = drd.dispatch(action.name, endpoint, relicParams);
-        Json::Value result;
-        result["success"] = rr.success;
-        if (rr.success) {
-            // Parse data as JSON if possible
-            Json::Value parsed;
-            Json::CharReaderBuilder r;
-            std::string errs;
-            std::istringstream ss(rr.data);
-            if (Json::parseFromStream(r, ss, &parsed, &errs))
-                result["data"] = parsed;
-            else
-                result["data"] = rr.data;
-        } else {
-            result["error"] = rr.error;
-        }
-        return result;
+    auto& reg = relics::Reliquary::instance();
+    if (!reg.has(action.name)) {
+        Json::Value err;
+        err["success"] = false;
+        err["error"] = "Unknown relic: " + action.name;
+        return err;
     }
+    Json::Value relicParams = action.params;
+    std::string endpoint = relicParams.get("endpoint", action.name).asString();
+    if (endpoint == action.name && !action.content.empty()) {
+        endpoint = action.content;
+    }
+    if (relicParams.isMember("body") && relicParams["body"].isObject())
+        relicParams = relicParams["body"];
+    relicParams.removeMember("endpoint");
+    relicParams.removeMember("method");
+    auto rr = reg.dispatch(action.name, endpoint, relicParams);
+    Json::Value result;
+    result["success"] = rr.success;
+    if (rr.success) {
+        result["data"] = rr.data;
+    } else {
+        result["error"] = rr.error;
+    }
+    return result;
 }
 
 // ── Agent dispatcher — sub-agent delegation.

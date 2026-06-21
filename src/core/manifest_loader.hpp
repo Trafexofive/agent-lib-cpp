@@ -20,6 +20,7 @@
 #include "../feeds/feed_engine.hpp"
 #include "../providers/factory.hpp"
 #include "../relics/docker_dispatcher.hpp"
+#include "../relics/reliquary.hpp"
 #include "../workflows/workflow_engine.hpp"
 #include "mini_yaml.hpp"
 
@@ -309,7 +310,11 @@ class ManifestLoader {
                               << " (imported from " << manifestPath << ")\n";
                     continue;
                 }
-                relics::DockerRelicDispatcher::instance().loadRelic(relicPath.string());
+                // Register the relic into the unified Reliquary (a
+                // Relic subclass that wraps Docker dispatch). The legacy
+                // DockerRelicDispatcher is left untouched for any direct
+                // callers; new dispatch paths should go through Reliquary.
+                relics::Reliquary::instance().loadDockerRelicsFrom(relicPath.string());
             }
             agent.addRelic(name);
         }
