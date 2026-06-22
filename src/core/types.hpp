@@ -155,6 +155,13 @@ struct AgentConfig {
     int topK = 40;
     double presencePenalty = 0.0;
     double frequencyPenalty = 0.0;
+
+    // When true, the system prompt gets a THINKING MODE rule appended
+    // that forces the LLM to emit <thought> before any <action>. Off by
+    // default so existing agents are unchanged. Designed for models that
+    // don't natively emit thinking tokens (e.g. minimax-m3) and for
+    // users who want visible reasoning in the TUI.
+    bool requireThought = false;
     int maxTokens = 0;
     int iterationCap =
         50;  // agent turns before forced response (override via manifest max_iterations)
@@ -237,6 +244,10 @@ struct Session {
     std::map<std::string, std::string> metadata;
     // LLM-injected context feeds accumulated across iterations; restored on resume
     std::vector<std::string> contextFeeds;
+    // Pre-rendered TUI lines captured during the live run. On -c, we just
+    // replay these into historyLines so the user sees exactly what they
+    // saw before exiting — no parser, no protocol reconstruction needed.
+    std::vector<std::string> renderedHistory;
 };
 
 }  // namespace cortex::mk3

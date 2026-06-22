@@ -126,6 +126,11 @@ class ManifestLoader {
                 cfg.fallbackProvider = ManifestYaml::get(*fallback, "provider");
                 cfg.fallbackModel = ManifestYaml::get(*fallback, "model");
             }
+            // thinking: true -> require the LLM to emit <thought> before any
+            // <action>. Injected into the system prompt at agent-load time.
+            std::string think = ManifestYaml::get(*engine, "thinking");
+            if (think == "true" || think == "1" || think == "yes")
+                cfg.requireThought = true;
         }
 
         // Context block — prompt paths + runtime config
