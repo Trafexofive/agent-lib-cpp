@@ -24,7 +24,6 @@ prompt_building:
 # doubt tools. The whole point: the LLM cannot escape into a shell to
 # explore freely. It can only challenge with what these two tools surface.
 import:
-  tools:
-    - challenge
+  tools: []
   feeds: []
   env: []

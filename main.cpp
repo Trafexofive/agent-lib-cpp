@@ -14,9 +14,11 @@
 #include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -78,11 +80,18 @@ struct CliConfig {
     bool resumePicker = false;
     std::string systemPromptPath;
     std::string harnessPromptPath;
+    std::string personaPath;
     bool ephemeral = false;
     bool raw = false;
     bool toolAnsi = true;
     bool replMode = false;
     std::string tuiDebugDumpPath;
+    std::string sessionName;       // --name <name>: human-readable session label
+    std::string forkFrom;          // --fork <id>: copy an existing session and continue
+    int showHistory = -1;          // --show-history N: render last N records on startup.
+                                   //   -1 (default) = auto: 5 on resume, 0 otherwise.
+                                   //    0 disables; positive overrides.
+    bool sessionBanner = true;     // print resume banner (suppress with --quiet-session)
 
     // Debug
     bool debug = false;
@@ -110,9 +119,15 @@ struct CliConfig {
     bool listModels = false;
     std::string listModelsProvider;
     bool listTools = false;
+    bool listSessionsFlag = false; // list --sessions
 
     // Completions
     std::string completionsShell;
+
+    // Sessions subcommand
+    std::string sessionsSubcommand; // "list" | "show" | "rm" | "export" | ""
+    std::string sessionsTarget;     // session id (or file path for export/import)
+    std::string sessionsTargetArg;  // extra arg (e.g. export file path)
 
     // Dry run
     bool dryRun = false;
@@ -207,6 +222,10 @@ Global flags:
   -c, --continue       Continue previous session
   -r, --resume         Select a session to resume
   --session <id>       Use specific session id
+  --name <name>        Human-readable session label (persisted in metadata)
+  --fork <id>          Copy an existing session and continue under a new id
+  --show-history N     Render the last N records of the resumed session on startup
+  --quiet-session      Suppress the resume banner (printed to stderr)
   --no-session         Don't save session (ephemeral)
   --tui-debug-dump <path> Auto-write TUI render/debug state (env: MK3_TUI_DEBUG_DUMP)
   --dry-run            Validate config + prompt without calling LLM
@@ -382,6 +401,10 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"session", required_argument, 0, 's'},
                                        {"continue", no_argument, 0, 'c'},
                                        {"resume", no_argument, 0, 'r'},
+                                       {"name", required_argument, 0, 1010},
+                                       {"fork", required_argument, 0, 1011},
+                                       {"show-history", required_argument, 0, 1012},
+                                       {"quiet-session", no_argument, 0, 1013},
                                        {"no-session", no_argument, 0, 'e'},
                                        {"ephemeral", no_argument, 0, 'e'},
                                        {"repl", no_argument, 0, 'E'},
@@ -397,6 +420,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"providers", no_argument, 0, 'L'},
                                        {"models", optional_argument, 0, 'l'},
                                        {"tools", no_argument, 0, 't'},
+                                       {"sessions", no_argument, 0, 1020},
 
                                        // Config
                                        {"show", no_argument, 0, 'w'},
@@ -434,6 +458,8 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 cli.listModelsProvider = arg.substr(std::string("--models=").size());
             } else if (arg == "--tools" || arg == "-t") {
                 cli.listTools = true;
+            } else if (arg == "--sessions") {
+                cli.listSessionsFlag = true;
             } else if (arg == "--help" || arg == "-h") {
                 cli.showHelp = true;
             }
@@ -500,6 +526,22 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 break;
             case 1001:
                 cli.tuiDebugDumpPath = optarg;
+                break;
+            case 1010:
+                cli.sessionName = optarg;
+                break;
+            case 1011:
+                cli.forkFrom = optarg;
+                break;
+            case 1012:
+                cli.showHistory = std::atoi(optarg);
+                if (cli.showHistory < 0) cli.showHistory = 0;
+                break;
+            case 1013:
+                cli.sessionBanner = false;
+                break;
+            case 1020:
+                cli.listSessionsFlag = true;
                 break;
             case 'n':
                 cli.dryRun = true;
@@ -598,7 +640,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
     if (optind < argc) {
         std::string cmd = argv[optind];
         if (cmd == "run" || cmd == "serve" || cmd == "list" || cmd == "config" ||
-            cmd == "completions" || cmd == "version" || cmd == "help") {
+            cmd == "completions" || cmd == "version" || cmd == "help" || cmd == "sessions") {
             cli.command = cmd;
             optind++;
         } else {
@@ -638,6 +680,38 @@ static CliConfig parseArgs(int argc, char* argv[]) {
     // Help subcommand takes optional command name
     if (cli.command == "help" && optind < argc) {
         cli.helpCommand = argv[optind];
+    }
+
+    // Sessions subcommand: sessions [list|show <id>|rm <id>|export <id> <file>]
+    if (cli.command == "sessions") {
+        if (optind < argc) {
+            std::string sub = argv[optind++];
+            if (sub == "list" || sub == "ls") {
+                cli.sessionsSubcommand = "list";
+            } else if (sub == "show" || sub == "cat") {
+                cli.sessionsSubcommand = "show";
+                if (optind < argc)
+                    cli.sessionsTarget = argv[optind++];
+            } else if (sub == "rm" || sub == "remove" || sub == "delete") {
+                cli.sessionsSubcommand = "rm";
+                if (optind < argc)
+                    cli.sessionsTarget = argv[optind++];
+            } else if (sub == "export") {
+                cli.sessionsSubcommand = "export";
+                if (optind < argc)
+                    cli.sessionsTarget = argv[optind++];
+                if (optind < argc)
+                    cli.sessionsTargetArg = argv[optind++];
+            } else if (!sub.empty() && sub[0] != '-') {
+                // Default: `sessions <id>` shows it
+                cli.sessionsSubcommand = "show";
+                cli.sessionsTarget = sub;
+            } else {
+                cli.sessionsSubcommand = "list";
+            }
+        } else {
+            cli.sessionsSubcommand = "list";
+        }
     }
 
     // Default command
@@ -713,6 +787,8 @@ static std::string newSessionId() {
     return id.str();
 }
 
+static std::string humanTime(const std::string& iso);
+static std::string humanAge(const std::string& iso);
 static std::string pickSessionInteractive(bool defaultIfEmpty) {
     auto sessions = sortedSessions();
     if (sessions.empty())
@@ -720,39 +796,217 @@ static std::string pickSessionInteractive(bool defaultIfEmpty) {
     if (!isatty(STDIN_FILENO))
         return sessions[0].id;
 
-    std::cout << "Select session to resume:\n\n";
-    for (size_t i = 0; i < sessions.size(); ++i) {
-        const auto& s = sessions[i];
-        std::cout << "  " << (i + 1) << ") " << s.id << "  " << s.updated << "  "
-                  << s.turnCount << " turns";
-        if (!s.model.empty())
-            std::cout << "  " << s.model;
-        std::cout << "\n";
-    }
-    std::cout << "\nSession [1]: " << std::flush;
-    std::string line;
-    std::getline(std::cin, line);
-    if (line.empty())
-        return sessions[0].id;
-    try {
-        size_t idx = static_cast<size_t>(std::stoul(line));
-        if (idx >= 1 && idx <= sessions.size())
-            return sessions[idx - 1].id;
-    } catch (...) {
-    }
+    // ── Raw mode for j/k/arrow navigation ──
+    struct termios oldt;
+    tcgetattr(STDIN_FILENO, &oldt);
+    struct termios raw = oldt;
+    cfmakeraw(&raw);
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    std::cout << tui::ansi::hideCursor() << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1)
+              << std::flush;
+
+    auto restore = [&]() {
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldt);
+        std::cout << tui::ansi::showCursor() << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1)
+                  << "\n" << std::flush;
+    };
+
+    auto readKey = [&]() -> std::pair<tui::KeyAction, char> {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(STDIN_FILENO, &fds);
+        select(STDIN_FILENO + 1, &fds, nullptr, nullptr, nullptr);
+        char buf[64];
+        ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
+        if (n <= 0)
+            return {tui::KeyAction::NONE, 0};
+        std::string seq(buf, buf + n);
+        if (seq[0] == 27 && seq.size() == 1) {
+            struct timeval tv = {0, 30000};
+            FD_ZERO(&fds);
+            FD_SET(STDIN_FILENO, &fds);
+            if (select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) > 0) {
+                char buf2[64];
+                ssize_t n2 = read(STDIN_FILENO, buf2, sizeof(buf2));
+                if (n2 > 0)
+                    seq.append(buf2, n2);
+            }
+        }
+        char outChar = 0;
+        tui::KeyMap keymap;
+        tui::KeyAction act = keymap.resolve(seq, outChar);
+        return {act, outChar};
+    };
+
+    // Load metadata for each session.
+    struct PickerRow {
+        std::string id;
+        std::string shortId;  // last 16 chars
+        std::string name;
+        std::string age;      // "2h ago"
+        std::string agentName;
+        size_t turnCount = 0;
+        std::string model;
+    };
+    std::vector<PickerRow> rows;
+    rows.reserve(sessions.size());
+    session::SessionManager sm;
     for (const auto& s : sessions) {
-        if (s.id.find(line) != std::string::npos)
-            return s.id;
+        PickerRow r;
+        r.id = s.id;
+        r.shortId = s.id.size() > 16 ? "…" + s.id.substr(s.id.size() - 15) : s.id;
+        r.name = s.agentName;
+        r.age = humanAge(s.updated);
+        if (r.age.empty())
+            r.age = s.updated.substr(11, 5);  // HH:MM
+        r.agentName = s.agentName;
+        r.turnCount = s.turnCount;
+        r.model = s.model;
+        if (sm.exists(s.id)) {
+            Session loaded = sm.load(s.id);
+            auto it = loaded.metadata.find("name");
+            if (it != loaded.metadata.end() && !it->second.empty()) {
+                r.name = it->second;
+            }
+        }
+        rows.push_back(std::move(r));
     }
-    return sessions[0].id;
+
+    // Render with viewport scrolling: show up to 20 rows starting at `offset`.
+    const size_t VIEW_H = 20;
+    size_t offset = 0;
+    int sel = 0;
+
+    auto renderPicker = [&]() {
+        std::cout << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1);
+        // Header
+        std::cout << "\033[1;36m┌─ Resume session\033[0m  \033[2m"
+                  << rows.size() << " total — j/k or ↑↓ move, 1-9 jump, d/u page, g/G top/bottom, "
+                     "Enter select, q/Esc cancel\033[0m\r\n";
+        size_t end = std::min(offset + VIEW_H, rows.size());
+        for (size_t i = offset; i < end; ++i) {
+            const auto& r = rows[i];
+            bool isSel = (int)i == sel;
+            std::string num = std::to_string(i + 1);
+            // Pad number for alignment
+            while (num.size() < 3)
+                num = " " + num;
+            std::string numColor = isSel ? "\033[1;36m" : "\033[2;34m";
+            std::string shortId = r.shortId;
+            while (shortId.size() < 16)
+                shortId = " " + shortId;
+            std::string agePad = r.age;
+            while (agePad.size() < 9)
+                agePad = " " + agePad;
+            std::string msg = std::to_string(r.turnCount) + " msg";
+            while (msg.size() < 7)
+                msg = " " + msg;
+            // Truncate fields to fit in a typical 100-col terminal.
+            std::string model = r.model;
+            if (model.size() > 28)
+                model = model.substr(0, 25) + "…";
+            std::string name = r.name;
+            if (name.size() > 24)
+                name = name.substr(0, 21) + "…";
+            if (isSel) {
+                std::cout << "\033[1;36m│\033[0m  \033[7;36m" << num << " " << shortId << "  "
+                          << agePad << "  " << msg << "  " << std::left << std::setw(28) << model
+                          << "  " << std::setw(24) << name << "\033[0m\r\n";
+            } else {
+                std::cout << "\033[2m│\033[0m  " << numColor << num << "\033[0m " << shortId
+                          << "  \033[2m" << agePad << "  " << msg << "  \033[0m" << std::left
+                          << std::setw(28) << model << "  \033[3m" << std::setw(24) << name
+                          << "\033[0m\r\n";
+            }
+        }
+        // Footer with scroll position
+        if (rows.size() > VIEW_H) {
+            size_t pos = offset + 1;
+            size_t total = rows.size();
+            std::cout << "\033[2m└─ showing " << pos << "–" << end << " of " << total << "\033[0m\r\n";
+        } else {
+            std::cout << "\033[2m└─ " << rows.size() << " session" << (rows.size() == 1 ? "" : "s")
+                      << "\033[0m\r\n";
+        }
+        std::cout << std::flush;
+    };
+
+    bool picked = false;
+    std::string selectedId;
+    while (!picked) {
+        // Keep cursor in view
+        if (sel < (int)offset)
+            offset = sel;
+        if (sel >= (int)(offset + VIEW_H))
+            offset = sel - VIEW_H + 1;
+        renderPicker();
+        auto [act, ch] = readKey();
+        if (act == tui::KeyAction::ENTER) {
+            picked = true;
+            selectedId = rows[sel].id;
+        } else if (act == tui::KeyAction::CANCEL || act == tui::KeyAction::EXIT ||
+                   (act == tui::KeyAction::CHAR && (ch == 'q' || ch == 'Q'))) {
+            restore();
+            // User explicitly cancelled — never mint a new session.
+            return "";
+        } else if (act == tui::KeyAction::HISTORY_DOWN ||
+                   (act == tui::KeyAction::CHAR && ch == 'j')) {
+            sel = (sel + 1) % (int)rows.size();
+        } else if (act == tui::KeyAction::HISTORY_UP ||
+                   (act == tui::KeyAction::CHAR && ch == 'k')) {
+            sel = (sel - 1 + (int)rows.size()) % (int)rows.size();
+        } else if (act == tui::KeyAction::CHAR && ch == 'd') {
+            // Page down
+            sel = std::min((int)rows.size() - 1, sel + (int)VIEW_H);
+        } else if (act == tui::KeyAction::CHAR && ch == 'u') {
+            // Page up
+            sel = std::max(0, sel - (int)VIEW_H);
+        } else if (act == tui::KeyAction::CHAR && ch >= '1' && ch <= '9') {
+            int idx = ch - '1';
+            if (idx < (int)rows.size())
+                sel = idx;
+        } else if (act == tui::KeyAction::CHAR && ch == 'g') {
+            sel = 0;
+        } else if (act == tui::KeyAction::CHAR && ch == 'G') {
+            sel = (int)rows.size() - 1;
+        }
+    }
+
+    restore();
+    return selectedId;
 }
 
 static std::string resolveSessionId(const CliConfig& cli, bool defaultIfEmpty) {
-    if (cli.resumePicker)
-        return pickSessionInteractive(defaultIfEmpty);
+    if (cli.resumePicker) {
+        std::string picked = pickSessionInteractive(defaultIfEmpty);
+        // If the user cancelled the picker, picked is "". Don't fall back to a
+        // brand-new session — the caller treats empty as "no session" and
+        // exits cleanly.
+        return picked;
+    }
     if (cli.continueSession) {
         auto sessions = sortedSessions();
-        return sessions.empty() ? (defaultIfEmpty ? newSessionId() : "") : sessions[0].id;
+        if (sessions.empty())
+            return defaultIfEmpty ? newSessionId() : "";
+        // Prefer the most recent session that actually has an agent reply
+        // (not just a user prompt). A bare user prompt usually means the user
+        // exited before the LLM finished — resuming that just shows a
+        // half-typed hello and a frozen prompt, which is worse than resuming
+        // the previous real session.
+        session::SessionManager sm;
+        for (const auto& s : sessions) {
+            auto loaded = sm.load(s.id);
+            for (const auto& r : loaded.records) {
+                if (r.role == SessionRecord::AGENT
+                    || r.role == SessionRecord::TOOL_CALL
+                    || r.role == SessionRecord::TOOL_RESULT) {
+                    return s.id;
+                }
+            }
+        }
+        return sessions[0].id;
     }
     if (!cli.sessionId.empty())
         return cli.sessionId;
@@ -776,6 +1030,8 @@ static void applySessionMetadata(CliConfig& cli, const std::string& sessionId) {
         cli.harnessPromptPath = get("harness_path");
     if (cli.systemPromptPath.empty())
         cli.systemPromptPath = get("system_prompt_path");
+    if (cli.personaPath.empty())
+        cli.personaPath = get("persona_path");
     if (!cli.providerSet && !get("provider").empty())
         cli.provider = get("provider");
     if (!cli.modelSet && !get("model").empty())
@@ -803,13 +1059,94 @@ static void persistSessionMetadata(const std::string& sessionId, const CliConfig
         session.metadata["system_prompt_path"] = acfg.systemPromptPath;
     if (!acfg.personaPath.empty())
         session.metadata["persona_path"] = acfg.personaPath;
+    if (!cli.sessionName.empty())
+        session.metadata["name"] = cli.sessionName;
+    else if (session.metadata.count("name"))
+        session.metadata.erase("name");
     session.updated = session::SessionManager::iso8601();
     sm.save(session);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Resume banner — printed to stderr so stdout stays clean for piping
+// ═══════════════════════════════════════════════════════════════════════
+static std::string humanTime(const std::string& iso) {
+    if (iso.empty())
+        return "unknown";
+    // Accept "YYYY-MM-DDTHH:MM:SSZ" or "YYYY-MM-DDTHH:MM:SS.fffZ".
+    if (iso.size() >= 16) {
+        std::string out = iso.substr(0, 16);
+        if (out.size() > 10)
+            out[10] = ' ';
+        return out;
+    }
+    return iso;
+}
+
+static std::string humanAge(const std::string& iso) {
+    if (iso.empty())
+        return "";
+    std::tm tm{};
+    if (iso.size() < 19 || !strptime(iso.substr(0, 19).c_str(), "%Y-%m-%dT%H:%M:%S", &tm))
+        return "";
+    auto t = timegm(&tm);
+    auto now = std::time(nullptr);
+    auto diff = static_cast<long>(now - t);
+    if (diff < 0)
+        return "in the future";
+    if (diff < 60)
+        return std::to_string(diff) + "s ago";
+    if (diff < 3600)
+        return std::to_string(diff / 60) + "m ago";
+    if (diff < 86400)
+        return std::to_string(diff / 3600) + "h ago";
+    return std::to_string(diff / 86400) + "d ago";
+}
+
+static void printResumeBanner(const std::string& sessionId, const std::string& kind,
+                              size_t messageCount = 0, const std::string& forkSource = "") {
+    if (sessionId.empty())
+        return;
+    session::SessionManager sm;
+    auto session = sm.load(sessionId);
+    std::string name = session.metadata.count("name") ? session.metadata.at("name") : "";
+    std::string agent = session.agentName;
+    std::string model = session.model;
+    std::string provider = session.provider;
+    std::string manifest = session.metadata.count("manifest_path") ? session.metadata.at("manifest_path") : "";
+    std::string created = humanTime(session.created);
+    std::string updated = humanTime(session.updated);
+    std::string age = humanAge(session.updated);
+    size_t turns = messageCount > 0 ? messageCount : session.records.size();
+
+    std::cerr << "\033[2m[session]\033[0m \033[1m" << kind << " session: " << sessionId << "\033[0m";
+    if (!name.empty())
+        std::cerr << " (\033[3m" << name << "\033[0m)";
+    std::cerr << "\n";
+    if (!forkSource.empty())
+        std::cerr << "\033[2m[session]\033[0m   forked from: " << forkSource << "\n";
+    if (!agent.empty())
+        std::cerr << "\033[2m[session]\033[0m   agent:     " << agent << "\n";
+    if (!provider.empty() || !model.empty())
+        std::cerr << "\033[2m[session]\033[0m   model:     " << provider << "/" << model << "\n";
+    if (!manifest.empty())
+        std::cerr << "\033[2m[session]\033[0m   manifest:  " << manifest << "\n";
+    std::cerr << "\033[2m[session]\033[0m   created:   " << created << "\n";
+    std::cerr << "\033[2m[session]\033[0m   updated:   " << updated << " (" << age << ")\n";
+    std::cerr << "\033[2m[session]\033[0m   messages:  " << turns << "\n";
+    if (turns > 0)
+        std::cerr << "\033[2m[session]\033[0m Last records will render in the TUI above the prompt.\n";
+    else
+        std::cerr << "\033[2m[session]\033[0m (no records — this is an empty session)\n";
+    std::cerr << "\033[2m[session]\033[0m To start fresh: \033[1mcortex-mk3 --no-session\033[0m\n";
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Command: list
 // ═══════════════════════════════════════════════════════════════════════
+static int cmdList(const CliConfig& cli);
+static int cmdSessions(const CliConfig& cli);
+
 static int cmdList(const CliConfig& cli) {
     if (cli.listProviders) {
         std::cout << "Available providers:\n\n";
@@ -917,10 +1254,145 @@ static int cmdList(const CliConfig& cli) {
         return 0;
     }
 
+    if (cli.listSessionsFlag) {
+        return cmdSessions(cli);
+    }
+
     // Default: show providers (most useful; use --models/--tools for the rest)
     CliConfig showProviders = cli;
     showProviders.listProviders = true;
     return cmdList(showProviders);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Command: sessions — list/show/rm/export
+// ═══════════════════════════════════════════════════════════════════════
+static int cmdSessions(const CliConfig& cli) {
+    session::SessionManager sm;
+
+    auto printTable = [](const std::vector<session::SessionManager::SessionInfo>& sessions) {
+        if (sessions.empty()) {
+            std::cout << "(no sessions found — run cortex-mk3 to create one)\n";
+            return;
+        }
+        // Compute column widths.
+        size_t idW = 2, agentW = 4, modelW = 5, updatedW = 7;
+        for (const auto& s : sessions) {
+            idW = std::max(idW, s.id.size());
+            agentW = std::max(agentW, s.agentName.size());
+            modelW = std::max(modelW, s.model.size());
+            updatedW = std::max(updatedW, s.updated.size());
+        }
+        std::cout << "\033[1m" << std::left
+                  << std::setw((int)idW + 2) << "ID"
+                  << std::setw((int)agentW + 2) << "AGENT"
+                  << std::setw((int)modelW + 2) << "MODEL"
+                  << std::setw((int)updatedW + 2) << "UPDATED"
+                  << std::right << std::setw(7) << "TURNS" << "\033[0m\n";
+        for (const auto& s : sessions) {
+            std::cout << std::left
+                      << std::setw((int)idW + 2) << s.id
+                      << std::setw((int)agentW + 2) << s.agentName
+                      << std::setw((int)modelW + 2) << s.model
+                      << std::setw((int)updatedW + 2) << s.updated
+                      << std::right << std::setw(7) << s.turnCount << "\n";
+        }
+        std::cout << "\n"
+                  << "Resume latest:  cortex-mk3 --continue\n"
+                  << "Pick one:       cortex-mk3 --resume\n"
+                  << "By id:          cortex-mk3 --session <id>\n"
+                  << "Fork:           cortex-mk3 --fork <id>\n";
+    };
+
+    if (cli.sessionsSubcommand == "list" || cli.sessionsSubcommand.empty()) {
+        printTable(sortedSessions());
+        return 0;
+    }
+
+    if (cli.sessionsSubcommand == "show") {
+        if (cli.sessionsTarget.empty()) {
+            std::cerr << "Usage: cortex-mk3 sessions show <id>\n";
+            return 1;
+        }
+        if (!sm.exists(cli.sessionsTarget)) {
+            std::cerr << "Session not found: " << cli.sessionsTarget << "\n";
+            return 1;
+        }
+        Session s = sm.load(cli.sessionsTarget);
+        std::cout << "\033[1mSession:\033[0m " << s.id << "\n";
+        if (s.metadata.count("name"))
+            std::cout << "\033[1mName:\033[0m    " << s.metadata.at("name") << "\n";
+        std::cout << "\033[1mAgent:\033[0m   " << s.agentName << "\n";
+        std::cout << "\033[1mModel:\033[0m   " << s.provider << "/" << s.model << "\n";
+        std::cout << "\033[1mCreated:\033[0m " << s.created << "\n";
+        std::cout << "\033[1mUpdated:\033[0m " << s.updated << "\n";
+        std::cout << "\033[1mRecords:\033[0m " << s.records.size() << "\n";
+        std::cout << "\033[1mFeeds:\033[0m   " << s.contextFeeds.size() << "\n";
+        if (s.metadata.count("manifest_path"))
+            std::cout << "\033[1mManifest:\033[0m " << s.metadata.at("manifest_path") << "\n";
+        if (s.metadata.count("forked_from"))
+            std::cout << "\033[1mForked from:\033[0m " << s.metadata.at("forked_from") << "\n";
+        std::cout << "\n\033[2m─── records ───\033[0m\n";
+        size_t n = 0;
+        for (const auto& r : s.records) {
+            std::string role;
+            switch (r.role) {
+                case SessionRecord::USER: role = "user"; break;
+                case SessionRecord::AGENT: role = "agent"; break;
+                case SessionRecord::TOOL_CALL: role = "tool"; break;
+                case SessionRecord::TOOL_RESULT: role = "result"; break;
+                default: role = "system"; break;
+            }
+            std::string content = r.content;
+            // Strip a single trailing newline for readability.
+            if (!content.empty() && content.back() == '\n')
+                content.pop_back();
+            // Truncate long content.
+            if (content.size() > 200)
+                content = content.substr(0, 197) + "...";
+            std::cout << "[" << n++ << "] " << role << ": " << content << "\n";
+        }
+        return 0;
+    }
+
+    if (cli.sessionsSubcommand == "rm") {
+        if (cli.sessionsTarget.empty()) {
+            std::cerr << "Usage: cortex-mk3 sessions rm <id>\n";
+            return 1;
+        }
+        if (!sm.exists(cli.sessionsTarget)) {
+            std::cerr << "Session not found: " << cli.sessionsTarget << "\n";
+            return 1;
+        }
+        sm.remove(cli.sessionsTarget);
+        // Also clear the state checkpoint if present.
+        fs::path statePath = fs::current_path() / ".cortex" / "state"
+                             / (cli.sessionsTarget + ".json");
+        std::error_code ec;
+        fs::remove(statePath, ec);
+        std::cout << "Removed session " << cli.sessionsTarget << "\n";
+        return 0;
+    }
+
+    if (cli.sessionsSubcommand == "export") {
+        if (cli.sessionsTarget.empty()) {
+            std::cerr << "Usage: cortex-mk3 sessions export <id> <file>\n";
+            return 1;
+        }
+        std::string outPath = cli.sessionsTargetArg.empty()
+                              ? (cli.sessionsTarget + ".portable.json")
+                              : cli.sessionsTargetArg;
+        if (sm.exportToFile(cli.sessionsTarget, outPath)) {
+            std::cout << "Exported " << cli.sessionsTarget << " to " << outPath << "\n";
+            return 0;
+        }
+        std::cerr << "Export failed: session empty or not found\n";
+        return 1;
+    }
+
+    std::cerr << "Unknown sessions subcommand: " << cli.sessionsSubcommand << "\n"
+              << "Try: cortex-mk3 sessions [list|show <id>|rm <id>|export <id> <file>]\n";
+    return 1;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1318,12 +1790,65 @@ static int cmdRun(CliConfig& cli) {
 
     // Resuming should restore the runtime surface before agent construction.
     std::string activeSessionId;
+    std::string forkedFrom;  // set when --fork was used, shown in banner
+    bool didResume = false;  // true when -c/-r/--session/--fork resolved an existing session
+
+    // --fork <id>: copy an existing session and continue under a fresh id.
+    // Must run before the resume block so it sets cli.sessionId correctly.
+    if (!cli.forkFrom.empty() && !cli.ephemeral) {
+        session::SessionManager sm;
+        if (!sm.exists(cli.forkFrom)) {
+            std::cerr << "Error: --fork target session not found: " << cli.forkFrom << "\n";
+            return 1;
+        }
+        Session src = sm.load(cli.forkFrom);
+        std::string newId = newSessionId();
+        Session fork = sm.create(newId, src.agentName, src.model, src.provider);
+        fork.records = src.records;
+        fork.contextFeeds = src.contextFeeds;
+        fork.metadata = src.metadata;
+        if (!cli.sessionName.empty())
+            fork.metadata["name"] = cli.sessionName;
+        fork.metadata["forked_from"] = cli.forkFrom;
+        fork.updated = session::SessionManager::iso8601();
+        sm.save(fork);
+        forkedFrom = cli.forkFrom;
+        cli.sessionId = newId;
+        cli.forkFrom.clear();
+        didResume = true;  // fork is a form of resume (copied history)
+    }
+
     if (!cli.ephemeral && (cli.resumePicker || cli.continueSession || !cli.sessionId.empty())) {
-        activeSessionId = resolveSessionId(cli, true);
-        applySessionMetadata(cli, activeSessionId);
-        cli.sessionId = activeSessionId;
+        std::string resolved = resolveSessionId(cli, true);
+        // If the user cancelled -r, the picker returns "". Exit cleanly
+        // instead of dropping them into a fresh session.
+        if (cli.resumePicker && resolved.empty()) {
+            std::cerr << "\033[2m[session] Resume cancelled.\033[0m\n";
+            return 0;
+        }
+        // Only restore metadata if we're truly loading an existing session.
+        // resolveSessionId may mint a brand-new id when nothing exists yet.
+        session::SessionManager sm;
+        bool existed = !resolved.empty() && sm.exists(resolved);
+        if (existed) {
+            applySessionMetadata(cli, resolved);
+            activeSessionId = resolved;
+            cli.sessionId = resolved;
+            didResume = true;
+        } else {
+            // No prior session — the resume flags were ignored. Stay with a
+            // fresh id (already set by resolveSessionId's default branch).
+            activeSessionId = resolved;
+            cli.sessionId = resolved;
+        }
         cli.resumePicker = false;
         cli.continueSession = false;
+
+        // Resume banner — printed once, after metadata is restored.
+        if (cli.sessionBanner) {
+            const char* kindStr = forkedFrom.empty() ? "Resuming" : "Forked";
+            printResumeBanner(activeSessionId, kindStr, 0, forkedFrom);
+        }
     }
 
     // Dry run: validate and exit
@@ -1554,6 +2079,9 @@ static int cmdRun(CliConfig& cli) {
 
     // Bottom-up layout: output anchors to bottom, above status/input bars
     tui::Input input;
+    // Declared early so lambdas defined below can capture it. Assigned later
+    // (after persistSessionMetadata runs) when we know the resolved id.
+    std::string sessionId;
     // ask_tool dialog state — shared between renderScreen and the prompt loop.
     auto askDialog = std::make_shared<AskDialogSession>();
     std::atomic<bool> dialogActive{false};
@@ -1595,6 +2123,8 @@ static int cmdRun(CliConfig& cli) {
         state.provider = acfg.provider;
         state.model = acfg.model;
         state.thoughtPreview = streamThoughtPreview;
+        state.sessionId = sessionId;
+        state.sessionName = cli.sessionName;
         return state;
     };
     auto statusBarText = [&](int displaySize) -> std::string {
@@ -1669,7 +2199,7 @@ static int cmdRun(CliConfig& cli) {
     std::string cmd;
     bool quit = false;
     const bool persistSession = !cli.ephemeral;
-    std::string sessionId = persistSession ? (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId) : "";
+    sessionId = persistSession ? (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId) : "";
     if (persistSession && !sessionId.empty())
         persistSessionMetadata(sessionId, cli, acfg);
     input.start([&](const std::string& s) {
@@ -1812,7 +2342,20 @@ static int cmdRun(CliConfig& cli) {
         pushTuiSection("workflows", workflowNamesFromXml());
     };
 
-    renderScreen();
+    // On resume, replay the saved rendered TUI text from the session.
+    // The live run captures its rendered lines (historyLines + rendererLines)
+    // and saves them as session.renderedHistory. We just push them back into
+    // historyLines — no parser, no protocol reconstruction, no XML.
+    {
+        session::SessionManager sm;
+        if (sm.exists(sessionId)) {
+            Session seeded = sm.load(sessionId);
+            for (const auto& line : seeded.renderedHistory)
+                historyLines.push_back(line);
+        }
+    }
+
+        renderScreen();
 
     while (cortex::mk3::g_running && !quit) {
         // Handle window resize
@@ -2342,6 +2885,19 @@ static int cmdRun(CliConfig& cli) {
         frameClock.requestFrame();
         // AC15 — agent.prompt() owns persistence; do not save again here.
         renderScreen();
+
+        // Capture the full TUI scrollback into the session so -c can replay
+        // it verbatim. The agent's saveSession() ran inside agent.prompt() —
+        // we load, append renderedHistory, and save again. Cheap (small
+        // JSON) and gives the user the exact view they had at exit time.
+        if (!cli.ephemeral && !sessionId.empty()) {
+            session::SessionManager sm;
+            if (sm.exists(sessionId)) {
+                Session seed = sm.load(sessionId);
+                seed.renderedHistory = historyLines;
+                sm.save(seed);
+            }
+        }
     }
 
     input.stop();
@@ -2396,6 +2952,8 @@ int main(int argc, char* argv[]) {
         return cmdCompletions(cli);
     if (cli.command == "serve")
         return cmdServe(cli);
+    if (cli.command == "sessions")
+        return cmdSessions(cli);
 
     // Default: run
     return cmdRun(cli);
