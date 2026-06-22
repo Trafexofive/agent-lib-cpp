@@ -326,3 +326,87 @@ I propose: **ship 1, 2, 5 in one release** (the harness + id work — id auto-ge
 Questions 5, 6, 7 are still open. If you don't pick, I'll go with my defaults.
 
 Once 5/6/7 are answered (or defaulted), I can promote the locked slices to a real PR with harness + parser + runtime + tests.
+
+---
+
+## 7. Addendum: `cognitive_engine.thinking: true|false`
+
+**Trigger:** user observation in live run with `minimax/minimax-m3`. The model:
+- Does not emit `<thought>` tags
+- Duplicates its own action in one turn (same id, twice)
+- Re-does work it already has results for (did `ping2` after `ping1` returned `pong`)
+
+The first two are downstream of the first: the LLM has no visible reasoning, so it makes mistakes that the user can't see and the runtime can't correct.
+
+### 7.1 The flag
+
+```yaml
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-v4-pro
+    parameters:
+      temperature: 0.5
+  thinking: true   # NEW: force the LLM to emit <thought> before any <action>
+```
+
+**Default:** `false` (don't break existing agents).
+
+### 7.2 Runtime effect
+
+When `thinking: true`, the system prompt gets a hard rule appended (BEFORE the harness prompt, as a system message):
+
+```
+THINKING MODE (enforced by manifest)
+
+You MUST emit a <thought>...</thought> tag immediately before every
+<action> you emit. No exceptions. The runtime uses these to:
+
+  - Render your reasoning live in the TUI (so the user sees your
+    work and can correct you mid-stream)
+  - Detect duplicate actions (same id twice in one turn)
+  - Detect redundant work (you have a result; you emit another
+    action that redoes it)
+
+If you emit an <action> without a preceding <thought> in the same
+turn, the runtime injects "[thought: no reasoning provided]" and
+emits a system correction.
+```
+
+### 7.3 Three layers of enforcement (all in scope)
+
+| Layer | What | Where |
+|---|---|---|
+| 1. **Manifest** | The flag | `agent.yml` |
+| 2. **Harness** | The system-prompt rule above | Injected at agent-load time |
+| 3. **Parser** | Reject `<action>` without preceding `<thought>` in the same turn (when `thinking: true`) | `src/protocol/parser.cpp` |
+
+Layer 1 + 2 are necessary; layer 3 is the strict enforcement. The user can pick.
+
+### 7.4 Why this is small (~30 LOC)
+
+- `AgentConfig` gets one field: `bool requireThought = false`
+- `ManifestLoader::loadAgentConfig` reads `cognitive_engine.thinking` (defaults to false)
+- `Agent::runLoop` (or wherever the system prompt is built) checks the flag; if true, prepends the THINKING MODE rule
+- `src/protocol/parser.cpp`: if flag is true AND an action arrives without a preceding thought in the current turn, emit a system correction and continue (don't hard-fail; the LLM is told and self-corrects)
+
+### 7.5 What this DOES NOT do
+
+- Does not change the model. Stays on whatever the agent manifest says.
+- Does not affect agents that don't set `thinking: true`.
+- Does not change the TUI rendering of thoughts (they're already dimmed cards).
+- Does not change duplicate-id handling. (That's a separate decision — see prior ask_cards.)
+
+### 7.6 Ship order
+
+1. **Layer 1 (manifest flag) + Layer 2 (system prompt rule)** — one commit, ~30 LOC, no parser change. Low risk. Ship this first.
+2. **Layer 3 (parser enforcement)** — separate commit if user wants strict. ~50 LOC. Higher risk of false positives (LLM might emit thought, then later action, but parser sees them in different turns).
+
+### 7.7 Test approach
+
+For each layer:
+- Layer 1: dry-run loads the manifest, sees `thinking: true`, no error.
+- Layer 2: dry-run + live run with a manifest that has `thinking: true` — system prompt should contain the THINKING MODE rule.
+- Layer 3: parser test that emits `<action>` without preceding `<thought>` and verifies the system correction is generated.
+
+Live test: user runs `cortex-mk3` with an agent that has `thinking: true` on minimax. The LLM should now emit `<thought>` before actions. User observes whether the redundant-ping behavior goes away.
