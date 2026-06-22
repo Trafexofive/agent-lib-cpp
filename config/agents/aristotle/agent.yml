@@ -20,10 +20,14 @@ prompt_building:
     return_schemas: false
     usage_examples: false
 
-# Aristotle is intentionally narrow. Zero builtins. Only purpose-built
-# doubt tools. The whole point: the LLM cannot escape into a shell to
-# explore freely. It can only challenge with what these two tools surface.
+# Aristotle is intentionally narrow. ZERO builtins. The only tool is
+# the local script tool `challenge`, which lives in ./tools/challenge/
+# — same manifest module, not a global builtin. The narrowness is
+# two-fold: (1) only one tool, and (2) that tool is local to this
+# agent. Other agents can't use it because it's not registered in
+# the global ToolRegistry.
 import:
-  tools: []
+  tools:
+    - ./tools/challenge/tool.yml
   feeds: []
   env: []

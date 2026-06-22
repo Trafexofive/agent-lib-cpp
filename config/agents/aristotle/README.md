@@ -42,16 +42,21 @@ Aristotle returns a severity-tagged findings table. The caller is responsible fo
 ## What's in this module
 
 ```
-manifests/agents/aristotle/
-├── agent.yml      # agent definition (zero tools imports)
+config/agents/aristotle/
+├── agent.yml      # agent definition (imports the local challenge tool)
 ├── persona.md     # identity: default position is doubt
 ├── system.md      # per-task system prompt with the strict output format
-├── CATALOG.md     # this file
-└── README.md      # quick-start + philosophy
+├── CATALOG.md     # catalog form of the same content
+├── README.md      # this file
+└── tools/
+    └── challenge/  # local doubt tool (script, not builtin)
+        ├── tool.yml
+        └── challenge.py
 ```
 
 ## Maintenance
 
-- New doubt patterns → add a detector in `src/tools/builtins/challenge.cpp` and bump `challenge` tool version.
+- New doubt patterns → add a detector in `tools/challenge/challenge.py` and bump `challenge` tool version.
 - Changes to the output format → update `system.md` (the format is part of the contract).
 - Changes to severity semantics → update `persona.md` (BLOCKER / CONCERN / NIT).
+- Adding another tool → put it under `tools/<name>/`, following the `challenge` pattern.
