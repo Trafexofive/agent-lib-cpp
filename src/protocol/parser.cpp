@@ -178,7 +178,7 @@ void Parser::processBuffer() {
 
             contentStart = gt + 1;
             size_t closingTagStart =
-                closingPos - (tagName.length() + 3);  // back to < of </tagName>
+                closingPos - lastCloseLen_;  // back to < of </tagName>
             openingTag = buffer_.substr(readPos_ + 1, contentStart - readPos_ - 2);
             content = buffer_.substr(contentStart, closingTagStart - contentStart);
         }
@@ -222,6 +222,13 @@ std::string Parser::identifyTag(size_t tagStart) {
     size_t nameEnd = buffer_.find_first_of(" >/", nameStart);
     std::string tagName = buffer_.substr(nameStart, nameEnd - nameStart);
 
+    // Normalize: <think> (HTML-style, used by some models including minimax-m3
+    // when emitting native reasoning tokens) is the same as <thought>. Without
+    // this, those tokens would be stripped as bare text and the user would see
+    // no reasoning in the TUI.
+    if (tagName == "think")
+        tagName = "thought";
+
     static const std::vector<std::string> known = {"thought", "action", "response", "result",
                                                    "context_feed"};
     for (auto& k : known) {
@@ -240,7 +247,13 @@ std::string Parser::identifyTag(size_t tagStart) {
 // ---------------------------------------------------------------------------
 size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
     const std::string openMarker = "<" + tagName;
-    const std::string closeMarker = "</" + tagName + ">";
+    std::string closeMarker = "</" + tagName + ">";
+    // Synonym: <thought> can be closed by </think> too (HTML-style reasoning
+    // tokens from some models). Without this, the closing tag would not be
+    // found and the tag would never be parsed.
+    std::string altCloseMarker;
+    if (tagName == "thought")
+        altCloseMarker = "</think>";
 
     int depth = 1;
     bool inString = false;
@@ -272,9 +285,22 @@ size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
             // Closing tag match
             if (i + closeMarker.size() <= buffer_.size() &&
                 buffer_.compare(i, closeMarker.size(), closeMarker) == 0) {
-                if (--depth == 0)
+                if (--depth == 0) {
+                    lastCloseLen_ = closeMarker.size();
                     return i + closeMarker.size();
+                }
                 i += closeMarker.size();
+                continue;
+            }
+            // Alternate close (e.g. </think> for <thought>)
+            if (!altCloseMarker.empty() &&
+                i + altCloseMarker.size() <= buffer_.size() &&
+                buffer_.compare(i, altCloseMarker.size(), altCloseMarker) == 0) {
+                if (--depth == 0) {
+                    lastCloseLen_ = altCloseMarker.size();
+                    return i + altCloseMarker.size();
+                }
+                i += altCloseMarker.size();
                 continue;
             }
             // Nested opening tag match: <tagName followed by space, > or /

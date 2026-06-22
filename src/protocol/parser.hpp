@@ -150,6 +150,10 @@ class Parser {
 
     std::string buffer_;
     size_t readPos_ = 0;
+    // Length of the most recent close marker matched by findClosingTag.
+    // Needed by the caller to compute closingTagStart correctly when the
+    // close is a synonym (e.g. </think> for <thought>).
+    size_t lastCloseLen_ = 0;
     bool inResponse_ = false;  // true between <response> and </response> for streaming
     size_t responseContentStart_ =
         0;  // start of active response body for code-span-aware close scans
