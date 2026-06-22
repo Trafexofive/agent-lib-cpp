@@ -74,3 +74,15 @@ audit artifact.
 Add a row in the appropriate batch. The audit artifact is the source of
 truth — when you add a row here, link the slice commit when it lands and
 remove the row from "Live open" if the slice completes.
+
+### Agent manifest expansion — from `bloated` prototype (queued, design complete)
+
+Each slice has a design in `docs/manifests/context-and-sandbox-design.md`. The `bloated` agent at `staged-manifests/agents/bloated/` is the forward-looking demo of what the full surface area looks like.
+
+| Slice | Status | Note |
+|---|---|---|
+| `context:` block: 6 new fields (`history_mode`, `on_protocol_violation`, `stream_strategy`, `action_timeout_sec` + rename of `runtime:` keys) | queued | Design §1. Parser change in `manifest_loader.hpp`, runtime wiring in `agent.cpp`. |
+| `sandbox:` block: 6 new fields (`allowed_commands`, `allowed_paths`, `allowed_hosts`, `readonly`, `network`, `files`) | queued | Design §2. Most-restrictive default is a behavior change; needs migration note. |
+| `import.files` and `import.folders` | queued | Design §5. Wrap content in `<imported_file path="...">`, recursive + .gitignore by default, follow symlinks by default, re-read on every load. |
+| "What's loaded" startup message — show counts of tools/feeds/relics/sub-agents/env/imports on agent start | queued | Design §7. Stderr line. Replace with status-bar indicator or `/loaded` slash command if user wants. |
+| `auto_play_on_start: [tool calls]` | queued | Future feature for protocol alignment. Reduces bare-text rate. Separate from `import:`. |
