@@ -192,6 +192,16 @@ class Agent {
         return sessionMgr_;
     }
 
+    // Set the prompt handler for workflow human-in-the-loop steps.
+    using HumanPromptHandler = std::function<std::string(const std::string&, const std::string&, int)>;
+    void setHumanPromptHandler(HumanPromptHandler h) { humanPromptHandler_ = std::move(h); }
+    HumanPromptHandler getHumanPromptHandler() const { return humanPromptHandler_; }
+
+    // Set the checkpoint handler for workflow checkpoint steps.
+    using CheckpointHandler = std::function<void(const std::string&, const Json::Value&)>;
+    void setCheckpointHandler(CheckpointHandler h) { checkpointHandler_ = std::move(h); }
+    CheckpointHandler getCheckpointHandler() const { return checkpointHandler_; }
+
    private:
     // Core loop
     std::string runLoop(AgentContext& ctx);
@@ -253,6 +263,9 @@ class Agent {
     std::vector<ProtocolResult> protocolResults_;
     std::vector<ProtocolEvent> protocolEvents_;
     std::map<std::string, std::shared_ptr<Agent>> subAgents_;
+    // Workflow integration: handlers for human-in-loop and checkpoint steps
+    HumanPromptHandler humanPromptHandler_;
+    CheckpointHandler checkpointHandler_;
     std::map<std::string, Json::Value>
         actionResults_;  // persistent results table for ${id.field} expansion
     std::map<std::string, std::string> env_;

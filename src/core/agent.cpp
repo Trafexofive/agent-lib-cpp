@@ -637,10 +637,10 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 (void)payload;
             };
 
-            // Slice 4: checkpoint — no-op by default
-            rt.executeCheckpoint = [](const std::string& id, const Json::Value& state) {
-                (void)id;
-                (void)state;
+            // Slice 4: checkpoint — uses the agent's CheckpointHandler if set.
+            rt.executeCheckpoint = [this](const std::string& id, const Json::Value& state) {
+                if (checkpointHandler_)
+                    checkpointHandler_(id, state);
             };
 
             // Slice 6: parallel_race — naive fallback
