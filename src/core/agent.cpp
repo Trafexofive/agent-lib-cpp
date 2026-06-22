@@ -580,6 +580,59 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 return r;
             };
 
+            // Slice 2: human callback — defaults to the step's default value.
+            rt.executeHuman = [](const std::string& id,
+                                  const Json::Value& prompt) -> Json::Value {
+                (void)id;
+                return prompt.isMember("default") ? Json::Value(prompt["default"]) : Json::Value("");
+            };
+
+            // Slice 2: relic callback — defaults to error (no registry yet).
+            rt.executeRelic = [](const std::string& name, const std::string& action,
+                                  const Json::Value& params) -> Json::Value {
+                (void)action;
+                (void)params;
+                Json::Value err;
+                err["success"] = false;
+                err["error"] = "relic runtime not wired (slice 9): " + name;
+                return err;
+            };
+
+            // Slice 2: feed callback — defaults to empty object (no registry yet).
+            rt.executeFeed = [](const std::string& name, const Json::Value& query) -> Json::Value {
+                (void)query;
+                Json::Value v;
+                v["note"] = "feed runtime not wired (slice 9): " + name;
+                return v;
+            };
+
+            // Slice 2: emit — no-op by default
+            rt.executeEmit = [](const std::string& event, const Json::Value& payload) {
+                (void)event;
+                (void)payload;
+            };
+
+            // Slice 4: checkpoint — no-op by default
+            rt.executeCheckpoint = [](const std::string& id, const Json::Value& state) {
+                (void)id;
+                (void)state;
+            };
+
+            // Slice 6: parallel_race — naive fallback
+            rt.executeParallelRace = [](
+                                          const std::vector<workflows::WorkflowStep>& steps,
+                                          const std::map<std::string, Json::Value>& symbols) -> Json::Value {
+                (void)symbols;
+                Json::Value out(Json::objectValue);
+                for (const auto& s : steps) {
+                    Json::Value r;
+                    r["success"] = true;
+                    r["note"] = "race fallback: returned placeholder";
+                    out[s.id] = r;
+                }
+                return out;
+            };
+
             // Recursive workflow call — builds its own runtime, not a copy of rt
             rt.executeWorkflow = [this, &ctx](const std::string& name,
                                               const Json::Value& p) -> workflows::WorkflowResult {
