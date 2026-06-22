@@ -1,0 +1,95 @@
+# =============================================================================
+# Live test workflow — exercises every new step type
+# =============================================================================
+
+kind: Workflow
+version: "2.0"
+name: smoke-test
+summary: "End-to-end smoke test of every workflow feature."
+
+description: |
+  Exercises: input_schema, switch, map, try_catch, emit, checkpoint, return.
+  All steps use no-op tools/agents so this can run with --manifest pointing
+  at the workflow alone, without an LLM.
+
+input_schema:
+  type: object
+  required: [target]
+  properties:
+    target:
+      type: string
+    environment:
+      type: string
+      enum: [staging, production]
+      default: staging
+
+output_schema:
+  type: object
+  required: [status, target]
+  properties:
+    status: { type: string }
+    target: { type: string }
+    findings_count: { type: integer }
+
+steps:
+  - id: announce
+    type: emit
+    event: "smoke.started"
+    payload:
+      target: "${input.target}"
+      environment: "${input.environment}"
+
+  - id: route
+    type: switch
+    on: "${input.environment}"
+    cases:
+      - value: "staging"
+        steps:
+          - id: run_staging
+            type: emit
+            event: "smoke.staging"
+            payload: { ok: true }
+      - value: "production"
+        steps:
+          - id: run_production
+            type: emit
+            event: "smoke.production"
+            payload: { ok: true }
+
+  - id: count_files
+    type: map
+    over: "[1, 2, 3, 4, 5]"
+    as: n
+    step:
+      id: dummy
+      type: emit
+      event: "smoke.iteration"
+      payload: { n: "${n}" }
+
+  - id: safe_section
+    type: try_catch
+    body:
+      - id: risky
+        type: tool
+        tool: nonexistent_tool_for_smoke
+        params: { x: 1 }
+        on_error: abort
+    catch:
+      - id: handle
+        type: emit
+        event: "smoke.caught"
+        payload: { note: "tool failed, caught" }
+
+  - id: checkpoint_done
+    type: checkpoint
+    state:
+      target: "${input.target}"
+      completed: true
+    message: "smoke test of ${input.target} complete"
+
+  - id: done
+    type: return
+    value:
+      status: "succeeded"
+      target: "${input.target}"
+      findings_count: 5

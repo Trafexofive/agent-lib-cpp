@@ -114,6 +114,7 @@ class MiniYaml {
         return idx;
     }
 
+   public:
     static std::string trimQuotes(const std::string& s) {
         if (s.size() >= 2 &&
             ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\'')))
@@ -491,11 +492,12 @@ class WorkflowEngine {
                     res.stepOutputs.push_back(out);
                 }
                 else if (step.type == "emit") {
+                    Json::Value resolvedPayload = resolveJsonDeep(step.emitPayload, symbols);
                     Json::Value event;
                     event["event"] = step.emitEvent;
-                    event["payload"] = step.emitPayload;
+                    event["payload"] = resolvedPayload;
                     if (rt.executeEmit)
-                        rt.executeEmit(step.emitEvent, step.emitPayload);
+                        rt.executeEmit(step.emitEvent, resolvedPayload);
                     symbols[step.id] = event;
                     res.outputs[step.id] = event;
                     res.stepIds.push_back(step.id);
@@ -504,8 +506,14 @@ class WorkflowEngine {
                 else if (step.type == "map") {
                     std::string listExpr = resolveString(step.over, symbols);
                     Json::Value list;
-                    if (symbols.count(listExpr) && symbols[listExpr].isArray())
+                    if (!listExpr.empty() && listExpr.front() == '[') {
+                        Json::CharReaderBuilder r;
+                        std::string errs;
+                        std::istringstream ss(listExpr);
+                        Json::parseFromStream(r, ss, &list, &errs);
+                    } else if (symbols.count(listExpr) && symbols[listExpr].isArray()) {
                         list = symbols[listExpr];
+                    }
                     Json::Value results(Json::arrayValue);
                     if (!step.steps.empty()) {
                         for (Json::ArrayIndex i = 0; i < list.size(); i++) {
@@ -569,7 +577,7 @@ class WorkflowEngine {
                     Json::Value ckpt;
                     ckpt["id"] = step.id;
                     ckpt["message"] = resolveString(step.checkpointMessage, symbols);
-                    ckpt["state"] = step.checkpointState;
+                    ckpt["state"] = resolveJsonDeep(step.checkpointState, symbols);
                     if (rt.executeCheckpoint)
                         rt.executeCheckpoint(step.id, ckpt);
                     symbols[step.id] = ckpt;
@@ -578,7 +586,7 @@ class WorkflowEngine {
                     res.stepOutputs.push_back(ckpt);
                 }
                 else if (step.type == "return") {
-                    Json::Value rv = step.returnValue;
+                    Json::Value rv = resolveJsonDeep(step.returnValue, symbols);
                     symbols[step.id] = rv;
                     res.outputs[step.id] = rv;
                     res.stepIds.push_back(step.id);
@@ -798,6 +806,38 @@ class WorkflowEngine {
             }
         }
         return resolved;
+    }
+
+    // Recursively resolve ${...} placeholders in any JSON value.
+    // Used for emit payloads, checkpoint state, switch on, etc. — anywhere
+    // the YAML loader produced a JSON value that may contain string refs.
+    static Json::Value resolveJsonDeep(const Json::Value& v,
+                                       const std::map<std::string, Json::Value>& symbols) {
+        if (v.isString()) {
+            std::string expanded = resolveString(v.asString(), symbols);
+            if (!expanded.empty() && (expanded.front() == '{' || expanded.front() == '[')) {
+                Json::Value parsed;
+                Json::CharReaderBuilder r;
+                std::string errs;
+                std::istringstream ss(expanded);
+                if (Json::parseFromStream(r, ss, &parsed, &errs))
+                    return parsed;
+            }
+            return Json::Value(expanded);
+        }
+        if (v.isObject()) {
+            Json::Value out(Json::objectValue);
+            for (const auto& k : v.getMemberNames())
+                out[k] = resolveJsonDeep(v[k], symbols);
+            return out;
+        }
+        if (v.isArray()) {
+            Json::Value out(Json::arrayValue);
+            for (Json::ArrayIndex i = 0; i < v.size(); i++)
+                out.append(resolveJsonDeep(v[i], symbols));
+            return out;
+        }
+        return v;
     }
 
     // ── Execute a single tool step ──
@@ -1030,9 +1070,15 @@ class WorkflowEngine {
             for (auto& st : bodyNode->children)
                 s.body.push_back(parseStep(st));
         auto* stepsNode = MiniYaml::find(node, "steps");
-        if (stepsNode)
+        if (!stepsNode) {
+            // Singular "step:" is the WHOLE block as one step, not a list.
+            auto* singleStep = MiniYaml::find(node, "step");
+            if (singleStep)
+                s.steps.push_back(parseStep(*singleStep));
+        } else {
             for (auto& st : stepsNode->children)
                 s.steps.push_back(parseStep(st));
+        }
 
         // Slice 5: try_catch
         auto* tryNode = MiniYaml::find(node, "try_catch");
@@ -1045,15 +1091,21 @@ class WorkflowEngine {
             if (finallyN) for (auto& st : finallyN->children) s.finallyBody.push_back(parseStep(st));
         }
 
-        // Slice 3: switch cases
+        // Slice 3: switch cases — each list item has children: {value, steps}
         auto* casesNode = MiniYaml::find(node, "cases");
         if (casesNode) {
             for (auto& c : casesNode->children) {
-                if (c.key.empty()) continue;
+                // c.key="value", c.value=<the case's value>; steps are c.children["steps"]
+                if (c.key != "value") continue;
+                std::string val = MiniYaml::trimQuotes(c.value);
                 std::vector<WorkflowStep> caseSteps;
-                for (auto& st : c.children)
-                    caseSteps.push_back(parseStep(st));
-                s.switchCases.push_back({c.key, caseSteps});
+                for (auto& sub : c.children) {
+                    if (sub.key == "steps") {
+                        for (auto& st : sub.children)
+                            caseSteps.push_back(parseStep(st));
+                    }
+                }
+                s.switchCases.push_back({val, caseSteps});
             }
         }
         auto* defaultNode = MiniYaml::find(node, "default");
