@@ -10,6 +10,8 @@
 #include <iostream>
 #include <sstream>
 
+#include "../utils/json_io.hpp"
+
 namespace cortex::mk3::session {
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -103,6 +105,10 @@ Session SessionManager::load(const std::string& id) const {
             for (auto& v : root["context_feeds"])
                 s.contextFeeds.push_back(v.asString());
         }
+        if (root.isMember("rendered_history")) {
+            for (auto& v : root["rendered_history"])
+                s.renderedHistory.push_back(v.asString());
+        }
         return s;
     } catch (...) {
         return s;
@@ -137,11 +143,13 @@ void SessionManager::save(const Session& s) const {
     for (auto& f : s.contextFeeds)
         feeds.append(f);
     root["context_feeds"] = feeds;
+    Json::Value rh(Json::arrayValue);
+    for (auto& l : s.renderedHistory)
+        rh.append(l);
+    root["rendered_history"] = rh;
     std::string path = sessionPath(s.id);
     std::ofstream f(path + ".tmp");
-    Json::StreamWriterBuilder w;
-    w["indentation"] = "  ";
-    f << Json::writeString(w, root);
+    f << cortex::mk3::json::stringify(root, /*pretty=*/true);
     f.close();
     std::filesystem::rename(path + ".tmp", path);
 }
@@ -235,9 +243,7 @@ bool SessionManager::exportToFile(const std::string& id, const std::string& path
     root["messages"] = msgs;
     std::filesystem::create_directories(std::filesystem::path(path).parent_path());
     std::ofstream f(path);
-    Json::StreamWriterBuilder w;
-    w["indentation"] = "  ";
-    f << Json::writeString(w, root);
+    f << cortex::mk3::json::stringify(root, /*pretty=*/true);
     return true;
 }
 
