@@ -418,6 +418,197 @@ class WorkflowEngine {
                         iter++;
                     }
                 }
+                else if (step.type == "human") {
+                    Json::Value promptParams;
+                    promptParams["prompt"] = resolveString(step.prompt, symbols);
+                    promptParams["default"] = step.defaultValue;
+                    promptParams["timeout_sec"] = step.humanTimeoutSec;
+                    Json::Value response;
+                    if (rt.executeHuman)
+                        response = rt.executeHuman(step.id, promptParams);
+                    else
+                        response = step.defaultValue;
+                    if (!step.responseVar.empty())
+                        symbols[step.responseVar] = response;
+                    symbols[step.id] = response;
+                    res.outputs[step.id] = response;
+                    res.stepIds.push_back(step.id);
+                    res.stepOutputs.push_back(response);
+                }
+                else if (step.type == "relic") {
+                    Json::Value out;
+                    if (rt.executeRelic)
+                        out = rt.executeRelic(step.relic, step.action, resolvedParams);
+                    symbols[step.id] = out;
+                    res.outputs[step.id] = out;
+                    res.stepIds.push_back(step.id);
+                    res.stepOutputs.push_back(out);
+                    if (!out.isObject() || !out.get("success", false).asBool()) {
+                        if (step.onError == "abort") {
+                            res.success = false;
+                            res.error = "relic " + step.relic + "." + step.action + " failed";
+                            return false;
+                        }
+                        res.diagnostics.push_back("step " + step.id + " relic failed");
+                    }
+                }
+                else if (step.type == "feed") {
+                    Json::Value out;
+                    if (rt.executeFeed)
+                        out = rt.executeFeed(step.feed, resolvedParams);
+                    else
+                        out = Json::Value(Json::objectValue);
+                    symbols[step.id] = out;
+                    res.outputs[step.id] = out;
+                    res.stepIds.push_back(step.id);
+                    res.stepOutputs.push_back(out);
+                }
+                else if (step.type == "emit") {
+                    Json::Value event;
+                    event["event"] = step.emitEvent;
+                    event["payload"] = step.emitPayload;
+                    if (rt.executeEmit)
+                        rt.executeEmit(step.emitEvent, step.emitPayload);
+                    symbols[step.id] = event;
+                    res.outputs[step.id] = event;
+                    res.stepIds.push_back(step.id);
+                    res.stepOutputs.push_back(event);
+                }
+                else if (step.type == "map") {
+                    std::string listExpr = resolveString(step.over, symbols);
+                    Json::Value list;
+                    if (symbols.count(listExpr) && symbols[listExpr].isArray())
+                        list = symbols[listExpr];
+                    Json::Value results(Json::arrayValue);
+                    if (!step.steps.empty()) {
+                        for (Json::ArrayIndex i = 0; i < list.size(); i++) {
+                            symbols[step.asVar] = list[i];
+                            if (!execSteps({step.steps[0]}, res))
+                                return false;
+                            auto lastId = step.steps[0].id;
+                            if (!lastId.empty() && res.outputs.count(lastId))
+                                results.append(res.outputs[lastId]);
+                        }
+                    }
+                    symbols[step.id] = results;
+                    res.outputs[step.id] = results;
+                    res.stepIds.push_back(step.id);
+                    res.stepOutputs.push_back(results);
+                }
+                else if (step.type == "reduce") {
+                    std::string listExpr = resolveString(step.over, symbols);
+                    Json::Value list;
+                    if (symbols.count(listExpr) && symbols[listExpr].isArray())
+                        list = symbols[listExpr];
+                    Json::Value acc = step.initial;
+                    if (!step.steps.empty()) {
+                        for (Json::ArrayIndex i = 0; i < list.size(); i++) {
+                            symbols[step.accVar] = acc;
+                            symbols[step.asVar] = list[i];
+                            if (!execSteps({step.steps[0]}, res))
+                                return false;
+                            auto lastId = step.steps[0].id;
+                            if (!lastId.empty() && res.outputs.count(lastId))
+                                acc = res.outputs[lastId];
+                        }
+                    }
+                    symbols[step.id] = acc;
+                    res.outputs[step.id] = acc;
+                    res.stepIds.push_back(step.id);
+                    res.stepOutputs.push_back(acc);
+                }
+                else if (step.type == "switch") {
+                    std::string sw = resolveString(step.switchOn, symbols);
+                    bool matched = false;
+                    for (auto& [val, stSteps] : step.switchCases) {
+                        if (val == sw) {
+                            matched = true;
+                            if (!execSteps(stSteps, res))
+                                return false;
+                            break;
+                        }
+                    }
+                    if (!matched && !step.switchDefault.empty()) {
+                        if (!execSteps(step.switchDefault, res))
+                            return false;
+                    }
+                    Json::Value empty(Json::objectValue);
+                    symbols[step.id] = empty;
+                    res.outputs[step.id] = empty;
+                    res.stepIds.push_back(step.id);
+                    res.stepOutputs.push_back(empty);
+                }
+                else if (step.type == "checkpoint") {
+                    Json::Value ckpt;
+                    ckpt["id"] = step.id;
+                    ckpt["message"] = resolveString(step.checkpointMessage, symbols);
+                    ckpt["state"] = step.checkpointState;
+                    if (rt.executeCheckpoint)
+                        rt.executeCheckpoint(step.id, ckpt);
+                    symbols[step.id] = ckpt;
+                    res.outputs[step.id] = ckpt;
+                    res.stepIds.push_back(step.id);
+                    res.stepOutputs.push_back(ckpt);
+                }
+                else if (step.type == "return") {
+                    Json::Value rv = step.returnValue;
+                    symbols[step.id] = rv;
+                    res.outputs[step.id] = rv;
+                    res.stepIds.push_back(step.id);
+                    res.stepOutputs.push_back(rv);
+                    res.success = true;
+                    return true;
+                }
+                else if (step.type == "try_catch") {
+                    bool caught = false;
+                    if (!execSteps(step.tryBody, res)) {
+                        caught = true;
+                        if (!execSteps(step.catchBody, res))
+                            return false;
+                    }
+                    if (!step.finallyBody.empty()) {
+                        if (!execSteps(step.finallyBody, res))
+                            return false;
+                    }
+                    Json::Value tc;
+                    tc["caught"] = caught;
+                    symbols[step.id] = tc;
+                    res.outputs[step.id] = tc;
+                    res.stepIds.push_back(step.id);
+                    res.stepOutputs.push_back(tc);
+                }
+                else if (step.type == "parallel_race") {
+                    Json::Value out(Json::objectValue);
+                    if (rt.executeParallelRace)
+                        out = rt.executeParallelRace(step.steps, symbols);
+                    else {
+                        auto p = executeParallelSteps(step.steps, rt, symbols);
+                        for (auto& [k, v] : p) out[k] = v;
+                    }
+                    symbols[step.id] = out;
+                    res.outputs[step.id] = out;
+                    res.stepIds.push_back(step.id);
+                    res.stepOutputs.push_back(out);
+                }
+                else if (step.type == "parallel_join") {
+                    auto outMap = executeParallelSteps(step.steps, rt, symbols);
+                    Json::Value out(Json::objectValue);
+                    bool anyFailed = false;
+                    for (auto& [id, v] : outMap) {
+                        out[id] = v;
+                        if (v.isObject() && v.isMember("success") && !v["success"].asBool())
+                            anyFailed = true;
+                    }
+                    if (anyFailed && step.onError == "abort") {
+                        res.success = false;
+                        res.error = "parallel_join " + step.id + " had failures";
+                        return false;
+                    }
+                    symbols[step.id] = out;
+                    res.outputs[step.id] = out;
+                    res.stepIds.push_back(step.id);
+                    res.stepOutputs.push_back(out);
+                }
             }
             return true;
         };

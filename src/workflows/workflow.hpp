@@ -139,10 +139,23 @@ struct WorkflowRuntime {
         std::function<Json::Value(const WorkflowAgentInvocation& invocation)>;
     using WorkflowFn =
         std::function<WorkflowResult(const std::string& name, const Json::Value& params)>;
+    // Slice 2-6: new callbacks
+    using HumanFn = std::function<Json::Value(const std::string& id, const Json::Value& prompt)>;
+    using RelicFn = std::function<Json::Value(const std::string& name, const std::string& action, const Json::Value& params)>;
+    using FeedFn = std::function<Json::Value(const std::string& name, const Json::Value& query)>;
+    using EmitFn = std::function<void(const std::string& event, const Json::Value& payload)>;
+    using CheckpointFn = std::function<void(const std::string& id, const Json::Value& state)>;
+    using ParallelRaceFn = std::function<Json::Value(const std::vector<WorkflowStep>& steps, const std::map<std::string, Json::Value>& symbols)>;
 
     ToolFn executeTool;
     AgentFn executeAgent;
     WorkflowFn executeWorkflow;
+    HumanFn executeHuman;
+    RelicFn executeRelic;
+    FeedFn executeFeed;
+    EmitFn executeEmit;
+    CheckpointFn executeCheckpoint;
+    ParallelRaceFn executeParallelRace;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
