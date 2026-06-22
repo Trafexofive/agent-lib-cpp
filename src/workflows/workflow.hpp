@@ -37,6 +37,31 @@ struct WorkflowStep {
     std::string onError = "abort";
     int maxRetries = 0;
     int timeout = 30;
+    // New fields (slices 2-6): per-step options
+    std::string prompt;          // for type: human — prompt text
+    std::string defaultValue;    // for type: human — timeout default
+    int humanTimeoutSec = 0;     // for type: human — auto-default after N sec (0 = no timeout)
+    std::string responseVar;     // for type: human — where to store response
+    std::string relic;           // for type: relic
+    std::string action;          // for type: relic
+    std::string feed;            // for type: feed
+    std::string emitEvent;       // for type: emit — event name
+    Json::Value emitPayload;     // for type: emit
+    std::string over;            // for type: map/reduce — list to iterate
+    std::string asVar;           // for type: map/reduce — bound name
+    std::string accVar = "acc";  // for type: reduce
+    std::string initial;         // for type: reduce
+    std::string switchOn;        // for type: switch — what to switch on
+    std::vector<std::pair<std::string, std::vector<WorkflowStep>>> switchCases;  // for type: switch
+    std::vector<WorkflowStep> switchDefault;  // for type: switch fallback
+    std::string checkpointState; // for type: checkpoint — state to save
+    std::string checkpointMessage;  // for type: checkpoint
+    std::string returnValue;     // for type: return
+    std::vector<WorkflowStep> tryBody;   // for type: try_catch
+    std::vector<WorkflowStep> catchBody; // for type: try_catch
+    std::vector<WorkflowStep> finallyBody; // for type: try_catch
+    // Schema (slice 1)
+    Json::Value paramsSchema;
 };
 
 // ── Workflow manifest ──
@@ -49,6 +74,21 @@ struct WorkflowManifest {
     std::vector<std::string> importTools;
     std::vector<std::string> importRelics;
     std::vector<std::string> tags;
+    // Schema validation (slice 1)
+    Json::Value inputSchema;   // JSON Schema for inputs
+    Json::Value outputSchema;  // JSON Schema for outputs
+    // Cross-manifest integration (slice 7-9)
+    std::string extends;       // parent workflow name (slice 13)
+    std::string kind;          // "Workflow" or "RelicSpec" (slice 8)
+    // Operations (slice 10, 11)
+    bool autoCheckpoint = false;
+    std::vector<std::string> triggers;  // feed names that can trigger this
+};
+
+// ── Step-level schema (slice 1) ──
+struct StepSchema {
+    Json::Value input;   // params_schema
+    Json::Value output;  // reserved (not yet emitted)
 };
 
 // ── Workflow execution result ──

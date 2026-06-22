@@ -123,6 +123,93 @@ class MiniYaml {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// SchemaValidator — slice 1: minimal JSON Schema validator
+//
+// Supports: type, required, properties, items, enum.
+// Does NOT support: $ref, allOf, oneOf, anyOf, pattern, format, etc.
+// Add features incrementally as needed.
+// ═══════════════════════════════════════════════════════════════════════════
+struct ValidationError {
+    std::string path;     // e.g. "input.environment"
+    std::string message;  // e.g. "must be one of [staging, production]"
+};
+
+class SchemaValidator {
+   public:
+    // Validate `value` against `schema`. Returns empty vector on success.
+    static std::vector<ValidationError> validate(const Json::Value& value,
+                                                  const Json::Value& schema,
+                                                  const std::string& basePath = "") {
+        std::vector<ValidationError> errors;
+        validateInto(value, schema, basePath, errors);
+        return errors;
+    }
+
+   private:
+    static void validateInto(const Json::Value& v, const Json::Value& s,
+                              const std::string& p, std::vector<ValidationError>& e) {
+        if (s.isNull() || !s.isObject())
+            return;
+
+        if (s.isMember("type")) {
+            std::string expected = s["type"].asString();
+            if (!typeMatches(v, expected))
+                e.push_back({p, "expected type " + expected});
+        }
+
+        if (s.isMember("enum") && s["enum"].isArray()) {
+            bool found = false;
+            for (const auto& opt : s["enum"]) {
+                if (v == opt) { found = true; break; }
+            }
+            if (!found) {
+                std::string opts;
+                for (Json::ArrayIndex i = 0; i < s["enum"].size(); i++) {
+                    if (i) opts += ", ";
+                    opts += s["enum"][i].asString();
+                }
+                e.push_back({p, "must be one of [" + opts + "]"});
+            }
+        }
+
+        if (v.isObject() && s.isMember("required") && s["required"].isArray()) {
+            for (const auto& req : s["required"]) {
+                std::string key = req.asString();
+                if (!v.isMember(key))
+                    e.push_back({p.empty() ? key : p + "." + key, "is required"});
+            }
+        }
+
+        if (v.isObject() && s.isMember("properties") && s["properties"].isObject()) {
+            for (const auto& key : v.getMemberNames()) {
+                if (s["properties"].isMember(key))
+                    validateInto(v[key], s["properties"][key],
+                                  p.empty() ? key : p + "." + key, e);
+            }
+        }
+
+        if (v.isArray() && s.isMember("items") && s["items"].isObject()) {
+            for (Json::ArrayIndex i = 0; i < v.size(); i++) {
+                validateInto(v[i], s["items"],
+                              p + "[" + std::to_string(i) + "]", e);
+            }
+        }
+    }
+
+    static bool typeMatches(const Json::Value& v, const std::string& t) {
+        if (t == "object") return v.isObject();
+        if (t == "array") return v.isArray();
+        if (t == "string") return v.isString();
+        if (t == "number") return v.isNumeric() && !v.isBool();
+        if (t == "integer") return v.isIntegral() && !v.isBool();
+        if (t == "boolean") return v.isBool();
+        if (t == "null") return v.isNull();
+        return true;
+    }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // WorkflowEngine — orchestrates Workflow objects, parses YAML, executes steps
 // ═══════════════════════════════════════════════════════════════════════════
 class WorkflowEngine {
@@ -158,6 +245,24 @@ class WorkflowEngine {
             for (auto& step : stepsNode->children)
                 wf.steps.push_back(parseStep(step));
 
+        // Slice 1: input/output schemas
+        wf.inputSchema = parseYamlValue(MiniYaml::find(root, "input_schema"));
+        wf.outputSchema = parseYamlValue(MiniYaml::find(root, "output_schema"));
+
+        // Slice 13: inheritance
+        wf.extends = MiniYaml::get(root, "extends");
+
+        // Slice 10: auto-checkpoint
+        std::string ac = MiniYaml::get(root, "auto_checkpoint");
+        wf.autoCheckpoint = (ac == "true" || ac == "1" || ac == "yes");
+
+        // Slice 9: feed triggers (top-level)
+        auto* triggersNode = MiniYaml::find(root, "triggers");
+        if (triggersNode)
+            for (auto& t : triggersNode->children)
+                if (!t.value.empty())
+                    wf.triggers.push_back(t.value);
+
         auto* importNode = MiniYaml::find(root, "import");
         if (importNode) {
             auto* toolsNode = MiniYaml::find(*importNode, "tools");
@@ -189,6 +294,18 @@ class WorkflowEngine {
         result.workflowName = wf.name;
         result.success = true;
 
+        // Slice 1: input schema validation
+        if (!wf.inputSchema.isNull() && wf.inputSchema.isObject()) {
+            auto errs = SchemaValidator::validate(inputParams, wf.inputSchema, "input");
+            if (!errs.empty()) {
+                result.success = false;
+                for (auto& e : errs)
+                    result.diagnostics.push_back("input schema: " + e.path + " " + e.message);
+                result.error = "input validation failed (" + std::to_string(errs.size()) + " errors)";
+                return result;
+            }
+        }
+
         auto t0 = std::chrono::steady_clock::now();
 
         // Symbol table: step_id → result JSON (populated as steps execute)
@@ -204,6 +321,20 @@ class WorkflowEngine {
             for (auto& step : steps) {
                 // Resolve params against current symbol table
                 Json::Value resolvedParams = resolveParams(step.params, symbols);
+
+                // Slice 1: per-step params schema validation
+                if (!step.paramsSchema.isNull() && step.paramsSchema.isObject()) {
+                    auto errs = SchemaValidator::validate(resolvedParams, step.paramsSchema, step.id);
+                    if (!errs.empty()) {
+                        for (auto& e : errs)
+                            res.diagnostics.push_back("step " + step.id + " params: " + e.path + " " + e.message);
+                        if (step.onError == "abort") {
+                            res.success = false;
+                            res.error = "step " + step.id + " params validation failed";
+                            return false;
+                        }
+                    }
+                }
 
                 if (step.type == "tool") {
                     auto out = executeToolStep(step, resolvedParams, rt, symbols);
@@ -637,6 +768,29 @@ class WorkflowEngine {
                 if (!p.key.empty())
                     s.params[p.key] = p.value;
 
+        // Slices 2-6: per-step options
+        s.prompt = getAttr("prompt");
+        s.defaultValue = getAttr("default");
+        s.responseVar = getAttr("response_var");
+        try { s.humanTimeoutSec = std::stoi(getAttr("timeout_sec", "0")); } catch (...) {}
+        s.relic = getAttr("relic");
+        s.action = getAttr("action");
+        s.feed = getAttr("feed");
+        s.emitEvent = getAttr("event");
+        if (MiniYaml::find(node, "payload"))
+            s.emitPayload = parseYamlValue(MiniYaml::find(node, "payload"));
+        s.over = getAttr("over");
+        s.asVar = getAttr("as", "item");
+        s.accVar = getAttr("acc_var", "acc");
+        s.initial = getAttr("initial");
+        s.switchOn = getAttr("on");
+        s.checkpointState = getAttr("state");
+        s.checkpointMessage = getAttr("message");
+        s.returnValue = getAttr("value");
+
+        // Slice 1: per-step params schema
+        s.paramsSchema = parseYamlValue(MiniYaml::find(node, "params_schema"));
+
         auto* thenNode = MiniYaml::find(node, "then");
         if (thenNode)
             for (auto& st : thenNode->children)
@@ -654,7 +808,68 @@ class WorkflowEngine {
             for (auto& st : stepsNode->children)
                 s.steps.push_back(parseStep(st));
 
+        // Slice 5: try_catch
+        auto* tryNode = MiniYaml::find(node, "try_catch");
+        if (tryNode) {
+            auto* bodyN = MiniYaml::find(*tryNode, "body");
+            if (bodyN) for (auto& st : bodyN->children) s.tryBody.push_back(parseStep(st));
+            auto* catchN = MiniYaml::find(*tryNode, "catch");
+            if (catchN) for (auto& st : catchN->children) s.catchBody.push_back(parseStep(st));
+            auto* finallyN = MiniYaml::find(*tryNode, "finally");
+            if (finallyN) for (auto& st : finallyN->children) s.finallyBody.push_back(parseStep(st));
+        }
+
+        // Slice 3: switch cases
+        auto* casesNode = MiniYaml::find(node, "cases");
+        if (casesNode) {
+            for (auto& c : casesNode->children) {
+                if (c.key.empty()) continue;
+                std::vector<WorkflowStep> caseSteps;
+                for (auto& st : c.children)
+                    caseSteps.push_back(parseStep(st));
+                s.switchCases.push_back({c.key, caseSteps});
+            }
+        }
+        auto* defaultNode = MiniYaml::find(node, "default");
+        if (defaultNode)
+            for (auto& st : defaultNode->children)
+                s.switchDefault.push_back(parseStep(st));
+
         return s;
+    }
+
+    // ── Convert a MiniYaml node tree to a Json::Value (slice 1) ──
+    // Used for input_schema, output_schema, params_schema, payload, etc.
+    // Supports: strings, numbers, booleans, null, lists, maps.
+    static Json::Value parseYamlValue(const MiniYaml::Node* node) {
+        if (!node) return Json::Value();
+        return yamlNodeToJson(*node);
+    }
+
+    static Json::Value yamlNodeToJson(const MiniYaml::Node& n) {
+        if (n.isList) {
+            Json::Value arr(Json::arrayValue);
+            for (const auto& c : n.children) arr.append(yamlNodeToJson(c));
+            return arr;
+        }
+        // Scalar: try to parse as bool, number, or fall back to string
+        if (n.children.empty()) {
+            const std::string& v = n.value;
+            if (v == "true") return Json::Value(true);
+            if (v == "false") return Json::Value(false);
+            if (v == "null" || v == "~") return Json::Value();
+            try { size_t pos; long long ll = std::stoll(v, &pos);
+                  if (pos == v.size()) return Json::Value(static_cast<Json::Int64>(ll)); } catch (...) {}
+            try { size_t pos; double d = std::stod(v, &pos);
+                  if (pos == v.size()) return Json::Value(d); } catch (...) {}
+            return Json::Value(v);
+        }
+        // Map
+        Json::Value obj(Json::objectValue);
+        for (const auto& c : n.children) {
+            if (!c.key.empty()) obj[c.key] = yamlNodeToJson(c);
+        }
+        return obj;
     }
 
     // ── Cache ──
