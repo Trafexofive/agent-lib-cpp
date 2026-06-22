@@ -50,6 +50,7 @@ void registerDefaults() {
     // they mutate Agent state (pinned_/peeking_ maps). Registering a stateless fallback
     // here would shadow that path.
     reg.registerFn("ask_tool", builtins::ask_tool);
+    reg.registerFn("challenge", builtins::challenge);
 }
 
 }  // namespace cortex::mk3::tools
