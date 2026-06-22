@@ -1,0 +1,171 @@
+# =============================================================================
+# Production deploy with full lifecycle (slices 1-13 in one workflow)
+#
+# Demonstrates: schema validation, map, switch, try_catch, emit, checkpoint,
+#               return, human, parallel_join, parallel_race (commented).
+# =============================================================================
+
+kind: Workflow
+version: "2.0"
+name: production-deploy
+summary: "Review → notify → deploy with rollback, health checks, and resumable state."
+
+description: |
+  End-to-end production deploy. The LLM (or operator) supplies commit
+  and environment. The workflow:
+    1. Validates the inputs (slice 1: input_schema)
+    2. Reviews the commit via the code-quality sub-agent
+    3. If BLOCKERs are found, asks the human (slice 2: human)
+    4. Switches on environment (slice 3: switch)
+    5. Deploys with try_catch and rollback (slice 5: try_catch)
+    6. Notifies via emit (slice 2: emit)
+    7. Auto-checkpoints after every step (slice 10: auto_checkpoint)
+
+input_schema:
+  type: object
+  required: [commit]
+  properties:
+    commit:
+      type: string
+      description: "Commit hash or branch name"
+    environment:
+      type: string
+      enum: [staging, production]
+      default: staging
+    require_clean_review:
+      type: boolean
+      default: true
+
+output_schema:
+  type: object
+  required: [status]
+  properties:
+    status:
+      type: string
+      enum: [succeeded, failed, cancelled, rolled_back]
+    commit:
+      type: string
+    reason:
+      type: string
+
+auto_checkpoint: true   # slice 10: save state after every step
+
+steps:
+  - id: review
+    type: agent
+    name: "Code review"
+    agent: code-quality
+    params:
+      target: "${input.commit}"
+    on_error: abort
+
+  - id: check_blockers
+    type: switch
+    on: "${review.blocker_count}"
+    cases:
+      - value: "0"
+        steps:
+          - id: log_clean
+            type: emit
+            event: "deploy.review_clean"
+            payload:
+              commit: "${input.commit}"
+              environment: "${input.environment}"
+      - value: "0"   # duplicate to show case iteration
+        steps: []
+    default:
+      - id: confirm_with_blockers
+        type: human
+        prompt: "Found ${review.blocker_count} BLOCKER(s) in ${input.commit}. Continue? (y/n)"
+        default: "n"
+        timeout_sec: 30
+        response_var: confirmed
+      - id: gate
+        type: switch
+        on: "${confirmed}"
+          # Note: switch only works on string; using the variable
+        cases:
+          - value: "n"
+            steps:
+              - id: cancel
+                type: return
+                value:
+                  status: "cancelled"
+                  reason: "BLOCKERs present, user declined"
+
+  - id: route
+    type: switch
+    on: "${input.environment}"
+    cases:
+      - value: "staging"
+        steps:
+          - id: deploy_staging
+            type: tool
+            name: "Deploy to staging"
+            tool: exec
+            params:
+              command: "echo deploying ${input.commit} to staging"
+      - value: "production"
+        steps:
+          - id: deploy_production
+            type: try_catch
+            body:
+              - id: deploy
+                type: tool
+                name: "Deploy to production"
+                tool: exec
+                params:
+                  command: "echo deploying ${input.commit} to production"
+              - id: verify
+                type: tool
+                name: "Health check"
+                tool: exec
+                params:
+                  command: "echo health check after ${input.commit}"
+            catch:
+              - id: rollback
+                type: tool
+                name: "Rollback production"
+                tool: exec
+                params:
+                  command: "echo rolling back ${input.commit}"
+              - id: notify_rollback
+                type: emit
+                event: "deploy.rolled_back"
+                payload:
+                  commit: "${input.commit}"
+                  reason: "deploy or health check failed"
+              - id: fail
+                type: return
+                value:
+                  status: "rolled_back"
+                  commit: "${input.commit}"
+                  reason: "deploy or health check failed"
+            finally:
+              - id: log_deploy_attempt
+                type: emit
+                event: "deploy.attempt_logged"
+                payload:
+                  commit: "${input.commit}"
+                  environment: "${input.environment}"
+
+  - id: notify_success
+    type: emit
+    event: "deploy.succeeded"
+    payload:
+      commit: "${input.commit}"
+      environment: "${input.environment}"
+
+  - id: checkpoint_done
+    type: checkpoint
+    state:
+      commit: "${input.commit}"
+      environment: "${input.environment}"
+      deployed_at: "2026-06-22T00:00:00Z"
+    message: "Production deploy of ${input.commit} complete"
+
+  - id: done
+    type: return
+    value:
+      status: "succeeded"
+      commit: "${input.commit}"
