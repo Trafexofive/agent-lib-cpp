@@ -587,23 +587,48 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 return prompt.isMember("default") ? Json::Value(prompt["default"]) : Json::Value("");
             };
 
-            // Slice 2: relic callback — defaults to error (no registry yet).
+            // Slice 2: relic callback — uses Reliquary singleton.
             rt.executeRelic = [](const std::string& name, const std::string& action,
                                   const Json::Value& params) -> Json::Value {
-                (void)action;
-                (void)params;
-                Json::Value err;
-                err["success"] = false;
-                err["error"] = "relic runtime not wired (slice 9): " + name;
-                return err;
+                auto& rel = relics::Reliquary::instance();
+                if (!rel.has(name)) {
+                    Json::Value err;
+                    err["success"] = false;
+                    err["error"] = "unknown relic: " + name;
+                    return err;
+                }
+                auto result = rel.dispatch(name, action, params);
+                Json::Value out;
+                out["success"] = result.success;
+                if (!result.error.empty())
+                    out["error"] = result.error;
+                if (!result.data.isNull())
+                    out["data"] = result.data;
+                return out;
             };
 
-            // Slice 2: feed callback — defaults to empty object (no registry yet).
+            // Slice 2: feed callback — uses FeedEngine singleton.
+            // If step.action is set, calls it as a feed tool.
+            // Otherwise refreshes the feed and returns the latest value.
             rt.executeFeed = [](const std::string& name, const Json::Value& query) -> Json::Value {
-                (void)query;
-                Json::Value v;
-                v["note"] = "feed runtime not wired (slice 9): " + name;
-                return v;
+                auto& eng = feeds::FeedEngine::instance();
+                std::string action = query.isMember("action") ? query["action"].asString() : "";
+                if (!action.empty())
+                    return eng.callFeedTool(name, action, query);
+                auto* feed = const_cast<feeds::Feed*>(eng.getFeed(name));
+                if (!feed) {
+                    Json::Value err;
+                    err["success"] = false;
+                    err["error"] = "unknown feed: " + name;
+                    return err;
+                }
+                auto result = feed->refresh();
+                Json::Value out;
+                out["success"] = result.ok;
+                out["name"] = result.name;
+                out["summary"] = result.summary;
+                out["json"] = result.json;
+                return out;
             };
 
             // Slice 2: emit — no-op by default
