@@ -97,6 +97,14 @@ struct WorkflowResult {
     std::string workflowName;
     std::vector<std::string> stepIds;
     std::vector<Json::Value> stepOutputs;
+    // Per-step metrics (slice 11): {id, type, elapsed_ms, success}
+    struct StepMetric {
+        std::string id;
+        std::string type;
+        double elapsedMs = 0.0;
+        bool success = true;
+    };
+    std::vector<StepMetric> stepMetrics;
     std::map<std::string, Json::Value> outputs;  // keyed by step id
     std::vector<std::string> diagnostics;
     double elapsedMs = 0.0;
@@ -117,6 +125,17 @@ struct WorkflowResult {
         for (const auto& [id, val] : outputs)
             outs[id] = val;
         j["outputs"] = outs;
+        // Slice 11: per-step metrics
+        Json::Value metrics(Json::arrayValue);
+        for (const auto& m : stepMetrics) {
+            Json::Value mm;
+            mm["id"] = m.id;
+            mm["type"] = m.type;
+            mm["elapsed_ms"] = m.elapsedMs;
+            mm["success"] = m.success;
+            metrics.append(mm);
+        }
+        j["metrics"] = metrics;
         return j;
     }
 };

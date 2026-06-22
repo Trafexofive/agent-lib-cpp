@@ -643,18 +643,64 @@ std::string Agent::runLoop(AgentContext& ctx) {
                     checkpointHandler_(id, state);
             };
 
-            // Slice 6: parallel_race — naive fallback
-            rt.executeParallelRace = [](
-                                          const std::vector<workflows::WorkflowStep>& steps,
-                                          const std::map<std::string, Json::Value>& symbols) -> Json::Value {
-                (void)symbols;
-                Json::Value out(Json::objectValue);
+            // Slice 6: parallel_race — fire all in parallel, first to succeed wins.
+            // Implementation: launch all steps on background threads, wait for the
+            // first success, then return that result. Losers continue running in
+            // the background but their results are discarded.
+            rt.executeParallelRace =
+                [this, &rt](const std::vector<workflows::WorkflowStep>& steps,
+                             const std::map<std::string, Json::Value>& symbols) -> Json::Value {
+                std::mutex mtx;
+                std::condition_variable cv;
+                Json::Value winner(Json::objectValue);
+                std::atomic<bool> hasWinner{false};
+                std::vector<std::thread> workers;
+                workers.reserve(steps.size());
                 for (const auto& s : steps) {
-                    Json::Value r;
-                    r["success"] = true;
-                    r["note"] = "race fallback: returned placeholder";
-                    out[s.id] = r;
+                    workers.emplace_back([&, s]() {
+                        Json::Value p;
+                        for (const auto& k : s.params.getMemberNames())
+                            p[k] = s.params[k];
+                        Json::Value r;
+                        if (s.type == "tool" && rt.executeTool)
+                            r = rt.executeTool(s.tool, p);
+                        else if (s.type == "agent" && rt.executeAgent) {
+                            workflows::WorkflowAgentInvocation inv;
+                            inv.name = s.agent;
+                            inv.instruction = p.toStyledString();
+                            r = rt.executeAgent(inv);
+                        } else {
+                            r["success"] = true;
+                            r["note"] = "no runtime for type=" + s.type;
+                        }
+                        // Was the winner taken while we were running?
+                        if (!hasWinner.load() && r.isObject() && r.get("success", false).asBool()) {
+                            std::lock_guard<std::mutex> lock(mtx);
+                            if (!hasWinner.load()) {
+                                winner = r;
+                                winner["_winner_id"] = s.id;
+                                hasWinner.store(true);
+                                cv.notify_all();
+                            }
+                        }
+                    });
                 }
+                // Wait briefly for the first success (1s timeout for now).
+                {
+                    std::unique_lock<std::mutex> lock(mtx);
+                    cv.wait_for(lock, std::chrono::milliseconds(1000),
+                                [&] { return hasWinner.load(); });
+                }
+                Json::Value out(Json::objectValue);
+                if (hasWinner.load()) {
+                    out["winner"] = winner;
+                    out["race_strategy"] = "first-success";
+                } else {
+                    out["winner"] = Json::Value(Json::objectValue);
+                    out["race_strategy"] = "timeout-no-winner";
+                }
+                // Detach workers — they finish in the background; results discarded
+                for (auto& w : workers) w.detach();
                 return out;
             };
 

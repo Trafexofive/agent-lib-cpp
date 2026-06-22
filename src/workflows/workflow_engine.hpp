@@ -284,6 +284,29 @@ class WorkflowEngine {
 
         manifestCache_.emplace(path, Workflow(wf));
         nameIndex_[wf.name] = path;
+
+        // Slice 13: resolve extends (workflow inheritance).
+        // If wf.extends is set, the parent workflow is loaded and its steps
+        // are prepended to this workflow's steps. Tags and import lists are
+        // inherited; this workflow's own fields override.
+        if (!wf.extends.empty()) {
+            auto parentIt = nameIndex_.find(wf.extends);
+            if (parentIt != nameIndex_.end()) {
+                WorkflowManifest parent = manifestCache_.at(parentIt->second).manifest();
+                // Prepend parent steps, then add child steps.
+                std::vector<WorkflowStep> merged;
+                merged.insert(merged.end(), parent.steps.begin(), parent.steps.end());
+                merged.insert(merged.end(), wf.steps.begin(), wf.steps.end());
+                wf.steps = std::move(merged);
+                // Inherit tags and imports if child didn't set them
+                if (wf.tags.empty()) wf.tags = parent.tags;
+                if (wf.importTools.empty()) wf.importTools = parent.importTools;
+                if (wf.importRelics.empty()) wf.importRelics = parent.importRelics;
+                // Update the cached manifest with the merged version
+                manifestCache_.at(path) = Workflow(wf);
+            }
+        }
+
         return manifestCache_.at(path);
     }
 
@@ -319,6 +342,10 @@ class WorkflowEngine {
         std::function<bool(const std::vector<WorkflowStep>&, WorkflowResult&)> execSteps;
         execSteps = [&](const std::vector<WorkflowStep>& steps, WorkflowResult& res) -> bool {
             for (auto& step : steps) {
+                // Slice 11: per-step timing
+                auto stepStart = std::chrono::steady_clock::now();
+                bool stepOk = true;
+
                 // Resolve params against current symbol table
                 Json::Value resolvedParams = resolveParams(step.params, symbols);
 
@@ -609,6 +636,14 @@ class WorkflowEngine {
                     res.stepIds.push_back(step.id);
                     res.stepOutputs.push_back(out);
                 }
+                // Slice 11: record per-step metric
+                auto stepEnd = std::chrono::steady_clock::now();
+                WorkflowResult::StepMetric m;
+                m.id = step.id;
+                m.type = step.type;
+                m.elapsedMs = std::chrono::duration_cast<std::chrono::microseconds>(stepEnd - stepStart).count() / 1000.0;
+                m.success = stepOk;
+                res.stepMetrics.push_back(m);
             }
             return true;
         };
