@@ -25,6 +25,8 @@ struct StatusBarState {
     std::string provider;
     std::string model;
     std::string thoughtPreview;
+    std::string sessionId;
+    std::string sessionName;
 };
 
 class StatusPromptRenderer {
