@@ -62,6 +62,11 @@ class StatusPromptRenderer {
                 preview = preview.substr(0, 87) + "...";
             out << " · thinking: " << preview;
         }
+        if (!state.sessionId.empty()) {
+            out << " · session:…" << state.sessionId.substr(state.sessionId.size() > 8 ? state.sessionId.size() - 8 : 0);
+            if (!state.sessionName.empty())
+                out << " (" << state.sessionName << ")";
+        }
         out << ansi::reset();
         return out.str();
     }
