@@ -47,6 +47,7 @@ class ILlmProvider {
         std::string name;
         int contextWindow = 272000;
         bool isFree = false;
+        bool supportsTopK = true;
     };
     virtual std::vector<ModelInfo> listModels() {
         return {};
