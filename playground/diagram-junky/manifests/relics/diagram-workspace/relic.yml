@@ -1,5 +1,5 @@
 kind: Relic
-version: "0.1"
+version: "0.2"
 name: diagram_workspace
 summary: "Managed local diagram document workspace for diagram-junky agents."
 mode: managed
@@ -9,9 +9,14 @@ compose_file: docker-compose.yml
 project_name: diagram-junky-workspace
 
 description: >
-  Starter managed relic for storing and retrieving diagram.document.v0 payloads
-  while prototyping the future TUI canvas/backend boundary. This is intentionally
-  project-local and not promoted to stdlib.
+  Single managed instance of the diagram_workspace service. Stores
+  diagram.document.v0 JSON by id (standalone) and inside
+  workspace/project hierarchies. Maintains an append-only event log,
+  exposes it as a polling endpoint and as a server-sent-event stream,
+  holds an "active session" pointer that TUI clients can follow, and
+  applies domain-aware patches. Multiple agents and TUI clients can
+  attach to the same instance concurrently; mutations are serialised
+  by per-resource file locks with TTL.
 
 service_type: storage
 
@@ -20,53 +25,120 @@ interface:
   base_url: "http://localhost:8127"
 
 endpoints:
+  # ---- read ----
   - name: health
     method: GET
     path: /health
-    description: "Service health check."
-  - name: put
+    description: "Service liveness check."
+  - name: version
+    method: GET
+    path: /version
+    description: "Server version and data directory."
+  - name: info
+    method: GET
+    path: /info
+    description: "Server stats: counts, uptime, active session pointer."
+  - name: events
+    method: GET
+    path: /events
+    description: "Tail the event log. Query: since (seq), limit (default 500)."
+  - name: events_stream
+    method: GET
+    path: /events/stream
+    description: "Server-sent events: realtime push of the event log."
+  - name: session_get
+    method: GET
+    path: /session/active
+    description: "Read the active session pointer (workspace/project/diagram)."
+
+  # ---- session pointer ----
+  - name: session_set
     method: POST
-    path: /put
-    description: "Store a diagram document by id. Body: {id?, document}."
-  - name: get
-    method: POST
-    path: /get
-    description: "Fetch a diagram document. Body: {id}."
-  - name: list
-    method: POST
-    path: /list
-    description: "List stored diagram ids. Body may be empty."
-  - name: delete
-    method: POST
-    path: /delete
-    description: "Delete a stored diagram. Body: {id}."
-  - name: workspace_create
-    method: POST
-    path: /workspace/create
-    description: "Create/update a workspace. Body: {workspace, title?}."
+    path: /session/active
+    description: "Update the active session pointer. Body: {workspace?, project?, diagram?, actor?}."
+
+  # ---- workspaces ----
   - name: workspace_list
     method: POST
     path: /workspace/list
-    description: "List workspaces. Body may be empty."
-  - name: project_create
+    description: "List all workspaces."
+  - name: workspace_create
     method: POST
-    path: /project/create
-    description: "Create/update a project. Body: {workspace, project, title?}."
+    path: /workspace/create
+    description: "Create or update a workspace. Body: {workspace, title?, actor?}. Auto-creates an 'inbox' project."
+  - name: workspace_rename
+    method: POST
+    path: /workspace/rename
+    description: "Rename a workspace. Body: {workspace, title}."
+  - name: workspace_delete
+    method: POST
+    path: /workspace/delete
+    description: "Delete a workspace and all of its projects/diagrams. Body: {workspace}."
+
+  # ---- projects ----
   - name: project_list
     method: POST
     path: /project/list
     description: "List projects in a workspace. Body: {workspace}."
-  - name: project_copy
+  - name: project_create
     method: POST
-    path: /project/copy
-    description: "Copy a diagram into a project. Body: {workspace, project, id?, document|source_path}."
+    path: /project/create
+    description: "Create a project inside a workspace. Body: {workspace, project, title?, actor?}."
+  - name: project_rename
+    method: POST
+    path: /project/rename
+    description: "Rename a project. Body: {workspace, project, title}."
+  - name: project_delete
+    method: POST
+    path: /project/delete
+    description: "Delete a project and all of its diagrams. Body: {workspace, project}."
   - name: project_diagrams
     method: POST
     path: /project/diagrams
     description: "List diagrams in a project. Body: {workspace, project}."
+
+  # ---- diagrams (unified) ----
+  - name: diagram_list
+    method: POST
+    path: /diagram/list
+    description: "List diagrams. Body: {workspace?, project?} or {} for standalone."
+  - name: diagram_get
+    method: POST
+    path: /diagram/get
+    description: "Fetch a diagram by id. Body: {id, workspace?, project?}."
+  - name: diagram_put
+    method: POST
+    path: /diagram/put
+    description: "Create or replace a diagram. Body: {id, document, workspace?, project?, actor?, source_path?}."
+  - name: diagram_delete
+    method: POST
+    path: /diagram/delete
+    description: "Delete a diagram. Body: {id, workspace?, project?}."
+  - name: diagram_render
+    method: POST
+    path: /diagram/render
+    description: "Render a document server-side. Body: {document, width?, height?, theme?, color?}."
+
+  # ---- patches ----
+  - name: patch_apply
+    method: POST
+    path: /patch/apply
+    description: "Apply domain-aware patch ops to a stored diagram. Body: {id, ops, workspace?, project?, actor?}."
+
+  # ---- locks ----
+  - name: lock_acquire
+    method: POST
+    path: /lock/acquire
+    description: "Acquire a named advisory lock. Body: {resource, holder?}."
+  - name: lock_release
+    method: POST
+    path: /lock/release
+    description: "Release a named advisory lock. Body: {resource, holder}."
 
 tags:
   - diagram-junky
   - diagrams
   - playground
   - managed-relic
+  - workspace
+  - storage

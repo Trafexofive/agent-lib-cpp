@@ -1,0 +1,162 @@
+kind: Tool
+name: diagram_workspace
+version: "0.2"
+summary: "CRUD and live introspection for the diagram_workspace relic."
+
+description: >
+  Project-local tool for the diagram-junky agent. Speaks the
+  diagram_workspace HTTP API: list/get/put/delete workspaces, projects,
+  and diagrams; apply patches; render server-side; read or set the
+  active session pointer; tail the event log. Use this whenever the
+  user asks the agent to organize, audit, or modify a workspace of
+  diagrams. Pairs with the diagram_workspace managed relic.
+
+implementation:
+  type: script
+  runtime: python3
+  entrypoint: ./src/main.py
+  input_type: json
+
+timeout: 30
+on_error: abort
+
+input_schema:
+  type: object
+  properties:
+    action:
+      type: string
+      enum:
+        - info
+        - health
+        - workspace.list
+        - workspace.create
+        - workspace.rename
+        - workspace.delete
+        - project.list
+        - project.create
+        - project.rename
+        - project.delete
+        - diagram.list
+        - diagram.get
+        - diagram.put
+        - diagram.delete
+        - diagram.render
+        - patch.apply
+        - session.get
+        - session.set
+        - events.tail
+      description: "Action to perform against the relic."
+    server_url:
+      type: string
+      default: "http://localhost:8127"
+      description: "Base URL of the diagram_workspace relic."
+    actor:
+      type: string
+      description: "Optional actor name for the event log (defaults to 'agent')."
+    workspace:
+      type: string
+    project:
+      type: string
+    id:
+      type: string
+      description: "Diagram id (or workspace/project id where applicable)."
+    title:
+      type: string
+    document:
+      type: object
+      description: "Full diagram.document.v0 payload for put / render / patch."
+    source_path:
+      type: string
+      description: "Filesystem path to a diagram document to read (alternative to document)."
+    ops:
+      type: array
+      items: { type: object }
+      description: "Patch operations for action=patch.apply."
+    since:
+      type: integer
+      default: 0
+    limit:
+      type: integer
+      default: 50
+    width:
+      type: integer
+      default: 120
+    height:
+      type: integer
+      default: 40
+    theme:
+      type: string
+      enum: [default, mono, neon]
+      default: neon
+    color:
+      type: string
+      enum: [auto, always, never]
+      default: never
+  required: [action]
+
+output_schema:
+  type: object
+  properties:
+    success:
+      type: boolean
+    action:
+      type: string
+    data:
+      type: object
+    error:
+      type: string
+
+examples:
+  - description: "List all workspaces"
+    params: { action: workspace.list }
+  - description: "Create a workspace and a project"
+    params: { action: workspace.create, workspace: brainstorm, title: "Brainstorm session" }
+  - description: "Put a diagram into a project"
+    params:
+      action: diagram.put
+      workspace: brainstorm
+      project: core-ideas
+      id: sketch1
+      document:
+        schema_version: "diagram.document.v0"
+        id: sketch1
+        title: "first sketch"
+        kind: "flow"
+        nodes: []
+        edges: []
+  - description: "Apply a patch"
+    params:
+      action: patch.apply
+      workspace: brainstorm
+      project: core-ideas
+      id: sketch1
+      ops:
+        - op: "node.add"
+          node:
+            id: "alpha"
+            type: "service"
+            label: "alpha"
+            position: { x: 0, y: 0 }
+            size: { w: 16, h: 4 }
+  - description: "Render server-side"
+    params:
+      action: diagram.render
+      width: 80
+      height: 24
+      document:
+        schema_version: "diagram.document.v0"
+        id: x
+        title: x
+        kind: flow
+        nodes: []
+        edges: []
+  - description: "Read active session pointer"
+    params: { action: session.get }
+  - description: "Set active session pointer"
+    params:
+      action: session.set
+      workspace: brainstorm
+      project: core-ideas
+      id: sketch1
+  - description: "Tail event log"
+    params: { action: events.tail, since: 0, limit: 20 }
