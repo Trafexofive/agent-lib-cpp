@@ -1,6 +1,8 @@
 services:
   diagram-workspace:
-    build: .
+    build:
+      context: ../../..
+      dockerfile: playground/diagram-junky/manifests/relics/diagram-workspace/Dockerfile
     container_name: diagram-junky-workspace
     ports:
       - "8127:8127"
@@ -8,6 +10,7 @@ services:
       - diagram-junky-workspace-data:/data
     environment:
       DIAGRAM_WORKSPACE_DATA: /data
+      DIAGRAM_WORKSPACE_VERBOSE: "1"
 
 volumes:
   diagram-junky-workspace-data:
