@@ -33,16 +33,13 @@ from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs, urlparse
 
 # Make the diagram_junky package importable from a local checkout, where
-# server.py lives at manifests/relics/diagram-workspace/app/server.py and
-# the package is at the diagram-junky workspace root (three parents up).
+# server.py lives at playground/diagram-junky/manifests/relics/diagram-workspace/app/server.py
+# and the package is at the diagram-junky workspace root (parents[5]).
 # The Docker image bundles the package in /app/diagram_junky, so this is
 # a no-op there.
-_PKG_PARENT = Path(__file__).resolve().parents[3]
-if str(_PKG_PARENT) not in sys.path:
-    sys.path.insert(0, str(_PKG_PARENT))
-# Also support a /app layout for the container.
-if Path("/app/diagram_junky").is_dir() and "/app" not in sys.path:
-    sys.path.insert(0, "/app")
+for _candidate in (Path(__file__).resolve().parents[5], Path("/app")):
+    if (_candidate / "diagram_junky").is_dir() and str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +261,7 @@ class EventBus:
             return self._seq
 
     def emit(self, event: Event) -> Event:
-        line = json.dumps(event.__dict__, sort_keys=True)
+        line = json.dumps(event.__dict__, sort_keys=True, separators=(",", ":"))
         with self._lock:
             with self.path.open("a", encoding="utf-8") as f:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
@@ -524,7 +521,7 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- response helpers ----------
 
     def _json(self, code: int, payload: Any) -> None:
-        data = json.dumps(payload, sort_keys=True).encode("utf-8")
+        data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
@@ -590,7 +587,7 @@ class Handler(BaseHTTPRequestHandler):
         self._sse()
         sub = BUS.subscribe()
         # Initial heartbeat so the client knows the stream is live.
-        self._sse_send(json.dumps({"type": "hello", "version": SERVER_VERSION}))
+        self._sse_send(json.dumps({"type": "hello", "version": SERVER_VERSION}, separators=(",", ":")))
         last_heartbeat = time.time()
         try:
             while self._sse_open:
@@ -598,12 +595,12 @@ class Handler(BaseHTTPRequestHandler):
                     event = sub.get(timeout=1.0)
                 except queue.Empty:
                     if time.time() - last_heartbeat > 15.0:
-                        self._sse_send(json.dumps({"type": "heartbeat", "ts": time.time()}))
+                        self._sse_send(json.dumps({"type": "heartbeat", "ts": time.time()}, separators=(",", ":")))
                         last_heartbeat = time.time()
                     continue
                 if event is None:
                     break
-                self._sse_send(json.dumps({"type": "event", **event.__dict__}))
+                self._sse_send(json.dumps({"type": "event", **event.__dict__}, separators=(",", ":")))
                 last_heartbeat = time.time()
         finally:
             BUS.unsubscribe(sub)
