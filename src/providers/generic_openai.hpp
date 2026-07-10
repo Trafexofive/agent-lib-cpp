@@ -64,6 +64,79 @@ struct OpenAIProviderConfig {
                 }
             }
         }
+        if (apiKeyEnvVar == "XAI_API_KEY") {
+            const char* token = std::getenv("XAI_AUTH_TOKEN");
+            if (token && token[0])
+                return token;
+
+            auto readTokenObject = [](const Json::Value& obj) -> std::string {
+                if (!obj.isObject())
+                    return "";
+                // pi auth.json API-key entries use { type:"api_key", key:"..." }.
+                if (obj.isMember("key") && obj["key"].isString())
+                    return obj["key"].asString();
+                // pi OAuth entries, including pi-xai-oauth, use access/refresh.
+                if (obj.isMember("access") && obj["access"].isString())
+                    return obj["access"].asString();
+                // Grok CLI and older guesses use access_token/token.
+                if (obj.isMember("access_token") && obj["access_token"].isString())
+                    return obj["access_token"].asString();
+                if (obj.isMember("token") && obj["token"].isString())
+                    return obj["token"].asString();
+                return "";
+            };
+
+            const char* home = std::getenv("HOME");
+            if (home && home[0]) {
+                // First-class pi global auth storage. This is where /login xai-auth
+                // persists OAuth credentials for the pi-xai-oauth extension.
+                {
+                    std::ifstream f(std::string(home) + "/.pi/agent/auth.json");
+                    if (f.good()) {
+                        Json::Value root;
+                        Json::CharReaderBuilder reader;
+                        std::string errs;
+                        if (Json::parseFromStream(reader, f, &root, &errs)) {
+                            for (const char* provider : {"xai-auth", "xai", "x-ai", "grok"}) {
+                                if (!root.isMember(provider))
+                                    continue;
+                                std::string access = readTokenObject(root[provider]);
+                                if (!access.empty())
+                                    return access;
+                            }
+                        }
+                    }
+                }
+
+                // Reuse the official Grok CLI OAuth bearer when present, mirroring
+                // pi-xai-oauth's secondary credential discovery path.
+                std::ifstream f(std::string(home) + "/.grok/auth.json");
+                if (f.good()) {
+                    Json::Value root;
+                    Json::CharReaderBuilder reader;
+                    std::string errs;
+                    if (Json::parseFromStream(reader, f, &root, &errs)) {
+                        const std::string oidcScope =
+                            "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828";
+                        const std::string legacyScope = "https://accounts.x.ai/sign-in";
+                        if (root.isMember(oidcScope)) {
+                            std::string access = readTokenObject(root[oidcScope]);
+                            if (!access.empty())
+                                return access;
+                        }
+                        if (root.isMember(legacyScope)) {
+                            std::string access = readTokenObject(root[legacyScope]);
+                            if (!access.empty())
+                                return access;
+                        }
+                        if (root.isMember("access_token") && root["access_token"].isString())
+                            return root["access_token"].asString();
+                        if (root.isMember("token") && root["token"].isString())
+                            return root["token"].asString();
+                    }
+                }
+            }
+        }
         return defaultApiKeyFallback;
     }
 };
@@ -157,9 +230,9 @@ class GenericOpenAIClient : public ILlmProvider {
         std::string lastErrorBody;  // preserved for HTTP error responses
         bool codexResponses = false;
         bool codexSawTextDelta = false;
-        bool anyContent = false;       // true if any non-thinking token reached cb
-        std::string finishReason;      // last finish_reason seen in SSE deltas
-        long httpStatus = 0;           // HTTP status of the streaming response
+        bool anyContent = false;   // true if any non-thinking token reached cb
+        std::string finishReason;  // last finish_reason seen in SSE deltas
+        long httpStatus = 0;       // HTTP status of the streaming response
     };
 
     mutable StreamStats lastStats_;
@@ -209,7 +282,8 @@ inline OpenAIProviderConfig openrouterConfig() {
                 {"X-Title", "Cortex-MK3"},
             },
             true,
-            false,  // OpenRouter is model-specific; direct runs omit top_k unless /models says it is supported.
+            false,  // OpenRouter is model-specific; direct runs omit top_k unless /models says it
+                    // is supported.
             "/chat/completions",
             "/models",
             "",
@@ -235,6 +309,27 @@ inline OpenAIProviderConfig codexConfig() {
     cfg.reasoningEffort = "high";
     cfg.defaultMaxTokens = 65536;
     return cfg;
+}
+
+// xAI / Grok — OpenAI-compatible API. API keys use XAI_API_KEY; if absent,
+// we also accept XAI_AUTH_TOKEN or a bearer from ~/.grok/auth.json for parity
+// with pi-xai-oauth's Grok CLI credential discovery.
+inline OpenAIProviderConfig xaiConfig() {
+    return {"xai",
+            "https://api.x.ai/v1",
+            "XAI_API_KEY",
+            "",
+            "grok-4.5",
+            {
+                {"X-Title", "Cortex-MK3"},
+            },
+            true,
+            false,
+            "/chat/completions",
+            "/models",
+            "",
+            131072,
+            "chat-completions"};
 }
 
 // Groq — does NOT support top_k

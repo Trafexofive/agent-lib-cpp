@@ -22,6 +22,8 @@ inline std::shared_ptr<ILlmProvider> createProvider(const std::string& name,
         cfg = codexConfig();
     else if (name == "openrouter")
         cfg = openrouterConfig();
+    else if (name == "xai" || name == "x-ai" || name == "xai-auth" || name == "grok")
+        cfg = xaiConfig();
     else if (name == "groq")
         cfg = groqConfig();
     else if (name == "zen")
@@ -54,9 +56,10 @@ inline std::shared_ptr<ILlmProvider> createProvider(const std::string& name,
 }
 
 inline std::vector<std::string> availableProviders() {
-    return {"deepseek",  "openrouter",  "openai-codex", "codex-provider", "groq",
-            "zen",       "opencode-go", "opencode",     "together",       "fireworks",
-            "sambanova", "cerebras",    "hyperbolic",   "llm7",           "nvidia"};
+    return {"deepseek",     "openrouter",     "xai",       "x-ai",     "xai-auth",    "grok",
+            "openai-codex", "codex-provider", "groq",      "zen",      "opencode-go", "opencode",
+            "together",     "fireworks",      "sambanova", "cerebras", "hyperbolic",  "llm7",
+            "nvidia"};
 }
 
 inline std::string defaultProviderModel(const std::string& name) {
@@ -64,6 +67,8 @@ inline std::string defaultProviderModel(const std::string& name) {
         return "deepseek-chat";
     if (name == "openrouter")
         return "nex-agi/nex-n2-pro:free";
+    if (name == "xai" || name == "x-ai" || name == "xai-auth" || name == "grok")
+        return "grok-4.5";
     if (name == "openai-codex" || name == "codex-provider" || name == "codex")
         return "gpt-5.5";
     if (name == "groq")

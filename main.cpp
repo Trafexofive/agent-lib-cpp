@@ -42,7 +42,7 @@
 #include "src/tui/session_view.hpp"
 #include "src/tui/slash_commands.hpp"
 #include "src/tui/status_prompt.hpp"
-#include "src/utils/ansi.hpp"},{
+#include "src/utils/ansi.hpp"
 
 using namespace cortex::mk3;
 
@@ -211,7 +211,7 @@ Global flags:
   --config <path>      Config file (default: ~/.config/cortex-mk3/config)
   --manifest-dir <dir> Manifest catalog root (default: ./manifests; explicit imports only)
   --iterations <n>     Max turns before forced response (default: 20)
-  --provider <name>    LLM provider (deepseek, openrouter, openai-codex, groq, zen, together, fireworks)
+  --provider <name>    LLM provider (deepseek, openrouter, xai, openai-codex, groq, zen, together, fireworks)
   --model <name>       Model name
   --sandbox            Enable sandbox mode (tool restrictions)
   --sandbox-ro         Read-only sandbox (no writes, restricted exec)
@@ -1154,6 +1154,7 @@ static int cmdList(const CliConfig& cli) {
         static const std::vector<std::pair<std::string, std::string>> providerInfo = {
             {"deepseek", "DeepSeek API        (DEEPSEEK_API_KEY)"},
             {"openrouter", "OpenRouter          (OPENROUTER_API_KEY)"},
+            {"xai", "xAI / Grok         (XAI_API_KEY, XAI_AUTH_TOKEN, or ~/.pi/agent/auth.json)"},
             {"openai-codex", "OpenAI Codex        (OPENAI_API_KEY or ~/.codex/auth.json)"},
             {"groq", "Groq                (GROQ_API_KEY)"},
             {"zen", "OpenCode Zen        (free tier)"},
@@ -1234,7 +1235,7 @@ static int cmdList(const CliConfig& cli) {
 
         std::cout << "Models for all providers. Use `--models <provider>` to filter.\n\n";
         for (const auto& p :
-             {"deepseek", "openrouter", "openai-codex", "groq", "zen", "together", "fireworks"}) {
+             {"deepseek", "openrouter", "xai", "openai-codex", "groq", "zen", "together", "fireworks"}) {
             if (!printModels(p))
                 return 1;
             std::cout << "\n";
@@ -1525,6 +1526,7 @@ static bool interactivePicker(std::string& outProvider, std::string& outModel) {
     static const std::vector<std::pair<std::string, std::string>> providerInfo = {
         {"deepseek", "DeepSeek API"},
         {"openrouter", "OpenRouter"},
+        {"xai", "xAI / Grok"},
         {"openai-codex", "OpenAI Codex"},
         {"groq", "Groq"},
         {"zen", "OpenCode Zen (free)"},

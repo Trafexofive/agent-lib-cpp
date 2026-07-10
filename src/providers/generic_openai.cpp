@@ -298,8 +298,14 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
             throw std::runtime_error("Failed to initialize CURL");
 
         std::string responseBuffer;
-        StreamCtx ctx{cb, {}, {}, config_.apiMode == "openai-codex-responses", false,
-                      /*anyContent=*/false, /*finishReason=*/{}, /*httpStatus=*/0};
+        StreamCtx ctx{cb,
+                      {},
+                      {},
+                      config_.apiMode == "openai-codex-responses",
+                      false,
+                      /*anyContent=*/false,
+                      /*finishReason=*/{},
+                      /*httpStatus=*/0};
 
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -719,6 +725,16 @@ static int knownContextWindow(const std::string& provider, const std::string& mo
         {"nvidia/nemotron-3-super-120b-a12b-20230311", 1000000},
     };
 
+    static const std::unordered_map<std::string, int> xai = {
+        {"grok-4.5", 500000},
+        {"grok-4.3", 1000000},
+        {"grok-build", 512000},
+        {"grok-composer-2.5-fast", 200000},
+        {"grok-4.20-0309-reasoning", 2000000},
+        {"grok-4.20-0309-non-reasoning", 2000000},
+        {"grok-4.20-multi-agent-0309", 2000000},
+    };
+
     std::string key = modelId;
     std::transform(key.begin(), key.end(), key.begin(),
                    [](unsigned char c) { return std::tolower(c); });
@@ -731,6 +747,11 @@ static int knownContextWindow(const std::string& provider, const std::string& mo
     if (provider == "openrouter") {
         auto it = openrouter.find(key);
         if (it != openrouter.end())
+            return it->second;
+    }
+    if (provider == "xai") {
+        auto it = xai.find(key);
+        if (it != xai.end())
             return it->second;
     }
     return fallback;
@@ -841,7 +862,7 @@ std::vector<ILlmProvider::ModelInfo> GenericOpenAIClient::listModels() {
 }
 
 ILlmProvider::ModelInfo GenericOpenAIClient::modelInfoFromJson(const OpenAIProviderConfig& cfg,
-                                                                const Json::Value& m) {
+                                                               const Json::Value& m) {
     if (!m.isObject() || !m.isMember("id") || !m["id"].isString()) {
         ModelInfo empty;
         empty.id.clear();

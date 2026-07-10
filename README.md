@@ -24,7 +24,7 @@ src/
                  └─ agent_session.cpp (107l) — save, load, dump, undo
                  └─ mini_yaml.hpp (129l) — shared YAML parser
   protocol/      Streaming XML parser (<action>, <response>, <context_feed>)
-  providers/     LLM backends (DeepSeek, OpenRouter, Groq, Zen, Together, Fireworks)
+  providers/     LLM backends (DeepSeek, OpenRouter, xAI/Grok, Groq, Zen, Together, Fireworks)
   tools/         Built-in tool implementations (exec, grep, fs_read, ...)
   feeds/         System feed pollers (clock, stats, working dir)
   relics/        Built-in + Docker relic dispatch (session_journal, state_checkpoint)
@@ -115,7 +115,7 @@ Usage: cortex-mk3 [options]
 
   -p, --prompt <text>     One-shot prompt
   -m, --manifest <path>   Agent manifest YAML
-  --provider <name>       deepseek, openrouter, groq, zen, together, fireworks
+  --provider <name>       deepseek, openrouter, xai, groq, zen, together, fireworks
   --model <name>          Model name (default: deepseek-v4-pro)
   --system-prompt <path>  Override system prompt
   --harness-prompt <path> Tuning harness prompt
