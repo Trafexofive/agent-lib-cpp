@@ -5,6 +5,7 @@
 // Do not redesign this into inkcell Scenes/TextArea until parity is locked.
 #pragma once
 
+#include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
@@ -67,7 +68,15 @@ class ReplSession {
    public:
     explicit ReplSession(ReplSessionConfig cfg) : cfg_(std::move(cfg)), renderer_(80) {
         renderer_.setToolAnsiPassthrough(cfg_.toolAnsi);
+        wakeFd_ = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     }
+
+    ~ReplSession() {
+        if (wakeFd_ >= 0) ::close(wakeFd_);
+    }
+
+    ReplSession(const ReplSession&) = delete;
+    ReplSession& operator=(const ReplSession&) = delete;
 
     int run(Agent& agent) {
         configureDebugDumpFromEnv();
@@ -496,6 +505,7 @@ class ReplSession {
                 }
                 askPending.store(true, std::memory_order_release);
                 askCv.notify_one();
+                wakeUi();
 
                 std::unique_lock<std::mutex> lk(askMtx);
                 askCv.wait(lk, [&] {
@@ -553,6 +563,7 @@ class ReplSession {
                             snapPhase = phase;
                             snapDirty = true;
                         }
+                        wakeUi();
                     },
                     cfg_.sessionId, cfg_.ephemeral);
                 {
@@ -565,6 +576,7 @@ class ReplSession {
                     snapPhase = "complete";
                     snapDirty = true;
                 }
+                wakeUi();
                 agentDone.store(true, std::memory_order_release);
             });
 
@@ -642,6 +654,7 @@ class ReplSession {
                 }
 
                 handleResize(sessionView, transcriptDirty, cachedRendererWidth, frameClock, renderScreen);
+                drainWake();
                 applyStreamSnapshot();
                 frameClock.heartbeatDue(streaming);
                 renderScreen(inputChanged, false);
@@ -702,6 +715,18 @@ class ReplSession {
     }
 
    private:
+    void wakeUi() const {
+        if (wakeFd_ < 0) return;
+        uint64_t one = 1;
+        (void)::write(wakeFd_, &one, sizeof(one));
+    }
+
+    void drainWake() const {
+        if (wakeFd_ < 0) return;
+        uint64_t value = 0;
+        while (::read(wakeFd_, &value, sizeof(value)) > 0) {}
+    }
+
     void configureDebugDumpFromEnv() {
         if (!cfg_.tuiDebugDumpPath.empty())
             return;
@@ -926,6 +951,7 @@ class ReplSession {
 
     ReplSessionConfig cfg_;
     TuiRenderer renderer_;
+    int wakeFd_ = -1;
     int termW_ = 80;
     int termH_ = 24;
 };
