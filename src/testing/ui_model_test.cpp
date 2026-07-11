@@ -6,6 +6,7 @@
 #include "src/ui/model/adapters/agent_tree.hpp"
 #include "src/ui/model/adapters/protocol_to_timeline.hpp"
 #include "src/ui/model/command_model.hpp"
+#include "src/ui/model/navigation_model.hpp"
 
 using namespace cortex::mk3;
 using namespace cortex::mk3::ui::model;
@@ -185,6 +186,22 @@ void test_context_status_line() {
     check(status.find("stale replay") != std::string::npos,
           "status includes stale replay marker");
 }
+
+void test_navigation_stack_agent_drill() {
+    NavigationState nav;
+    replaceRoot(nav, makeEntry(AppView::AgentHistory, FocusPane::Composer));
+    check(atRootAgent(nav), "navigation root starts at root agent");
+    check(pushAgentChild(nav, "reader", "r1"), "push child agent succeeds");
+    check(!atRootAgent(nav), "navigation child is not root");
+    check(currentBreadcrumb(nav, "root") == "root / reader", "breadcrumb includes child agent");
+    check(pushAgentChild(nav, "grep"), "push sub-child agent succeeds");
+    check(currentBreadcrumb(nav, "root") == "root / reader / grep", "breadcrumb includes sub-child");
+    check(popView(nav), "pop sub-child succeeds");
+    check(currentBreadcrumb(nav, "root") == "root / reader", "pop restores parent breadcrumb");
+    check(popView(nav), "pop child succeeds");
+    check(atRootAgent(nav), "pop restores root agent");
+    check(!popView(nav), "cannot pop root view");
+}
 }  // namespace
 
 int main() {
@@ -197,6 +214,7 @@ int main() {
     test_command_inventory_agent_history();
     test_command_inventory_disabled_reasons();
     test_context_status_line();
+    test_navigation_stack_agent_drill();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }
