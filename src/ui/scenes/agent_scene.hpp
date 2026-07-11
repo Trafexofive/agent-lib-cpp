@@ -5,6 +5,7 @@
 
 #include "base_scene.hpp"
 #include "src/ui/chat/chat_commands.hpp"
+#include "src/ui/chat/chat_io.hpp"
 #include "src/ui/chat/chat_view.hpp"
 
 namespace cortex::mk3::ui::scenes {
@@ -72,6 +73,10 @@ class AgentScene final : public BaseScene {
 
         if (event.code == KeyCode::Escape) {
             model_->focusTimeline();
+            return true;
+        }
+        if (event.code == KeyCode::Tab) {
+            completeSlashCommand();
             return true;
         }
         if (event.code == KeyCode::ArrowUp) {
@@ -237,9 +242,61 @@ class AgentScene final : public BaseScene {
         if (result.clearTranscript) model_->clearTranscript();
         if (result.toggleThoughts) model_->showThoughts = !model_->showThoughts;
         if (result.toggleRaw) model_->showRaw = !model_->showRaw;
-        if (!result.lines.empty()) model_->appendNotice(result.title, result.lines);
+        if (result.showPrompts) showCapturedPrompts();
+        if (result.dumpPrompts) {
+            auto messages = chat::dumpPrompts(model_->rootAgent ? model_->rootAgent->iterationPrompts()
+                                                                : std::vector<std::string>{});
+            model_->appendNotice("dump prompt", messages);
+        }
+        if (result.copyAll) {
+            auto copied = chat::copyText(chat::joinLines(model_->transcriptView.lines), "/tmp/mk3-cp-all.txt");
+            model_->appendNotice("copy transcript", {copied.copied ? "wrote " + copied.destination
+                                                                  : "failed " + copied.destination});
+        }
+        if (result.copyRaw) {
+            std::string raw = model_->rootAgent ? model_->rootAgent->rawLlOutput() : model_->raw;
+            auto copied = chat::copyText(raw, "/tmp/mk3-cp-raw.txt");
+            model_->appendNotice("copy raw", {copied.copied ? "wrote " + copied.destination
+                                                           : "failed " + copied.destination});
+        }
+        if (!result.composerReplacement.empty()) {
+            model_->composer.value = result.composerReplacement;
+            model_->composer.cursor = static_cast<int>(model_->composer.value.size());
+        } else if (!result.lines.empty()) {
+            model_->appendNotice(result.title, result.lines);
+        }
         model_->rebuildViews();
         return true;
+    }
+
+    void showCapturedPrompts() {
+        std::vector<std::string> lines;
+        if (!model_->rootAgent || model_->rootAgent->iterationPrompts().empty()) {
+            lines.push_back("no prompts captured — run a prompt first");
+        } else {
+            const auto& prompts = model_->rootAgent->iterationPrompts();
+            for (size_t i = 0; i < prompts.size(); ++i) {
+                lines.push_back("--- iteration " + std::to_string(i + 1) + " ---");
+                auto promptLines = splitDisplayLines(prompts[i]);
+                lines.insert(lines.end(), promptLines.begin(), promptLines.end());
+            }
+        }
+        model_->appendNotice("prompts", lines);
+    }
+
+    void completeSlashCommand() {
+        if (model_->composer.value.empty() || model_->composer.value[0] != '/') return;
+        size_t space = model_->composer.value.find(' ');
+        std::string prefix = space == std::string::npos
+                                 ? model_->composer.value
+                                 : model_->composer.value.substr(0, space);
+        auto matches = chat::completeChatCommand(prefix);
+        if (matches.size() == 1) {
+            model_->composer.value = matches.front() + " ";
+            model_->composer.cursor = static_cast<int>(model_->composer.value.size());
+        } else if (!matches.empty()) {
+            model_->appendNotice("completions", matches);
+        }
     }
 
     void handle(const inkcell::Action& action) override {

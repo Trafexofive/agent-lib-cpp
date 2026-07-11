@@ -89,7 +89,7 @@ test-parser: $(PARSER_TEST_BIN)
 UI_MODEL_TEST_SRC := src/testing/ui_model_test.cpp
 UI_MODEL_TEST_BIN := ui-model-test
 
-$(UI_MODEL_TEST_BIN): $(OBJS) $(UI_MODEL_TEST_SRC) src/ui/chat/chat_commands.hpp src/ui/model/timeline_model.hpp src/ui/model/app_context.hpp src/ui/model/command_model.hpp src/ui/model/inkcell_app_model.hpp src/ui/model/navigation_model.hpp src/ui/model/adapters/protocol_to_timeline.hpp src/ui/model/adapters/agent_tree.hpp
+$(UI_MODEL_TEST_BIN): $(OBJS) $(UI_MODEL_TEST_SRC) src/ui/chat/ask_dialog_model.hpp src/ui/chat/chat_command_catalog.hpp src/ui/chat/chat_commands.hpp src/ui/chat/chat_io.hpp src/ui/chat/prompt_history.hpp src/ui/model/timeline_model.hpp src/ui/model/app_context.hpp src/ui/model/command_model.hpp src/ui/model/inkcell_app_model.hpp src/ui/model/navigation_model.hpp src/ui/model/adapters/protocol_to_timeline.hpp src/ui/model/adapters/agent_tree.hpp
 	$(CXX) $(CXXFLAGS) $(UI_MODEL_TEST_SRC) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) -o $@ $(LDFLAGS)
 
 test-ui-model: $(UI_MODEL_TEST_BIN)

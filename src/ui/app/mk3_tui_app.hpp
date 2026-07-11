@@ -12,7 +12,9 @@
 #include <thread>
 
 #include "inkcell/app.hpp"
+#include "src/session/manager.hpp"
 #include "src/ui/bridge/agent_bridge.hpp"
+#include "src/ui/chat/prompt_history.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
 #include "src/ui/scenes/agent_scene.hpp"
 
@@ -41,6 +43,16 @@ inline void publishProtocolChanges(AgentBridge& bridge, const std::vector<Protoc
             bridge.publish(UiEvent::protocolEvent(current[i], i));
     }
     previous = current;
+}
+
+inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
+                               const InkcellAppConfig& cfg) {
+    model->promptHistory = chat::loadPromptHistory();
+    model->promptHistoryIndex = static_cast<int>(model->promptHistory.size());
+    if (!cfg.sessionId.empty()) {
+        session::SessionManager sessions;
+        if (sessions.exists(cfg.sessionId)) model->loadSessionRecords(sessions.load(cfg.sessionId).records);
+    }
 }
 
 inline void installChatTick(inkcell::App& app, AgentBridge& bridge, const std::shared_ptr<ShellModel>& model) {
@@ -104,6 +116,7 @@ inline int runInkcellShell(const InkcellAppConfig& cfg, Agent& agent) {
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
     model->setRootAgent(&agent);
+    initializeChatModel(model, cfg);
     auto app = makeChatApp(cfg, bridge, model);
     installChatTick(app, bridge, model);
     if (snapshotMode()) {
@@ -120,6 +133,7 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
     model->setRootAgent(&agent);
+    initializeChatModel(model, cfg);
     TimelineRow userRow;
     userRow.kind = TimelineKind::User;
     userRow.title = "you";
@@ -154,6 +168,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
     model->setRootAgent(&agent);
+    initializeChatModel(model, cfg);
     agent.setAskToolHandler([&bridge](const Json::Value& params) { return bridge.requestAsk(params); });
     std::atomic<bool> workerBusy{false};
     std::thread worker;
@@ -174,6 +189,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
         if (!model->pendingSubmit.empty() && !workerBusy.load(std::memory_order_acquire)) {
             std::string prompt = model->pendingSubmit;
             model->pendingSubmit.clear();
+            chat::savePromptHistory(model->promptHistory);
             workerBusy.store(true, std::memory_order_release);
             model->running = true;
             model->done = false;
@@ -200,6 +216,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     g_running = false;
     bridge.cancelAsk();
     joinWorker();
+    chat::savePromptHistory(model->promptHistory);
     g_running = true;
     return rc;
 }

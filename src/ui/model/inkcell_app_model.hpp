@@ -646,6 +646,41 @@ struct ShellModel {
         for (const auto& e : batch) apply(e);
     }
 
+    void loadSessionRecords(const std::vector<SessionRecord>& records) {
+        rootRows.clear();
+        for (const auto& record : records) {
+            TimelineRow row;
+            row.body = record.content;
+            row.ok = true;
+            switch (record.role) {
+                case SessionRecord::USER:
+                    row.kind = TimelineKind::User;
+                    row.title = "you";
+                    break;
+                case SessionRecord::AGENT:
+                    row.kind = TimelineKind::Response;
+                    row.title = "response";
+                    break;
+                case SessionRecord::TOOL_CALL:
+                    row.kind = TimelineKind::Action;
+                    row.title = "tool call";
+                    break;
+                case SessionRecord::TOOL_RESULT:
+                    row.kind = TimelineKind::Result;
+                    row.title = "tool result";
+                    break;
+                case SessionRecord::SYSTEM:
+                    row.kind = TimelineKind::Log;
+                    row.title = "system";
+                    break;
+            }
+            rootRows.push_back(std::move(row));
+        }
+        timelineState = rootRows.empty() ? PageState::Empty : PageState::Populated;
+        selectedBlock = 0;
+        rebuildViews();
+    }
+
     void clearTranscript() {
         rootRows.clear();
         nestedRows.clear();

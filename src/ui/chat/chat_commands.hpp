@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "src/session/manager.hpp"
+#include "src/ui/chat/chat_command_catalog.hpp"
 
 namespace cortex::mk3::ui::chat {
 
@@ -26,8 +27,13 @@ struct ChatCommandResult {
     bool clearTranscript = false;
     bool toggleThoughts = false;
     bool toggleRaw = false;
+    bool showPrompts = false;
+    bool dumpPrompts = false;
+    bool copyAll = false;
+    bool copyRaw = false;
     std::string title;
     std::vector<std::string> lines;
+    std::string composerReplacement;
 };
 
 inline ChatCommandResult executeChatCommand(const std::string& command,
@@ -56,6 +62,22 @@ inline ChatCommandResult executeChatCommand(const std::string& command,
         out.lines = {"raw stream visibility toggled"};
         return out;
     }
+    if (command == "/prompts") {
+        out.showPrompts = true;
+        return out;
+    }
+    if (command == "/dump-prompt" || command == "/dp") {
+        out.dumpPrompts = true;
+        return out;
+    }
+    if (command == "/cp-all") {
+        out.copyAll = true;
+        return out;
+    }
+    if (command == "/cp-raw") {
+        out.copyRaw = true;
+        return out;
+    }
     if (command == "/help" || command == "/commands") {
         out.title = "commands";
         out.lines = {
@@ -65,8 +87,15 @@ inline ChatCommandResult executeChatCommand(const std::string& command,
             "/raw               toggle raw stream rows",
             "/manifests         inspect active harness surface",
             "/sessions          list recent sessions",
+            "/prompts           show captured iteration prompts",
+            "/dump-prompt, /dp  write captured prompts to /tmp",
+            "/cp-all            copy transcript (file fallback)",
+            "/cp-raw            copy raw model output (file fallback)",
             "/quit, /exit       leave chat",
+            "Tab                complete command names",
         };
+        for (const auto& dynamic : discoverDynamicChatCommands())
+            out.lines.push_back(dynamic.name + "  [" + dynamic.kind + "] " + dynamic.description);
         return out;
     }
     if (command == "/manifests") {
@@ -96,6 +125,16 @@ inline ChatCommandResult executeChatCommand(const std::string& command,
                                     std::to_string(s.turnCount) + " turns");
             }
         }
+        return out;
+    }
+
+    size_t space = command.find(' ');
+    std::string commandName = space == std::string::npos ? command : command.substr(0, space);
+    std::string arguments = space == std::string::npos ? std::string() : trimCommandText(command.substr(space + 1));
+    auto dynamicCommands = discoverDynamicChatCommands();
+    if (const auto* dynamic = findDynamicChatCommand(commandName, dynamicCommands)) {
+        out.title = dynamic->name;
+        out.composerReplacement = expandDynamicChatCommand(*dynamic, arguments);
         return out;
     }
 

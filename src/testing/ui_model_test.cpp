@@ -1,14 +1,18 @@
+#include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <future>
 #include <iostream>
 #include <set>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 #include "src/ui/chat/chat_commands.hpp"
+#include "src/ui/chat/prompt_history.hpp"
 #include "src/ui/model/adapters/agent_tree.hpp"
-#include "src/ui/model/adapters/protocol_to_timeline.hpp"},{
+#include "src/ui/model/adapters/protocol_to_timeline.hpp"
 #include "src/ui/model/command_model.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
 #include "src/ui/model/navigation_model.hpp"
@@ -216,6 +220,30 @@ int countRows(const ShellModel& model, TimelineKind kind) {
     return count;
 }
 
+void test_chat_persistence() {
+    std::string path = "/tmp/mk3-chat-history-test-" + std::to_string(::getpid());
+    std::vector<std::string> saved = {"first", "second", "second", "third"};
+    check(chat::savePromptHistory(saved, path, 3), "prompt history saves atomically");
+    auto loaded = chat::loadPromptHistory(path);
+    check(loaded.size() == 2 && loaded[0] == "second" && loaded[1] == "third",
+          "prompt history loads bounded deduplicated entries");
+    std::filesystem::remove(path);
+
+    std::vector<SessionRecord> records;
+    records.push_back({SessionRecord::USER, "hello", "", ""});
+    records.push_back({SessionRecord::AGENT, "hi", "", ""});
+    records.push_back({SessionRecord::TOOL_CALL, "read x", "", ""});
+    records.push_back({SessionRecord::TOOL_RESULT, "x contents", "", ""});
+    ShellModel model;
+    model.loadSessionRecords(records);
+    check(model.rootRows.size() == 4, "session replay loads every structured record");
+    check(model.rootRows[0].kind == TimelineKind::User &&
+              model.rootRows[1].kind == TimelineKind::Response &&
+              model.rootRows[2].kind == TimelineKind::Action &&
+              model.rootRows[3].kind == TimelineKind::Result,
+          "session replay maps record roles to chat rows");
+}
+
 void test_chat_ask_dialog_channel() {
     Json::Value params;
     params["chainTitle"] = "Choose target";
@@ -290,7 +318,21 @@ void test_chat_commands() {
     check(chat::executeChatCommand("/clear").clearTranscript, "chat clear command classified");
     check(chat::executeChatCommand("/thoughts").toggleThoughts, "chat thoughts command classified");
     check(chat::executeChatCommand("/raw").toggleRaw, "chat raw command classified");
+    check(chat::executeChatCommand("/prompts").showPrompts, "chat prompts command classified");
+    check(chat::executeChatCommand("/dump-prompt").dumpPrompts, "chat dump-prompt command classified");
+    check(chat::executeChatCommand("/cp-all").copyAll, "chat copy-all command classified");
+    check(chat::executeChatCommand("/cp-raw").copyRaw, "chat copy-raw command classified");
     check(chat::executeChatCommand("/quit").quit, "chat quit command classified");
+    auto dynamic = chat::discoverDynamicChatCommands();
+    check(!dynamic.empty(), "dynamic prompt/skill catalog is discovered");
+    auto debugger = chat::completeChatCommand("/debug");
+    check(std::find(debugger.begin(), debugger.end(), "/debugger") != debugger.end(),
+          "dynamic command participates in completion");
+    auto expanded = chat::executeChatCommand("/debugger parser crash");
+    check(expanded.handled && !expanded.composerReplacement.empty() &&
+              expanded.composerReplacement.find("parser crash") != std::string::npos,
+          "dynamic command expands arguments into composer text");
+
     auto unknown = chat::executeChatCommand("/nope");
     check(unknown.handled && unknown.title == "unknown command",
           "unknown slash command is not sent to model");
@@ -381,6 +423,7 @@ int main() {
     test_command_inventory_disabled_reasons();
     test_context_status_line();
     test_navigation_stack_agent_drill();
+    test_chat_persistence();
     test_chat_ask_dialog_channel();
     test_chat_commands();
     test_chat_prompt_history();
