@@ -95,6 +95,7 @@ class AgentScene final : public BaseScene {
         vm.resultCount = model_->resultCount;
         vm.tokenBytes = model_->tokenBytes;
         vm.scrollOffset = model_->transcriptView.offset;
+        vm.followBottom = model_->transcriptView.stick_bottom;
         vm.transcript = model_->transcriptView.lines;
         vm.input = model_->composer.value;
         if (!model_->atRoot()) vm.hint = "Esc/Backspace back · j/k select · Enter drill · g refresh";

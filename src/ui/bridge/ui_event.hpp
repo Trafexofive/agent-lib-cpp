@@ -5,6 +5,7 @@
 
 #include <json/json.h>
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,7 @@ struct UiEvent {
     std::string text;
     std::string id;
     ProtocolEvent protocol;
+    size_t protocolIndex = 0;
     Json::Value json;
     bool final = false;
 
@@ -61,10 +63,11 @@ struct UiEvent {
         return e;
     }
 
-    static UiEvent protocolEvent(ProtocolEvent ev) {
+    static UiEvent protocolEvent(ProtocolEvent ev, size_t index = 0) {
         UiEvent e;
         e.kind = UiEventKind::Protocol;
         e.protocol = std::move(ev);
+        e.protocolIndex = index;
         return e;
     }
 

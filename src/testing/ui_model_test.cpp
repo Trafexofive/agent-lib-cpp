@@ -6,9 +6,11 @@
 #include "src/ui/model/adapters/agent_tree.hpp"
 #include "src/ui/model/adapters/protocol_to_timeline.hpp"
 #include "src/ui/model/command_model.hpp"
+#include "src/ui/model/inkcell_app_model.hpp"
 #include "src/ui/model/navigation_model.hpp"
 
 using namespace cortex::mk3;
+using namespace cortex::mk3::ui;
 using namespace cortex::mk3::ui::model;
 
 namespace {
@@ -202,6 +204,54 @@ void test_navigation_stack_agent_drill() {
     check(atRootAgent(nav), "pop restores root agent");
     check(!popView(nav), "cannot pop root view");
 }
+
+int countRows(const ShellModel& model, TimelineKind kind) {
+    int count = 0;
+    for (const auto& row : model.rootRows)
+        if (row.kind == kind) ++count;
+    return count;
+}
+
+void test_chat_protocol_reducer_updates_in_place() {
+    ShellModel model;
+    model.apply(UiEvent::status("agent running"));
+    check(model.rootRows.empty(), "status stays out of transcript");
+
+    model.apply(UiEvent::token("raw bytes"));
+    check(countRows(model, TimelineKind::Stream) == 0, "FULL mode stream stays out of transcript");
+
+    ProtocolEvent action = actionEvent("agent", "reader", "ping_reader", "ping");
+    model.apply(UiEvent::protocolEvent(action, 0));
+    model.apply(UiEvent::protocolEvent(action, 0));
+    check(countRows(model, TimelineKind::Action) == 1 && model.actionCount == 1,
+          "duplicate action update does not append");
+    check(model.pendingOps == 1, "action remains pending");
+
+    ProtocolEvent progress = resultEvent("ping_reader", true, "reader is running…", "reader");
+    progress.result.elapsedMs = 0;
+    model.apply(UiEvent::protocolEvent(progress, 1));
+    check(countRows(model, TimelineKind::Result) == 0 && model.resultCount == 0,
+          "progress placeholder is not a completed result row");
+
+    ProtocolEvent result = resultEvent("ping_reader", true, "reader available", "reader");
+    model.apply(UiEvent::protocolEvent(result, 1));
+    check(countRows(model, TimelineKind::Result) == 1 && model.resultCount == 1,
+          "final result replaces placeholder slot");
+    check(model.pendingOps == 0, "final result clears pending action");
+
+    model.apply(UiEvent::protocolEvent(responseEvent("I"), 2));
+    model.apply(UiEvent::protocolEvent(responseEvent("I pinged reader."), 2));
+    check(countRows(model, TimelineKind::Response) == 1,
+          "partial response updates one transcript row");
+    check(model.rootRows.back().body == "I pinged reader.", "response row contains latest text");
+
+    UiEvent done;
+    done.kind = UiEventKind::TurnDone;
+    done.text = "I pinged reader.";
+    model.apply(done);
+    check(countRows(model, TimelineKind::Final) == 0,
+          "turn done does not duplicate an existing response");
+}
 }  // namespace
 
 int main() {
@@ -215,6 +265,7 @@ int main() {
     test_command_inventory_disabled_reasons();
     test_context_status_line();
     test_navigation_stack_agent_drill();
+    test_chat_protocol_reducer_updates_in_place();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }

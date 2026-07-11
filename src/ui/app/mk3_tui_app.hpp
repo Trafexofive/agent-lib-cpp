@@ -18,6 +18,31 @@
 
 namespace cortex::mk3::ui {
 
+inline bool sameProtocolEvent(const ProtocolEvent& a, const ProtocolEvent& b) {
+    if (a.kind != b.kind || a.text != b.text) return false;
+    if (a.kind == ProtocolEventKind::ACTION) {
+        return a.action.type == b.action.type && a.action.name == b.action.name &&
+               a.action.id == b.action.id && a.action.body == b.action.body &&
+               a.action.mode == b.action.mode && a.action.modifiers == b.action.modifiers;
+    }
+    if (a.kind == ProtocolEventKind::RESULT) {
+        return a.result.id == b.result.id && a.result.ok == b.result.ok &&
+               a.result.summary == b.result.summary && a.result.toolName == b.result.toolName &&
+               a.result.exitCode == b.result.exitCode && a.result.elapsedMs == b.result.elapsedMs &&
+               a.result.outputBytes == b.result.outputBytes;
+    }
+    return true;
+}
+
+inline void publishProtocolChanges(AgentBridge& bridge, const std::vector<ProtocolEvent>& current,
+                                   std::vector<ProtocolEvent>& previous) {
+    for (size_t i = 0; i < current.size(); ++i) {
+        if (i >= previous.size() || !sameProtocolEvent(current[i], previous[i]))
+            bridge.publish(UiEvent::protocolEvent(current[i], i));
+    }
+    previous = current;
+}
+
 inline void installChatTick(inkcell::App& app, AgentBridge& bridge, const std::shared_ptr<ShellModel>& model) {
     app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([model, &bridge]() { model->drain(bridge); });
     app.engine().on_tick([model, &bridge, &app](inkcell::Tick) {
@@ -50,15 +75,14 @@ inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& p
     try {
         bridge.publish(UiEvent::status("agent running"));
         size_t rawSeen = 0;
-        size_t eventSeen = 0;
+        std::vector<ProtocolEvent> previousEvents;
         auto onToken = [&](const std::string&, bool) {
             const std::string& raw = agent.rawLlOutput();
             if (raw.size() > rawSeen) {
                 bridge.publish(UiEvent::token(raw.substr(rawSeen)));
                 rawSeen = raw.size();
             }
-            const auto& events = agent.protocolEvents();
-            while (eventSeen < events.size()) bridge.publish(UiEvent::protocolEvent(events[eventSeen++]));
+            publishProtocolChanges(bridge, agent.protocolEvents(), previousEvents);
         };
         std::string result = agent.prompt(prompt, onToken, sessionId, ephemeral);
         onToken("", true);

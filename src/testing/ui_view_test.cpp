@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "inkcell/surface.hpp"
+#include "src/ui/chat/chat_view.hpp"
 #include "src/ui/views/timeline_view.hpp"
 
 using namespace cortex::mk3::ui;
@@ -81,6 +82,17 @@ void test_drillable_tag() {
     drawTimeline(s, {2, 2, 96, 8}, model);
     check(containsRow(s, "↳ reader"), "drillable child target rendered");
 }
+
+void test_chat_transcript_wraps_long_lines() {
+    std::vector<std::string> source = {
+        "  This response is deliberately longer than the available transcript width and must wrap.",
+    };
+    auto lines = chat::wrapTranscript(source, 32);
+    check(lines.size() >= 3, "chat transcript wraps long response");
+    bool preservedIndent = true;
+    for (const auto& line : lines) preservedIndent = preservedIndent && line.rfind("  ", 0) == 0;
+    check(preservedIndent, "chat transcript preserves indentation while wrapping");
+}
 }  // namespace
 
 int main() {
@@ -88,6 +100,7 @@ int main() {
     test_empty_state();
     test_selected_block_cues();
     test_drillable_tag();
+    test_chat_transcript_wraps_long_lines();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }

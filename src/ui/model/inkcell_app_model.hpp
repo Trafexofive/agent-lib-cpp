@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unistd.h>
@@ -111,10 +112,9 @@ inline TimelineRow rowFromProtocol(const ProtocolEvent& pe) {
         row.ok = pe.result.ok;
         row.actionId = pe.result.id;
         row.actionName = pe.result.toolName;
-        // Agent results are also enterable when toolName matches a sub-agent.
-        row.drillable = !pe.result.toolName.empty();  // refined when resolving against Agent*
+        // Result drillability is resolved against the actual Agent tree later.
+        row.drillable = false;
         row.title = "#" + pe.result.id + " " + pe.result.toolName;
-        if (row.drillable) row.title += "  ↳ enter?";
         row.body = pe.result.summary;
         if (pe.result.elapsedMs > 0) row.body += "\n" + std::to_string(static_cast<int>(pe.result.elapsedMs)) + "ms";
     } else if (pe.kind == ProtocolEventKind::RESPONSE) {
@@ -208,6 +208,12 @@ struct ShellModel {
     std::vector<int> blockRowIndex;
     // Nested frame cache (rebuilt on enter/refresh)
     std::vector<TimelineRow> nestedRows;
+
+    // Current-turn protocol reducer. Agent protocol entries mutate in place as
+    // response text and progress results grow; map each protocol index to one row.
+    std::vector<int> activeProtocolRows;
+    std::set<std::string> pendingActionIds;
+    std::set<std::string> completedResultIds;
 
     ShellModel() {
         composer.focused = true;
@@ -474,15 +480,38 @@ struct ShellModel {
         rebuildViews();
     }
 
+    static bool isProgressPlaceholder(const ProtocolResult& result) {
+        return result.elapsedMs == 0.0 && result.summary.find(" is running…") != std::string::npos;
+    }
+
+    void upsertProtocolRow(size_t index, TimelineRow row) {
+        if (activeProtocolRows.size() <= index) activeProtocolRows.resize(index + 1, -1);
+        int& mapped = activeProtocolRows[index];
+        if (mapped >= 0 && mapped < static_cast<int>(rootRows.size())) {
+            rootRows[static_cast<size_t>(mapped)] = std::move(row);
+        } else {
+            mapped = static_cast<int>(rootRows.size());
+            rootRows.push_back(std::move(row));
+        }
+        timelineState = PageState::Populated;
+    }
+
     void apply(const UiEvent& e) {
         switch (e.kind) {
-            case UiEventKind::Status:
+            case UiEventKind::Status: {
+                bool startsTurn = e.text.find("running") != std::string::npos && !running;
+                if (startsTurn) {
+                    activeProtocolRows.clear();
+                    pendingActionIds.clear();
+                    completedResultIds.clear();
+                    pendingOps = 0;
+                }
                 status = e.text;
                 running = e.text.find("running") != std::string::npos;
                 if (running) timelineState = PageState::Loading;
-                pushRow({TimelineKind::Status, "status", e.text, true});
                 if (atRoot()) rebuildViews();
                 break;
+            }
             case UiEventKind::Log:
                 pushRow({TimelineKind::Log, "log", e.text, true});
                 if (atRoot()) rebuildViews();
@@ -501,8 +530,6 @@ struct ShellModel {
                 if (showRaw) {
                     for (auto& line : splitDisplayLines(e.text))
                         pushRow({TimelineKind::Stream, "raw", line, true});
-                } else {
-                    setStreamProgress(tokenBytes);
                 }
                 if (atRoot()) rebuildViews();
                 break;
@@ -510,20 +537,31 @@ struct ShellModel {
                 const auto& pe = e.protocol;
                 TimelineRow row = rowFromProtocol(pe);
                 if (pe.kind == ProtocolEventKind::ACTION) {
-                    ++actionCount;
-                    ++pendingOps;
+                    if (pendingActionIds.insert(pe.action.id).second) {
+                        ++actionCount;
+                        pendingOps = static_cast<int>(pendingActionIds.size());
+                        eventLog.push_back("action " + row.title);
+                    }
                     if (row.actionType == "agent" && rootAgent && rootAgent->hasSubAgent(row.actionName)) {
                         row.drillable = true;
                         if (row.title.find("↳") == std::string::npos) row.title += "  ↳ enter";
-                    } else if (row.actionType == "agent") {
-                        row.drillable = true;  // may resolve later once child exists
-                    } else {
+                    } else if (row.actionType != "agent") {
                         row.drillable = false;
                     }
-                    eventLog.push_back("action " + row.title);
+                    upsertProtocolRow(e.protocolIndex, std::move(row));
                 } else if (pe.kind == ProtocolEventKind::RESULT) {
-                    ++resultCount;
-                    if (pendingOps > 0) --pendingOps;
+                    if (isProgressPlaceholder(pe.result)) {
+                        // Keep progress in the status metrics. Do not render a fake
+                        // completed result such as "reader is running…".
+                        if (atRoot()) rebuildViews();
+                        break;
+                    }
+                    if (completedResultIds.insert(pe.result.id).second) {
+                        ++resultCount;
+                        pendingActionIds.erase(pe.result.id);
+                        pendingOps = static_cast<int>(pendingActionIds.size());
+                        eventLog.push_back(std::string("result ") + (row.ok ? "ok " : "err ") + row.actionId);
+                    }
                     if (rootAgent && rootAgent->hasSubAgent(row.actionName)) {
                         row.drillable = true;
                         row.actionType = "agent";
@@ -531,23 +569,27 @@ struct ShellModel {
                     } else {
                         row.drillable = false;
                     }
-                    eventLog.push_back(std::string("result ") + (row.ok ? "ok " : "err ") + row.actionId);
-                } else if (pe.kind == ProtocolEventKind::THOUGHT) {
-                    eventLog.push_back("thought");
-                } else if (pe.kind == ProtocolEventKind::RESPONSE) {
-                    eventLog.push_back("response");
+                    upsertProtocolRow(e.protocolIndex, std::move(row));
+                } else {
+                    if (pe.kind == ProtocolEventKind::THOUGHT) eventLog.push_back("thought");
+                    else if (pe.kind == ProtocolEventKind::RESPONSE) eventLog.push_back("response");
+                    upsertProtocolRow(e.protocolIndex, std::move(row));
                 }
-                pushRow(std::move(row));
                 if (atRoot()) rebuildViews();
                 break;
             }
-            case UiEventKind::TurnDone:
+            case UiEventKind::TurnDone: {
                 done = true;
                 running = false;
                 status = failed ? "failed" : "done";
                 finalText = e.text;
                 timelineState = e.text.empty() ? PageState::Empty : PageState::Populated;
-                pushRow({TimelineKind::Final, "final", e.text, !failed});
+                bool hasResponse = false;
+                for (const auto& row : rootRows)
+                    if (row.kind == TimelineKind::Response) hasResponse = true;
+                if (!hasResponse && !e.text.empty()) pushRow({TimelineKind::Final, "final", e.text, !failed});
+                pendingActionIds.clear();
+                pendingOps = 0;
                 // Re-mark drillable agent rows now that children finished.
                 if (rootAgent) {
                     for (auto& row : rootRows) {
@@ -563,6 +605,7 @@ struct ShellModel {
                 if (atRoot()) rebuildViews();
                 else refreshNested();
                 break;
+            }
             case UiEventKind::AskDialog:
             case UiEventKind::AskDialogResult:
                 pushRow({TimelineKind::Status, uiEventKindName(e.kind), e.text, true});

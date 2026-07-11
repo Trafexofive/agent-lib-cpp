@@ -37,6 +37,7 @@ struct ChatSurfaceModel {
     int resultCount = 0;
     int tokenBytes = 0;
     int scrollOffset = 0;
+    bool followBottom = true;
     std::vector<std::string> transcript;
     std::string input;
     std::string hint;
@@ -86,9 +87,29 @@ inline void drawHeader(inkcell::Surface& surface, inkcell::Rect frame, const Cha
     surface.text({frame.x, frame.y + 1}, inkcell::text::truncate(path, frame.w), theme::dim());
 }
 
+inline std::vector<std::string> wrapTranscript(const std::vector<std::string>& source, int width) {
+    std::vector<std::string> out;
+    width = std::max(1, width);
+    for (const auto& original : source) {
+        if (original.empty()) {
+            out.push_back("");
+            continue;
+        }
+        size_t indentSize = 0;
+        while (indentSize < original.size() && original[indentSize] == ' ' && indentSize < 6) ++indentSize;
+        std::string indent(indentSize, ' ');
+        std::string content = original.substr(indentSize);
+        auto wrapped = inkcell::text::wrap_words(content, std::max(1, width - static_cast<int>(indentSize)));
+        if (wrapped.empty()) out.push_back(indent);
+        else for (const auto& line : wrapped) out.push_back(indent + line);
+    }
+    return out;
+}
+
 inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const ChatSurfaceModel& m) {
     if (body.w <= 0 || body.h <= 0) return;
-    int total = static_cast<int>(m.transcript.size());
+    auto displayLines = wrapTranscript(m.transcript, std::max(1, body.w - 1));
+    int total = static_cast<int>(displayLines.size());
     if (total <= 0) {
         int y = body.y + std::max(0, body.h / 2 - 1);
         surface.text({body.x, y}, "No turns yet. Type a prompt and press Enter.", theme::dim());
@@ -96,13 +117,14 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
         return;
     }
     int maxOffset = std::max(0, total - body.h);
-    int offset = std::max(0, std::min(m.scrollOffset, maxOffset));
-    for (int y = 0; y < body.h; ++y) {
+    int offset = m.followBottom ? maxOffset : std::max(0, std::min(m.scrollOffset, maxOffset));
+    int visible = std::min(body.h, total - offset);
+    int firstY = body.y + std::max(0, body.h - visible);  // ReplSession-style bottom anchoring.
+    for (int y = 0; y < visible; ++y) {
         int idx = offset + y;
-        if (idx >= total) break;
-        const auto& line = m.transcript[static_cast<size_t>(idx)];
+        const auto& line = displayLines[static_cast<size_t>(idx)];
         bool selected = m.historyFocused && line.rfind("> ", 0) == 0;
-        surface.text({body.x, body.y + y}, inkcell::text::fit_left(line, body.w), lineStyle(line, selected));
+        surface.text({body.x, firstY + y}, inkcell::text::fit_left(line, body.w), lineStyle(line, selected));
     }
     if (total > body.h && body.w > 4) {
         int thumb = std::max(1, body.h * body.h / total);
