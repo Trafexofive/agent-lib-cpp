@@ -1,43 +1,54 @@
-# Inkcell live test checklist
+# Inkcell live test checklist — legacy parity path
 
-## Interactive
+Current truth: `--tui inkcell` routes to the extracted legacy `ReplSession`.
+The experimental Welcome/History scene shell is **not** the default path.
+
+## Interactive parity
+
+Run both in a real TTY at the same terminal size:
 
 ```bash
+./cortex-mk3 --tui legacy  --provider openai-codex --model gpt-5.5 --no-session
 ./cortex-mk3 --tui inkcell --provider openai-codex --model gpt-5.5 --no-session
 ```
 
-1. **Welcome** — only two options: Agent/History, Quit
-2. Enter → **Agent/History**
-3. Type prompt, Enter send
-4. Esc → history focus
-5. j/k select blocks
-6. On `agent:… ↳ enter` block, Enter drills into that sub-agent history
-7. Esc/Backspace pops back
-8. Nested path shows in header breadcrumb
-9. q / Ctrl-C quit, terminal restores
+Expected: same product TUI surface:
 
-## One-shot (skips welcome)
+- bottom-anchored transcript
+- status bar on row H-1
+- prompt line on row H
+- same slash commands
+- same scroll/cancel behavior
+- same ask_tool dialog rendering
+- same action/result cards
+- same terminal restore after quit
+
+## Non-live smoke already checked
+
+```bash
+(printf '/quit\r'; sleep 0.1) | \
+  TERM=xterm COLUMNS=100 LINES=28 \
+  ./cortex-mk3 --tui legacy --provider openai-codex --model gpt-5.5 --no-session
+
+(printf '/quit\r'; sleep 0.1) | \
+  TERM=xterm COLUMNS=100 LINES=28 \
+  ./cortex-mk3 --tui inkcell --provider openai-codex --model gpt-5.5 --no-session
+```
+
+Result: byte-identical ANSI output and stderr.
+
+## One-shot note
 
 ```bash
 ./cortex-mk3 --tui inkcell --provider openai-codex --model gpt-5.5 --no-session -p 'Reply with exactly PONG.'
 ```
 
-## Keys (Agent/History)
+This intentionally uses the existing non-REPL one-shot path for now. The 1:1 port target is the interactive REPL.
 
-| Key | Mode | Action |
-|-----|------|--------|
-| Enter | composer | send |
-| Esc | composer | history focus |
-| i | history (root) | composer |
-| j/k ↑↓ | history | select block |
-| Enter | history | drill into sub-agent if drillable |
-| Esc/Backspace/h | nested | pop history stack |
-| g | nested | refresh sub-agent snapshot |
-| r/t | history | raw / thoughts toggles |
-| q | any | quit |
+## Next gates
 
-## Out of scope for now
-
-- Dashboard / Inspector / Help pages (removed)
-- Visual parity with legacy TUI (legacy still default / better for daily work)
-- Full Action/Result card chrome
+1. Live TTY compare: legacy vs inkcell.
+2. ask_tool dialog path under `--tui inkcell`.
+3. Resize during streaming.
+4. Cancel during provider wait and during tool execution.
+5. Session resume replays rendered history.
