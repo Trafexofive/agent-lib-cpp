@@ -194,8 +194,11 @@ struct ShellModel {
     int routeTicks = 0;
     std::string activePage = "Agent";
     std::string pendingSubmit;
-    std::string pendingRoute;  // main → "agent" | "main" | "quit"
+    std::string pendingRoute;  // "quit" for the chat-only app
     inkcell::widgets::TextAreaState composer;
+    std::vector<std::string> promptHistory;
+    int promptHistoryIndex = 0;
+    std::string promptHistoryDraft;
     mutable inkcell::widgets::ScrollViewState transcriptView;
     mutable inkcell::widgets::ScrollViewState inspectorView;
 
@@ -627,6 +630,30 @@ struct ShellModel {
         for (const auto& e : batch) apply(e);
     }
 
+    bool historyPrevious() {
+        if (promptHistory.empty() || running || !atRoot()) return false;
+        if (promptHistoryIndex >= static_cast<int>(promptHistory.size())) {
+            promptHistoryDraft = composer.value;
+            promptHistoryIndex = static_cast<int>(promptHistory.size());
+        }
+        if (promptHistoryIndex <= 0) return false;
+        --promptHistoryIndex;
+        composer.value = promptHistory[static_cast<size_t>(promptHistoryIndex)];
+        composer.cursor = static_cast<int>(composer.value.size());
+        return true;
+    }
+
+    bool historyNext() {
+        if (promptHistory.empty() || running || !atRoot()) return false;
+        if (promptHistoryIndex >= static_cast<int>(promptHistory.size())) return false;
+        ++promptHistoryIndex;
+        composer.value = promptHistoryIndex == static_cast<int>(promptHistory.size())
+                             ? promptHistoryDraft
+                             : promptHistory[static_cast<size_t>(promptHistoryIndex)];
+        composer.cursor = static_cast<int>(composer.value.size());
+        return true;
+    }
+
     bool submitComposer() {
         if (running || !atRoot()) return false;
         std::string text = composer.value;
@@ -636,6 +663,9 @@ struct ShellModel {
         text = text.substr(start);
         if (text.empty()) return false;
         pendingSubmit = text;
+        if (promptHistory.empty() || promptHistory.back() != text) promptHistory.push_back(text);
+        promptHistoryIndex = static_cast<int>(promptHistory.size());
+        promptHistoryDraft.clear();
         pushRow({TimelineKind::User, "you", text, true});
         composer.value.clear();
         composer.cursor = 0;

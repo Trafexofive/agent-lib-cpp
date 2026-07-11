@@ -212,6 +212,27 @@ int countRows(const ShellModel& model, TimelineKind kind) {
     return count;
 }
 
+void test_chat_prompt_history() {
+    ShellModel model;
+    model.composer.value = "first prompt";
+    model.composer.cursor = static_cast<int>(model.composer.value.size());
+    check(model.submitComposer(), "first prompt submits");
+    model.composer.value = "second prompt";
+    model.composer.cursor = static_cast<int>(model.composer.value.size());
+    check(model.submitComposer(), "second prompt submits");
+
+    model.composer.value = "draft";
+    model.composer.cursor = 5;
+    check(model.historyPrevious() && model.composer.value == "second prompt",
+          "history up recalls latest prompt");
+    check(model.historyPrevious() && model.composer.value == "first prompt",
+          "history up recalls older prompt");
+    check(model.historyNext() && model.composer.value == "second prompt",
+          "history down moves toward latest prompt");
+    check(model.historyNext() && model.composer.value == "draft",
+          "history down restores draft");
+}
+
 void test_chat_protocol_reducer_updates_in_place() {
     ShellModel model;
     model.apply(UiEvent::status("agent running"));
@@ -276,6 +297,7 @@ int main() {
     test_command_inventory_disabled_reasons();
     test_context_status_line();
     test_navigation_stack_agent_drill();
+    test_chat_prompt_history();
     test_chat_protocol_reducer_updates_in_place();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;

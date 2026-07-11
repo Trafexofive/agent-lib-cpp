@@ -71,6 +71,14 @@ class AgentScene final : public BaseScene {
             model_->focusTimeline();
             return true;
         }
+        if (event.code == KeyCode::ArrowUp) {
+            model_->historyPrevious();
+            return true;
+        }
+        if (event.code == KeyCode::ArrowDown) {
+            model_->historyNext();
+            return true;
+        }
         if (event.code == KeyCode::Enter) {
             model_->submitComposer();
             return true;
@@ -112,7 +120,7 @@ class AgentScene final : public BaseScene {
         if (model_->running) vm.hint = "Ctrl-C cancel · Esc history · t thoughts · r raw";
         else if (!model_->atRoot()) vm.hint = "Esc/Backspace back · j/k select · Enter drill · g refresh";
         else if (vm.historyFocused) vm.hint = "j/k select · Enter open sub-agent · i composer · t thoughts · r raw · q quit";
-        else vm.hint = "Enter send · Esc history · t thoughts · r raw · q quit";
+        else vm.hint = "Enter send · ↑↓ prompt history · Esc transcript · Ctrl-C cancel · q quit";
 
         chat::drawChatSurface(surface, p, vm);
     }
