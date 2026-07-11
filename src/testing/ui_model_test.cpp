@@ -256,6 +256,12 @@ void test_chat_protocol_reducer_updates_in_place() {
     check(model.actionCount == 0 && model.resultCount == 0 && model.pendingOps == 0,
           "new turn resets per-turn action metrics");
     check(model.tokenBytes == 0 && model.raw.empty(), "new turn resets stream metrics");
+
+    UiEvent cancelled;
+    cancelled.kind = UiEventKind::TurnDone;
+    cancelled.text = "[cancelled]";
+    model.apply(cancelled);
+    check(model.status == "cancelled" && !model.running, "cancelled turn has truthful terminal state");
 }
 }  // namespace
 

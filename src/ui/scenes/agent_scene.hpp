@@ -16,6 +16,16 @@ class AgentScene final : public BaseScene {
     bool on_key(const inkcell::KeyEvent& event) override {
         using inkcell::KeyCode;
 
+        if (event.code == KeyCode::CtrlC) {
+            if (model_->running) {
+                model_->status = "cancelling";
+                g_running = false;
+            } else {
+                model_->pendingRoute = "quit";
+            }
+            return true;
+        }
+
         if (model_->timelineFocus || !model_->atRoot() || !model_->composer.focused) {
             if (event.code == KeyCode::Escape) {
                 if (model_->goBack()) return true;
@@ -99,7 +109,8 @@ class AgentScene final : public BaseScene {
         vm.transcript = model_->transcriptView.lines;
         vm.input = model_->composer.value;
         vm.inputCursor = model_->composer.cursor;
-        if (!model_->atRoot()) vm.hint = "Esc/Backspace back · j/k select · Enter drill · g refresh";
+        if (model_->running) vm.hint = "Ctrl-C cancel · Esc history · t thoughts · r raw";
+        else if (!model_->atRoot()) vm.hint = "Esc/Backspace back · j/k select · Enter drill · g refresh";
         else if (vm.historyFocused) vm.hint = "j/k select · Enter open sub-agent · i composer · t thoughts · r raw · q quit";
         else vm.hint = "Enter send · Esc history · t thoughts · r raw · q quit";
 

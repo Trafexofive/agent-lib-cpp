@@ -182,6 +182,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
                 runAgentTurn(bridge, agent, prompt, sessionId, ephemeral, done);
                 while (!done.load(std::memory_order_acquire))
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                g_running = true;
                 workerBusy.store(false, std::memory_order_release);
             });
         }

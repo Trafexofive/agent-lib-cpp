@@ -587,7 +587,8 @@ struct ShellModel {
             case UiEventKind::TurnDone: {
                 done = true;
                 running = false;
-                status = failed ? "failed" : "done";
+                bool cancelled = e.text == "[cancelled]";
+                status = cancelled ? "cancelled" : failed ? "failed" : "done";
                 finalText = e.text;
                 timelineState = e.text.empty() ? PageState::Empty : PageState::Populated;
                 bool hasResponse = false;
