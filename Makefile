@@ -85,6 +85,16 @@ $(PARSER_TEST_BIN): $(OBJS) $(PARSER_TEST_OBJ)
 test-parser: $(PARSER_TEST_BIN)
 	./$(PARSER_TEST_BIN)
 
+# ── UI model tests (timeline/adapters; no TUI rendering) ──
+UI_MODEL_TEST_SRC := src/testing/ui_model_test.cpp
+UI_MODEL_TEST_BIN := ui-model-test
+
+$(UI_MODEL_TEST_BIN): $(UI_MODEL_TEST_SRC) src/ui/model/timeline_model.hpp src/ui/model/adapters/protocol_to_timeline.hpp src/ui/model/adapters/agent_tree.hpp
+	$(CXX) $(CXXFLAGS) $(UI_MODEL_TEST_SRC) -o $@ $(LDFLAGS)
+
+test-ui-model: $(UI_MODEL_TEST_BIN)
+	./$(UI_MODEL_TEST_BIN)
+
 # ── mini_yaml unit tests ──
 YAML_TEST_SRC := src/testing/yaml_test.cpp
 YAML_TEST_BIN := yaml-test
