@@ -630,6 +630,28 @@ struct ShellModel {
         for (const auto& e : batch) apply(e);
     }
 
+    void clearTranscript() {
+        rootRows.clear();
+        nestedRows.clear();
+        activeProtocolRows.clear();
+        pendingActionIds.clear();
+        completedResultIds.clear();
+        pendingOps = 0;
+        selectedBlock = 0;
+        rebuildViews();
+    }
+
+    void appendNotice(const std::string& title, const std::vector<std::string>& lines) {
+        TimelineRow row;
+        row.kind = TimelineKind::Log;
+        row.title = title;
+        for (size_t i = 0; i < lines.size(); ++i) {
+            if (i) row.body += "\n";
+            row.body += lines[i];
+        }
+        pushRow(std::move(row));
+    }
+
     bool historyPrevious() {
         if (promptHistory.empty() || running || !atRoot()) return false;
         if (promptHistoryIndex >= static_cast<int>(promptHistory.size())) {

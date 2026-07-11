@@ -4,6 +4,7 @@
 // (transcript + status + prompt), not the old experimental card UI.
 
 #include "base_scene.hpp"
+#include "src/ui/chat/chat_commands.hpp"
 #include "src/ui/chat/chat_view.hpp"
 
 namespace cortex::mk3::ui::scenes {
@@ -80,6 +81,7 @@ class AgentScene final : public BaseScene {
             return true;
         }
         if (event.code == KeyCode::Enter) {
+            if (runSlashCommand()) return true;
             model_->submitComposer();
             return true;
         }
@@ -126,6 +128,33 @@ class AgentScene final : public BaseScene {
     }
 
    private:
+    bool runSlashCommand() {
+        const std::string command = model_->composer.value;
+        if (command.empty() || command[0] != '/') return false;
+
+        chat::ChatCommandContext ctx;
+        ctx.manifestPath = cfg_.manifestPath;
+        ctx.harnessPath = cfg_.harnessPath;
+        ctx.systemPromptPath = cfg_.systemPromptPath;
+        ctx.personaPath = cfg_.personaPath;
+        ctx.toolCount = cfg_.toolCount;
+        ctx.feedCount = cfg_.feedCount;
+        ctx.relicCount = cfg_.relicCount;
+        ctx.subAgentCount = cfg_.subAgentCount;
+        auto result = chat::executeChatCommand(command, ctx);
+        if (!result.handled) return false;
+
+        model_->composer.value.clear();
+        model_->composer.cursor = 0;
+        if (result.quit) model_->pendingRoute = "quit";
+        if (result.clearTranscript) model_->clearTranscript();
+        if (result.toggleThoughts) model_->showThoughts = !model_->showThoughts;
+        if (result.toggleRaw) model_->showRaw = !model_->showRaw;
+        if (!result.lines.empty()) model_->appendNotice(result.title, result.lines);
+        model_->rebuildViews();
+        return true;
+    }
+
     void handle(const inkcell::Action& action) override {
         if (action.is("shell.focus_composer")) model_->focusComposer();
         else if (action.is("shell.focus_timeline")) model_->focusTimeline();

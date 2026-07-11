@@ -3,8 +3,9 @@
 #include <string>
 #include <vector>
 
+#include "src/ui/chat/chat_commands.hpp"
 #include "src/ui/model/adapters/agent_tree.hpp"
-#include "src/ui/model/adapters/protocol_to_timeline.hpp"
+#include "src/ui/model/adapters/protocol_to_timeline.hpp"},{
 #include "src/ui/model/command_model.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
 #include "src/ui/model/navigation_model.hpp"
@@ -212,6 +213,32 @@ int countRows(const ShellModel& model, TimelineKind kind) {
     return count;
 }
 
+void test_chat_commands() {
+    auto help = chat::executeChatCommand("/help");
+    check(help.handled && help.title == "commands" && help.lines.size() >= 6,
+          "chat help command renders command catalog");
+
+    chat::ChatCommandContext ctx;
+    ctx.manifestPath = "manifests/agents/coder/agent.yml";
+    ctx.toolCount = 3;
+    ctx.subAgentCount = 2;
+    auto manifests = chat::executeChatCommand("/manifests", ctx);
+    check(manifests.handled && manifests.title == "active surface",
+          "chat manifests command is handled locally");
+    bool hasTools = false;
+    for (const auto& line : manifests.lines)
+        if (line == "tools     3") hasTools = true;
+    check(hasTools, "chat manifests command reports active counts");
+
+    check(chat::executeChatCommand("/clear").clearTranscript, "chat clear command classified");
+    check(chat::executeChatCommand("/thoughts").toggleThoughts, "chat thoughts command classified");
+    check(chat::executeChatCommand("/raw").toggleRaw, "chat raw command classified");
+    check(chat::executeChatCommand("/quit").quit, "chat quit command classified");
+    auto unknown = chat::executeChatCommand("/nope");
+    check(unknown.handled && unknown.title == "unknown command",
+          "unknown slash command is not sent to model");
+}
+
 void test_chat_prompt_history() {
     ShellModel model;
     model.composer.value = "first prompt";
@@ -297,6 +324,7 @@ int main() {
     test_command_inventory_disabled_reasons();
     test_context_status_line();
     test_navigation_stack_agent_drill();
+    test_chat_commands();
     test_chat_prompt_history();
     test_chat_protocol_reducer_updates_in_place();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
