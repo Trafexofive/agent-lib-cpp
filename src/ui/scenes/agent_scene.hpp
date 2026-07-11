@@ -5,6 +5,7 @@
 #include "inkcell/widgets/scroll_view.hpp"
 #include "inkcell/widgets/textarea.hpp"
 #include "base_scene.hpp"
+#include "src/ui/views/timeline_view.hpp"
 
 namespace cortex::mk3::ui::scenes {
 
@@ -100,11 +101,14 @@ class AgentScene final : public BaseScene {
         int bodyH = std::max(3, p.h - 8 - composerH);
         Rect tview{p.x, bodyTop, p.w, bodyH};
 
-        layout::flat_panel(surface, tview, theme::panel_bg());
-        widgets::ScrollView()
-            .state(&model_->transcriptView)
-            .bordered(false)
-            .draw(surface, {tview.x + 1, tview.y + 1, std::max(1, tview.w - 2), std::max(1, tview.h - 2)});
+        views::TimelineViewModel timelineVm;
+        timelineVm.focused = model_->timelineFocus || !model_->composer.focused;
+        timelineVm.selectedIndex = model_->selectedBlock;
+        timelineVm.loading = model_->running && model_->activeRows().empty();
+        timelineVm.emptyMessage = model_->atRoot() ? "No turns yet. Type a prompt to begin."
+                                               : "This sub-agent has no recorded protocol events.";
+        for (const auto& row : model_->activeRows()) timelineVm.blocks.push_back(toTimelineBlock(row));
+        views::drawTimeline(surface, tview, timelineVm);
 
         if (showComposer) {
             Rect composer{p.x, p.bottom() - composerH - 1, p.w, composerH};
@@ -133,6 +137,36 @@ class AgentScene final : public BaseScene {
     }
 
    private:
+    static model::TimelineBlock toTimelineBlock(const TimelineRow& row) {
+        model::TimelineBlock block;
+        block.title = row.title;
+        block.summary = row.body;
+        block.actionId = row.actionId;
+        block.actionType = row.actionType;
+        block.actionName = row.actionName;
+        block.drillable = row.drillable;
+        block.hasDetail = true;
+        block.rawBody = row.body;
+        block.status = row.ok ? model::BlockStatus::Ok : model::BlockStatus::Error;
+        if (row.kind == TimelineKind::Status || row.kind == TimelineKind::Stream) block.status = model::BlockStatus::Pending;
+        if (row.kind == TimelineKind::User) block.kind = model::BlockKind::UserPrompt;
+        else if (row.kind == TimelineKind::Thought) block.kind = model::BlockKind::Thought;
+        else if (row.kind == TimelineKind::Action) block.kind = model::BlockKind::Action;
+        else if (row.kind == TimelineKind::Result) block.kind = model::BlockKind::Result;
+        else if (row.kind == TimelineKind::Response) block.kind = model::BlockKind::Response;
+        else if (row.kind == TimelineKind::Final) block.kind = model::BlockKind::Final;
+        else if (row.kind == TimelineKind::Error) block.kind = model::BlockKind::Error;
+        else block.kind = model::BlockKind::Status;
+        if (!row.actionType.empty()) block.tags.push_back(row.actionType);
+        if (!row.actionName.empty()) block.tags.push_back(row.actionName);
+        if (row.drillable) {
+            block.related.available = true;
+            block.related.label = row.actionName;
+            if (!row.actionName.empty()) block.related.agentPath.push_back(row.actionName);
+        }
+        return block;
+    }
+
     void handle(const inkcell::Action& action) override {
         if (action.is("shell.focus_composer")) model_->focusComposer();
         else if (action.is("shell.focus_timeline")) model_->focusTimeline();

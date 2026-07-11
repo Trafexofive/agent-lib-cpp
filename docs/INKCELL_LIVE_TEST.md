@@ -1,7 +1,10 @@
 # Inkcell live test checklist — legacy parity path
 
-Current truth: `--tui inkcell` routes to the extracted legacy `ReplSession`.
-The experimental Welcome/History scene shell is **not** the default path.
+Current truth:
+
+- `--tui legacy` routes to extracted legacy `ReplSession`.
+- `--tui inkcell` also routes to `ReplSession` as the parity/oracle path.
+- `--tui experimental` launches the visible new inkcell app workbench.
 
 ## Interactive parity
 
@@ -37,13 +40,35 @@ Expected: same product TUI surface:
 
 Result: byte-identical ANSI output and stderr.
 
-## One-shot note
+## Experimental app live test
+
+Empty/start screen:
+
+```bash
+./cortex-mk3 -m manifests/agents/coder/agent.yml --tui experimental --no-session
+```
+
+One-shot visual timeline snapshot:
+
+```bash
+MK3_TUI_SNAPSHOT=1 ./cortex-mk3 --tui experimental --provider openai-codex --model gpt-5.5 --no-session -p 'Reply with exactly PONG.'
+```
+
+Expected now:
+
+- `CORTEX MK3` topbar
+- `history` section
+- block-rendered stream/response/final rows
+- visible `final` block containing `PONG`
+- composer still present
+
+## One-shot parity note
 
 ```bash
 ./cortex-mk3 --tui inkcell --provider openai-codex --model gpt-5.5 --no-session -p 'Reply with exactly PONG.'
 ```
 
-This intentionally uses the existing non-REPL one-shot path for now. The 1:1 port target is the interactive REPL.
+This intentionally uses the existing non-REPL one-shot path for now. The visible new app lane is `--tui experimental`.
 
 ## Next gates
 

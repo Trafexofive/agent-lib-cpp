@@ -46,6 +46,7 @@
 #include "src/tui/session_view.hpp"
 #include "src/tui/slash_commands.hpp"
 #include "src/tui/status_prompt.hpp"
+#include "src/ui/app/mk3_tui_app.hpp"
 #include "src/utils/ansi.hpp"
 
 using namespace cortex::mk3;
@@ -91,7 +92,7 @@ struct CliConfig {
     bool raw = false;
     bool toolAnsi = true;
     bool replMode = false;
-    std::string tuiMode;  // legacy | inkcell (default from MK3_TUI or legacy)
+    std::string tuiMode;  // legacy | inkcell | experimental (default from MK3_TUI or legacy)
     std::string tuiDebugDumpPath;
     std::string sessionName;    // --name <name>: human-readable session label
     std::string forkFrom;       // --fork <id>: copy an existing session and continue
@@ -221,7 +222,9 @@ Global flags:
   --show-history N     Render the last N records of the resumed session on startup
   --quiet-session      Suppress the resume banner (printed to stderr)
   --no-session         Don't save session (ephemeral)
-  --tui <legacy|inkcell> Select interactive TUI backend (env: MK3_TUI)
+  --tui <legacy|inkcell|experimental>
+                       Select TUI backend. legacy/inkcell = parity ReplSession;
+                       experimental = new inkcell app shell (env: MK3_TUI)
   --tui-debug-dump <path> Auto-write TUI render/debug state (env: MK3_TUI_DEBUG_DUMP)
   --dry-run            Validate config + prompt without calling LLM
   --help               Show this help
@@ -263,7 +266,7 @@ Flags:
   --ephemeral            Alias for --no-session
   --no-tool-ansi         Strip ANSI/color escapes from tool result rendering
   --repl                 Force interactive mode even with --prompt
-  --tui <legacy|inkcell> Select interactive TUI backend
+  --tui <legacy|inkcell|experimental> Select TUI backend
   --tui-debug-dump <path> Auto-write TUI render/debug state
 )";
 }
@@ -2106,9 +2109,9 @@ static int cmdRun(CliConfig& cli) {
         catalog::fixDefaultPromptPaths(acfg, cli.manifestDir);
     }
 
-    if (cli.tuiMode != "legacy" && cli.tuiMode != "inkcell") {
+    if (cli.tuiMode != "legacy" && cli.tuiMode != "inkcell" && cli.tuiMode != "experimental") {
         std::cerr << "Error: unknown TUI backend '" << cli.tuiMode
-                  << "' (expected legacy|inkcell)\n";
+                  << "' (expected legacy|inkcell|experimental)\n";
         return 1;
     }
 
@@ -2192,6 +2195,17 @@ static int cmdRun(CliConfig& cli) {
         if (!cli.ephemeral)
             persistSessionMetadata(promptSessionId, cli, acfg);
 
+        if (cli.tuiMode == "experimental") {
+            ui::InkcellAppConfig icfg;
+            icfg.agentName = acfg.name;
+            icfg.provider = acfg.provider;
+            icfg.model = acfg.model;
+            icfg.manifestPath = cli.manifestPath;
+            icfg.sessionId = promptSessionId;
+            icfg.ephemeral = cli.ephemeral;
+            return ui::runInkcellOneShot(icfg, agent, cli.prompt, promptSessionId, cli.ephemeral);
+        }
+
         Spinner spinner;
         if (!cli.raw) {
             printBanner();
@@ -2212,10 +2226,30 @@ static int cmdRun(CliConfig& cli) {
         return 0;
     }
 
+    // ── Interactive experimental inkcell app ──
+    // This is the visible workbench for the new UI/app overhaul. It is deliberately
+    // separate from --tui inkcell until it beats ReplSession at the release gate.
+    if (cli.tuiMode == "experimental") {
+        std::string experimentalSessionId =
+            cli.ephemeral
+                ? ""
+                : (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId);
+        if (!cli.ephemeral)
+            persistSessionMetadata(experimentalSessionId, cli, acfg);
+        ui::InkcellAppConfig icfg;
+        icfg.agentName = acfg.name;
+        icfg.provider = acfg.provider;
+        icfg.model = acfg.model;
+        icfg.manifestPath = cli.manifestPath;
+        icfg.sessionId = experimentalSessionId;
+        icfg.ephemeral = cli.ephemeral;
+        return ui::runInkcellRepl(icfg, agent, experimentalSessionId, cli.ephemeral);
+    }
+
     // ── Interactive REPL TUI ──
     // 1:1 legacy surface. For Phase 0/1 of the inkcell port, both legacy and
     // inkcell flags route through the same extracted ReplSession. This preserves
-    // the working product TUI before any host/substrate changes.
+    // the working product TUI while the new app develops under --tui experimental.
     std::string replSessionId =
         cli.ephemeral
             ? ""

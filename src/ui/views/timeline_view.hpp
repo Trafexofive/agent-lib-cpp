@@ -98,7 +98,19 @@ inline void drawTimeline(inkcell::Surface& surface, inkcell::Rect frame, const T
     layout::flat_panel(surface, frame, theme::panel_bg());
     int y = frame.y;
     int selected = std::max(0, std::min(model.selectedIndex, static_cast<int>(model.blocks.size()) - 1));
-    for (int i = 0; i < static_cast<int>(model.blocks.size()) && y < frame.bottom(); ++i) {
+    const int blockStride = 4;  // 3-row block + 1-row gutter
+    const int visibleBlocks = std::max(1, (frame.h + 1) / blockStride);
+    int start = 0;
+    if (static_cast<int>(model.blocks.size()) > visibleBlocks) {
+        if (model.focused) {
+            start = std::max(0, std::min(selected - visibleBlocks / 2,
+                                         static_cast<int>(model.blocks.size()) - visibleBlocks));
+        } else {
+            // Follow-live/default snapshot behavior: newest blocks are visible.
+            start = std::max(0, static_cast<int>(model.blocks.size()) - visibleBlocks);
+        }
+    }
+    for (int i = start; i < static_cast<int>(model.blocks.size()) && y < frame.bottom(); ++i) {
         int h = std::min(3, frame.bottom() - y);
         drawTimelineBlock(surface, {frame.x, y, frame.w, h}, model.blocks[static_cast<size_t>(i)],
                           i == selected, model.focused);
