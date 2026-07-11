@@ -251,6 +251,11 @@ void test_chat_protocol_reducer_updates_in_place() {
     model.apply(done);
     check(countRows(model, TimelineKind::Final) == 0,
           "turn done does not duplicate an existing response");
+
+    model.apply(UiEvent::status("agent running"));
+    check(model.actionCount == 0 && model.resultCount == 0 && model.pendingOps == 0,
+          "new turn resets per-turn action metrics");
+    check(model.tokenBytes == 0 && model.raw.empty(), "new turn resets stream metrics");
 }
 }  // namespace
 

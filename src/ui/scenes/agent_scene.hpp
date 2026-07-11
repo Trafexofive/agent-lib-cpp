@@ -98,9 +98,10 @@ class AgentScene final : public BaseScene {
         vm.followBottom = model_->transcriptView.stick_bottom;
         vm.transcript = model_->transcriptView.lines;
         vm.input = model_->composer.value;
+        vm.inputCursor = model_->composer.cursor;
         if (!model_->atRoot()) vm.hint = "Esc/Backspace back · j/k select · Enter drill · g refresh";
         else if (vm.historyFocused) vm.hint = "j/k select · Enter open sub-agent · i composer · t thoughts · r raw · q quit";
-        else vm.hint = "Enter send · Esc history · /slash commands preserved · q quit";
+        else vm.hint = "Enter send · Esc history · t thoughts · r raw · q quit";
 
         chat::drawChatSurface(surface, p, vm);
     }

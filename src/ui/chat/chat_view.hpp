@@ -40,6 +40,7 @@ struct ChatSurfaceModel {
     bool followBottom = true;
     std::vector<std::string> transcript;
     std::string input;
+    int inputCursor = 0;
     std::string hint;
 };
 
@@ -72,10 +73,20 @@ inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const C
 
 inline void drawPromptLine(inkcell::Surface& surface, inkcell::Rect row, const ChatSurfaceModel& m) {
     std::string prompt = m.inputFocused ? "> " : "  ";
-    std::string input = m.input.empty() ? std::string("message") : m.input;
-    if (m.running) input = "agent running…";
-    std::string cursor = m.inputFocused && !m.running ? "█" : "";
-    surface.text({row.x, row.y}, inkcell::text::truncate(prompt + input + cursor, row.w),
+    std::string input;
+    if (m.running) {
+        input = "agent running…";
+    } else if (m.input.empty()) {
+        input = "message";
+        if (m.inputFocused) input += "█";
+    } else {
+        input = m.input;
+        if (m.inputFocused) {
+            int cursor = std::max(0, std::min(m.inputCursor, static_cast<int>(input.size())));
+            input.insert(static_cast<size_t>(cursor), "█");
+        }
+    }
+    surface.text({row.x, row.y}, inkcell::text::truncate(prompt + input, row.w),
                  m.inputFocused ? theme::bright() : theme::dim());
 }
 

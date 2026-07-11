@@ -93,6 +93,16 @@ void test_chat_transcript_wraps_long_lines() {
     for (const auto& line : lines) preservedIndent = preservedIndent && line.rfind("  ", 0) == 0;
     check(preservedIndent, "chat transcript preserves indentation while wrapping");
 }
+
+void test_chat_prompt_cursor_position() {
+    inkcell::Surface s({40, 8});
+    chat::ChatSurfaceModel model;
+    model.input = "abcd";
+    model.inputCursor = 2;
+    model.inputFocused = true;
+    chat::drawChatSurface(s, {0, 0, 40, 8}, model);
+    check(containsRow(s, "> ab█cd"), "chat prompt renders cursor at model position");
+}
 }  // namespace
 
 int main() {
@@ -101,6 +111,7 @@ int main() {
     test_selected_block_cues();
     test_drillable_tag();
     test_chat_transcript_wraps_long_lines();
+    test_chat_prompt_cursor_position();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }

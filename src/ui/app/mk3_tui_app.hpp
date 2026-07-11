@@ -120,6 +120,11 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
     model->setRootAgent(&agent);
+    TimelineRow userRow;
+    userRow.kind = TimelineKind::User;
+    userRow.title = "you";
+    userRow.body = prompt;
+    model->pushRow(std::move(userRow));
     std::atomic<bool> done{false};
     std::thread worker([&]() { runAgentTurn(bridge, agent, prompt, sessionId, ephemeral, done); });
 

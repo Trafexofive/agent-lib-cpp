@@ -505,6 +505,12 @@ struct ShellModel {
                     pendingActionIds.clear();
                     completedResultIds.clear();
                     pendingOps = 0;
+                    actionCount = 0;
+                    resultCount = 0;
+                    tokenBytes = 0;
+                    raw.clear();
+                    done = false;
+                    failed = false;
                 }
                 status = e.text;
                 running = e.text.find("running") != std::string::npos;
