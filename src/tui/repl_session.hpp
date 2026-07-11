@@ -655,7 +655,6 @@ class ReplSession {
                 }
 
                 handleResize(sessionView, transcriptDirty, cachedRendererWidth, frameClock, renderScreen);
-                drainWake();
                 applyStreamSnapshot();
                 frameClock.heartbeatDue(streaming);
                 renderScreen(inputChanged, false);
@@ -737,9 +736,10 @@ class ReplSession {
         fds[1].events = POLLIN;
         fds[1].revents = 0;
         const nfds_t nfds = wakeFd_ >= 0 ? 2 : 1;
-        // Keep spinner/cancel responsive while avoiding the old 2ms busy-spin.
-        int timeoutMs = streaming ? 20 : 50;
-        int rc = ::poll(fds, nfds, timeoutMs);
+        // Preserve legacy loop timing (previously usleep(2000)) while allowing
+        // agent wake_fd to interrupt immediately when stream snapshots arrive.
+        (void)streaming;
+        int rc = ::poll(fds, nfds, 2);
         if (rc > 0 && wakeFd_ >= 0 && (fds[1].revents & POLLIN)) drainWake();
     }
 

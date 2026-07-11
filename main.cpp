@@ -1864,8 +1864,8 @@ static int cmdRun(CliConfig& cli) {
     //   2. `--provider openrouter` with no --model → pick model for that provider
     //   3. No --provider and no --model → pick provider then model
     bool needPicker = false;
-    if (cli.tuiMode != "inkcell" && cli.prompt.empty() && cli.promptFile.empty() && !cli.replMode &&
-        cli.manifestPath.empty() && !cli.manifestPickerRequested) {
+    if (cli.prompt.empty() && cli.promptFile.empty() && !cli.replMode && cli.manifestPath.empty() &&
+        !cli.manifestPickerRequested) {
         if (cli.providerPickerRequested)
             needPicker = true;  // bare --provider
         else if (cli.providerSet && !cli.modelSet && cli.model.empty())
