@@ -4,11 +4,13 @@
 // no scene-specific business logic, no dependency on src/tui.
 
 #include <algorithm>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "inkcell/surface.hpp"
 #include "inkcell/text.hpp"
+#include "src/ui/chat/ask_dialog_model.hpp"
 #include "src/ui/theme/cortex_theme.hpp"
 
 namespace cortex::mk3::ui::chat {
@@ -144,6 +146,57 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
             surface.put({body.right() - 1, body.y + y}, (y >= thumbY && y < thumbY + thumb) ? "│" : "┆", theme::dim());
         }
     }
+}
+
+inline void drawAskDialog(inkcell::Surface& surface, inkcell::Rect page, const DialogState& state,
+                          const std::string& input, const std::set<int>& multiSelected) {
+    const DialogCard* card = state.current();
+    if (!card) return;
+    int width = std::max(40, std::min(page.w - 4, 92));
+    int height = std::max(12, std::min(page.h - 4, 24));
+    inkcell::Rect frame{page.x + (page.w - width) / 2, page.y + (page.h - height) / 2, width, height};
+    surface.fill(frame, " ", theme::panel_2());
+    surface.box(frame, inkcell::BorderStyle::Square, theme::cyan());
+    int x = frame.x + 2;
+    int y = frame.y + 1;
+    int inner = frame.w - 4;
+    surface.text({x, y++}, inkcell::text::truncate(state.chainTitle, inner), theme::cyan());
+    surface.text({x, y++}, inkcell::text::truncate("card " + std::to_string(state.index + 1) + "/" +
+                                                       std::to_string(state.cards.size()) + " · " + card->type,
+                                                   inner), theme::dim());
+    ++y;
+    surface.text({x, y++}, inkcell::text::truncate(card->title.empty() ? card->id : card->title, inner), theme::bright());
+    for (const auto& line : inkcell::text::wrap_words(card->message, inner)) {
+        if (y >= frame.bottom() - 5) break;
+        surface.text({x, y++}, line, theme::text());
+    }
+    if (!card->help.empty() && y < frame.bottom() - 5)
+        surface.text({x, y++}, inkcell::text::truncate(card->help, inner), theme::dim());
+
+    if (card->type == "choice" || card->type == "multi_choice" || card->type == "ranker") {
+        ++y;
+        for (int i = 0; i < static_cast<int>(card->options.size()) && y < frame.bottom() - 3; ++i) {
+            const auto& option = card->options[static_cast<size_t>(i)];
+            bool selected = i == state.selectedOption;
+            bool checked = multiSelected.count(i) > 0;
+            std::string marker = selected ? "> " : "  ";
+            if (card->type == "multi_choice") marker += checked ? "[x] " : "[ ] ";
+            surface.text({x, y++}, inkcell::text::truncate(marker + option.label, inner),
+                         option.disabled ? theme::dim() : selected ? theme::selected_style() : theme::text());
+        }
+    } else {
+        ++y;
+        std::string shown = card->type == "secret" ? std::string(input.size(), '*') : input;
+        surface.text({x, y}, inkcell::text::truncate("> " + shown + "█", inner), theme::bright());
+    }
+
+    if (!state.error.empty())
+        surface.text({x, frame.bottom() - 3}, inkcell::text::truncate("error: " + state.error, inner), theme::red());
+    std::string hint = (card->type == "choice") ? "↑↓/j/k select · Enter choose · Esc cancel"
+                       : (card->type == "multi_choice") ? "↑↓ select · Space toggle · Enter done · Esc cancel"
+                       : (card->type == "confirm") ? "y/n answer · Esc cancel"
+                       : "Enter submit · Esc cancel";
+    surface.text({x, frame.bottom() - 2}, inkcell::text::truncate(hint, inner), theme::dim());
 }
 
 inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, const ChatSurfaceModel& m) {

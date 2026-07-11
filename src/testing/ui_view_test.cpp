@@ -103,6 +103,25 @@ void test_chat_prompt_cursor_position() {
     chat::drawChatSurface(s, {0, 0, 40, 8}, model);
     check(containsRow(s, "> ab█cd"), "chat prompt renders cursor at model position");
 }
+
+void test_ask_dialog_overlay() {
+    inkcell::Surface s({100, 30});
+    Json::Value params;
+    params["chainTitle"] = "Select worker";
+    Json::Value card;
+    card["id"] = "worker";
+    card["type"] = "choice";
+    card["title"] = "Worker";
+    card["message"] = "Choose one worker.";
+    card["options"].append("reader");
+    card["options"].append("tester");
+    params["cards"].append(card);
+    auto state = chat::parseDialogState(params);
+    chat::drawAskDialog(s, {2, 2, 96, 26}, state, "", {});
+    check(containsRow(s, "Select worker"), "ask overlay renders chain title");
+    check(containsRow(s, "> reader"), "ask overlay renders selected choice");
+    check(containsRow(s, "Enter choose"), "ask overlay renders interaction hint");
+}
 }  // namespace
 
 int main() {
@@ -112,6 +131,7 @@ int main() {
     test_drillable_tag();
     test_chat_transcript_wraps_long_lines();
     test_chat_prompt_cursor_position();
+    test_ask_dialog_overlay();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }

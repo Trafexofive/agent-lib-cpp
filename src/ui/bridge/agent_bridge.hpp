@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -112,6 +113,53 @@ class AgentBridge {
         return snapshot_;
     }
 
+    Json::Value requestAsk(const Json::Value& params) {
+        {
+            std::lock_guard<std::mutex> lock(askMu_);
+            askPending_ = true;
+            askComplete_ = false;
+            askCancelled_ = false;
+            askResult_ = Json::objectValue;
+        }
+        UiEvent event;
+        event.kind = UiEventKind::AskDialog;
+        event.json = params;
+        publish(std::move(event));
+
+        std::unique_lock<std::mutex> lock(askMu_);
+        askCv_.wait(lock, [&] { return askComplete_ || askCancelled_; });
+        Json::Value out;
+        out["success"] = !askCancelled_;
+        out["cancelled"] = askCancelled_;
+        out["results"] = askResult_;
+        askPending_ = false;
+        return out;
+    }
+
+    void completeAsk(const Json::Value& results) {
+        {
+            std::lock_guard<std::mutex> lock(askMu_);
+            if (!askPending_) return;
+            askResult_ = results;
+            askComplete_ = true;
+        }
+        askCv_.notify_all();
+    }
+
+    void cancelAsk() {
+        {
+            std::lock_guard<std::mutex> lock(askMu_);
+            if (!askPending_) return;
+            askCancelled_ = true;
+        }
+        askCv_.notify_all();
+    }
+
+    bool askPending() const {
+        std::lock_guard<std::mutex> lock(askMu_);
+        return askPending_ && !askComplete_ && !askCancelled_;
+    }
+
     void clear() {
         std::lock_guard<std::mutex> lock(mu_);
         queue_.clear();
@@ -124,6 +172,12 @@ class AgentBridge {
     mutable std::mutex mu_;
     std::deque<UiEvent> queue_;
     UiSnapshot snapshot_;
+    mutable std::mutex askMu_;
+    std::condition_variable askCv_;
+    bool askPending_ = false;
+    bool askComplete_ = false;
+    bool askCancelled_ = false;
+    Json::Value askResult_ = Json::objectValue;
 
     void wake() const {
         if (wakeFd_ < 0)

@@ -20,6 +20,12 @@ class BaseScene : public inkcell::Scene {
 
     void update(inkcell::Tick, inkcell::Action action) override {
         model_->drain(bridge_);
+        if (bridge_.askPending() && model_->askDialog.done()) {
+            if (model_->askDialog.cancelled) bridge_.cancelAsk();
+            else bridge_.completeAsk(model_->askDialog.results);
+            model_->askActive = false;
+            model_->status = model_->running ? "agent running" : model_->status;
+        }
         model_->tickRoute();
         if (action.is("shell.toggle_raw")) {
             model_->showRaw = !model_->showRaw;

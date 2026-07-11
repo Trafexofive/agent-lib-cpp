@@ -1,6 +1,9 @@
+#include <chrono>
+#include <future>
 #include <iostream>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "src/ui/chat/chat_commands.hpp"
@@ -213,6 +216,60 @@ int countRows(const ShellModel& model, TimelineKind kind) {
     return count;
 }
 
+void test_chat_ask_dialog_channel() {
+    Json::Value params;
+    params["chainTitle"] = "Choose target";
+    Json::Value card;
+    card["id"] = "target";
+    card["type"] = "choice";
+    card["title"] = "Target";
+    card["options"].append("reader");
+    card["options"].append("tester");
+    params["cards"].append(card);
+
+    AgentBridge bridge;
+    auto future = std::async(std::launch::async, [&] { return bridge.requestAsk(params); });
+    for (int i = 0; i < 100 && !bridge.askPending(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    auto events = bridge.drain();
+    check(events.size() == 1 && events[0].kind == UiEventKind::AskDialog,
+          "ask channel publishes dialog event");
+
+    ShellModel model;
+    model.apply(events[0]);
+    check(model.askActive && model.askDialog.current() &&
+              model.askDialog.current()->type == "choice",
+          "ask dialog event activates parsed card state");
+    chat::advanceDialog(model.askDialog, "reader");
+    bridge.completeAsk(model.askDialog.results);
+    Json::Value result = future.get();
+    check(result["success"].asBool() && result["results"]["target"].asString() == "reader",
+          "ask channel returns card result to worker");
+
+    Json::Value numberParams;
+    Json::Value numberCard;
+    numberCard["id"] = "count";
+    numberCard["type"] = "number";
+    numberCard["numberMin"] = 2;
+    numberCard["numberMax"] = 4;
+    numberParams["cards"].append(numberCard);
+    auto numberState = chat::parseDialogState(numberParams);
+    check(!chat::handleDialogLine(numberState, "1") && !numberState.error.empty(),
+          "ask number card enforces lower bound");
+    check(chat::handleDialogLine(numberState, "3") && numberState.results["count"].asInt() == 3,
+          "ask number card accepts valid value");
+
+    Json::Value confirmParams;
+    Json::Value confirmCard;
+    confirmCard["id"] = "danger";
+    confirmCard["type"] = "type_confirm";
+    confirmCard["confirmWord"] = "DELETE";
+    confirmParams["cards"].append(confirmCard);
+    auto confirmState = chat::parseDialogState(confirmParams);
+    check(!chat::handleDialogLine(confirmState, "delete"), "type-confirm rejects wrong case/value");
+    check(chat::handleDialogLine(confirmState, "DELETE"), "type-confirm accepts exact word");
+}
+
 void test_chat_commands() {
     auto help = chat::executeChatCommand("/help");
     check(help.handled && help.title == "commands" && help.lines.size() >= 6,
@@ -324,6 +381,7 @@ int main() {
     test_command_inventory_disabled_reasons();
     test_context_status_line();
     test_navigation_stack_agent_drill();
+    test_chat_ask_dialog_channel();
     test_chat_commands();
     test_chat_prompt_history();
     test_chat_protocol_reducer_updates_in_place();

@@ -17,6 +17,8 @@ class AgentScene final : public BaseScene {
     bool on_key(const inkcell::KeyEvent& event) override {
         using inkcell::KeyCode;
 
+        if (model_->askActive) return handleAskKey(event);
+
         if (event.code == KeyCode::CtrlC) {
             if (model_->running) {
                 model_->status = "cancelling";
@@ -125,9 +127,94 @@ class AgentScene final : public BaseScene {
         else vm.hint = "Enter send · ↑↓ prompt history · Esc transcript · Ctrl-C cancel · q quit";
 
         chat::drawChatSurface(surface, p, vm);
+        if (model_->askActive)
+            chat::drawAskDialog(surface, p, model_->askDialog, model_->askInput.value,
+                                model_->askMultiSelected);
     }
 
    private:
+    bool handleAskKey(const inkcell::KeyEvent& event) {
+        using inkcell::KeyCode;
+        auto* card = model_->askDialog.index < model_->askDialog.cards.size()
+                         ? &model_->askDialog.cards[model_->askDialog.index]
+                         : nullptr;
+        if (!card) return true;
+
+        if (event.code == KeyCode::Escape || event.code == KeyCode::CtrlC) {
+            model_->askDialog.cancelled = true;
+            model_->askActive = false;
+            bridge_.cancelAsk();
+            return true;
+        }
+        if (event.code == KeyCode::ArrowUp ||
+            (event.code == KeyCode::Character && (event.ch == 'k' || event.ch == 'K'))) {
+            model_->askDialog.selectedOption = std::max(0, model_->askDialog.selectedOption - 1);
+            return true;
+        }
+        if (event.code == KeyCode::ArrowDown ||
+            (event.code == KeyCode::Character && (event.ch == 'j' || event.ch == 'J'))) {
+            model_->askDialog.selectedOption = std::min(
+                std::max(0, static_cast<int>(card->options.size()) - 1),
+                model_->askDialog.selectedOption + 1);
+            return true;
+        }
+        if (card->type == "confirm" && event.code == KeyCode::Character &&
+            (event.ch == 'y' || event.ch == 'Y' || event.ch == 'n' || event.ch == 'N')) {
+            chat::advanceDialog(model_->askDialog, event.ch == 'y' || event.ch == 'Y');
+            finishAskCard();
+            return true;
+        }
+        if (card->type == "multi_choice" && event.code == KeyCode::Character && event.ch == ' ') {
+            int selected = model_->askDialog.selectedOption;
+            if (selected >= 0 && selected < static_cast<int>(card->options.size()) &&
+                !card->options[static_cast<size_t>(selected)].disabled) {
+                if (model_->askMultiSelected.count(selected)) model_->askMultiSelected.erase(selected);
+                else model_->askMultiSelected.insert(selected);
+            }
+            return true;
+        }
+        if (event.code == KeyCode::Enter) {
+            bool accepted = false;
+            if (card->type == "choice") {
+                int selected = model_->askDialog.selectedOption;
+                if (selected >= 0 && selected < static_cast<int>(card->options.size()) &&
+                    !card->options[static_cast<size_t>(selected)].disabled) {
+                    chat::advanceDialog(model_->askDialog,
+                                        card->options[static_cast<size_t>(selected)].value);
+                    accepted = true;
+                }
+            } else if (card->type == "multi_choice") {
+                std::string indices;
+                for (int selected : model_->askMultiSelected) {
+                    if (!indices.empty()) indices += ',';
+                    indices += std::to_string(selected + 1);
+                }
+                accepted = chat::handleDialogLine(model_->askDialog, indices);
+            } else if (card->type == "ranker" && model_->askInput.value.empty()) {
+                std::string indices;
+                for (int i = 0; i < static_cast<int>(card->options.size()); ++i) {
+                    if (!indices.empty()) indices += ',';
+                    indices += std::to_string(i + 1);
+                }
+                accepted = chat::handleDialogLine(model_->askDialog, indices);
+            } else {
+                accepted = chat::handleDialogLine(model_->askDialog, model_->askInput.value);
+            }
+            if (accepted) finishAskCard();
+            return true;
+        }
+        if (model_->askInput.handle_key(event)) return true;
+        return true;
+    }
+
+    void finishAskCard() {
+        model_->askInput.value.clear();
+        model_->askInput.cursor = 0;
+        model_->askMultiSelected.clear();
+        chat::completeNonInteractiveCards(model_->askDialog);
+        if (model_->askDialog.done()) model_->askActive = false;
+    }
+
     bool runSlashCommand() {
         const std::string command = model_->composer.value;
         if (command.empty() || command[0] != '/') return false;

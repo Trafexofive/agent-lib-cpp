@@ -125,6 +125,7 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     userRow.title = "you";
     userRow.body = prompt;
     model->pushRow(std::move(userRow));
+    agent.setAskToolHandler([&bridge](const Json::Value& params) { return bridge.requestAsk(params); });
     std::atomic<bool> done{false};
     std::thread worker([&]() { runAgentTurn(bridge, agent, prompt, sessionId, ephemeral, done); });
 
@@ -134,6 +135,7 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     if (snapshotMode()) {
         while (!done.load(std::memory_order_acquire)) {
             model->drain(bridge);
+            if (model->askActive) bridge.cancelAsk();
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
         model->drain(bridge);
@@ -152,6 +154,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
     model->setRootAgent(&agent);
+    agent.setAskToolHandler([&bridge](const Json::Value& params) { return bridge.requestAsk(params); });
     std::atomic<bool> workerBusy{false};
     std::thread worker;
 
@@ -195,6 +198,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
 
     int rc = app.run("agent");
     g_running = false;
+    bridge.cancelAsk();
     joinWorker();
     g_running = true;
     return rc;

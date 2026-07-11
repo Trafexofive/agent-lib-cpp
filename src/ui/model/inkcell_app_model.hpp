@@ -13,6 +13,7 @@
 #include "inkcell/widgets/scroll_view.hpp"
 #include "inkcell/widgets/textarea.hpp"
 #include "src/core/agent.hpp"
+#include "src/ui/chat/ask_dialog_model.hpp"
 #include "src/ui/bridge/agent_bridge.hpp"
 
 namespace cortex::mk3::ui {
@@ -199,6 +200,11 @@ struct ShellModel {
     std::vector<std::string> promptHistory;
     int promptHistoryIndex = 0;
     std::string promptHistoryDraft;
+
+    bool askActive = false;
+    chat::DialogState askDialog;
+    inkcell::widgets::TextAreaState askInput;
+    std::set<int> askMultiSelected;
     mutable inkcell::widgets::ScrollViewState transcriptView;
     mutable inkcell::widgets::ScrollViewState inspectorView;
 
@@ -617,9 +623,19 @@ struct ShellModel {
                 break;
             }
             case UiEventKind::AskDialog:
+                askDialog = chat::parseDialogState(e.json);
+                chat::completeNonInteractiveCards(askDialog);
+                askActive = !askDialog.done();
+                askInput.value.clear();
+                askInput.cursor = 0;
+                askInput.focused = true;
+                askMultiSelected.clear();
+                status = askActive ? "waiting human input" : status;
+                break;
             case UiEventKind::AskDialogResult:
-                pushRow({TimelineKind::Status, uiEventKindName(e.kind), e.text, true});
-                if (atRoot()) rebuildViews();
+                askActive = false;
+                askInput.value.clear();
+                askMultiSelected.clear();
                 break;
         }
     }
