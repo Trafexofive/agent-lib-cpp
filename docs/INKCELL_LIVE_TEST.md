@@ -1,34 +1,43 @@
 # Inkcell live test checklist
 
-Run from a real TTY, not a pipe:
+## Interactive REPL (real TTY)
+
+```bash
+./cortex-mk3 --tui inkcell --provider openai-codex --model gpt-5.5 --no-session
+```
+
+Type a prompt, press **Enter** to send. Expect stream + final in timeline.
+
+## One-shot (real TTY)
 
 ```bash
 ./cortex-mk3 --tui inkcell --provider openai-codex --model gpt-5.5 --no-session -p 'Reply with exactly PONG.'
 ```
 
-## Expected
+## Headless verification (already green)
 
-- App opens in alt screen with outer inset, no edge-touching content.
-- Header shows `CORTEX MK3`, value prop, mode chip, provider/model chip.
-- Agent page is default.
-- While running: status shows live/running, transcript shows stream byte progress.
-- After completion: transcript contains final `PONG`.
-- `2` routes to Dashboard.
-- `3` routes to Inspector.
-- `?` routes to Help.
-- `1` returns to Agent.
-- `q` or `Ctrl-C` quits and restores terminal.
+```bash
+MK3_TUI_SNAPSHOT=1 ./cortex-mk3 --tui inkcell --provider openai-codex --model gpt-5.5 --no-session -p 'Reply with exactly PONG.'
+```
 
-## Review gates from sbtui spec
+## Keys
 
-- No idle motion after run completes.
-- No content touches terminal edge.
-- Footer shows contextual keys and global status.
-- Empty/loading/populated/error states are visible, not blank.
-- No box spam: containment uses background panels/rules, not repeated cards.
+| Key | Action |
+|-----|--------|
+| Enter | send (composer focused) |
+| Esc | focus timeline scroll |
+| i | focus composer |
+| 1/2/3/? | Agent / Dashboard / Inspector / Help |
+| r | toggle raw stream lines |
+| t | toggle thoughts |
+| ↑↓ | scroll timeline (when unfocused) |
+| q / Ctrl-C | quit |
 
-## Known missing next
+## Review gates
 
-- Interactive composer/REPL is not wired yet. Requires input substrate work so scenes can receive unbound character keys/TextArea events cleanly.
-- Command palette not wired yet.
-- Manifest/session/provider scenes still legacy/planned.
+- Outer inset, no edge-touch content
+- No idle animation after turn completes
+- Empty state before first prompt
+- Loading/running chip during stream
+- Final/response visible after turn
+- Terminal restored after quit
