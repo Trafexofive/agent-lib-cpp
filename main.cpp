@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <csignal>
@@ -29,6 +30,7 @@
 #include <vector>
 
 #include "src/core/agent.hpp"
+#include "src/core/agent_catalog.hpp"
 #include "src/core/manifest_autoload.hpp"
 #include "src/core/manifest_loader.hpp"
 #include "src/core/sandbox_launcher.hpp"
@@ -36,12 +38,14 @@
 #include "src/sandbox/policy.hpp"
 #include "src/session/manager.hpp"
 #include "src/tui/dialog.hpp"
+#include "src/tui/manifest_manager.hpp"
 #include "src/tui/frame_clock.hpp"
 #include "src/tui/input.hpp"
 #include "src/tui/renderer.hpp"
 #include "src/tui/session_view.hpp"
 #include "src/tui/slash_commands.hpp"
 #include "src/tui/status_prompt.hpp"
+#include "src/ui/app/mk3_tui_app.hpp"
 #include "src/utils/ansi.hpp"
 
 using namespace cortex::mk3;
@@ -74,6 +78,8 @@ struct CliConfig {
     std::string promptFile;
     std::string manifestPath;
     std::string manifestDir;
+    bool manifestPickerRequested = false;  // bare -m / --manifest → manager
+    bool listAgents = false;               // list --agents
     int iterations = 0;
     std::string sessionId;
     bool continueSession = false;
@@ -85,13 +91,14 @@ struct CliConfig {
     bool raw = false;
     bool toolAnsi = true;
     bool replMode = false;
+    std::string tuiMode;  // legacy | inkcell (default from MK3_TUI or legacy)
     std::string tuiDebugDumpPath;
-    std::string sessionName;       // --name <name>: human-readable session label
-    std::string forkFrom;          // --fork <id>: copy an existing session and continue
-    int showHistory = -1;          // --show-history N: render last N records on startup.
-                                   //   -1 (default) = auto: 5 on resume, 0 otherwise.
-                                   //    0 disables; positive overrides.
-    bool sessionBanner = true;     // print resume banner (suppress with --quiet-session)
+    std::string sessionName;    // --name <name>: human-readable session label
+    std::string forkFrom;       // --fork <id>: copy an existing session and continue
+    int showHistory = -1;       // --show-history N: render last N records on startup.
+                                //   -1 (default) = auto: 5 on resume, 0 otherwise.
+                                //    0 disables; positive overrides.
+    bool sessionBanner = true;  // print resume banner (suppress with --quiet-session)
 
     // Debug
     bool debug = false;
@@ -119,15 +126,15 @@ struct CliConfig {
     bool listModels = false;
     std::string listModelsProvider;
     bool listTools = false;
-    bool listSessionsFlag = false; // list --sessions
+    bool listSessionsFlag = false;  // list --sessions
 
     // Completions
     std::string completionsShell;
 
     // Sessions subcommand
-    std::string sessionsSubcommand; // "list" | "show" | "rm" | "export" | ""
-    std::string sessionsTarget;     // session id (or file path for export/import)
-    std::string sessionsTargetArg;  // extra arg (e.g. export file path)
+    std::string sessionsSubcommand;  // "list" | "show" | "rm" | "export" | ""
+    std::string sessionsTarget;      // session id (or file path for export/import)
+    std::string sessionsTargetArg;   // extra arg (e.g. export file path)
 
     // Dry run
     bool dryRun = false;
@@ -209,7 +216,9 @@ void printHelpGeneral() {
 
 Global flags:
   --config <path>      Config file (default: ~/.config/cortex-mk3/config)
-  --manifest-dir <dir> Manifest catalog root (default: ./manifests; explicit imports only)
+  --manifest-dir <dir> Extra manifests/ root (global surface is manifests/ only)
+  -m, --manifest [name|path]  Agent under manifests/agents; bare -m opens manager
+  --agent [name|path]  Alias for --manifest
   --iterations <n>     Max turns before forced response (default: 20)
   --provider <name>    LLM provider (deepseek, openrouter, xai, openai-codex, groq, zen, together, fireworks)
   --model <name>       Model name
@@ -227,6 +236,7 @@ Global flags:
   --show-history N     Render the last N records of the resumed session on startup
   --quiet-session      Suppress the resume banner (printed to stderr)
   --no-session         Don't save session (ephemeral)
+  --tui <legacy|inkcell> Select interactive TUI backend (env: MK3_TUI)
   --tui-debug-dump <path> Auto-write TUI render/debug state (env: MK3_TUI_DEBUG_DUMP)
   --dry-run            Validate config + prompt without calling LLM
   --help               Show this help
@@ -257,8 +267,9 @@ void printHelpRun() {
 Flags:
   -p, --prompt <text>    One-shot prompt
   -f, --file <path>      Read prompt from file
-  -m, --manifest <path>  Agent manifest YAML (recursive imports + global scope)
-  --harness <path>       Harness prompt (XML protocol spec)
+  -m, --manifest [name|path]  Agent name (catalog) or path; bare -m opens manager
+  --agent [name|path]    Alias for --manifest
+  --harness <size|path>  Protocol harness: small|medium|big|default or file path
   --system <path>        System prompt override
   --session <id>         Use specific session id
   -c, --continue         Continue previous session
@@ -267,6 +278,7 @@ Flags:
   --ephemeral            Alias for --no-session
   --no-tool-ansi         Strip ANSI/color escapes from tool result rendering
   --repl                 Force interactive mode even with --prompt
+  --tui <legacy|inkcell> Select interactive TUI backend
   --tui-debug-dump <path> Auto-write TUI render/debug state
 )";
 }
@@ -290,6 +302,7 @@ Flags:
   --providers        List available providers
   --models [name]    List models for a provider (or all)
   --tools            List available tools
+  --agents           List agents under manifests/ with ownership trees
 )";
 }
 
@@ -365,6 +378,10 @@ static void applyConfig(CliConfig& cli, const std::map<std::string, std::string>
         cli.systemPromptPath = get("system_prompt", cli.systemPromptPath);
     if (cli.manifestDir.empty())
         cli.manifestDir = get("manifest_dir", cli.manifestDir);
+    if (cli.tuiMode.empty()) {
+        const char* envTui = std::getenv("MK3_TUI");
+        cli.tuiMode = (envTui && envTui[0]) ? std::string(envTui) : get("tui", "legacy");
+    }
     if (cli.configPath.empty())
         cli.configPath = get("config_path", defaultConfigPath());
 }
@@ -388,6 +405,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"debug", no_argument, 0, 'D'},
                                        {"raw", no_argument, 0, 1003},
                                        {"no-tool-ansi", no_argument, 0, 1004},
+                                       {"tui", required_argument, 0, 1002},
                                        {"tui-debug-dump", required_argument, 0, 1001},
                                        {"dry-run", no_argument, 0, 'n'},
                                        {"help", no_argument, 0, 'h'},
@@ -395,7 +413,8 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        // Run
                                        {"prompt", required_argument, 0, 'p'},
                                        {"file", required_argument, 0, 'f'},
-                                       {"manifest", required_argument, 0, 'm'},
+                                       {"manifest", optional_argument, 0, 'm'},
+                                       {"agent", optional_argument, 0, 'm'},
                                        {"harness", required_argument, 0, 'H'},
                                        {"system", required_argument, 0, 'y'},
                                        {"session", required_argument, 0, 's'},
@@ -420,6 +439,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"providers", no_argument, 0, 'L'},
                                        {"models", optional_argument, 0, 'l'},
                                        {"tools", no_argument, 0, 't'},
+                                       {"agents", no_argument, 0, 1021},
                                        {"sessions", no_argument, 0, 1020},
 
                                        // Config
@@ -458,6 +478,8 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 cli.listModelsProvider = arg.substr(std::string("--models=").size());
             } else if (arg == "--tools" || arg == "-t") {
                 cli.listTools = true;
+            } else if (arg == "--agents") {
+                cli.listAgents = true;
             } else if (arg == "--sessions") {
                 cli.listSessionsFlag = true;
             } else if (arg == "--help" || arg == "-h") {
@@ -470,7 +492,9 @@ static CliConfig parseArgs(int argc, char* argv[]) {
     int opt;
     bool sawProviderFlag = false;
     bool providerFlagHadArg = false;
-    while ((opt = getopt_long(argc, argv, "C:G:P:M:p:f:m:H:y:s:VhrSReEDnX:c", longOpts, nullptr)) !=
+    bool sawManifestFlag = false;
+    bool manifestFlagHadArg = false;
+    while ((opt = getopt_long(argc, argv, "C:G:P::M:p:f:m::H:y:s:VhrSReEDnX:c", longOpts, nullptr)) !=
            -1) {
         switch (opt) {
             // Global
@@ -527,6 +551,9 @@ static CliConfig parseArgs(int argc, char* argv[]) {
             case 1001:
                 cli.tuiDebugDumpPath = optarg;
                 break;
+            case 1002:
+                cli.tuiMode = optarg;
+                break;
             case 1010:
                 cli.sessionName = optarg;
                 break;
@@ -535,7 +562,8 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 break;
             case 1012:
                 cli.showHistory = std::atoi(optarg);
-                if (cli.showHistory < 0) cli.showHistory = 0;
+                if (cli.showHistory < 0)
+                    cli.showHistory = 0;
                 break;
             case 1013:
                 cli.sessionBanner = false;
@@ -558,7 +586,19 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 cli.promptFile = optarg;
                 break;
             case 'm':
-                cli.manifestPath = optarg;
+                sawManifestFlag = true;
+                if (optarg) {
+                    manifestFlagHadArg = true;
+                    cli.manifestPath = optarg;
+                    cli.manifestPickerRequested = false;
+                } else {
+                    // bare -m / --manifest → manager; may be normalized below
+                    // if a name follows as a separate argv token.
+                    cli.manifestPickerRequested = true;
+                }
+                break;
+            case 1021:
+                cli.listAgents = true;
                 break;
             case 'H':
                 cli.harnessPromptPath = optarg;
@@ -633,6 +673,14 @@ static CliConfig parseArgs(int argc, char* argv[]) {
         cli.provider = argv[optind];
         cli.providerSet = true;
         cli.providerPickerRequested = false;  // got a real provider name
+        optind++;
+    }
+
+    // Same for --manifest / -m: optional args only attach as -mname or --manifest=name.
+    // `-m default` leaves "default" at optind — treat as agent name, not manager.
+    if (sawManifestFlag && !manifestFlagHadArg && optind < argc && argv[optind][0] != '-') {
+        cli.manifestPath = argv[optind];
+        cli.manifestPickerRequested = false;
         optind++;
     }
 
@@ -810,7 +858,8 @@ static std::string pickSessionInteractive(bool defaultIfEmpty) {
     auto restore = [&]() {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldt);
         std::cout << tui::ansi::showCursor() << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1)
-                  << "\n" << std::flush;
+                  << "\n"
+                  << std::flush;
     };
 
     auto readKey = [&]() -> std::pair<tui::KeyAction, char> {
@@ -845,7 +894,7 @@ static std::string pickSessionInteractive(bool defaultIfEmpty) {
         std::string id;
         std::string shortId;  // last 16 chars
         std::string name;
-        std::string age;      // "2h ago"
+        std::string age;  // "2h ago"
         std::string agentName;
         size_t turnCount = 0;
         std::string model;
@@ -882,8 +931,8 @@ static std::string pickSessionInteractive(bool defaultIfEmpty) {
     auto renderPicker = [&]() {
         std::cout << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1);
         // Header
-        std::cout << "\033[1;36m┌─ Resume session\033[0m  \033[2m"
-                  << rows.size() << " total — j/k or ↑↓ move, 1-9 jump, d/u page, g/G top/bottom, "
+        std::cout << "\033[1;36m┌─ Resume session\033[0m  \033[2m" << rows.size()
+                  << " total — j/k or ↑↓ move, 1-9 jump, d/u page, g/G top/bottom, "
                      "Enter select, q/Esc cancel\033[0m\r\n";
         size_t end = std::min(offset + VIEW_H, rows.size());
         for (size_t i = offset; i < end; ++i) {
@@ -925,7 +974,8 @@ static std::string pickSessionInteractive(bool defaultIfEmpty) {
         if (rows.size() > VIEW_H) {
             size_t pos = offset + 1;
             size_t total = rows.size();
-            std::cout << "\033[2m└─ showing " << pos << "–" << end << " of " << total << "\033[0m\r\n";
+            std::cout << "\033[2m└─ showing " << pos << "–" << end << " of " << total
+                      << "\033[0m\r\n";
         } else {
             std::cout << "\033[2m└─ " << rows.size() << " session" << (rows.size() == 1 ? "" : "s")
                       << "\033[0m\r\n";
@@ -999,9 +1049,8 @@ static std::string resolveSessionId(const CliConfig& cli, bool defaultIfEmpty) {
         for (const auto& s : sessions) {
             auto loaded = sm.load(s.id);
             for (const auto& r : loaded.records) {
-                if (r.role == SessionRecord::AGENT
-                    || r.role == SessionRecord::TOOL_CALL
-                    || r.role == SessionRecord::TOOL_RESULT) {
+                if (r.role == SessionRecord::AGENT || r.role == SessionRecord::TOOL_CALL ||
+                    r.role == SessionRecord::TOOL_RESULT) {
                     return s.id;
                 }
             }
@@ -1043,8 +1092,9 @@ static void persistSessionMetadata(const std::string& sessionId, const CliConfig
     if (sessionId.empty())
         return;
     session::SessionManager sm;
-    auto session = sm.exists(sessionId) ? sm.load(sessionId)
-                                        : sm.create(sessionId, acfg.name, acfg.model, acfg.provider);
+    auto session = sm.exists(sessionId)
+                       ? sm.load(sessionId)
+                       : sm.create(sessionId, acfg.name, acfg.model, acfg.provider);
     session.agentName = acfg.name;
     session.model = acfg.model;
     session.provider = acfg.provider;
@@ -1113,13 +1163,15 @@ static void printResumeBanner(const std::string& sessionId, const std::string& k
     std::string agent = session.agentName;
     std::string model = session.model;
     std::string provider = session.provider;
-    std::string manifest = session.metadata.count("manifest_path") ? session.metadata.at("manifest_path") : "";
+    std::string manifest =
+        session.metadata.count("manifest_path") ? session.metadata.at("manifest_path") : "";
     std::string created = humanTime(session.created);
     std::string updated = humanTime(session.updated);
     std::string age = humanAge(session.updated);
     size_t turns = messageCount > 0 ? messageCount : session.records.size();
 
-    std::cerr << "\033[2m[session]\033[0m \033[1m" << kind << " session: " << sessionId << "\033[0m";
+    std::cerr << "\033[2m[session]\033[0m \033[1m" << kind << " session: " << sessionId
+              << "\033[0m";
     if (!name.empty())
         std::cerr << " (\033[3m" << name << "\033[0m)";
     std::cerr << "\n";
@@ -1135,7 +1187,8 @@ static void printResumeBanner(const std::string& sessionId, const std::string& k
     std::cerr << "\033[2m[session]\033[0m   updated:   " << updated << " (" << age << ")\n";
     std::cerr << "\033[2m[session]\033[0m   messages:  " << turns << "\n";
     if (turns > 0)
-        std::cerr << "\033[2m[session]\033[0m Last records will render in the TUI above the prompt.\n";
+        std::cerr
+            << "\033[2m[session]\033[0m Last records will render in the TUI above the prompt.\n";
     else
         std::cerr << "\033[2m[session]\033[0m (no records — this is an empty session)\n";
     std::cerr << "\033[2m[session]\033[0m To start fresh: \033[1mcortex-mk3 --no-session\033[0m\n";
@@ -1154,7 +1207,7 @@ static int cmdList(const CliConfig& cli) {
         static const std::vector<std::pair<std::string, std::string>> providerInfo = {
             {"deepseek", "DeepSeek API        (DEEPSEEK_API_KEY)"},
             {"openrouter", "OpenRouter          (OPENROUTER_API_KEY)"},
-            {"xai", "xAI / Grok         (XAI_API_KEY, XAI_AUTH_TOKEN, or ~/.pi/agent/auth.json)"},
+            {"xai", "xAI / Grok         (XAI_API_KEY, XAI_AUTH_TOKEN, or ~/.grok/auth.json)"},
             {"openai-codex", "OpenAI Codex        (OPENAI_API_KEY or ~/.codex/auth.json)"},
             {"groq", "Groq                (GROQ_API_KEY)"},
             {"zen", "OpenCode Zen        (free tier)"},
@@ -1234,8 +1287,8 @@ static int cmdList(const CliConfig& cli) {
         }
 
         std::cout << "Models for all providers. Use `--models <provider>` to filter.\n\n";
-        for (const auto& p :
-             {"deepseek", "openrouter", "xai", "openai-codex", "groq", "zen", "together", "fireworks"}) {
+        for (const auto& p : {"deepseek", "openrouter", "xai", "openai-codex", "groq", "zen",
+                              "together", "fireworks"}) {
             if (!printModels(p))
                 return 1;
             std::cout << "\n";
@@ -1257,6 +1310,31 @@ static int cmdList(const CliConfig& cli) {
 
     if (cli.listSessionsFlag) {
         return cmdSessions(cli);
+    }
+
+    if (cli.listAgents) {
+        auto agents = catalog::discoverAgents(cli.manifestDir);
+        if (agents.empty()) {
+            std::cout << "No agents found under manifests/agents.\n";
+            std::cout << "Global surface is manifests/ only. Search roots:\n";
+            for (const auto& [root, source] : catalog::manifestsSearchRoots(cli.manifestDir))
+                std::cout << "  [" << source << "] " << root << "\n";
+            std::cout << "\nInstall:\n"
+                         "  $CORTEX_HOME/manifests/agents/<name>/agent.yml\n"
+                         "  ~/.config/cortex/manifests/agents/<name>/agent.yml\n"
+                         "  <repo>/manifests/agents/<name>/agent.yml\n";
+            return 0;
+        }
+        bool color = isatty(STDOUT_FILENO);
+        std::cout << "Agents in manifests/ (" << agents.size() << ")\n";
+        std::cout << "Legend: ✓ path ok  ·  ◆ builtin  ·  ✗ missing\n\n";
+        for (size_t i = 0; i < agents.size(); ++i) {
+            for (const auto& line : catalog::formatOwnershipTree(agents[i], color))
+                std::cout << line << "\n";
+            if (i + 1 < agents.size())
+                std::cout << "\n";
+        }
+        return 0;
     }
 
     // Default: show providers (most useful; use --models/--tools for the rest)
@@ -1284,19 +1362,15 @@ static int cmdSessions(const CliConfig& cli) {
             modelW = std::max(modelW, s.model.size());
             updatedW = std::max(updatedW, s.updated.size());
         }
-        std::cout << "\033[1m" << std::left
-                  << std::setw((int)idW + 2) << "ID"
-                  << std::setw((int)agentW + 2) << "AGENT"
-                  << std::setw((int)modelW + 2) << "MODEL"
-                  << std::setw((int)updatedW + 2) << "UPDATED"
-                  << std::right << std::setw(7) << "TURNS" << "\033[0m\n";
+        std::cout << "\033[1m" << std::left << std::setw((int)idW + 2) << "ID"
+                  << std::setw((int)agentW + 2) << "AGENT" << std::setw((int)modelW + 2) << "MODEL"
+                  << std::setw((int)updatedW + 2) << "UPDATED" << std::right << std::setw(7)
+                  << "TURNS" << "\033[0m\n";
         for (const auto& s : sessions) {
-            std::cout << std::left
-                      << std::setw((int)idW + 2) << s.id
-                      << std::setw((int)agentW + 2) << s.agentName
-                      << std::setw((int)modelW + 2) << s.model
-                      << std::setw((int)updatedW + 2) << s.updated
-                      << std::right << std::setw(7) << s.turnCount << "\n";
+            std::cout << std::left << std::setw((int)idW + 2) << s.id << std::setw((int)agentW + 2)
+                      << s.agentName << std::setw((int)modelW + 2) << s.model
+                      << std::setw((int)updatedW + 2) << s.updated << std::right << std::setw(7)
+                      << s.turnCount << "\n";
         }
         std::cout << "\n"
                   << "Resume latest:  cortex-mk3 --continue\n"
@@ -1338,11 +1412,21 @@ static int cmdSessions(const CliConfig& cli) {
         for (const auto& r : s.records) {
             std::string role;
             switch (r.role) {
-                case SessionRecord::USER: role = "user"; break;
-                case SessionRecord::AGENT: role = "agent"; break;
-                case SessionRecord::TOOL_CALL: role = "tool"; break;
-                case SessionRecord::TOOL_RESULT: role = "result"; break;
-                default: role = "system"; break;
+                case SessionRecord::USER:
+                    role = "user";
+                    break;
+                case SessionRecord::AGENT:
+                    role = "agent";
+                    break;
+                case SessionRecord::TOOL_CALL:
+                    role = "tool";
+                    break;
+                case SessionRecord::TOOL_RESULT:
+                    role = "result";
+                    break;
+                default:
+                    role = "system";
+                    break;
             }
             std::string content = r.content;
             // Strip a single trailing newline for readability.
@@ -1367,8 +1451,8 @@ static int cmdSessions(const CliConfig& cli) {
         }
         sm.remove(cli.sessionsTarget);
         // Also clear the state checkpoint if present.
-        fs::path statePath = fs::current_path() / ".cortex" / "state"
-                             / (cli.sessionsTarget + ".json");
+        fs::path statePath =
+            fs::current_path() / ".cortex" / "state" / (cli.sessionsTarget + ".json");
         std::error_code ec;
         fs::remove(statePath, ec);
         std::cout << "Removed session " << cli.sessionsTarget << "\n";
@@ -1381,8 +1465,8 @@ static int cmdSessions(const CliConfig& cli) {
             return 1;
         }
         std::string outPath = cli.sessionsTargetArg.empty()
-                              ? (cli.sessionsTarget + ".portable.json")
-                              : cli.sessionsTargetArg;
+                                  ? (cli.sessionsTarget + ".portable.json")
+                                  : cli.sessionsTargetArg;
         if (sm.exportToFile(cli.sessionsTarget, outPath)) {
             std::cout << "Exported " << cli.sessionsTarget << " to " << outPath << "\n";
             return 0;
@@ -1743,16 +1827,60 @@ static bool validateExplicitModel(const std::string& providerName, const std::st
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Global manifest manager (bare -m / --manifest)
+// ═══════════════════════════════════════════════════════════════════════
+// Returns selected absolute agent.yml path, or empty on cancel.
+// ═══════════════════════════════════════════════════════════════════════
+// Global manifest manager (bare -m / --manifest)
+// ═══════════════════════════════════════════════════════════════════════
+static std::string interactiveManifestManager(const std::string& manifestDirOverride) {
+    return tui::runManifestManager(manifestDirOverride);
+}
+
+static bool resolveCliManifest(CliConfig& cli) {
+    if (cli.manifestPickerRequested && cli.manifestPath.empty()) {
+        std::string picked = interactiveManifestManager(cli.manifestDir);
+        if (picked.empty()) {
+            std::cerr << "\033[2m[manifest] cancelled.\033[0m\n";
+            return false;
+        }
+        cli.manifestPath = picked;
+        cli.manifestPickerRequested = false;
+        std::cerr << "\033[2m[manifest]\033[0m " << cli.manifestPath << "\n";
+        return true;
+    }
+    if (cli.manifestPath.empty())
+        return true;
+
+    std::string err;
+    std::string resolved =
+        catalog::resolveAgent(cli.manifestPath, cli.manifestDir, &err);
+    if (resolved.empty()) {
+        std::cerr << "Error: " << err << "\n";
+        return false;
+    }
+    if (resolved != cli.manifestPath)
+        std::cerr << "\033[2m[manifest]\033[0m " << cli.manifestPath << " → " << resolved << "\n";
+    cli.manifestPath = resolved;
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Command: run (agent execution)
 // ═══════════════════════════════════════════════════════════════════════
 static int cmdRun(CliConfig& cli) {
+    // Global agent / manifest selection (any-CWD catalog)
+    if (!resolveCliManifest(cli))
+        return cli.manifestPickerRequested ? 0 : 1;
+
     // ── Interactive picker ──
     // Three cases trigger the picker (only in non-REPL, no-prompt, no-manifest mode):
     //   1. `--provider` bare → pick provider then model
     //   2. `--provider openrouter` with no --model → pick model for that provider
     //   3. No --provider and no --model → pick provider then model
     bool needPicker = false;
-    if (cli.prompt.empty() && cli.promptFile.empty() && !cli.replMode && cli.manifestPath.empty()) {
+    if (cli.tuiMode != "inkcell" && cli.prompt.empty() && cli.promptFile.empty() && !cli.replMode &&
+        cli.manifestPath.empty() && !cli.manifestPickerRequested) {
         if (cli.providerPickerRequested)
             needPicker = true;  // bare --provider
         else if (cli.providerSet && !cli.modelSet && cli.model.empty())
@@ -1872,17 +2000,37 @@ static int cmdRun(CliConfig& cli) {
             }
             dryCfg = ManifestLoader::loadAgentConfig(cli.manifestPath);
             ManifestLoader::loadEnv(cli.manifestPath, dryCfg);
+            catalog::fixDefaultPromptPaths(dryCfg, cli.manifestDir);
             if (cli.providerSet)
                 dryCfg.provider = cli.provider;
             if (cli.modelSet)
                 dryCfg.model = cli.model;
-            if (!cli.harnessPromptPath.empty())
-                dryCfg.harnessPath = cli.harnessPromptPath;
+            if (!cli.harnessPromptPath.empty()) {
+                std::string herr;
+                std::string hp =
+                    catalog::resolveHarnessPath(cli.harnessPromptPath, cli.manifestDir, &herr);
+                if (hp.empty()) {
+                    std::cerr << "  ✗ " << herr << "\n";
+                    return 1;
+                }
+                dryCfg.harnessPath = hp;
+            }
         } else {
             if (dryCfg.harnessPath.empty())
                 dryCfg.harnessPath = "manifests/harness/default.md";
+            if (!cli.harnessPromptPath.empty()) {
+                std::string herr;
+                std::string hp =
+                    catalog::resolveHarnessPath(cli.harnessPromptPath, cli.manifestDir, &herr);
+                if (hp.empty()) {
+                    std::cerr << "  ✗ " << herr << "\n";
+                    return 1;
+                }
+                dryCfg.harnessPath = hp;
+            }
             if (dryCfg.systemPromptPath.empty())
                 dryCfg.systemPromptPath = "manifests/system/default.md";
+            catalog::fixDefaultPromptPaths(dryCfg, cli.manifestDir);
         }
 
         std::cout << "  provider: " << dryCfg.provider << "\n";
@@ -1928,12 +2076,21 @@ static int cmdRun(CliConfig& cli) {
     if (!cli.manifestPath.empty()) {
         acfg = ManifestLoader::loadAgentConfig(cli.manifestPath);
         ManifestLoader::loadEnv(cli.manifestPath, acfg);
+        catalog::fixDefaultPromptPaths(acfg, cli.manifestDir);
         if (cli.providerSet)
             acfg.provider = cli.provider;
         if (cli.modelSet)
             acfg.model = cli.model;
-        if (!cli.harnessPromptPath.empty())
-            acfg.harnessPath = cli.harnessPromptPath;
+        if (!cli.harnessPromptPath.empty()) {
+            std::string herr;
+            std::string hp =
+                catalog::resolveHarnessPath(cli.harnessPromptPath, cli.manifestDir, &herr);
+            if (hp.empty()) {
+                std::cerr << "Error: " << herr << "\n";
+                return 1;
+            }
+            acfg.harnessPath = hp;
+        }
 
         if (acfg.sandboxMode == "docker" && !fs::exists("/.dockerenv")) {
             auto files = ManifestLoader::loadFiles(cli.manifestPath);
@@ -1944,7 +2101,14 @@ static int cmdRun(CliConfig& cli) {
         acfg.provider = cli.provider;
         acfg.model = cli.model;
         if (!cli.harnessPromptPath.empty()) {
-            acfg.harnessPath = cli.harnessPromptPath;
+            std::string herr;
+            std::string hp =
+                catalog::resolveHarnessPath(cli.harnessPromptPath, cli.manifestDir, &herr);
+            if (hp.empty()) {
+                std::cerr << "Error: " << herr << "\n";
+                return 1;
+            }
+            acfg.harnessPath = hp;
         } else {
             acfg.harnessPath = "manifests/harness/default.md";
         }
@@ -1954,6 +2118,13 @@ static int cmdRun(CliConfig& cli) {
             acfg.systemPromptPath = "manifests/system/default.md";
         }
         acfg.personaPath = "manifests/persona/default.md";
+        catalog::fixDefaultPromptPaths(acfg, cli.manifestDir);
+    }
+
+    if (cli.tuiMode != "legacy" && cli.tuiMode != "inkcell") {
+        std::cerr << "Error: unknown TUI backend '" << cli.tuiMode
+                  << "' (expected legacy|inkcell)\n";
+        return 1;
     }
 
     auto provider = providers::createProvider(acfg.provider, acfg.model);
@@ -2029,15 +2200,30 @@ static int cmdRun(CliConfig& cli) {
 
     // ── One-shot mode ──
     if (!cli.prompt.empty() && !cli.replMode) {
+        std::string promptSessionId =
+            cli.ephemeral
+                ? ""
+                : (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId);
+        if (!cli.ephemeral)
+            persistSessionMetadata(promptSessionId, cli, acfg);
+
+        if (cli.tuiMode == "inkcell") {
+            ui::InkcellAppConfig icfg;
+            icfg.agentName = acfg.name;
+            icfg.provider = acfg.provider;
+            icfg.model = acfg.model;
+            icfg.manifestPath = cli.manifestPath;
+            icfg.sessionId = promptSessionId;
+            icfg.ephemeral = cli.ephemeral;
+            return ui::runInkcellOneShot(icfg, agent, cli.prompt, promptSessionId, cli.ephemeral);
+        }
+
         Spinner spinner;
         if (!cli.raw) {
             printBanner();
             spinner.start("Thinking...");
         }
 
-        std::string promptSessionId = cli.ephemeral ? "" : (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId);
-        if (!cli.ephemeral)
-            persistSessionMetadata(promptSessionId, cli, acfg);
         std::string result = agent.prompt(cli.prompt, promptSessionId, cli.ephemeral);
         spinner.stop();
 
@@ -2050,6 +2236,24 @@ static int cmdRun(CliConfig& cli) {
             std::cout << result << std::endl;
         }
         return 0;
+    }
+
+    // Interactive inkcell REPL (no one-shot prompt, or --repl with prompt already handled).
+    if (cli.tuiMode == "inkcell") {
+        std::string replSessionId =
+            cli.ephemeral
+                ? ""
+                : (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId);
+        if (!cli.ephemeral)
+            persistSessionMetadata(replSessionId, cli, acfg);
+        ui::InkcellAppConfig icfg;
+        icfg.agentName = acfg.name;
+        icfg.provider = acfg.provider;
+        icfg.model = acfg.model;
+        icfg.manifestPath = cli.manifestPath;
+        icfg.sessionId = replSessionId;
+        icfg.ephemeral = cli.ephemeral;
+        return ui::runInkcellRepl(icfg, agent, replSessionId, cli.ephemeral);
     }
 
     if (cli.tuiDebugDumpPath.empty()) {
@@ -2089,8 +2293,8 @@ static int cmdRun(CliConfig& cli) {
     std::atomic<bool> dialogActive{false};
     std::string dialogInputLine;  // last submitted line during a dialog
     std::vector<std::string> historyLines;
-    int scrollOffset = 0;      // lines scrolled above viewport
-    bool showPrompts = false;  // /prompts toggle
+    int scrollOffset = 0;                                // lines scrolled above viewport
+    bool showPrompts = false;                            // /prompts toggle
     bool streaming = false;                              // true during LLM call, false when idle
     std::chrono::steady_clock::time_point streamStart_;  // for TTC
     tui::FrameClock frameClock;
@@ -2102,14 +2306,28 @@ static int cmdRun(CliConfig& cli) {
     size_t streamRespBytes = 0;
     size_t streamRawBytes = 0;
     std::string streamThoughtPreview;
-    size_t lastEventCount = 0;
     std::atomic<bool> agentDone{false};
     std::mutex streamMtx;
     std::vector<cortex::mk3::ProtocolEvent> snapEvents;
-    std::string snapResponse, snapRaw, snapPhase = "waiting provider";
+    std::string snapResponse, snapPhase = "waiting provider";
+    size_t snapRawBytes = 0;
+    size_t snapActionCount = 0;
+    size_t snapResultCount = 0;
     bool snapDirty = false;
     bool snapClearRenderer = false;
     bool firstToken = true;
+
+    // UI-thread render cache. The agent thread publishes immutable snapshots;
+    // the UI thread adopts them in applyStreamSnapshot() and only rebuilds the
+    // expensive transcript rows when the transcript actually changed. Spinner,
+    // timer, cursor, and scroll ticks then hit SessionView's row diff instead of
+    // reparsing markdown/protocol and repainting the whole screen.
+    std::vector<cortex::mk3::ProtocolEvent> uiEvents;
+    std::string uiResponse;
+    std::vector<std::string> cachedRendererLines;
+    bool transcriptDirty = true;
+    int cachedRendererWidth = -1;
+    size_t uiTimelineSignature = 0;
 
     auto statusState = [&]() {
         tui::StatusBarState state;
@@ -2134,7 +2352,8 @@ static int cmdRun(CliConfig& cli) {
         return tui::StatusPromptRenderer::statusBar(statusState());
     };
     auto promptLineText = [&]() -> std::string {
-        return tui::StatusPromptRenderer::promptLine(input, dialogActive.load(std::memory_order_acquire));
+        return tui::StatusPromptRenderer::promptLine(input,
+                                                     dialogActive.load(std::memory_order_acquire));
     };
     auto captureAnsiFrame = [&](const std::vector<std::string>& visible, int startRow,
                                 int visibleCount, int displaySize) {
@@ -2154,54 +2373,60 @@ static int cmdRun(CliConfig& cli) {
             tuiAnsiFrames.erase(tuiAnsiFrames.begin());
     };
     tui::SessionView sessionView(termW, termH);
-    auto renderScreen = [&](bool force = false) {
-        if (!frameClock.shouldRender(streaming, force))
+    auto renderScreen = [&](bool bypassPacing = false, bool fullRedraw = false) {
+        if (!frameClock.shouldRender(streaming, bypassPacing))
             return;
 
-        std::vector<std::string> rendererLines;
+        std::vector<std::string> dynamicRendererLines;
         std::vector<std::string> dialogLines;
+        const std::vector<std::string>* rendererLines = &cachedRendererLines;
         bool showDialog = dialogActive.load(std::memory_order_acquire) && !askDialog->state.done();
         if (showDialog) {
-            dialogLines = cortex::mk3::tui::DialogRenderer::render(askDialog->state, termW, input.line());
+            dialogLines =
+                cortex::mk3::tui::DialogRenderer::render(askDialog->state, termW, input.line());
         } else if (showPrompts) {
             auto& prompts = agent.iterationPrompts();
             if (prompts.empty()) {
-                rendererLines.push_back("\033[2m(no prompts captured — run a prompt first)\033[0m");
+                dynamicRendererLines.push_back(
+                    "\033[2m(no prompts captured — run a prompt first)\033[0m");
             } else {
                 for (size_t i = 0; i < prompts.size(); i++) {
-                    rendererLines.push_back(std::string("\033[1m") + tui::ansi::fg(200, 200, 100) +
-                                            "─── Iter " + std::to_string(i + 1) + " ───\033[0m");
+                    dynamicRendererLines.push_back(std::string("\033[1m") +
+                                                   tui::ansi::fg(200, 200, 100) + "─── Iter " +
+                                                   std::to_string(i + 1) + " ───\033[0m");
                     std::istringstream ps(prompts[i]);
                     std::string pline;
                     while (std::getline(ps, pline)) {
-                        rendererLines.push_back(std::string("\033[2m") + pline + "\033[0m");
+                        dynamicRendererLines.push_back(std::string("\033[2m") + pline + "\033[0m");
                     }
-                    rendererLines.push_back("");
+                    dynamicRendererLines.push_back("");
                 }
             }
+            rendererLines = &dynamicRendererLines;
         } else {
-            std::vector<cortex::mk3::ProtocolEvent> events;
-            std::string response;
-            {
-                std::lock_guard<std::mutex> lk(streamMtx);
-                events = snapEvents;
-                response = snapResponse;
+            if (transcriptDirty || cachedRendererWidth != termW) {
+                cachedRendererLines = renderer.renderTranscript(uiEvents, uiResponse, termW);
+                cachedRendererWidth = termW;
+                transcriptDirty = false;
             }
-            rendererLines = renderer.renderTranscript(events, response, termW);
         }
 
-        tui::SessionViewport vp = sessionView.build(historyLines, rendererLines, dialogLines, showDialog, scrollOffset);
+        tui::SessionViewport vp =
+            sessionView.build(historyLines, *rendererLines, dialogLines, showDialog, scrollOffset);
         if (!cli.tuiDebugDumpPath.empty())
             captureAnsiFrame(vp.visible, vp.startRow, vp.visibleCount, vp.displaySize);
 
-        std::cout << sessionView.render(vp, statusBarText, promptLineText()) << std::flush;
+        std::cout << sessionView.render(vp, statusBarText, promptLineText(), fullRedraw)
+                  << std::flush;
         frameClock.didRender(streaming);
     };
 
     std::string cmd;
     bool quit = false;
     const bool persistSession = !cli.ephemeral;
-    sessionId = persistSession ? (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId) : "";
+    sessionId = persistSession
+                    ? (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId)
+                    : "";
     if (persistSession && !sessionId.empty())
         persistSessionMetadata(sessionId, cli, acfg);
     input.start([&](const std::string& s) {
@@ -2230,7 +2455,7 @@ static int cmdRun(CliConfig& cli) {
     input.clearScreen = [&] {
         std::cout << "\033[2J\033[H" << std::flush;
         frameClock.requestFrame();
-        renderScreen(true);
+        renderScreen(true, true);
     };
 
     auto pushTuiLine = [&](const std::string& line) {
@@ -2357,7 +2582,7 @@ static int cmdRun(CliConfig& cli) {
         }
     }
 
-        renderScreen();
+    renderScreen();
 
     while (cortex::mk3::g_running && !quit) {
         // Handle window resize
@@ -2368,7 +2593,11 @@ static int cmdRun(CliConfig& cli) {
                 termW = ws.ws_col;
                 termH = ws.ws_row;
                 renderer.setWidth(termW);
+                cachedRendererWidth = -1;
+                transcriptDirty = true;
                 sessionView.setWidthHeight(termW, termH);
+                frameClock.requestFrame();
+                renderScreen(true, true);
             }
         }
         cmd.clear();
@@ -2378,7 +2607,7 @@ static int cmdRun(CliConfig& cli) {
             input.poll();
             if (input.line() != before || input.cursorPos() != beforeCp) {
                 frameClock.requestFrame();
-                renderScreen();
+                renderScreen(true, false);
             }
         }
         if (!cortex::mk3::g_running || cmd.empty())
@@ -2487,12 +2716,13 @@ static int cmdRun(CliConfig& cli) {
         streaming = true;
         agentDone.store(false, std::memory_order_release);
         firstToken = true;
-        lastEventCount = 0;
         {
             std::lock_guard<std::mutex> lk(streamMtx);
             snapEvents.clear();
             snapResponse.clear();
-            snapRaw.clear();
+            snapRawBytes = 0;
+            snapActionCount = 0;
+            snapResultCount = 0;
             snapPhase = "waiting provider";
             snapDirty = false;
             snapClearRenderer = false;
@@ -2503,6 +2733,12 @@ static int cmdRun(CliConfig& cli) {
         streamRespBytes = 0;
         streamRawBytes = 0;
         streamThoughtPreview.clear();
+        uiEvents.clear();
+        uiResponse.clear();
+        cachedRendererLines.clear();
+        transcriptDirty = true;
+        cachedRendererWidth = -1;
+        uiTimelineSignature = 0;
         streamStart_ = std::chrono::steady_clock::now();
         input.clearEscape();
 
@@ -2520,7 +2756,7 @@ static int cmdRun(CliConfig& cli) {
         }
         scrollOffset = 0;
         frameClock.requestFrame();
-        renderScreen();
+        renderScreen(true, false);
 
         // ── ask_tool bridge: shared pending-dialog state ──
         std::mutex askMtx;
@@ -2564,18 +2800,48 @@ static int cmdRun(CliConfig& cli) {
             return out;
         });
 
-        auto applyStreamSnapshot = [&]() {
+        auto timelineSignature =
+            [](const std::vector<cortex::mk3::ProtocolEvent>& events) -> size_t {
+            // Content fingerprint for render-cache invalidation. Event count alone is
+            // insufficient because streaming thought/response text mutates the tail event.
+            size_t h = 1469598103934665603ull;
+            auto mix = [&](size_t v) {
+                h ^= v;
+                h *= 1099511628211ull;
+            };
+            for (const auto& ev : events) {
+                mix(static_cast<size_t>(ev.kind));
+                mix(ev.text.size());
+                mix(ev.action.type.size());
+                mix(ev.action.name.size());
+                mix(ev.action.id.size());
+                mix(ev.action.body.size());
+                mix(ev.result.id.size());
+                mix(ev.result.summary.size());
+                mix(ev.result.toolName.size());
+                mix(static_cast<size_t>(ev.result.ok));
+                mix(static_cast<size_t>(ev.result.outputBytes));
+            }
+            return h;
+        };
+
+        auto applyStreamSnapshot = [&]() -> bool {
             std::vector<cortex::mk3::ProtocolEvent> events;
-            std::string response, raw, phase;
+            std::string response, phase;
+            size_t rawBytes = 0;
+            size_t actions = 0;
+            size_t results = 0;
             bool clearRenderer = false;
             {
                 std::lock_guard<std::mutex> lk(streamMtx);
                 if (!snapDirty)
-                    return;
+                    return false;
                 events = snapEvents;
                 response = snapResponse;
-                raw = snapRaw;
                 phase = snapPhase;
+                rawBytes = snapRawBytes;
+                actions = snapActionCount;
+                results = snapResultCount;
                 clearRenderer = snapClearRenderer;
                 snapClearRenderer = false;
                 snapDirty = false;
@@ -2583,24 +2849,25 @@ static int cmdRun(CliConfig& cli) {
 
             if (clearRenderer)
                 renderer.clear();
-            size_t actions = 0, results = 0;
-            for (const auto& ev : events) {
-                if (ev.kind == cortex::mk3::ProtocolEventKind::ACTION)
-                    ++actions;
-                else if (ev.kind == cortex::mk3::ProtocolEventKind::RESULT)
-                    ++results;
-            }
+            const size_t nextTimelineSignature = timelineSignature(events);
+            const bool eventsChanged = nextTimelineSignature != uiTimelineSignature;
+            const bool responseChanged = response.size() != uiResponse.size();
+            uiTimelineSignature = nextTimelineSignature;
+            uiEvents = std::move(events);
+            uiResponse = std::move(response);
             streamActionCount = actions;
             streamResultCount = results;
-            streamRespBytes = response.size();
-            streamRawBytes = raw.size();
+            streamRespBytes = uiResponse.size();
+            streamRawBytes = rawBytes;
             streamPhase = phase;
-            if (events.size() != lastEventCount) {
-                lastEventCount = events.size();
+            if (eventsChanged)
+                frameClock.requestFrame();
+            const bool changed = eventsChanged || responseChanged || clearRenderer;
+            if (changed) {
+                transcriptDirty = true;
                 frameClock.requestFrame();
             }
-            if (!response.empty())
-                frameClock.requestFrame();
+            return changed;
         };
 
         // Run agent in background thread. The provider callback must never render
@@ -2614,14 +2881,9 @@ static int cmdRun(CliConfig& cli) {
                     const std::vector<cortex::mk3::ProtocolEvent>& events = agent.protocolEvents();
                     const std::string& response = agent.responseOutput();
                     const std::string& raw = agent.rawLlOutput();
+                    const size_t actions = agent.protocolActions().size();
+                    const size_t results = agent.protocolResults().size();
                     std::string phase = "waiting provider";
-                    size_t actions = 0, results = 0;
-                    for (const auto& ev : events) {
-                        if (ev.kind == cortex::mk3::ProtocolEventKind::ACTION)
-                            ++actions;
-                        else if (ev.kind == cortex::mk3::ProtocolEventKind::RESULT)
-                            ++results;
-                    }
                     if (actions > results)
                         phase = "running tools";
                     else if (!response.empty())
@@ -2636,7 +2898,9 @@ static int cmdRun(CliConfig& cli) {
                         }
                         snapEvents = events;
                         snapResponse = response;
-                        snapRaw = raw;
+                        snapRawBytes = raw.size();
+                        snapActionCount = actions;
+                        snapResultCount = results;
                         snapPhase = phase;
                         snapDirty = true;
                     }
@@ -2646,7 +2910,9 @@ static int cmdRun(CliConfig& cli) {
                 std::lock_guard<std::mutex> lk(streamMtx);
                 snapEvents = agent.protocolEvents();
                 snapResponse = agent.responseOutput();
-                snapRaw = agent.rawLlOutput();
+                snapRawBytes = agent.rawLlOutput().size();
+                snapActionCount = agent.protocolActions().size();
+                snapResultCount = agent.protocolResults().size();
                 snapPhase = "complete";
                 snapDirty = true;
             }
@@ -2720,7 +2986,7 @@ static int cmdRun(CliConfig& cli) {
                                         askDialog->active = false;
                                         dialogActive.store(false, std::memory_order_release);
                                         input.clearActionInterceptor();
-                                                        frameClock.requestFrame();
+                                        frameClock.requestFrame();
                                         askCv.notify_one();
                                     }
                                     return true;
@@ -2734,7 +3000,7 @@ static int cmdRun(CliConfig& cli) {
                                         askDialog->active = false;
                                         dialogActive.store(false, std::memory_order_release);
                                         input.clearActionInterceptor();
-                                                        frameClock.requestFrame();
+                                        frameClock.requestFrame();
                                         askCv.notify_one();
                                     }
                                     return true;
@@ -2812,8 +3078,11 @@ static int cmdRun(CliConfig& cli) {
                     termW = ws.ws_col;
                     termH = ws.ws_row;
                     renderer.setWidth(termW);
+                    cachedRendererWidth = -1;
+                    transcriptDirty = true;
                     sessionView.setWidthHeight(termW, termH);
                     frameClock.requestFrame();
+                    renderScreen(true, true);
                 }
             }
 
@@ -2823,8 +3092,8 @@ static int cmdRun(CliConfig& cli) {
             // independent frame clock. Otherwise the spinner/timer only moves when
             // stream text changes, which looks like the loader is blocked while the
             // model is just waiting on first bytes.
-            bool uiTick = frameClock.heartbeatDue(streaming);
-            renderScreen(inputChanged || uiTick);
+            frameClock.heartbeatDue(streaming);
+            renderScreen(inputChanged, false);
 
             // Small sleep to avoid busy-wait CPU spin; skip on any input activity.
             if (!hadInput && !inputChanged)
@@ -2837,9 +3106,9 @@ static int cmdRun(CliConfig& cli) {
         if (agentThread.joinable())
             agentThread.join();
 
-        // Flush final render state
+        // Flush final render state immediately; bypass pacing but keep dirty-row diffing.
         applyStreamSnapshot();
-        renderScreen();
+        renderScreen(true, false);
 
         if (!cortex::mk3::g_running) {
             streaming = false;
@@ -2870,9 +3139,17 @@ static int cmdRun(CliConfig& cli) {
             // historyLines (which already contains the same content).
             snapEvents.clear();
             snapResponse.clear();
+            snapRawBytes = 0;
+            snapActionCount = 0;
+            snapResultCount = 0;
             snapDirty = false;
         }
-        lastEventCount = 0;
+        uiEvents.clear();
+        uiResponse.clear();
+        cachedRendererLines.clear();
+        transcriptDirty = true;
+        cachedRendererWidth = -1;
+        uiTimelineSignature = 0;
         auto turnLines = renderer.renderTranscript(curEvents, curResponse, termW);
         // User prompt already in historyLines (added before streaming started)
         historyLines.insert(historyLines.end(), turnLines.begin(), turnLines.end());

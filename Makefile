@@ -8,8 +8,12 @@ LDFLAGS  ?= -lcurl -ljsoncpp -lpthread -lreadline
 SRC_DIR   := src
 BUILD_DIR := build
 
+# inkcell sibling dependency (new TUI path). Override INKCELL_ROOT if installed elsewhere.
+INKCELL_ROOT ?= ../inkcell
+INKCELL_LIB  := $(INKCELL_ROOT)/build/libinkcell.a
+
 # Include paths
-INC_DIRS  := . $(SRC_DIR) $(shell find $(SRC_DIR) -type d) /usr/include/jsoncpp
+INC_DIRS  := . $(SRC_DIR) $(shell find $(SRC_DIR) -type d) /usr/include/jsoncpp $(INKCELL_ROOT)/include
 CXXFLAGS  += $(foreach dir,$(INC_DIRS),-I$(dir))
 
 # Source files (exclude test files)
@@ -23,19 +27,22 @@ BIN_SERVER := cortex-mk3-server
 LIB_SHARED := libagent-mk3.so
 LIB_STATIC := libagent-mk3.a
 
-.PHONY: all lib clean run test install uninstall format lint watch dev all-tests smoke
+.PHONY: all lib clean run test install uninstall format lint watch dev all-tests smoke inkcell-lib
 
 all: $(BIN_CLI) $(BIN_SERVER) lib
 
 lib: $(LIB_SHARED) $(LIB_STATIC)
 
 # ── CLI binary ──
+inkcell-lib:
+	$(MAKE) -C $(INKCELL_ROOT) lib
+
 $(BUILD_DIR)/main.o: main.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(BIN_CLI): $(OBJS) $(BUILD_DIR)/main.o
-	$(CXX) $^ -o $@ $(LDFLAGS)
+$(BIN_CLI): $(OBJS) $(BUILD_DIR)/main.o | inkcell-lib
+	$(CXX) $^ -o $@ $(INKCELL_LIB) $(LDFLAGS)
 
 # ── Server binary ──
 $(BUILD_DIR)/server_main.o: server_main.cpp
