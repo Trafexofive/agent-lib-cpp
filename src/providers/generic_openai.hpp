@@ -48,6 +48,29 @@ struct OpenAIProviderConfig {
         if (apiKeyEnvVar == "OPENAI_API_KEY") {
             const char* home = std::getenv("HOME");
             if (home && home[0]) {
+                // First-class pi auth store. `pi /login openai-codex` refreshes
+                // and persists credentials here; Cortex should reuse that
+                // working credential instead of an older ~/.codex token.
+                {
+                    std::ifstream f(std::string(home) + "/.pi/agent/auth.json");
+                    if (f.good()) {
+                        Json::Value root;
+                        Json::CharReaderBuilder reader;
+                        std::string errs;
+                        if (Json::parseFromStream(reader, f, &root, &errs) &&
+                            root.isMember("openai-codex") && root["openai-codex"].isObject()) {
+                            const Json::Value& codex = root["openai-codex"];
+                            if (codex.isMember("access") && codex["access"].isString())
+                                return codex["access"].asString();
+                            if (codex.isMember("key") && codex["key"].isString())
+                                return codex["key"].asString();
+                            if (codex.isMember("access_token") && codex["access_token"].isString())
+                                return codex["access_token"].asString();
+                        }
+                    }
+                }
+
+                // Legacy/official Codex CLI store.
                 std::ifstream f(std::string(home) + "/.codex/auth.json");
                 if (f.good()) {
                     Json::Value root;

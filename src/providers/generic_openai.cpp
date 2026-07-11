@@ -63,6 +63,25 @@ static std::string base64UrlDecode(std::string input) {
 std::string GenericOpenAIClient::resolveCodexAccountId(const std::string& token) {
     const char* home = std::getenv("HOME");
     if (home && home[0]) {
+        // Prefer pi's refreshed OpenAI Codex OAuth store when present.
+        {
+            std::ifstream f(std::string(home) + "/.pi/agent/auth.json");
+            if (f.good()) {
+                Json::Value root;
+                Json::CharReaderBuilder reader;
+                std::string errs;
+                if (Json::parseFromStream(reader, f, &root, &errs) &&
+                    root.isMember("openai-codex") && root["openai-codex"].isObject()) {
+                    const Json::Value& codex = root["openai-codex"];
+                    if (codex.isMember("accountId") && codex["accountId"].isString())
+                        return codex["accountId"].asString();
+                    if (codex.isMember("account_id") && codex["account_id"].isString())
+                        return codex["account_id"].asString();
+                }
+            }
+        }
+
+        // Legacy Codex CLI store.
         std::ifstream f(std::string(home) + "/.codex/auth.json");
         if (f.good()) {
             Json::Value root;
