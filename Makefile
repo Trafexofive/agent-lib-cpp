@@ -95,6 +95,16 @@ $(UI_MODEL_TEST_BIN): $(UI_MODEL_TEST_SRC) src/ui/model/timeline_model.hpp src/u
 test-ui-model: $(UI_MODEL_TEST_BIN)
 	./$(UI_MODEL_TEST_BIN)
 
+# ── UI view tests (fixture-only Surface rendering) ──
+UI_VIEW_TEST_SRC := src/testing/ui_view_test.cpp
+UI_VIEW_TEST_BIN := ui-view-test
+
+$(UI_VIEW_TEST_BIN): $(UI_VIEW_TEST_SRC) src/ui/views/timeline_view.hpp src/ui/model/timeline_model.hpp src/ui/layout/sbtui_layout.hpp src/ui/theme/cortex_theme.hpp
+	$(CXX) $(CXXFLAGS) $(UI_VIEW_TEST_SRC) -o $@ $(LDFLAGS)
+
+test-ui-view: $(UI_VIEW_TEST_BIN)
+	./$(UI_VIEW_TEST_BIN)
+
 # ── mini_yaml unit tests ──
 YAML_TEST_SRC := src/testing/yaml_test.cpp
 YAML_TEST_BIN := yaml-test
