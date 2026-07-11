@@ -1,5 +1,5 @@
 #pragma once
-// App assembly: routes, agent worker, REPL loop.
+// App assembly: Welcome + Agent/History only.
 // One-way deps: app -> scenes -> views/layout/theme/model -> bridge.
 
 #include <atomic>
@@ -14,39 +14,40 @@
 #include "src/ui/bridge/agent_bridge.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
 #include "src/ui/scenes/agent_scene.hpp"
-#include "src/ui/scenes/dashboard_scene.hpp"
-#include "src/ui/scenes/help_scene.hpp"
-#include "src/ui/scenes/inspector_scene.hpp"
+#include "src/ui/scenes/welcome_scene.hpp"
 
 namespace cortex::mk3::ui {
 
+inline void installShellTick(inkcell::App& app, AgentBridge& bridge, const std::shared_ptr<ShellModel>& model) {
+    app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([model, &bridge]() { model->drain(bridge); });
+    app.engine().on_tick([model, &bridge, &app](inkcell::Tick) {
+        model->drain(bridge);
+        if (model->pendingRoute == "agent") {
+            model->pendingRoute.clear();
+            app.engine().post_action(inkcell::Action{"scene.agent"});
+        } else if (model->pendingRoute == "quit") {
+            model->pendingRoute.clear();
+            app.engine().post_action(inkcell::Action{"app.quit"});
+        }
+    });
+}
+
 inline inkcell::App makeAgentShellApp(const InkcellAppConfig& cfg, AgentBridge& bridge,
-                                      std::shared_ptr<ShellModel> model) {
+                                      std::shared_ptr<ShellModel> model, bool startAtWelcome) {
     inkcell::App app;
     app.tick_ms(33)
         .bind("q", "app.quit", "Quit")
-        .bind("up", "scroll.up", "Scroll up")
-        .bind("down", "scroll.down", "Scroll down")
-        .bind("ctrl-p", "scroll.page_up", "Page up")
-        .bind("ctrl-n", "scroll.page_down", "Page down")
-        .bind("1", "scene.agent", "Agent")
-        .bind("2", "scene.dashboard", "Dashboard")
-        .bind("3", "scene.inspector", "Inspector")
-        .bind("?", "scene.help", "Help")
-        .bind("r", "shell.toggle_raw", "Toggle raw stream")
+        .bind("up", "scroll.up", "Up")
+        .bind("down", "scroll.down", "Down")
+        .bind("r", "shell.toggle_raw", "Toggle raw")
         .bind("t", "shell.toggle_thoughts", "Toggle thoughts")
         .bind("i", "shell.focus_composer", "Focus composer")
-        .bind("esc", "shell.focus_timeline", "Focus timeline")
+        .bind("esc", "shell.focus_timeline", "Focus timeline / back")
         .route("scene.agent", "agent")
-        .route("scene.dashboard", "dashboard")
-        .route("scene.inspector", "inspector")
-        .route("scene.help", "help")
+        .route("scene.welcome", "welcome")
+        .scene<scenes::WelcomeScene>("welcome", cfg, bridge, model)
         .scene<scenes::AgentScene>("agent", cfg, bridge, model)
-        .scene<scenes::DashboardScene>("dashboard", cfg, bridge, model)
-        .scene<scenes::InspectorScene>("inspector", cfg, bridge, model)
-        .scene<scenes::HelpScene>("help", cfg, bridge, model)
-        .initial_scene("agent");
-    app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([&bridge, model]() { model->drain(bridge); });
+        .initial_scene(startAtWelcome ? "welcome" : "agent");
     return app;
 }
 
@@ -84,12 +85,13 @@ inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& p
 inline int runInkcellShell(const InkcellAppConfig& cfg) {
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
-    auto app = makeAgentShellApp(cfg, bridge, model);
+    auto app = makeAgentShellApp(cfg, bridge, model, true);
+    installShellTick(app, bridge, model);
     if (snapshotMode()) {
-        app.render_to(std::cout, "agent", {120, 34});
+        app.render_to(std::cout, "welcome", {100, 28});
         return 0;
     }
-    return app.run("agent");
+    return app.run("welcome");
 }
 
 inline int runInkcellSmoke(const InkcellAppConfig& cfg) { return runInkcellShell(cfg); }
@@ -98,11 +100,12 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
                              const std::string& sessionId, bool ephemeral) {
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
+    model->setRootAgent(&agent);
     std::atomic<bool> done{false};
-
     std::thread worker([&]() { runAgentTurn(bridge, agent, prompt, sessionId, ephemeral, done); });
 
-    auto app = makeAgentShellApp(cfg, bridge, model);
+    auto app = makeAgentShellApp(cfg, bridge, model, false);
+    installShellTick(app, bridge, model);
     int rc = 0;
     if (snapshotMode()) {
         while (!done.load(std::memory_order_acquire)) {
@@ -112,14 +115,6 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
         model->drain(bridge);
         app.render_to(std::cout, "agent", {120, 34});
     } else {
-        // Live TTY: also poll pendingSubmit if user types more after turn (REPL-lite).
-        app.engine().on_tick([&](inkcell::Tick) {
-            model->drain(bridge);
-            if (!model->pendingSubmit.empty() && done.load(std::memory_order_acquire) && !model->running) {
-                // One-shot mode: ignore extra submits after completion for now.
-                model->pendingSubmit.clear();
-            }
-        });
         rc = app.run("agent");
     }
 
@@ -129,10 +124,10 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     return rc;
 }
 
-// Interactive REPL: full agent session with composer submits.
 inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::string& sessionId, bool ephemeral) {
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
+    model->setRootAgent(&agent);
     std::atomic<bool> workerBusy{false};
     std::thread worker;
 
@@ -141,14 +136,18 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
         workerBusy.store(false, std::memory_order_release);
     };
 
-    auto app = makeAgentShellApp(cfg, bridge, model);
-    if (snapshotMode()) {
-        app.render_to(std::cout, "agent", {120, 34});
-        return 0;
-    }
-
-    app.engine().on_tick([&](inkcell::Tick) {
+    auto app = makeAgentShellApp(cfg, bridge, model, true);
+    app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([model, &bridge]() { model->drain(bridge); });
+    app.engine().on_tick([model, &bridge, &app, &workerBusy, &worker, &joinWorker, &agent, sessionId, ephemeral](
+                             inkcell::Tick) {
         model->drain(bridge);
+        if (model->pendingRoute == "agent") {
+            model->pendingRoute.clear();
+            app.engine().post_action(inkcell::Action{"scene.agent"});
+        } else if (model->pendingRoute == "quit") {
+            model->pendingRoute.clear();
+            app.engine().post_action(inkcell::Action{"app.quit"});
+        }
         if (!model->pendingSubmit.empty() && !workerBusy.load(std::memory_order_acquire)) {
             std::string prompt = model->pendingSubmit;
             model->pendingSubmit.clear();
@@ -168,7 +167,12 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
         }
     });
 
-    int rc = app.run("agent");
+    if (snapshotMode()) {
+        app.render_to(std::cout, "welcome", {100, 28});
+        return 0;
+    }
+
+    int rc = app.run("welcome");
     g_running = false;
     joinWorker();
     g_running = true;
