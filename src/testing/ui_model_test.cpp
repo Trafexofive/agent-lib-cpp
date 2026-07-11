@@ -5,6 +5,7 @@
 
 #include "src/ui/model/adapters/agent_tree.hpp"
 #include "src/ui/model/adapters/protocol_to_timeline.hpp"
+#include "src/ui/model/command_model.hpp"
 
 using namespace cortex::mk3;
 using namespace cortex::mk3::ui::model;
@@ -128,6 +129,62 @@ void test_generic_path_exists() {
     check(pathExists(ok, exists), "generic nested path exists");
     check(!pathExists(bad, exists), "generic missing nested path fails");
 }
+
+const CommandSpec* findCommand(const std::vector<CommandSpec>& commands, const std::string& id) {
+    for (const auto& c : commands)
+        if (c.id == id) return &c;
+    return nullptr;
+}
+
+void test_command_inventory_agent_history() {
+    UiContext ctx;
+    ctx.view = AppView::AgentHistory;
+    ctx.focus = FocusPane::Composer;
+    ctx.provider.configured = true;
+    ctx.hasSelection = true;
+    ctx.selectedHasDetail = true;
+    ctx.selectedDrillable = true;
+    auto commands = commandsForContext(ctx);
+    auto* send = findCommand(commands, "run.send_prompt");
+    auto* drill = findCommand(commands, "agent.drill");
+    auto* copy = findCommand(commands, "copy.selected");
+    check(send && send->enabled, "send prompt enabled when composer focused and provider configured");
+    check(drill && drill->enabled, "drill command enabled for drillable selection");
+    check(copy && copy->enabled, "copy command enabled for selected block");
+}
+
+void test_command_inventory_disabled_reasons() {
+    UiContext ctx;
+    ctx.view = AppView::AgentHistory;
+    ctx.focus = FocusPane::Composer;
+    ctx.provider.configured = false;
+    auto commands = commandsForContext(ctx);
+    auto* send = findCommand(commands, "run.send_prompt");
+    auto* detail = findCommand(commands, "detail.open");
+    check(send && !send->enabled && send->disabledReason == "provider not configured",
+          "send prompt disabled with provider reason");
+    check(detail && !detail->enabled && detail->disabledReason == "no block selected",
+          "detail disabled with selection reason");
+}
+
+void test_context_status_line() {
+    UiContext ctx;
+    ctx.provider.provider = "openai-codex";
+    ctx.provider.model = "gpt-5.5";
+    ctx.run.lifecycle = RunLifecycle::RunningTools;
+    ctx.run.pendingOps = 2;
+    ctx.session.id = "abcdef123456";
+    ctx.session.staleReplay = true;
+    std::string status = globalStatusLine(ctx);
+    check(status.find("openai-codex/gpt-5.5") != std::string::npos,
+          "status includes provider/model");
+    check(status.find("running tools") != std::string::npos,
+          "status includes lifecycle");
+    check(status.find("pending 2") != std::string::npos,
+          "status includes pending ops");
+    check(status.find("stale replay") != std::string::npos,
+          "status includes stale replay marker");
+}
 }  // namespace
 
 int main() {
@@ -137,6 +194,9 @@ int main() {
     test_missing_child_not_drillable();
     test_thought_toggle_and_path_prefix();
     test_generic_path_exists();
+    test_command_inventory_agent_history();
+    test_command_inventory_disabled_reasons();
+    test_context_status_line();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }
