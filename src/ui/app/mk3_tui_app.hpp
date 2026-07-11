@@ -1,6 +1,7 @@
 #pragma once
-// App assembly: Main control page + Agent/History chat.
-// One-way deps: app -> scenes -> views/layout/theme/model -> bridge.
+// App assembly: chat-only inkcell workbench.
+// No main menu. No dashboards. This file wires AgentBridge + ShellModel +
+// AgentScene; chat rendering lives in src/ui/chat and engine code stays in inkcell.
 
 #include <atomic>
 #include <chrono>
@@ -14,29 +15,22 @@
 #include "src/ui/bridge/agent_bridge.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
 #include "src/ui/scenes/agent_scene.hpp"
-#include "src/ui/scenes/main_scene.hpp"
 
 namespace cortex::mk3::ui {
 
-inline void installShellTick(inkcell::App& app, AgentBridge& bridge, const std::shared_ptr<ShellModel>& model) {
+inline void installChatTick(inkcell::App& app, AgentBridge& bridge, const std::shared_ptr<ShellModel>& model) {
     app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([model, &bridge]() { model->drain(bridge); });
     app.engine().on_tick([model, &bridge, &app](inkcell::Tick) {
         model->drain(bridge);
-        if (model->pendingRoute == "agent") {
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"scene.agent"});
-        } else if (model->pendingRoute == "main") {
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"scene.main"});
-        } else if (model->pendingRoute == "quit") {
+        if (model->pendingRoute == "quit") {
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"app.quit"});
         }
     });
 }
 
-inline inkcell::App makeAgentShellApp(const InkcellAppConfig& cfg, AgentBridge& bridge,
-                                      std::shared_ptr<ShellModel> model, bool startAtMain) {
+inline inkcell::App makeChatApp(const InkcellAppConfig& cfg, AgentBridge& bridge,
+                                std::shared_ptr<ShellModel> model) {
     inkcell::App app;
     app.tick_ms(33)
         .bind("q", "app.quit", "Quit")
@@ -45,13 +39,9 @@ inline inkcell::App makeAgentShellApp(const InkcellAppConfig& cfg, AgentBridge& 
         .bind("r", "shell.toggle_raw", "Toggle raw")
         .bind("t", "shell.toggle_thoughts", "Toggle thoughts")
         .bind("i", "shell.focus_composer", "Focus composer")
-        .bind("m", "scene.main", "Main menu")
-        .bind("esc", "shell.focus_timeline", "Focus timeline / back")
-        .route("scene.agent", "agent")
-        .route("scene.main", "main")
-        .scene<scenes::MainScene>("main", cfg, bridge, model)
+        .bind("esc", "shell.focus_timeline", "Focus history")
         .scene<scenes::AgentScene>("agent", cfg, bridge, model)
-        .initial_scene(startAtMain ? "main" : "agent");
+        .initial_scene("agent");
     return app;
 }
 
@@ -86,19 +76,20 @@ inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& p
     done.store(true, std::memory_order_release);
 }
 
-inline int runInkcellShell(const InkcellAppConfig& cfg) {
+inline int runInkcellShell(const InkcellAppConfig& cfg, Agent& agent) {
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
-    auto app = makeAgentShellApp(cfg, bridge, model, true);
-    installShellTick(app, bridge, model);
+    model->setRootAgent(&agent);
+    auto app = makeChatApp(cfg, bridge, model);
+    installChatTick(app, bridge, model);
     if (snapshotMode()) {
-        app.render_to(std::cout, "main", {120, 34});
+        app.render_to(std::cout, "agent", {120, 34});
         return 0;
     }
-    return app.run("main");
+    return app.run("agent");
 }
 
-inline int runInkcellSmoke(const InkcellAppConfig& cfg) { return runInkcellShell(cfg); }
+inline int runInkcellSmoke(const InkcellAppConfig& cfg, Agent& agent) { return runInkcellShell(cfg, agent); }
 
 inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const std::string& prompt,
                              const std::string& sessionId, bool ephemeral) {
@@ -108,8 +99,8 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     std::atomic<bool> done{false};
     std::thread worker([&]() { runAgentTurn(bridge, agent, prompt, sessionId, ephemeral, done); });
 
-    auto app = makeAgentShellApp(cfg, bridge, model, false);
-    installShellTick(app, bridge, model);
+    auto app = makeChatApp(cfg, bridge, model);
+    installChatTick(app, bridge, model);
     int rc = 0;
     if (snapshotMode()) {
         while (!done.load(std::memory_order_acquire)) {
@@ -140,19 +131,11 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
         workerBusy.store(false, std::memory_order_release);
     };
 
-    bool startAtMain = cfg.manifestPath.empty();
-    auto app = makeAgentShellApp(cfg, bridge, model, startAtMain);
+    auto app = makeChatApp(cfg, bridge, model);
     app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([model, &bridge]() { model->drain(bridge); });
-    app.engine().on_tick([model, &bridge, &app, &workerBusy, &worker, &joinWorker, &agent, sessionId, ephemeral](
-                             inkcell::Tick) {
+    app.engine().on_tick([model, &bridge, &app, &workerBusy, &worker, &joinWorker, &agent, sessionId, ephemeral](inkcell::Tick) {
         model->drain(bridge);
-        if (model->pendingRoute == "agent") {
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"scene.agent"});
-        } else if (model->pendingRoute == "main") {
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"scene.main"});
-        } else if (model->pendingRoute == "quit") {
+        if (model->pendingRoute == "quit") {
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"app.quit"});
         }
@@ -176,11 +159,11 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     });
 
     if (snapshotMode()) {
-        app.render_to(std::cout, startAtMain ? "main" : "agent", {120, 34});
+        app.render_to(std::cout, "agent", {120, 34});
         return 0;
     }
 
-    int rc = app.run(startAtMain ? "main" : "agent");
+    int rc = app.run("agent");
     g_running = false;
     joinWorker();
     g_running = true;

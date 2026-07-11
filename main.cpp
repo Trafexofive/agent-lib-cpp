@@ -46,6 +46,7 @@
 #include "src/tui/session_view.hpp"
 #include "src/tui/slash_commands.hpp"
 #include "src/tui/status_prompt.hpp"
+#include "src/ui/app/mk3_tui_app.hpp"
 #include "src/utils/ansi.hpp"
 
 using namespace cortex::mk3;
@@ -222,8 +223,8 @@ Global flags:
   --quiet-session      Suppress the resume banner (printed to stderr)
   --no-session         Don't save session (ephemeral)
   --tui <legacy|inkcell|experimental>
-                       Select TUI backend. All interactive chat modes currently
-                       route to the ReplSession parity oracle (env: MK3_TUI)
+                       Select TUI backend. legacy/inkcell use ReplSession oracle;
+                       experimental uses the inkcell-native chat port (env: MK3_TUI)
   --tui-debug-dump <path> Auto-write TUI render/debug state (env: MK3_TUI_DEBUG_DUMP)
   --dry-run            Validate config + prompt without calling LLM
   --help               Show this help
@@ -265,7 +266,7 @@ Flags:
   --ephemeral            Alias for --no-session
   --no-tool-ansi         Strip ANSI/color escapes from tool result rendering
   --repl                 Force interactive mode even with --prompt
-  --tui <legacy|inkcell|experimental> Select TUI backend (chat oracle path)
+  --tui <legacy|inkcell|experimental> Select TUI backend
   --tui-debug-dump <path> Auto-write TUI render/debug state
 )";
 }
@@ -2194,6 +2195,24 @@ static int cmdRun(CliConfig& cli) {
         if (!cli.ephemeral)
             persistSessionMetadata(promptSessionId, cli, acfg);
 
+        if (cli.tuiMode == "experimental") {
+            ui::InkcellAppConfig icfg;
+            icfg.agentName = acfg.name;
+            icfg.provider = acfg.provider;
+            icfg.model = acfg.model;
+            icfg.manifestPath = cli.manifestPath;
+            icfg.harnessPath = acfg.harnessPath;
+            icfg.systemPromptPath = acfg.systemPromptPath;
+            icfg.personaPath = acfg.personaPath;
+            icfg.sessionId = promptSessionId;
+            icfg.toolCount = static_cast<int>(allSchemas.size());
+            icfg.feedCount = static_cast<int>(agent.feedNames().size());
+            icfg.relicCount = static_cast<int>(agent.relicNames().size());
+            icfg.subAgentCount = static_cast<int>(agent.subAgentNames().size());
+            icfg.ephemeral = cli.ephemeral;
+            return ui::runInkcellOneShot(icfg, agent, cli.prompt, promptSessionId, cli.ephemeral);
+        }
+
         Spinner spinner;
         if (!cli.raw) {
             printBanner();
@@ -2214,10 +2233,35 @@ static int cmdRun(CliConfig& cli) {
         return 0;
     }
 
+    // ── Interactive experimental inkcell chat port ──
+    // Chat-only: no main menu/dashboard. This is the src/ui path intended to
+    // retire src/tui once it reaches parity-or-better against ReplSession.
+    if (cli.tuiMode == "experimental") {
+        std::string experimentalSessionId =
+            cli.ephemeral
+                ? ""
+                : (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId);
+        if (!cli.ephemeral)
+            persistSessionMetadata(experimentalSessionId, cli, acfg);
+        ui::InkcellAppConfig icfg;
+        icfg.agentName = acfg.name;
+        icfg.provider = acfg.provider;
+        icfg.model = acfg.model;
+        icfg.manifestPath = cli.manifestPath;
+        icfg.harnessPath = acfg.harnessPath;
+        icfg.systemPromptPath = acfg.systemPromptPath;
+        icfg.personaPath = acfg.personaPath;
+        icfg.sessionId = experimentalSessionId;
+        icfg.toolCount = static_cast<int>(allSchemas.size());
+        icfg.feedCount = static_cast<int>(agent.feedNames().size());
+        icfg.relicCount = static_cast<int>(agent.relicNames().size());
+        icfg.subAgentCount = static_cast<int>(agent.subAgentNames().size());
+        icfg.ephemeral = cli.ephemeral;
+        return ui::runInkcellRepl(icfg, agent, experimentalSessionId, cli.ephemeral);
+    }
+
     // ── Interactive REPL TUI / chat oracle ──
-    // legacy, inkcell, and experimental all route through the extracted
-    // ReplSession chat surface until the inkcell-native chat port proves real
-    // 1:1 parity. No experimental scene shell is allowed in the chat path.
+    // legacy and inkcell still route through ReplSession.
     std::string replSessionId =
         cli.ephemeral
             ? ""
