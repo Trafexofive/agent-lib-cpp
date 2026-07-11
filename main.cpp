@@ -2233,9 +2233,9 @@ static int cmdRun(CliConfig& cli) {
         return 0;
     }
 
-    // ── Interactive experimental inkcell app ──
-    // This is the visible workbench for the new UI/app overhaul. It is deliberately
-    // separate from --tui inkcell until it beats ReplSession at the release gate.
+    // ── Experimental inkcell app ──
+    // Chat uses src/ui/chat, an inkcell-native port of the ReplSession composition
+    // contract. ReplSession remains oracle only; this path is where tui/ gets retired.
     if (cli.tuiMode == "experimental") {
         std::string experimentalSessionId =
             cli.ephemeral
@@ -2260,10 +2260,9 @@ static int cmdRun(CliConfig& cli) {
         return ui::runInkcellRepl(icfg, agent, experimentalSessionId, cli.ephemeral);
     }
 
-    // ── Interactive REPL TUI ──
-    // 1:1 legacy surface. For Phase 0/1 of the inkcell port, both legacy and
-    // inkcell flags route through the same extracted ReplSession. This preserves
-    // the working product TUI while the new app develops under --tui experimental.
+    // ── Interactive REPL TUI / chat oracle ──
+    // legacy and inkcell flags still route through ReplSession until src/ui/chat
+    // reaches parity-or-better and tui/ can be removed.
     std::string replSessionId =
         cli.ephemeral
             ? ""

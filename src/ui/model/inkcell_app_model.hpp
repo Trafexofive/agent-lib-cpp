@@ -215,7 +215,10 @@ struct ShellModel {
         rebuildViews();
     }
 
-    void setRootAgent(Agent* agent) { rootAgent = agent; }
+    void setRootAgent(Agent* agent) {
+        rootAgent = agent;
+        rebuildViews();
+    }
 
     void routeTo(std::string page) {
         activePage = std::move(page);
@@ -303,10 +306,10 @@ struct ShellModel {
         }
 
         if (rows.empty()) {
-            transcriptView.lines.push_back("Nothing here yet.");
+            transcriptView.lines.push_back(atRoot() ? "No turns yet." : "Nothing here yet.");
             if (atRoot()) {
-                transcriptView.lines.push_back("Type a prompt below and press Enter to send.");
-                transcriptView.lines.push_back("Esc focuses timeline · j/k select blocks · Enter opens agent history.");
+                transcriptView.lines.push_back("Type a prompt and press Enter to send.");
+                transcriptView.lines.push_back("Esc focuses history · j/k select blocks · Enter opens agent history.");
             } else {
                 transcriptView.lines.push_back("This sub-agent has no recorded protocol events.");
             }
