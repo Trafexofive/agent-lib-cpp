@@ -21,7 +21,14 @@ struct InkcellAppConfig {
     std::string provider;
     std::string model;
     std::string manifestPath;
+    std::string harnessPath;
+    std::string systemPromptPath;
+    std::string personaPath;
     std::string sessionId;
+    int toolCount = 0;
+    int feedCount = 0;
+    int relicCount = 0;
+    int subAgentCount = 0;
     bool ephemeral = false;
 };
 
@@ -187,7 +194,7 @@ struct ShellModel {
     int routeTicks = 0;
     std::string activePage = "Agent";
     std::string pendingSubmit;
-    std::string pendingRoute;  // welcome → "agent" | "quit"
+    std::string pendingRoute;  // main → "agent" | "main" | "quit"
     inkcell::widgets::TextAreaState composer;
     mutable inkcell::widgets::ScrollViewState transcriptView;
     mutable inkcell::widgets::ScrollViewState inspectorView;

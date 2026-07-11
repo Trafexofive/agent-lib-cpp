@@ -123,11 +123,11 @@ class AgentScene final : public BaseScene {
 
         std::string hints;
         if (!model_->atRoot()) {
-            hints = "Esc/Backspace back · j/k select · Enter drill · g refresh · path in header";
+            hints = "Esc/Backspace back · j/k select · Enter drill · g refresh · m main";
         } else if (model_->timelineFocus) {
-            hints = "j/k select · Enter open sub-agent · i composer · Esc composer · q quit";
+            hints = "j/k select · Enter open sub-agent · i composer · m main · q quit";
         } else {
-            hints = "Enter send · Esc history · j/k after Esc · q quit";
+            hints = "Enter send · Esc history · Esc then m main · q quit";
         }
         std::string right = "pending " + std::to_string(model_->pendingOps) + " · " +
                             std::to_string(model_->actionCount) + " actions";

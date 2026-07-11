@@ -2201,7 +2201,14 @@ static int cmdRun(CliConfig& cli) {
             icfg.provider = acfg.provider;
             icfg.model = acfg.model;
             icfg.manifestPath = cli.manifestPath;
+            icfg.harnessPath = acfg.harnessPath;
+            icfg.systemPromptPath = acfg.systemPromptPath;
+            icfg.personaPath = acfg.personaPath;
             icfg.sessionId = promptSessionId;
+            icfg.toolCount = static_cast<int>(allSchemas.size());
+            icfg.feedCount = static_cast<int>(agent.feedNames().size());
+            icfg.relicCount = static_cast<int>(agent.relicNames().size());
+            icfg.subAgentCount = static_cast<int>(agent.subAgentNames().size());
             icfg.ephemeral = cli.ephemeral;
             return ui::runInkcellOneShot(icfg, agent, cli.prompt, promptSessionId, cli.ephemeral);
         }
@@ -2241,7 +2248,14 @@ static int cmdRun(CliConfig& cli) {
         icfg.provider = acfg.provider;
         icfg.model = acfg.model;
         icfg.manifestPath = cli.manifestPath;
+        icfg.harnessPath = acfg.harnessPath;
+        icfg.systemPromptPath = acfg.systemPromptPath;
+        icfg.personaPath = acfg.personaPath;
         icfg.sessionId = experimentalSessionId;
+        icfg.toolCount = static_cast<int>(allSchemas.size());
+        icfg.feedCount = static_cast<int>(agent.feedNames().size());
+        icfg.relicCount = static_cast<int>(agent.relicNames().size());
+        icfg.subAgentCount = static_cast<int>(agent.subAgentNames().size());
         icfg.ephemeral = cli.ephemeral;
         return ui::runInkcellRepl(icfg, agent, experimentalSessionId, cli.ephemeral);
     }

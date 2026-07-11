@@ -1,5 +1,5 @@
 #pragma once
-// App assembly: Welcome + Agent/History only.
+// App assembly: Main control page + Agent/History chat.
 // One-way deps: app -> scenes -> views/layout/theme/model -> bridge.
 
 #include <atomic>
@@ -14,7 +14,7 @@
 #include "src/ui/bridge/agent_bridge.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
 #include "src/ui/scenes/agent_scene.hpp"
-#include "src/ui/scenes/welcome_scene.hpp"
+#include "src/ui/scenes/main_scene.hpp"
 
 namespace cortex::mk3::ui {
 
@@ -25,6 +25,9 @@ inline void installShellTick(inkcell::App& app, AgentBridge& bridge, const std::
         if (model->pendingRoute == "agent") {
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"scene.agent"});
+        } else if (model->pendingRoute == "main") {
+            model->pendingRoute.clear();
+            app.engine().post_action(inkcell::Action{"scene.main"});
         } else if (model->pendingRoute == "quit") {
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"app.quit"});
@@ -33,7 +36,7 @@ inline void installShellTick(inkcell::App& app, AgentBridge& bridge, const std::
 }
 
 inline inkcell::App makeAgentShellApp(const InkcellAppConfig& cfg, AgentBridge& bridge,
-                                      std::shared_ptr<ShellModel> model, bool startAtWelcome) {
+                                      std::shared_ptr<ShellModel> model, bool startAtMain) {
     inkcell::App app;
     app.tick_ms(33)
         .bind("q", "app.quit", "Quit")
@@ -42,12 +45,13 @@ inline inkcell::App makeAgentShellApp(const InkcellAppConfig& cfg, AgentBridge& 
         .bind("r", "shell.toggle_raw", "Toggle raw")
         .bind("t", "shell.toggle_thoughts", "Toggle thoughts")
         .bind("i", "shell.focus_composer", "Focus composer")
+        .bind("m", "scene.main", "Main menu")
         .bind("esc", "shell.focus_timeline", "Focus timeline / back")
         .route("scene.agent", "agent")
-        .route("scene.welcome", "welcome")
-        .scene<scenes::WelcomeScene>("welcome", cfg, bridge, model)
+        .route("scene.main", "main")
+        .scene<scenes::MainScene>("main", cfg, bridge, model)
         .scene<scenes::AgentScene>("agent", cfg, bridge, model)
-        .initial_scene(startAtWelcome ? "welcome" : "agent");
+        .initial_scene(startAtMain ? "main" : "agent");
     return app;
 }
 
@@ -88,10 +92,10 @@ inline int runInkcellShell(const InkcellAppConfig& cfg) {
     auto app = makeAgentShellApp(cfg, bridge, model, true);
     installShellTick(app, bridge, model);
     if (snapshotMode()) {
-        app.render_to(std::cout, "welcome", {100, 28});
+        app.render_to(std::cout, "main", {120, 34});
         return 0;
     }
-    return app.run("welcome");
+    return app.run("main");
 }
 
 inline int runInkcellSmoke(const InkcellAppConfig& cfg) { return runInkcellShell(cfg); }
@@ -136,7 +140,8 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
         workerBusy.store(false, std::memory_order_release);
     };
 
-    auto app = makeAgentShellApp(cfg, bridge, model, true);
+    bool startAtMain = cfg.manifestPath.empty();
+    auto app = makeAgentShellApp(cfg, bridge, model, startAtMain);
     app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([model, &bridge]() { model->drain(bridge); });
     app.engine().on_tick([model, &bridge, &app, &workerBusy, &worker, &joinWorker, &agent, sessionId, ephemeral](
                              inkcell::Tick) {
@@ -144,6 +149,9 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
         if (model->pendingRoute == "agent") {
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"scene.agent"});
+        } else if (model->pendingRoute == "main") {
+            model->pendingRoute.clear();
+            app.engine().post_action(inkcell::Action{"scene.main"});
         } else if (model->pendingRoute == "quit") {
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"app.quit"});
@@ -168,11 +176,11 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     });
 
     if (snapshotMode()) {
-        app.render_to(std::cout, "welcome", {100, 28});
+        app.render_to(std::cout, startAtMain ? "main" : "agent", {120, 34});
         return 0;
     }
 
-    int rc = app.run("welcome");
+    int rc = app.run(startAtMain ? "main" : "agent");
     g_running = false;
     joinWorker();
     g_running = true;

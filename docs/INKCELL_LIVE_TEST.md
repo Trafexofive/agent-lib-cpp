@@ -42,11 +42,21 @@ Result: byte-identical ANSI output and stderr.
 
 ## Experimental app live test
 
-Empty/start screen:
+Main control page (no `-m`):
+
+```bash
+./cortex-mk3 --tui experimental --no-session
+```
+
+Expected: main control board with Chat, Sessions, Harness/Manifest, Provider/Model.
+
+Direct chat when `-m` is specified:
 
 ```bash
 ./cortex-mk3 -m manifests/agents/coder/agent.yml --tui experimental --no-session
 ```
+
+Expected: drops directly into Agent/History chat for `coder`. From chat, press `Esc` to focus history, then `m` for main menu.
 
 One-shot visual timeline snapshot:
 
