@@ -105,6 +105,16 @@ $(UI_VIEW_TEST_BIN): $(UI_VIEW_TEST_SRC) src/ui/chat/chat_view.hpp src/ui/views/
 test-ui-view: $(UI_VIEW_TEST_BIN)
 	./$(UI_VIEW_TEST_BIN)
 
+# ── Chat scene integration tests (ask bridge, slash input, cancellation) ──
+CHAT_SCENE_TEST_SRC := src/testing/chat_scene_test.cpp
+CHAT_SCENE_TEST_BIN := chat-scene-test
+
+$(CHAT_SCENE_TEST_BIN): $(OBJS) $(CHAT_SCENE_TEST_SRC) src/ui/scenes/agent_scene.hpp src/ui/chat/ask_dialog_model.hpp src/ui/chat/chat_commands.hpp
+	$(CXX) $(CXXFLAGS) $(CHAT_SCENE_TEST_SRC) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) -o $@ $(INKCELL_LIB) $(LDFLAGS)
+
+test-chat-scene: $(CHAT_SCENE_TEST_BIN) | inkcell-lib
+	./$(CHAT_SCENE_TEST_BIN)
+
 # ── mini_yaml unit tests ──
 YAML_TEST_SRC := src/testing/yaml_test.cpp
 YAML_TEST_BIN := yaml-test

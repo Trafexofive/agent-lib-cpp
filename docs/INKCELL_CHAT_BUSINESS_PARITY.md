@@ -57,6 +57,7 @@ These are not business-critical parity requirements:
 make cortex-mk3
 make test-ui-model
 make test-ui-view
+make test-chat-scene
 tests/tui/ui_architecture_smoke.sh
 tests/tui/experimental_chat_smoke.sh ./cortex-mk3
 tests/tui/repl_parity_smoke.sh ./cortex-mk3
