@@ -93,8 +93,12 @@ class AgentBridge {
                 queue_.pop_front();
             }
             if (!out.empty()) {
-                snapshot_.events.insert(snapshot_.events.end(), out.begin(), out.end());
                 for (const auto& e : out) {
+                    if (e.kind != UiEventKind::Token && e.kind != UiEventKind::Protocol) {
+                        snapshot_.events.push_back(e);
+                        if (snapshot_.events.size() > 128)
+                            snapshot_.events.erase(snapshot_.events.begin());
+                    }
                     if (e.kind == UiEventKind::Status)
                         snapshot_.status = e.text;
                     else if (e.kind == UiEventKind::TurnDone)

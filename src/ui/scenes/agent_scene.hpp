@@ -141,7 +141,9 @@ class AgentScene final : public BaseScene {
         vm.tokenBytes = model_->tokenBytes;
         vm.scrollOffset = model_->transcriptView.offset;
         vm.followBottom = model_->transcriptView.stick_bottom;
-        vm.transcript = model_->transcriptView.lines;
+        vm.transcriptSource = &model_->transcriptView.lines;
+        vm.transcriptVersion = model_->transcriptVersion;
+        vm.transcriptCache = &model_->transcriptWrapCache;
         vm.input = model_->composer.value;
         vm.inputCursor = model_->composer.cursor;
         if (model_->running) vm.hint = "Ctrl-C cancel · Esc history · t thoughts · r raw";

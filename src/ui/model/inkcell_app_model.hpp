@@ -15,6 +15,7 @@
 #include "inkcell/widgets/textarea.hpp"
 #include "src/core/agent.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
+#include "src/ui/chat/transcript_cache.hpp"
 #include "src/ui/model/dashboard_model.hpp"
 #include "src/ui/bridge/agent_bridge.hpp"
 
@@ -227,6 +228,11 @@ struct ShellModel {
     // response text and progress results grow; map each protocol index to one row.
     std::vector<int> activeProtocolRows;
     std::set<std::string> pendingActionIds;
+    bool batchingEvents = false;
+    bool viewRebuildPending = false;
+    uint64_t viewRebuildCount = 0;
+    uint64_t transcriptVersion = 0;
+    mutable chat::TranscriptWrapCache transcriptWrapCache;
     std::set<std::string> completedResultIds;
 
     ShellModel() {
@@ -314,6 +320,13 @@ struct ShellModel {
     }
 
     void rebuildViews() {
+        if (batchingEvents) {
+            viewRebuildPending = true;
+            return;
+        }
+        viewRebuildPending = false;
+        ++viewRebuildCount;
+        ++transcriptVersion;
         const auto& rows = activeRows();
         transcriptView.lines.clear();
         blockRowIndex.clear();
@@ -548,12 +561,10 @@ struct ShellModel {
                 status = e.text;
                 running = e.text.find("running") != std::string::npos;
                 if (running) timelineState = PageState::Loading;
-                if (atRoot()) rebuildViews();
                 break;
             }
             case UiEventKind::Log:
                 pushRow({TimelineKind::Log, "log", e.text, true});
-                if (atRoot()) rebuildViews();
                 break;
             case UiEventKind::Error:
                 failed = true;
@@ -561,7 +572,6 @@ struct ShellModel {
                 status = "error";
                 timelineState = PageState::Error;
                 pushRow({TimelineKind::Error, "error", e.text, false});
-                if (atRoot()) rebuildViews();
                 break;
             case UiEventKind::Token:
                 raw += e.text;
@@ -570,7 +580,6 @@ struct ShellModel {
                     for (auto& line : splitDisplayLines(e.text))
                         pushRow({TimelineKind::Stream, "raw", line, true});
                 }
-                if (atRoot()) rebuildViews();
                 break;
             case UiEventKind::Protocol: {
                 const auto& pe = e.protocol;
@@ -592,7 +601,6 @@ struct ShellModel {
                     if (isProgressPlaceholder(pe.result)) {
                         // Keep progress in the status metrics. Do not render a fake
                         // completed result such as "reader is running…".
-                        if (atRoot()) rebuildViews();
                         break;
                     }
                     if (completedResultIds.insert(pe.result.id).second) {
@@ -666,8 +674,12 @@ struct ShellModel {
 
     void drain(AgentBridge& bridge) {
         auto batch = bridge.drain();
-        if (!batch.empty()) ++wakeCount;
+        if (batch.empty()) return;
+        ++wakeCount;
+        batchingEvents = true;
         for (const auto& e : batch) apply(e);
+        batchingEvents = false;
+        if (viewRebuildPending) rebuildViews();
     }
 
     void loadSessionRecords(const std::vector<SessionRecord>& records) {

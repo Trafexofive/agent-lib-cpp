@@ -75,7 +75,7 @@ PARSER_TEST_SRC := src/testing/parser_test.cpp
 PARSER_TEST_OBJ := $(BUILD_DIR)/testing/parser_test.o
 PARSER_TEST_BIN := parser-test
 
-$(PARSER_TEST_OBJ): $(PARSER_TEST_SRC)
+$(PARSER_TEST_OBJ): $(PARSER_TEST_SRC) src/protocol/parser.hpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -89,7 +89,7 @@ test-parser: $(PARSER_TEST_BIN)
 UI_MODEL_TEST_SRC := src/testing/ui_model_test.cpp
 UI_MODEL_TEST_BIN := ui-model-test
 
-$(UI_MODEL_TEST_BIN): $(OBJS) $(UI_MODEL_TEST_SRC) src/ui/chat/ask_dialog_model.hpp src/ui/chat/chat_command_catalog.hpp src/ui/chat/chat_commands.hpp src/ui/chat/chat_io.hpp src/ui/chat/prompt_history.hpp src/ui/model/dashboard_controller.hpp src/ui/model/dashboard_model.hpp src/ui/model/timeline_model.hpp src/ui/model/app_context.hpp src/ui/model/command_model.hpp src/ui/model/inkcell_app_model.hpp src/ui/model/navigation_model.hpp src/ui/model/adapters/protocol_to_timeline.hpp src/ui/model/adapters/agent_tree.hpp
+$(UI_MODEL_TEST_BIN): $(OBJS) $(UI_MODEL_TEST_SRC) src/ui/chat/ask_dialog_model.hpp src/ui/chat/chat_blocks.hpp src/ui/chat/chat_command_catalog.hpp src/ui/chat/chat_commands.hpp src/ui/chat/chat_io.hpp src/ui/chat/prompt_history.hpp src/ui/chat/transcript_cache.hpp src/ui/model/dashboard_controller.hpp src/ui/model/dashboard_model.hpp src/ui/model/timeline_model.hpp src/ui/model/app_context.hpp src/ui/model/command_model.hpp src/ui/model/inkcell_app_model.hpp src/ui/model/navigation_model.hpp src/ui/model/adapters/protocol_to_timeline.hpp src/ui/model/adapters/agent_tree.hpp
 	$(CXX) $(CXXFLAGS) $(UI_MODEL_TEST_SRC) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) -o $@ $(LDFLAGS)
 
 test-ui-model: $(UI_MODEL_TEST_BIN)
@@ -114,6 +114,16 @@ $(CHAT_SCENE_TEST_BIN): $(OBJS) $(CHAT_SCENE_TEST_SRC) src/ui/scenes/agent_scene
 
 test-chat-scene: $(CHAT_SCENE_TEST_BIN) | inkcell-lib
 	./$(CHAT_SCENE_TEST_BIN)
+
+# ── Parser + streaming reducer performance regression gates ──
+PERF_TEST_SRC := src/testing/perf_test.cpp
+PERF_TEST_BIN := perf-test
+
+$(PERF_TEST_BIN): $(OBJS) $(PERF_TEST_SRC) src/protocol/parser.hpp src/ui/bridge/agent_bridge.hpp src/ui/model/inkcell_app_model.hpp
+	$(CXX) $(CXXFLAGS) $(PERF_TEST_SRC) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) -o $@ $(INKCELL_LIB) $(LDFLAGS)
+
+test-perf: $(PERF_TEST_BIN) | inkcell-lib
+	./$(PERF_TEST_BIN)
 
 # ── mini_yaml unit tests ──
 YAML_TEST_SRC := src/testing/yaml_test.cpp
@@ -215,7 +225,7 @@ PROTOCOL_TEST_SRC := src/testing/protocol_test.cpp
 PROTOCOL_TEST_OBJ := $(BUILD_DIR)/testing/protocol_test.o
 PROTOCOL_TEST_BIN := protocol-test
 
-$(PROTOCOL_TEST_OBJ): $(PROTOCOL_TEST_SRC)
+$(PROTOCOL_TEST_OBJ): $(PROTOCOL_TEST_SRC) src/protocol/parser.hpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 

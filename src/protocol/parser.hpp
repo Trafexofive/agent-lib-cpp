@@ -104,6 +104,7 @@ class Parser {
    private:
     // Core parse loop — processes buffer looking for tags
     void processBuffer();
+    void compactBuffer();
 
     // Tag detection
     size_t findNextTag();
@@ -154,6 +155,12 @@ class Parser {
     // Needed by the caller to compute closingTagStart correctly when the
     // close is a synonym (e.g. </think> for <thought>).
     size_t lastCloseLen_ = 0;
+    std::string closingScanTag_;
+    size_t closingScanContentStart_ = std::string::npos;
+    size_t closingScanPos_ = 0;
+    int closingScanDepth_ = 1;
+    bool closingScanInString_ = false;
+    bool closingScanEscape_ = false;
     bool inResponse_ = false;  // true between <response> and </response> for streaming
     size_t responseContentStart_ =
         0;  // start of active response body for code-span-aware close scans

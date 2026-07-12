@@ -83,6 +83,35 @@ void test_drillable_tag() {
     check(containsRow(s, "↳ reader"), "drillable child target rendered");
 }
 
+void test_chat_block_primitives() {
+    check(chat::classifyChatBlock("  YOU") == chat::ChatBlockKind::User,
+          "chat block classifies user primitive");
+    check(chat::classifyChatBlock("  CORTEX") == chat::ChatBlockKind::Assistant,
+          "chat block classifies assistant primitive");
+    check(chat::classifyChatBlock("  AGENT  reader  #r1") == chat::ChatBlockKind::Agent,
+          "chat block classifies agent primitive");
+    check(chat::classifyChatBlock("  TOOL  exec  #e1") == chat::ChatBlockKind::ToolExec,
+          "chat block classifies exec builtin");
+    check(chat::classifyChatBlock("  TOOL  read  #r1") == chat::ChatBlockKind::ToolRead,
+          "chat block classifies read builtin");
+    check(chat::classifyChatBlock("  TOOL  fs_write  #w1") == chat::ChatBlockKind::ToolWrite,
+          "chat block classifies write builtin");
+
+    inkcell::Surface surface({60, 14});
+    chat::ChatSurfaceModel model;
+    model.transcript = {"  YOU", "    hello", "", "  TOOL  exec  #e1", "    pwd"};
+    chat::drawTranscript(surface, {2, 2, 56, 8}, model);
+    int firstY = 2 + 8 - 5;
+    auto userBg = chat::blockBackground(chat::ChatBlockKind::User);
+    auto execBg = chat::blockBackground(chat::ChatBlockKind::ToolExec);
+    check(inkcell::same_color(surface.at({2, firstY}).style.bg, userBg) &&
+              inkcell::same_color(surface.at({2, firstY + 1}).style.bg, userBg),
+          "chat user background spans header and body");
+    check(inkcell::same_color(surface.at({2, firstY + 3}).style.bg, execBg) &&
+              inkcell::same_color(surface.at({2, firstY + 4}).style.bg, execBg),
+          "chat builtin background spans header and body");
+}
+
 void test_chat_transcript_wraps_long_lines() {
     std::vector<std::string> source = {
         "  This response is deliberately longer than the available transcript width and must wrap.",
@@ -111,6 +140,27 @@ void test_chat_transcript_wraps_long_lines() {
               code[1].find("│ int  x = 1;") != std::string::npos &&
               code[2].find("└─") != std::string::npos,
           "chat code fences preserve code whitespace");
+}
+
+void test_chat_wrap_cache() {
+    inkcell::Surface surface({60, 14});
+    std::vector<std::string> source = {"  CORTEX", "    cached response"};
+    chat::TranscriptWrapCache cache;
+    chat::ChatSurfaceModel model;
+    model.transcriptSource = &source;
+    model.transcriptCache = &cache;
+    model.transcriptVersion = 7;
+    chat::drawTranscript(surface, {2, 2, 56, 8}, model);
+    check(cache.sourceVersion == 7 && cache.width == 55 && !cache.lines.empty(),
+          "chat wrap cache records source version and width");
+    const auto* storage = cache.lines.data();
+    chat::drawTranscript(surface, {2, 2, 56, 8}, model);
+    check(cache.lines.data() == storage, "chat wrap cache reuses wrapped storage without mutation");
+    source.push_back("    updated");
+    model.transcriptVersion = 8;
+    chat::drawTranscript(surface, {2, 2, 56, 8}, model);
+    check(cache.sourceVersion == 8 && cache.lines.size() == 3,
+          "chat wrap cache invalidates on transcript version change");
 }
 
 void test_chat_selection_stays_visible_after_wrap() {
@@ -173,7 +223,9 @@ int main() {
     test_empty_state();
     test_selected_block_cues();
     test_drillable_tag();
+    test_chat_block_primitives();
     test_chat_transcript_wraps_long_lines();
+    test_chat_wrap_cache();
     test_chat_selection_stays_visible_after_wrap();
     test_chat_prompt_cursor_position();
     test_chat_help_and_theme();

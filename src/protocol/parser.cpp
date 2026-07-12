@@ -4,6 +4,7 @@
 
 #include "parser.hpp"
 
+#include <cctype>
 #include <iostream>
 #include <regex>
 #include <sstream>
@@ -27,22 +28,48 @@ Parser::~Parser() {
 void Parser::feed(const std::string& token, bool isFinal) {
     buffer_ += token;
     processBuffer();
+    compactBuffer();
 
     if (isFinal)
         flush();
 }
 
 void Parser::flush() {
-    // Emit any remaining plain text
-    if (readPos_ < buffer_.size()) {
-        std::string remaining = buffer_.substr(readPos_);
-        // Strip any stray tags
-        static const std::regex tagRe(R"(<\/?[^>]+>)");
-        remaining = std::regex_replace(remaining, tagRe, "");
-        if (!remaining.empty()) {
-            emit({TokenEvent::TEXT, remaining, {}, {}});
+    if (readPos_ >= buffer_.size()) return;
+    std::string remaining;
+    remaining.reserve(buffer_.size() - readPos_);
+    size_t cursor = readPos_;
+    while (cursor < buffer_.size()) {
+        size_t lt = buffer_.find('<', cursor);
+        if (lt == std::string::npos) {
+            remaining.append(buffer_, cursor, std::string::npos);
+            break;
         }
-        readPos_ = buffer_.size();
+        remaining.append(buffer_, cursor, lt - cursor);
+        size_t gt = buffer_.find('>', lt + 1);
+        if (gt == std::string::npos) {
+            remaining.append(buffer_, lt, std::string::npos);
+            break;
+        }
+        cursor = gt + 1;
+    }
+    if (!remaining.empty()) emit({TokenEvent::TEXT, std::move(remaining), {}, {}});
+    readPos_ = buffer_.size();
+    compactBuffer();
+}
+
+void Parser::compactBuffer() {
+    constexpr size_t kCompactThreshold = 64 * 1024;
+    if (readPos_ < kCompactThreshold) return;
+    size_t consumed = readPos_;
+    buffer_.erase(0, consumed);
+    readPos_ = 0;
+    responseContentStart_ = responseContentStart_ >= consumed ? responseContentStart_ - consumed : 0;
+    if (closingScanContentStart_ != std::string::npos) {
+        closingScanContentStart_ = closingScanContentStart_ >= consumed
+                                       ? closingScanContentStart_ - consumed
+                                       : 0;
+        closingScanPos_ = closingScanPos_ >= consumed ? closingScanPos_ - consumed : 0;
     }
 }
 
@@ -58,7 +85,7 @@ void Parser::processBuffer() {
         // fake closing tags.
         if (inResponse_) {
             const std::string closeMarker = "</response>";
-            size_t closePos = findResponseClose(responseContentStart_);
+            size_t closePos = findResponseClose(readPos_);
             size_t emitEnd = (closePos == std::string::npos) ? buffer_.size() : closePos;
             if (closePos == std::string::npos) {
                 // Do not emit a suffix that could be the start of a streamed
@@ -247,74 +274,93 @@ std::string Parser::identifyTag(size_t tagStart) {
 // ---------------------------------------------------------------------------
 size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
     const std::string openMarker = "<" + tagName;
-    std::string closeMarker = "</" + tagName + ">";
-    // Synonym: <thought> can be closed by </think> too (HTML-style reasoning
-    // tokens from some models). Without this, the closing tag would not be
-    // found and the tag would never be parsed.
-    std::string altCloseMarker;
-    if (tagName == "thought")
-        altCloseMarker = "</think>";
+    const std::string closeMarker = "</" + tagName + ">";
+    const std::string altCloseMarker = tagName == "thought" ? "</think>" : "";
 
-    int depth = 1;
-    bool inString = false;
-    bool escape = false;
+    if (closingScanTag_ != tagName || closingScanContentStart_ != contentStart) {
+        closingScanTag_ = tagName;
+        closingScanContentStart_ = contentStart;
+        closingScanPos_ = contentStart;
+        closingScanDepth_ = 1;
+        closingScanInString_ = false;
+        closingScanEscape_ = false;
+    }
 
-    size_t i = contentStart;
+    auto resetScan = [&] {
+        closingScanTag_.clear();
+        closingScanContentStart_ = std::string::npos;
+        closingScanPos_ = 0;
+        closingScanDepth_ = 1;
+        closingScanInString_ = false;
+        closingScanEscape_ = false;
+    };
+    auto partialAtEnd = [&](size_t pos, const std::string& marker) {
+        size_t remaining = buffer_.size() - pos;
+        return remaining < marker.size() && marker.compare(0, remaining, buffer_, pos, remaining) == 0;
+    };
+
+    size_t i = closingScanPos_;
     while (i < buffer_.size()) {
         char c = buffer_[i];
-        if (escape) {
-            escape = false;
+        if (closingScanEscape_) {
+            closingScanEscape_ = false;
             ++i;
             continue;
         }
-        if (inString) {
-            if (c == '\\')
-                escape = true;
-            else if (c == '"')
-                inString = false;
+        if (closingScanInString_) {
+            if (c == '\\') closingScanEscape_ = true;
+            else if (c == '"') closingScanInString_ = false;
             ++i;
             continue;
         }
         if (c == '"') {
-            inString = true;
+            closingScanInString_ = true;
             ++i;
             continue;
         }
 
         if (c == '<') {
-            // Closing tag match
-            if (i + closeMarker.size() <= buffer_.size() &&
-                buffer_.compare(i, closeMarker.size(), closeMarker) == 0) {
-                if (--depth == 0) {
+            if (partialAtEnd(i, closeMarker) ||
+                (!altCloseMarker.empty() && partialAtEnd(i, altCloseMarker)) ||
+                partialAtEnd(i, openMarker)) {
+                closingScanPos_ = i;
+                return std::string::npos;
+            }
+            if (buffer_.compare(i, closeMarker.size(), closeMarker) == 0) {
+                if (--closingScanDepth_ == 0) {
                     lastCloseLen_ = closeMarker.size();
-                    return i + closeMarker.size();
+                    size_t end = i + closeMarker.size();
+                    resetScan();
+                    return end;
                 }
                 i += closeMarker.size();
                 continue;
             }
-            // Alternate close (e.g. </think> for <thought>)
             if (!altCloseMarker.empty() &&
-                i + altCloseMarker.size() <= buffer_.size() &&
                 buffer_.compare(i, altCloseMarker.size(), altCloseMarker) == 0) {
-                if (--depth == 0) {
+                if (--closingScanDepth_ == 0) {
                     lastCloseLen_ = altCloseMarker.size();
-                    return i + altCloseMarker.size();
+                    size_t end = i + altCloseMarker.size();
+                    resetScan();
+                    return end;
                 }
                 i += altCloseMarker.size();
                 continue;
             }
-            // Nested opening tag match: <tagName followed by space, > or /
-            if (i + openMarker.size() <= buffer_.size() &&
-                buffer_.compare(i, openMarker.size(), openMarker) == 0) {
+            if (buffer_.compare(i, openMarker.size(), openMarker) == 0) {
                 size_t after = i + openMarker.size();
-                char next = (after < buffer_.size()) ? buffer_[after] : '\0';
+                if (after >= buffer_.size()) {
+                    closingScanPos_ = i;
+                    return std::string::npos;
+                }
+                char next = buffer_[after];
                 if (next == ' ' || next == '\t' || next == '>' || next == '/') {
-                    size_t gt = buffer_.find('>', i);
-                    if (gt == std::string::npos)
+                    size_t gt = buffer_.find('>', after);
+                    if (gt == std::string::npos) {
+                        closingScanPos_ = i;
                         return std::string::npos;
-                    bool selfClosingNested = (gt > i && buffer_[gt - 1] == '/');
-                    if (!selfClosingNested)
-                        ++depth;
+                    }
+                    if (gt == i || buffer_[gt - 1] != '/') ++closingScanDepth_;
                     i = gt + 1;
                     continue;
                 }
@@ -322,17 +368,7 @@ size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
         }
         ++i;
     }
-
-    // Fall back to self-closing inline form: <tag ... />
-    if (depth == 1) {
-        size_t selfClose = buffer_.find("/>", contentStart);
-        if (selfClose != std::string::npos) {
-            size_t nextOpen = buffer_.find("<" + tagName, contentStart);
-            if (nextOpen == std::string::npos || selfClose < nextOpen)
-                return selfClose + 2;
-        }
-    }
-
+    closingScanPos_ = i;
     return std::string::npos;
 }
 
@@ -358,14 +394,29 @@ size_t Parser::findResponseClose(size_t contentStart) const {
 // ---------------------------------------------------------------------------
 std::map<std::string, std::string> Parser::parseAttrs(const std::string& tagContent) {
     std::map<std::string, std::string> attrs;
-    std::regex attrRe("(\\w+)\\s*=\\s*\"([^\"]*)\"?");
-
-    auto begin = std::sregex_iterator(tagContent.begin(), tagContent.end(), attrRe);
-    auto end = std::sregex_iterator();
-    for (auto it = begin; it != end; ++it) {
-        attrs[(*it)[1]] = (*it)[2];
+    size_t pos = tagContent.find_first_of(" \t\r\n");
+    while (pos != std::string::npos && pos < tagContent.size()) {
+        pos = tagContent.find_first_not_of(" \t\r\n", pos);
+        if (pos == std::string::npos) break;
+        size_t keyStart = pos;
+        while (pos < tagContent.size() &&
+               (std::isalnum(static_cast<unsigned char>(tagContent[pos])) || tagContent[pos] == '_'))
+            ++pos;
+        if (pos == keyStart) {
+            ++pos;
+            continue;
+        }
+        std::string key = tagContent.substr(keyStart, pos - keyStart);
+        pos = tagContent.find_first_not_of(" \t\r\n", pos);
+        if (pos == std::string::npos || tagContent[pos] != '=') continue;
+        pos = tagContent.find_first_not_of(" \t\r\n", pos + 1);
+        if (pos == std::string::npos || tagContent[pos] != '"') continue;
+        size_t valueStart = ++pos;
+        size_t valueEnd = tagContent.find('"', valueStart);
+        if (valueEnd == std::string::npos) break;
+        attrs[std::move(key)] = tagContent.substr(valueStart, valueEnd - valueStart);
+        pos = valueEnd + 1;
     }
-
     return attrs;
 }
 
@@ -698,6 +749,12 @@ void Parser::reset() {
     responseContentStart_ = 0;
     usedActionIds_.clear();
     responseAttrs_.clear();
+    closingScanTag_.clear();
+    closingScanContentStart_ = std::string::npos;
+    closingScanPos_ = 0;
+    closingScanDepth_ = 1;
+    closingScanInString_ = false;
+    closingScanEscape_ = false;
 }
 
 // ---------------------------------------------------------------------------

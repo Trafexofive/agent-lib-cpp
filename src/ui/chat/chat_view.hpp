@@ -4,6 +4,7 @@
 // no scene-specific business logic, no dependency on src/tui.
 
 #include <algorithm>
+#include <cstdint>
 #include <set>
 #include <sstream>
 #include <string>
@@ -12,6 +13,8 @@
 #include "inkcell/surface.hpp"
 #include "inkcell/text.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
+#include "src/ui/chat/chat_blocks.hpp"
+#include "src/ui/chat/transcript_cache.hpp"
 #include "src/ui/theme/cortex_theme.hpp"
 
 namespace cortex::mk3::ui::chat {
@@ -41,7 +44,10 @@ struct ChatSurfaceModel {
     int tokenBytes = 0;
     int scrollOffset = 0;
     bool followBottom = true;
-    std::vector<std::string> transcript;
+    std::vector<std::string> transcript;  // standalone/test fallback
+    const std::vector<std::string>* transcriptSource = nullptr;
+    uint64_t transcriptVersion = 0;
+    TranscriptWrapCache* transcriptCache = nullptr;
     std::string input;
     int inputCursor = 0;
     std::string hint;
@@ -226,11 +232,74 @@ inline std::vector<std::string> wrapTranscript(const std::vector<std::string>& s
     return out;
 }
 
+inline void buildBlockMetadata(const std::vector<std::string>& lines,
+                               std::vector<uint8_t>& kinds,
+                               std::vector<bool>& headers,
+                               std::vector<bool>& selected) {
+    kinds.assign(lines.size(), static_cast<uint8_t>(ChatBlockKind::None));
+    headers.assign(lines.size(), false);
+    selected.assign(lines.size(), false);
+    ChatBlockKind currentKind = ChatBlockKind::None;
+    bool currentSelected = false;
+    for (size_t i = 0; i < lines.size(); ++i) {
+        const auto& line = lines[i];
+        if (line.empty()) {
+            currentKind = ChatBlockKind::None;
+            currentSelected = false;
+            continue;
+        }
+        bool header = line.rfind("    ", 0) != 0;
+        if (header) {
+            currentKind = classifyChatBlock(line);
+            currentSelected = line.rfind("› ", 0) == 0;
+        }
+        kinds[i] = static_cast<uint8_t>(currentKind);
+        headers[i] = header;
+        selected[i] = currentSelected;
+    }
+}
+
 inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const ChatSurfaceModel& m) {
     if (body.w <= 0 || body.h <= 0) return;
-    auto displayLines = wrapTranscript(m.transcript, std::max(1, body.w - 1));
+    const auto& source = m.transcriptSource ? *m.transcriptSource : m.transcript;
+    int wrapWidth = std::max(1, body.w - 1);
+    std::vector<std::string> uncachedLines;
+    const std::vector<std::string>* displayLinesPtr = nullptr;
+    if (m.transcriptCache) {
+        if (m.transcriptCache->sourceVersion != m.transcriptVersion ||
+            m.transcriptCache->width != wrapWidth) {
+            m.transcriptCache->lines = wrapTranscript(source, wrapWidth);
+            m.transcriptCache->blockKinds.clear();
+            m.transcriptCache->blockHeaders.clear();
+            m.transcriptCache->blockSelected.clear();
+            m.transcriptCache->sourceVersion = m.transcriptVersion;
+            m.transcriptCache->width = wrapWidth;
+        }
+        displayLinesPtr = &m.transcriptCache->lines;
+    } else {
+        uncachedLines = wrapTranscript(source, wrapWidth);
+        displayLinesPtr = &uncachedLines;
+    }
+    const auto& displayLines = *displayLinesPtr;
     int total = static_cast<int>(displayLines.size());
     if (total <= 0) return;
+    std::vector<uint8_t> localKinds;
+    std::vector<bool> localHeaders;
+    std::vector<bool> localSelected;
+    std::vector<uint8_t>* blockKinds = &localKinds;
+    std::vector<bool>* blockHeaders = &localHeaders;
+    std::vector<bool>* blockSelected = &localSelected;
+    if (m.transcriptCache) {
+        if (m.transcriptCache->blockKinds.size() != displayLines.size())
+            buildBlockMetadata(displayLines, m.transcriptCache->blockKinds,
+                               m.transcriptCache->blockHeaders, m.transcriptCache->blockSelected);
+        blockKinds = &m.transcriptCache->blockKinds;
+        blockHeaders = &m.transcriptCache->blockHeaders;
+        blockSelected = &m.transcriptCache->blockSelected;
+    } else {
+        buildBlockMetadata(displayLines, localKinds, localHeaders, localSelected);
+    }
+
     int maxOffset = std::max(0, total - body.h);
     int offset = m.followBottom ? maxOffset : std::max(0, std::min(m.scrollOffset, maxOffset));
     if (m.historyFocused) {
@@ -246,8 +315,19 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
     for (int y = 0; y < visible; ++y) {
         int idx = offset + y;
         const auto& line = displayLines[static_cast<size_t>(idx)];
-        bool selected = m.historyFocused && line.rfind("› ", 0) == 0;
-        surface.text({body.x, firstY + y}, inkcell::text::fit_left(line, body.w), lineStyle(line, selected));
+        ChatBlockKind kind = static_cast<ChatBlockKind>((*blockKinds)[static_cast<size_t>(idx)]);
+        bool header = (*blockHeaders)[static_cast<size_t>(idx)];
+        bool selected = m.historyFocused && (*blockSelected)[static_cast<size_t>(idx)];
+        if (kind != ChatBlockKind::None) {
+            auto style = blockStyle(kind, header, selected);
+            int blockWidth = std::max(1, body.w - (total > body.h ? 1 : 0));
+            surface.fill({body.x, firstY + y, blockWidth, 1}, " ", style);
+            surface.text({body.x, firstY + y}, header ? "▎" : " ", style);
+            surface.text({body.x + 1, firstY + y},
+                         inkcell::text::fit_left(line, std::max(1, blockWidth - 1)), style);
+        } else {
+            surface.text({body.x, firstY + y}, inkcell::text::fit_left(line, body.w), theme::text());
+        }
     }
     if (total > body.h && body.w > 4) {
         int thumb = std::max(1, body.h * body.h / total);

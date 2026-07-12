@@ -38,13 +38,18 @@ inline bool sameProtocolEvent(const ProtocolEvent& a, const ProtocolEvent& b) {
     return true;
 }
 
-inline void publishProtocolChanges(AgentBridge& bridge, const std::vector<ProtocolEvent>& current,
+inline void collectProtocolChanges(std::vector<UiEvent>& out,
+                                   const std::vector<ProtocolEvent>& current,
                                    std::vector<ProtocolEvent>& previous) {
+    size_t previousSize = previous.size();
+    if (previous.size() < current.size()) previous.resize(current.size());
     for (size_t i = 0; i < current.size(); ++i) {
-        if (i >= previous.size() || !sameProtocolEvent(current[i], previous[i]))
-            bridge.publish(UiEvent::protocolEvent(current[i], i));
+        if (i >= previousSize || !sameProtocolEvent(current[i], previous[i])) {
+            out.push_back(UiEvent::protocolEvent(current[i], i));
+            previous[i] = current[i];
+        }
     }
-    previous = current;
+    if (previous.size() > current.size()) previous.resize(current.size());
 }
 
 inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
@@ -109,13 +114,19 @@ inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& p
         bridge.publish(UiEvent::status("agent running"));
         size_t rawSeen = 0;
         std::vector<ProtocolEvent> previousEvents;
-        auto onToken = [&](const std::string&, bool) {
+        auto lastUiFlush = std::chrono::steady_clock::now() - std::chrono::milliseconds(16);
+        auto onToken = [&](const std::string&, bool finalChunk) {
+            auto now = std::chrono::steady_clock::now();
+            if (!finalChunk && now - lastUiFlush < std::chrono::milliseconds(16)) return;
+            lastUiFlush = now;
+            std::vector<UiEvent> batch;
             const std::string& raw = agent.rawLlOutput();
             if (raw.size() > rawSeen) {
-                bridge.publish(UiEvent::token(raw.substr(rawSeen)));
+                batch.push_back(UiEvent::token(raw.substr(rawSeen)));
                 rawSeen = raw.size();
             }
-            publishProtocolChanges(bridge, agent.protocolEvents(), previousEvents);
+            collectProtocolChanges(batch, agent.protocolEvents(), previousEvents);
+            bridge.publishMany(std::move(batch));
         };
         std::string result = agent.prompt(prompt, onToken, sessionId, ephemeral);
         onToken("", true);
