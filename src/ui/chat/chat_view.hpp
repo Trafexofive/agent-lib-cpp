@@ -187,13 +187,17 @@ inline std::vector<std::string> wrapTranscript(const std::vector<std::string>& s
         std::string indent(indentSize, ' ');
         std::string content = original.substr(indentSize);
         int available = std::max(1, width - static_cast<int>(indentSize));
-        bool semanticHeader = content.rfind("YOU", 0) == 0 || content.rfind("CORTEX", 0) == 0 ||
-                              content.rfind("AGENT", 0) == 0 || content.rfind("TOOL", 0) == 0 ||
-                              content.rfind("FEED", 0) == 0 || content.rfind("RELIC", 0) == 0 ||
-                              content.rfind("WORKFLOW", 0) == 0 || content.rfind("ACTION", 0) == 0 ||
-                              content.rfind("✓ RESULT", 0) == 0 || content.rfind("✗ RESULT", 0) == 0 ||
-                              content.rfind("THOUGHT", 0) == 0 || content.rfind("RAW", 0) == 0 ||
-                              content.rfind("✗ ERROR", 0) == 0;
+        const std::string selectionPrefix = "› ";
+        std::string semanticProbe = content.rfind(selectionPrefix, 0) == 0
+                                        ? content.substr(selectionPrefix.size())
+                                        : content;
+        bool semanticHeader = semanticProbe.rfind("YOU", 0) == 0 || semanticProbe.rfind("CORTEX", 0) == 0 ||
+                              semanticProbe.rfind("AGENT", 0) == 0 || semanticProbe.rfind("TOOL", 0) == 0 ||
+                              semanticProbe.rfind("FEED", 0) == 0 || semanticProbe.rfind("RELIC", 0) == 0 ||
+                              semanticProbe.rfind("WORKFLOW", 0) == 0 || semanticProbe.rfind("ACTION", 0) == 0 ||
+                              semanticProbe.rfind("✓ RESULT", 0) == 0 || semanticProbe.rfind("✗ RESULT", 0) == 0 ||
+                              semanticProbe.rfind("THOUGHT", 0) == 0 || semanticProbe.rfind("RAW", 0) == 0 ||
+                              semanticProbe.rfind("✗ ERROR", 0) == 0;
         if (semanticHeader) {
             for (const auto& line : hardWrapUtf8(content, available)) out.push_back(indent + line);
             continue;
@@ -229,6 +233,14 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
     if (total <= 0) return;
     int maxOffset = std::max(0, total - body.h);
     int offset = m.followBottom ? maxOffset : std::max(0, std::min(m.scrollOffset, maxOffset));
+    if (m.historyFocused) {
+        for (int i = 0; i < total; ++i) {
+            if (displayLines[static_cast<size_t>(i)].rfind("› ", 0) == 0) {
+                offset = std::max(0, std::min(maxOffset, i - body.h / 3));
+                break;
+            }
+        }
+    }
     int visible = std::min(body.h, total - offset);
     int firstY = body.y + std::max(0, body.h - visible);  // ReplSession-style bottom anchoring.
     for (int y = 0; y < visible; ++y) {

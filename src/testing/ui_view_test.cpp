@@ -102,12 +102,27 @@ void test_chat_transcript_wraps_long_lines() {
     auto semantic = chat::wrapTranscript({"  AGENT  reader  #ping  ↳"}, 40);
     check(semantic.size() == 1 && semantic[0] == "  AGENT  reader  #ping  ↳",
           "chat wrapping preserves semantic header spacing");
+    auto selectedSemantic = chat::wrapTranscript({"› AGENT  reader  #ping  ↳"}, 40);
+    check(selectedSemantic.size() == 1 && selectedSemantic[0] == "› AGENT  reader  #ping  ↳",
+          "selected semantic header preserves spacing");
 
     auto code = chat::wrapTranscript({"    ```cpp", "    int  x = 1;", "    ```"}, 40);
     check(code.size() == 3 && code[0].find("┌─ cpp") != std::string::npos &&
               code[1].find("│ int  x = 1;") != std::string::npos &&
               code[2].find("└─") != std::string::npos,
           "chat code fences preserve code whitespace");
+}
+
+void test_chat_selection_stays_visible_after_wrap() {
+    inkcell::Surface s({60, 16});
+    chat::ChatSurfaceModel model;
+    model.historyFocused = true;
+    model.followBottom = false;
+    for (int i = 0; i < 18; ++i) model.transcript.push_back("    history line " + std::to_string(i));
+    model.transcript.push_back("› CORTEX");
+    model.transcript.push_back("    selected response");
+    chat::drawTranscript(s, {2, 2, 56, 10}, model);
+    check(containsRow(s, "› CORTEX"), "selected transcript block remains visible");
 }
 
 void test_chat_prompt_cursor_position() {
@@ -159,6 +174,7 @@ int main() {
     test_selected_block_cues();
     test_drillable_tag();
     test_chat_transcript_wraps_long_lines();
+    test_chat_selection_stays_visible_after_wrap();
     test_chat_prompt_cursor_position();
     test_chat_help_and_theme();
     test_ask_dialog_overlay();
