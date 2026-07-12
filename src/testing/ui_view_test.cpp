@@ -104,6 +104,19 @@ void test_chat_prompt_cursor_position() {
     check(containsRow(s, "> ab█cd"), "chat prompt renders cursor at model position");
 }
 
+void test_chat_help_and_theme() {
+    inkcell::Surface s({100, 30});
+    theme::set(theme::Variant::Graphite);
+    check(std::string(theme::name()) == "graphite", "graphite is the default chat theme");
+    chat::drawHelpOverlay(s, {2, 2, 96, 26});
+    check(containsRow(s, "CHAT HELP"), "chat help overlay renders on demand");
+    check(containsRow(s, "T           switch graphite / neon"),
+          "chat help documents theme switching");
+    theme::toggle();
+    check(std::string(theme::name()) == "neon", "chat theme toggles to neon");
+    theme::set(theme::Variant::Graphite);
+}
+
 void test_ask_dialog_overlay() {
     inkcell::Surface s({100, 30});
     Json::Value params;
@@ -131,6 +144,7 @@ int main() {
     test_drillable_tag();
     test_chat_transcript_wraps_long_lines();
     test_chat_prompt_cursor_position();
+    test_chat_help_and_theme();
     test_ask_dialog_overlay();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;

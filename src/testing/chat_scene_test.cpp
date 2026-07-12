@@ -81,6 +81,16 @@ void test_slash_and_completion() {
     check(!model->composer.value.empty() && model->composer.value.find("debug") != std::string::npos,
           "dynamic command expands into reviewed composer text");
     check(model->pendingSubmit.empty(), "dynamic expansion is not auto-submitted");
+
+    scene.on_key(key(inkcell::KeyCode::Escape));
+    scene.on_key(key(inkcell::KeyCode::Character, '?'));
+    check(model->helpVisible, "question mark opens help from transcript focus");
+    scene.on_key(key(inkcell::KeyCode::Escape));
+    check(!model->helpVisible, "Escape closes help overlay");
+    theme::set(theme::Variant::Graphite);
+    scene.on_key(key(inkcell::KeyCode::Character, 'T'));
+    check(theme::activeVariant == theme::Variant::Neon, "uppercase T switches theme in transcript focus");
+    theme::set(theme::Variant::Graphite);
 }
 
 void test_ctrl_c_state() {

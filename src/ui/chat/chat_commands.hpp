@@ -27,6 +27,7 @@ struct ChatCommandResult {
     bool clearTranscript = false;
     bool toggleThoughts = false;
     bool toggleRaw = false;
+    bool toggleTheme = false;
     bool showPrompts = false;
     bool dumpPrompts = false;
     bool copyAll = false;
@@ -62,6 +63,11 @@ inline ChatCommandResult executeChatCommand(const std::string& command,
         out.lines = {"raw stream visibility toggled"};
         return out;
     }
+    if (command == "/theme") {
+        out.toggleTheme = true;
+        out.title = "theme";
+        return out;
+    }
     if (command == "/prompts") {
         out.showPrompts = true;
         return out;
@@ -85,6 +91,7 @@ inline ChatCommandResult executeChatCommand(const std::string& command,
             "/clear             clear visible transcript",
             "/thoughts          toggle thought rows",
             "/raw               toggle raw stream rows",
+            "/theme             switch graphite / neon",
             "/manifests         inspect active harness surface",
             "/sessions          list recent sessions",
             "/prompts           show captured iteration prompts",

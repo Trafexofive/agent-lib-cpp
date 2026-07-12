@@ -201,6 +201,7 @@ struct ShellModel {
     int promptHistoryIndex = 0;
     std::string promptHistoryDraft;
 
+    bool helpVisible = false;
     bool askActive = false;
     chat::DialogState askDialog;
     inkcell::widgets::TextAreaState askInput;
@@ -321,13 +322,6 @@ struct ShellModel {
         }
 
         if (rows.empty()) {
-            transcriptView.lines.push_back(atRoot() ? "No turns yet." : "Nothing here yet.");
-            if (atRoot()) {
-                transcriptView.lines.push_back("Type a prompt and press Enter to send.");
-                transcriptView.lines.push_back("Esc focuses history · j/k select blocks · Enter opens agent history.");
-            } else {
-                transcriptView.lines.push_back("This sub-agent has no recorded protocol events.");
-            }
             if (atRoot()) timelineState = PageState::Empty;
         } else {
             int focusIdx = 0;

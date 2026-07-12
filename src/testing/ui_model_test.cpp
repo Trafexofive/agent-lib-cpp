@@ -318,6 +318,7 @@ void test_chat_commands() {
     check(chat::executeChatCommand("/clear").clearTranscript, "chat clear command classified");
     check(chat::executeChatCommand("/thoughts").toggleThoughts, "chat thoughts command classified");
     check(chat::executeChatCommand("/raw").toggleRaw, "chat raw command classified");
+    check(chat::executeChatCommand("/theme").toggleTheme, "chat theme command classified");
     check(chat::executeChatCommand("/prompts").showPrompts, "chat prompts command classified");
     check(chat::executeChatCommand("/dump-prompt").dumpPrompts, "chat dump-prompt command classified");
     check(chat::executeChatCommand("/cp-all").copyAll, "chat copy-all command classified");

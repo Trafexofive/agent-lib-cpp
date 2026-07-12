@@ -101,7 +101,7 @@ inline std::string expandDynamicChatCommand(const DynamicChatCommand& command,
 
 inline std::vector<std::string> completeChatCommand(const std::string& prefix) {
     static const std::vector<std::string> builtins = {
-        "/help", "/commands", "/clear", "/thoughts", "/raw", "/manifests",
+        "/help", "/commands", "/clear", "/thoughts", "/raw", "/theme", "/manifests",
         "/sessions", "/prompts", "/dump-prompt", "/dp", "/cp-all", "/cp-raw",
         "/quit", "/exit",
     };

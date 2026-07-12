@@ -19,6 +19,12 @@ class AgentScene final : public BaseScene {
         using inkcell::KeyCode;
 
         if (model_->askActive) return handleAskKey(event);
+        if (model_->helpVisible) {
+            if (event.code == KeyCode::Escape ||
+                (event.code == KeyCode::Character && event.ch == '?'))
+                model_->helpVisible = false;
+            return true;
+        }
 
         if (event.code == KeyCode::CtrlC) {
             if (model_->running) {
@@ -31,6 +37,14 @@ class AgentScene final : public BaseScene {
         }
 
         if (model_->timelineFocus || !model_->atRoot() || !model_->composer.focused) {
+            if (event.code == KeyCode::Character && event.ch == '?') {
+                model_->helpVisible = true;
+                return true;
+            }
+            if (event.code == KeyCode::Character && event.ch == 'T') {
+                theme::toggle();
+                return true;
+            }
             if (event.code == KeyCode::Escape) {
                 if (model_->goBack()) return true;
                 model_->focusComposer();
@@ -128,13 +142,15 @@ class AgentScene final : public BaseScene {
         vm.inputCursor = model_->composer.cursor;
         if (model_->running) vm.hint = "Ctrl-C cancel · Esc history · t thoughts · r raw";
         else if (!model_->atRoot()) vm.hint = "Esc/Backspace back · j/k select · Enter drill · g refresh";
-        else if (vm.historyFocused) vm.hint = "j/k select · Enter open sub-agent · i composer · t thoughts · r raw · q quit";
+        else if (vm.historyFocused) vm.hint = "j/k select · Enter open · i composer · ? help · T theme · q quit";
         else vm.hint = "Enter send · ↑↓ prompt history · Esc transcript · Ctrl-C cancel · q quit";
 
         chat::drawChatSurface(surface, p, vm);
         if (model_->askActive)
             chat::drawAskDialog(surface, p, model_->askDialog, model_->askInput.value,
                                 model_->askMultiSelected);
+        else if (model_->helpVisible)
+            chat::drawHelpOverlay(surface, p);
     }
 
    private:
@@ -242,6 +258,10 @@ class AgentScene final : public BaseScene {
         if (result.clearTranscript) model_->clearTranscript();
         if (result.toggleThoughts) model_->showThoughts = !model_->showThoughts;
         if (result.toggleRaw) model_->showRaw = !model_->showRaw;
+        if (result.toggleTheme) {
+            theme::toggle();
+            result.lines = {std::string("active theme: ") + theme::name()};
+        }
         if (result.showPrompts) showCapturedPrompts();
         if (result.dumpPrompts) {
             auto messages = chat::dumpPrompts(model_->rootAgent ? model_->rootAgent->iterationPrompts()

@@ -66,7 +66,7 @@ inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const C
     auto st = m.failed ? theme::red() : m.running ? theme::green() : theme::dim();
     std::string left = std::string(m.running ? "●" : m.failed ? "✗" : "○") + " " + m.status;
     left += "  " + (m.provider.empty() ? "provider?" : m.provider) + "/" + (m.model.empty() ? "default" : m.model);
-    left += "  mode:" + m.mode;
+    left += "  mode:" + m.mode + "  theme:" + theme::name();
     std::string right = "pending " + std::to_string(m.pendingOps) + " · actions " + std::to_string(m.actionCount) +
                         " · results " + std::to_string(m.resultCount) + " · bytes " + std::to_string(m.tokenBytes);
     surface.text({row.x, row.y}, inkcell::text::truncate(left, std::max(0, row.w - static_cast<int>(right.size()) - 2)), st);
@@ -123,12 +123,7 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
     if (body.w <= 0 || body.h <= 0) return;
     auto displayLines = wrapTranscript(m.transcript, std::max(1, body.w - 1));
     int total = static_cast<int>(displayLines.size());
-    if (total <= 0) {
-        int y = body.y + std::max(0, body.h / 2 - 1);
-        surface.text({body.x, y}, "No turns yet. Type a prompt and press Enter.", theme::dim());
-        surface.text({body.x, y + 1}, "Esc history · Enter send · /help commands · Ctrl-C cancel", theme::dim());
-        return;
-    }
+    if (total <= 0) return;
     int maxOffset = std::max(0, total - body.h);
     int offset = m.followBottom ? maxOffset : std::max(0, std::min(m.scrollOffset, maxOffset));
     int visible = std::min(body.h, total - offset);
@@ -146,6 +141,38 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
             surface.put({body.right() - 1, body.y + y}, (y >= thumbY && y < thumbY + thumb) ? "│" : "┆", theme::dim());
         }
     }
+}
+
+inline void drawHelpOverlay(inkcell::Surface& surface, inkcell::Rect page) {
+    int width = std::max(44, std::min(page.w - 4, 76));
+    int height = std::max(16, std::min(page.h - 4, 22));
+    inkcell::Rect frame{page.x + (page.w - width) / 2, page.y + (page.h - height) / 2, width, height};
+    surface.fill(frame, " ", theme::panel_2());
+    surface.box(frame, inkcell::BorderStyle::Square, theme::dim());
+    int x = frame.x + 2;
+    int y = frame.y + 1;
+    int inner = frame.w - 4;
+    surface.text({x, y++}, "CHAT HELP", theme::bright());
+    surface.text({x, y++}, std::string("theme: ") + theme::name(), theme::dim());
+    ++y;
+    const std::vector<std::string> lines = {
+        "Enter       send prompt",
+        "Up / Down   prompt history (composer)",
+        "Esc         focus transcript / return to composer",
+        "j / k       select transcript blocks",
+        "Enter       open selected sub-agent",
+        "t / r       toggle thoughts / raw",
+        "T           switch graphite / neon",
+        "Tab         complete slash command",
+        "Ctrl-C      cancel active turn",
+        "q           quit (outside composer)",
+        "/help       command catalog",
+    };
+    for (const auto& line : lines) {
+        if (y >= frame.bottom() - 2) break;
+        surface.text({x, y++}, inkcell::text::truncate(line, inner), theme::text());
+    }
+    surface.text({x, frame.bottom() - 2}, "? or Esc close", theme::dim());
 }
 
 inline void drawAskDialog(inkcell::Surface& surface, inkcell::Rect page, const DialogState& state,
