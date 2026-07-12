@@ -99,6 +99,10 @@ void test_chat_transcript_wraps_long_lines() {
     for (const auto& line : tokenLines) reconstructed += line.substr(std::min<size_t>(4, line.size()));
     check(reconstructed == token, "chat wrapping never truncates long tokens");
 
+    auto semantic = chat::wrapTranscript({"  AGENT  reader  #ping  ↳"}, 40);
+    check(semantic.size() == 1 && semantic[0] == "  AGENT  reader  #ping  ↳",
+          "chat wrapping preserves semantic header spacing");
+
     auto code = chat::wrapTranscript({"    ```cpp", "    int  x = 1;", "    ```"}, 40);
     check(code.size() == 3 && code[0].find("┌─ cpp") != std::string::npos &&
               code[1].find("│ int  x = 1;") != std::string::npos &&

@@ -187,6 +187,17 @@ inline std::vector<std::string> wrapTranscript(const std::vector<std::string>& s
         std::string indent(indentSize, ' ');
         std::string content = original.substr(indentSize);
         int available = std::max(1, width - static_cast<int>(indentSize));
+        bool semanticHeader = content.rfind("YOU", 0) == 0 || content.rfind("CORTEX", 0) == 0 ||
+                              content.rfind("AGENT", 0) == 0 || content.rfind("TOOL", 0) == 0 ||
+                              content.rfind("FEED", 0) == 0 || content.rfind("RELIC", 0) == 0 ||
+                              content.rfind("WORKFLOW", 0) == 0 || content.rfind("ACTION", 0) == 0 ||
+                              content.rfind("✓ RESULT", 0) == 0 || content.rfind("✗ RESULT", 0) == 0 ||
+                              content.rfind("THOUGHT", 0) == 0 || content.rfind("RAW", 0) == 0 ||
+                              content.rfind("✗ ERROR", 0) == 0;
+        if (semanticHeader) {
+            for (const auto& line : hardWrapUtf8(content, available)) out.push_back(indent + line);
+            continue;
+        }
         if (content.rfind("```", 0) == 0) {
             if (!inCode) {
                 std::string language = content.substr(3);
