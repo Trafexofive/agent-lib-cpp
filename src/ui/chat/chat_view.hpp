@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -64,6 +65,10 @@ inline inkcell::Style lineStyle(const std::string& line, bool selected) {
     if (content.rfind("✓ RESULT", 0) == 0) return theme::green();
     if (content.rfind("✗", 0) == 0 || content.rfind("ERROR", 0) == 0) return theme::red();
     if (content.rfind("THOUGHT", 0) == 0 || content.rfind("RAW", 0) == 0) return theme::dim();
+    if (content.rfind("┌─", 0) == 0 || content.rfind("└─", 0) == 0 ||
+        content.rfind("│ ", 0) == 0) return theme::dim();
+    if (content.rfind("# ", 0) == 0 || content.rfind("## ", 0) == 0 ||
+        content.rfind("### ", 0) == 0) return theme::bright();
     if (line.rfind("    ", 0) == 0) return theme::text();
     return theme::dim();
 }
@@ -116,9 +121,62 @@ inline void drawHeader(inkcell::Surface& surface, inkcell::Rect frame, const Cha
     surface.text({std::max(frame.x, frame.right() - rightWidth), frame.y}, right, theme::dim());
 }
 
+inline std::vector<std::string> hardWrapUtf8(const std::string& value, int width) {
+    std::vector<std::string> out;
+    width = std::max(1, width);
+    std::string line;
+    int columns = 0;
+    for (size_t i = 0; i < value.size();) {
+        size_t len = inkcell::text::utf8_codepoint_len(static_cast<unsigned char>(value[i]));
+        if (i + len > value.size()) len = 1;
+        std::string glyph = value.substr(i, len);
+        int glyphWidth = std::max(1, inkcell::text::display_width(glyph));
+        if (!line.empty() && columns + glyphWidth > width) {
+            out.push_back(line);
+            line.clear();
+            columns = 0;
+        }
+        line += glyph;
+        columns += glyphWidth;
+        i += len;
+    }
+    if (!line.empty() || out.empty()) out.push_back(line);
+    return out;
+}
+
+inline std::vector<std::string> wrapWordsLossless(const std::string& value, int width) {
+    std::vector<std::string> out;
+    std::istringstream words(value);
+    std::string word;
+    std::string line;
+    while (words >> word) {
+        if (inkcell::text::display_width(word) > width) {
+            if (!line.empty()) {
+                out.push_back(line);
+                line.clear();
+            }
+            auto chunks = hardWrapUtf8(word, width);
+            out.insert(out.end(), chunks.begin(), chunks.end());
+            continue;
+        }
+        int next = inkcell::text::display_width(line) + inkcell::text::display_width(word) +
+                   (line.empty() ? 0 : 1);
+        if (next > width) {
+            out.push_back(line);
+            line = word;
+        } else {
+            if (!line.empty()) line += ' ';
+            line += word;
+        }
+    }
+    if (!line.empty()) out.push_back(line);
+    return out;
+}
+
 inline std::vector<std::string> wrapTranscript(const std::vector<std::string>& source, int width) {
     std::vector<std::string> out;
     width = std::max(1, width);
+    bool inCode = false;
     for (const auto& original : source) {
         if (original.empty()) {
             out.push_back("");
@@ -128,7 +186,25 @@ inline std::vector<std::string> wrapTranscript(const std::vector<std::string>& s
         while (indentSize < original.size() && original[indentSize] == ' ' && indentSize < 6) ++indentSize;
         std::string indent(indentSize, ' ');
         std::string content = original.substr(indentSize);
-        auto wrapped = inkcell::text::wrap_words(content, std::max(1, width - static_cast<int>(indentSize)));
+        int available = std::max(1, width - static_cast<int>(indentSize));
+        if (content.rfind("```", 0) == 0) {
+            if (!inCode) {
+                std::string language = content.substr(3);
+                size_t first = language.find_first_not_of(" \t");
+                language = first == std::string::npos ? std::string() : language.substr(first);
+                out.push_back(indent + "┌─" + (language.empty() ? std::string() : " " + language));
+            } else {
+                out.push_back(indent + "└─");
+            }
+            inCode = !inCode;
+            continue;
+        }
+        if (inCode) {
+            for (const auto& line : hardWrapUtf8(content, std::max(1, available - 2)))
+                out.push_back(indent + "│ " + line);
+            continue;
+        }
+        auto wrapped = wrapWordsLossless(content, available);
         if (wrapped.empty()) out.push_back(indent);
         else for (const auto& line : wrapped) out.push_back(indent + line);
     }

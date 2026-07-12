@@ -92,6 +92,18 @@ void test_chat_transcript_wraps_long_lines() {
     bool preservedIndent = true;
     for (const auto& line : lines) preservedIndent = preservedIndent && line.rfind("  ", 0) == 0;
     check(preservedIndent, "chat transcript preserves indentation while wrapping");
+
+    std::string token(90, 'x');
+    auto tokenLines = chat::wrapTranscript({"    " + token}, 24);
+    std::string reconstructed;
+    for (const auto& line : tokenLines) reconstructed += line.substr(std::min<size_t>(4, line.size()));
+    check(reconstructed == token, "chat wrapping never truncates long tokens");
+
+    auto code = chat::wrapTranscript({"    ```cpp", "    int  x = 1;", "    ```"}, 40);
+    check(code.size() == 3 && code[0].find("┌─ cpp") != std::string::npos &&
+              code[1].find("│ int  x = 1;") != std::string::npos &&
+              code[2].find("└─") != std::string::npos,
+          "chat code fences preserve code whitespace");
 }
 
 void test_chat_prompt_cursor_position() {
