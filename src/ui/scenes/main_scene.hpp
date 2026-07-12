@@ -1,7 +1,6 @@
 #pragma once
-// Main control page for experimental inkcell app.
-// This is the app composition surface: chat entry, sessions, harness/manifest,
-// provider/model, and run context. No placeholder route pages.
+// Final dashboard/control surface. Real actions only: chat, session lifecycle,
+// harness inventory, runtime inspection, help, quit.
 
 #include <algorithm>
 #include <string>
@@ -9,41 +8,74 @@
 
 #include "base_scene.hpp"
 #include "src/session/manager.hpp"
+#include "src/ui/chat/chat_view.hpp"
+#include "src/ui/model/dashboard_controller.hpp"
 
 namespace cortex::mk3::ui::scenes {
 
 class MainScene final : public BaseScene {
    public:
     using BaseScene::BaseScene;
-    std::string name() const override { return "Main"; }
+    std::string name() const override { return "Dashboard"; }
+
+    void on_enter() override {
+        BaseScene::on_enter();
+        model_->dashboard.refreshSessions();
+    }
 
     bool on_key(const inkcell::KeyEvent& event) override {
         using inkcell::KeyCode;
-        if (event.code == KeyCode::ArrowUp || (event.code == KeyCode::Character && event.ch == 'k')) {
-            mainIndex_ = std::max(0, mainIndex_ - 1);
+        auto& dash = model_->dashboard;
+
+        if (event.code == KeyCode::Escape) {
+            dash.focus = model::DashboardFocus::Navigation;
             return true;
         }
-        if (event.code == KeyCode::ArrowDown || (event.code == KeyCode::Character && event.ch == 'j')) {
-            mainIndex_ = std::min(kOptionCount - 1, mainIndex_ + 1);
+        if (event.code == KeyCode::Tab || event.code == KeyCode::ArrowRight) {
+            if (dash.section == model::DashboardSection::Sessions)
+                dash.focus = model::DashboardFocus::Content;
+            return true;
+        }
+        if (event.code == KeyCode::ArrowLeft) {
+            dash.focus = model::DashboardFocus::Navigation;
+            return true;
+        }
+        if (event.code == KeyCode::ArrowUp ||
+            (event.code == KeyCode::Character && (event.ch == 'k' || event.ch == 'K'))) {
+            if (dash.focus == model::DashboardFocus::Content &&
+                dash.section == model::DashboardSection::Sessions)
+                dash.moveSession(-1);
+            else
+                dash.moveNavigation(-1);
+            return true;
+        }
+        if (event.code == KeyCode::ArrowDown ||
+            (event.code == KeyCode::Character && (event.ch == 'j' || event.ch == 'J'))) {
+            if (dash.focus == model::DashboardFocus::Content &&
+                dash.section == model::DashboardSection::Sessions)
+                dash.moveSession(1);
+            else
+                dash.moveNavigation(1);
             return true;
         }
         if (event.code == KeyCode::Enter) {
-            activateSelection();
+            activate();
             return true;
         }
         if (event.code == KeyCode::Character) {
-            if (event.ch == '1' || event.ch == 'c' || event.ch == 'C') {
-                model_->pendingRoute = "agent";
-                return true;
-            }
-            if (event.ch == 'q' || event.ch == 'Q') {
-                model_->pendingRoute = "quit";
-                return true;
-            }
-            if (event.ch >= '1' && event.ch <= '5') {
-                mainIndex_ = event.ch - '1';
-                activateSelection();
-                return true;
+            switch (event.ch) {
+                case 'c': case 'C': model_->pendingRoute = "agent"; return true;
+                case 'o': case 'O': dash.select(model::DashboardSection::Overview); return true;
+                case 's': case 'S': dash.select(model::DashboardSection::Sessions); dash.focus = model::DashboardFocus::Content; return true;
+                case 'h': case 'H': dash.select(model::DashboardSection::Harness); return true;
+                case 'r': dash.select(model::DashboardSection::Runtime); return true;
+                case '?': dash.select(model::DashboardSection::Help); return true;
+                case 'n': case 'N':
+                    if (dash.section == model::DashboardSection::Sessions) createSession();
+                    return true;
+                case 'R': dash.refreshSessions(); dash.notice = "session index refreshed"; return true;
+                case 'T': theme::toggle(); return true;
+                case 'q': case 'Q': model_->pendingRoute = "quit"; return true;
             }
         }
         return false;
@@ -53,185 +85,283 @@ class MainScene final : public BaseScene {
         using namespace inkcell;
         if (layout::render_min_size_notice(surface)) return;
         surface.clear(theme::base_bg());
-        Rect p = layout::page(surface);
+        Rect page = layout::page(surface);
+        drawHeader(surface, page);
 
-        drawTop(surface, p);
-
-        Rect body{p.x, p.y + 6, p.w, std::max(1, p.h - 8)};
-        if (body.w >= 120) drawWide(surface, body);
-        else drawStandard(surface, body);
-
-        std::string right = cfg_.ephemeral ? "ephemeral" : "session:…" + suffix(cfg_.sessionId);
-        surface.text({p.x, p.bottom() - 1}, "↑↓/j/k select · Enter open · 1/c chat · q quit", theme::dim());
-        surface.text({std::max(p.x, p.right() - static_cast<int>(right.size())), p.bottom() - 1}, right,
-                     theme::dim());
+        int top = page.y + 3;
+        int footer = page.bottom() - 1;
+        int navWidth = page.w >= 110 ? 29 : 24;
+        Rect nav{page.x, top, navWidth, std::max(1, footer - top - 1)};
+        Rect content{nav.right() + 3, top, std::max(1, page.right() - nav.right() - 3), nav.h};
+        drawNavigation(surface, nav);
+        drawContent(surface, content);
+        drawFooter(surface, {page.x, footer, page.w, 1});
     }
 
    private:
-    static constexpr int kOptionCount = 5;
-    int mainIndex_ = 0;
-
-    struct Option {
+    struct NavigationItem {
+        model::DashboardSection section;
         const char* key;
-        const char* title;
-        const char* hint;
-        const char* route;
+        const char* label;
+        const char* description;
     };
 
-    static std::string suffix(const std::string& id) {
-        if (id.empty()) return "none";
-        return id.size() > 8 ? id.substr(id.size() - 8) : id;
+    static const std::vector<NavigationItem>& items() {
+        static const std::vector<NavigationItem> value = {
+            {model::DashboardSection::Overview, "o", "Overview", "active workspace"},
+            {model::DashboardSection::Sessions, "s", "Sessions", "resume or start clean"},
+            {model::DashboardSection::Harness, "h", "Harness", "prompts and capabilities"},
+            {model::DashboardSection::Runtime, "r", "Runtime", "provider and process state"},
+            {model::DashboardSection::Help, "?", "Help", "dashboard controls"},
+        };
+        return value;
+    }
+
+    static std::string suffix(const std::string& value) {
+        if (value.empty()) return "none";
+        return value.size() > 10 ? value.substr(value.size() - 10) : value;
     }
 
     static std::string basename(const std::string& path) {
         if (path.empty()) return "none";
-        size_t pos = path.find_last_of('/');
-        return pos == std::string::npos ? path : path.substr(pos + 1);
+        size_t slash = path.find_last_of('/');
+        return slash == std::string::npos ? path : path.substr(slash + 1);
     }
 
-    static std::string fit(inkcell::Surface& surface, inkcell::Point p, int w, const std::string& text,
-                           inkcell::Style style) {
-        surface.text(p, inkcell::text::truncate(text, w), style);
-        return text;
+    void drawHeader(inkcell::Surface& surface, inkcell::Rect page) const {
+        std::string left = "CORTEX MK3  /  DASHBOARD";
+        std::string right = nonempty(cfg_.provider, "provider?") + "/" +
+                            nonempty(cfg_.model, "default") + "  ·  " + theme::name();
+        int rightWidth = inkcell::text::display_width(right);
+        surface.text({page.x, page.y}, left, theme::bright());
+        surface.text({std::max(page.x, page.right() - rightWidth), page.y}, right, theme::dim());
+        std::string context = nonempty(cfg_.agentName, "builtin") + "  ·  session " +
+                              suffix(model_->activeSessionId) + "  ·  " +
+                              (cfg_.ephemeral ? "ephemeral" : "persistent");
+        surface.text({page.x, page.y + 1}, inkcell::text::truncate(context, page.w), theme::dim());
     }
 
-    void activateSelection() const {
-        if (mainIndex_ == 0) model_->pendingRoute = "agent";
-        else if (mainIndex_ == 4) model_->pendingRoute = "quit";
-        // Sessions / Harness / Provider are management panels on this page for now.
-        // Selection moves the right-hand context; no fake route.
+    void drawNavigation(inkcell::Surface& surface, inkcell::Rect frame) const {
+        const auto& dash = model_->dashboard;
+        surface.text({frame.x, frame.y}, "WORKSPACE", theme::dim());
+        int y = frame.y + 2;
+        for (const auto& item : items()) {
+            bool selected = item.section == dash.section;
+            std::string row = std::string(item.key) + "  " + item.label;
+            layout::selected_row(surface, {frame.x, y, frame.w, 1}, row,
+                                 selected && dash.focus == model::DashboardFocus::Navigation);
+            surface.text({frame.x + 4, y + 1},
+                         inkcell::text::truncate(item.description, std::max(1, frame.w - 5)),
+                         selected ? theme::text() : theme::dim());
+            y += 3;
+        }
+        if (y + 2 < frame.bottom()) {
+            surface.text({frame.x, frame.bottom() - 3}, "c  Open chat", theme::green());
+            surface.text({frame.x, frame.bottom() - 2}, "T  Switch theme", theme::dim());
+            surface.text({frame.x, frame.bottom() - 1}, "q  Quit", theme::dim());
+        }
+    }
+
+    void drawContent(inkcell::Surface& surface, inkcell::Rect frame) const {
+        switch (model_->dashboard.section) {
+            case model::DashboardSection::Overview: drawOverview(surface, frame); break;
+            case model::DashboardSection::Sessions: drawSessions(surface, frame); break;
+            case model::DashboardSection::Harness: drawHarness(surface, frame); break;
+            case model::DashboardSection::Runtime: drawRuntime(surface, frame); break;
+            case model::DashboardSection::Help: drawHelp(surface, frame); break;
+        }
+    }
+
+    void sectionTitle(inkcell::Surface& surface, inkcell::Rect frame,
+                      const std::string& title, const std::string& subtitle) const {
+        surface.text({frame.x, frame.y}, title, theme::bright());
+        surface.text({frame.x, frame.y + 1}, inkcell::text::truncate(subtitle, frame.w), theme::dim());
+        surface.hline({frame.x, frame.y + 3}, frame.w, "─", theme::dim());
+    }
+
+    void field(inkcell::Surface& surface, int x, int y, int width,
+               const std::string& name, const std::string& value,
+               inkcell::Style valueStyle = theme::text()) const {
+        surface.text({x, y}, inkcell::text::fit_left(name, 12), theme::dim());
+        surface.text({x + 13, y}, inkcell::text::truncate(value, std::max(1, width - 13)), valueStyle);
+    }
+
+    void drawOverview(inkcell::Surface& surface, inkcell::Rect frame) const {
+        sectionTitle(surface, frame, "Overview", "Current agent workspace and operational state");
+        int y = frame.y + 5;
+        field(surface, frame.x, y++, frame.w, "agent", nonempty(cfg_.agentName, "builtin"), theme::bright());
+        field(surface, frame.x, y++, frame.w, "status", model_->running ? "running" : "ready",
+              model_->running ? theme::green() : theme::text());
+        field(surface, frame.x, y++, frame.w, "session", suffix(model_->activeSessionId));
+        field(surface, frame.x, y++, frame.w, "manifest", cfg_.manifestPath.empty() ? "builtin surface" : cfg_.manifestPath);
+        y += 2;
+        surface.text({frame.x, y++}, "CAPABILITIES", theme::dim());
+        field(surface, frame.x, y++, frame.w, "tools", std::to_string(cfg_.toolCount));
+        field(surface, frame.x, y++, frame.w, "sub-agents", std::to_string(cfg_.subAgentCount));
+        field(surface, frame.x, y++, frame.w, "feeds/relics", std::to_string(cfg_.feedCount) + " / " + std::to_string(cfg_.relicCount));
+        y += 2;
+        surface.text({frame.x, y++}, "c / Enter  open chat", theme::green());
+        surface.text({frame.x, y++}, "s          manage sessions", theme::dim());
+    }
+
+    void drawSessions(inkcell::Surface& surface, inkcell::Rect frame) const {
+        sectionTitle(surface, frame, "Sessions", "Enter resumes selection · n starts clean · R refreshes");
+        const auto& dash = model_->dashboard;
+        int y = frame.y + 5;
+        if (dash.sessions.empty()) {
+            surface.text({frame.x, y++}, "No saved sessions.", theme::dim());
+            surface.text({frame.x, y}, "Press n to create a clean session.", theme::text());
+            return;
+        }
+        int visible = std::max(1, frame.bottom() - y - 2);
+        int start = std::max(0, std::min(dash.sessionIndex - visible / 2,
+                                         static_cast<int>(dash.sessions.size()) - visible));
+        for (int i = start; i < static_cast<int>(dash.sessions.size()) && y < frame.bottom() - 1; ++i) {
+            const auto& info = dash.sessions[static_cast<size_t>(i)];
+            bool selected = i == dash.sessionIndex;
+            std::string line = suffix(info.id) + "  " +
+                               nonempty(info.agentName, "agent") + "  " +
+                               std::to_string(info.turnCount) + " records";
+            layout::selected_row(surface, {frame.x, y, frame.w, 1}, line,
+                                 selected && dash.focus == model::DashboardFocus::Content);
+            if (selected && y + 1 < frame.bottom())
+                surface.text({frame.x + 3, ++y},
+                             inkcell::text::truncate(info.updated + "  " + info.model, frame.w - 3),
+                             theme::dim());
+            ++y;
+        }
+    }
+
+    void drawHarness(inkcell::Surface& surface, inkcell::Rect frame) const {
+        sectionTitle(surface, frame, "Harness", "Active prompt stack and imported capability surface");
+        int y = frame.y + 5;
+        field(surface, frame.x, y++, frame.w, "manifest", cfg_.manifestPath.empty() ? "none" : cfg_.manifestPath);
+        field(surface, frame.x, y++, frame.w, "harness", basename(cfg_.harnessPath));
+        field(surface, frame.x, y++, frame.w, "system", basename(cfg_.systemPromptPath));
+        field(surface, frame.x, y++, frame.w, "persona", basename(cfg_.personaPath));
+        y += 2;
+        if (!model_->rootAgent) return;
+        auto renderNames = [&](const std::string& label, const std::vector<std::string>& names) {
+            if (y >= frame.bottom()) return;
+            surface.text({frame.x, y++}, label + "  " + std::to_string(names.size()), theme::dim());
+            std::string joined;
+            for (const auto& name : names) {
+                if (!joined.empty()) joined += " · ";
+                joined += name;
+            }
+            for (const auto& line : chat::wrapWordsLossless(joined.empty() ? "none" : joined, frame.w - 2)) {
+                if (y >= frame.bottom()) break;
+                surface.text({frame.x + 2, y++}, line, names.empty() ? theme::dim() : theme::text());
+            }
+            ++y;
+        };
+        renderNames("TOOLS", model_->rootAgent->toolNames());
+        renderNames("FEEDS", model_->rootAgent->feedNames());
+        renderNames("RELICS", model_->rootAgent->relicNames());
+        renderNames("SUB-AGENTS", model_->rootAgent->subAgentNames());
+    }
+
+    void drawRuntime(inkcell::Surface& surface, inkcell::Rect frame) const {
+        sectionTitle(surface, frame, "Runtime", "Current immutable agent backend and process state");
+        int y = frame.y + 5;
+        field(surface, frame.x, y++, frame.w, "provider", nonempty(cfg_.provider, "unset"));
+        field(surface, frame.x, y++, frame.w, "model", nonempty(cfg_.model, "default"));
+        field(surface, frame.x, y++, frame.w, "theme", theme::name());
+        field(surface, frame.x, y++, frame.w, "mode", cfg_.ephemeral ? "ephemeral" : "persistent");
+        field(surface, frame.x, y++, frame.w, "turn", model_->running ? "running" : "idle");
+        field(surface, frame.x, y++, frame.w, "pending", std::to_string(model_->pendingOps));
+        field(surface, frame.x, y++, frame.w, "actions", std::to_string(model_->actionCount));
+        field(surface, frame.x, y++, frame.w, "results", std::to_string(model_->resultCount));
+        y += 2;
+        surface.text({frame.x, y++}, "Provider/model are fixed for the active Agent instance.", theme::dim());
+        surface.text({frame.x, y}, "Use CLI/provider picker before launch to change backend safely.", theme::dim());
+    }
+
+    void drawHelp(inkcell::Surface& surface, inkcell::Rect frame) const {
+        sectionTitle(surface, frame, "Help", "Dashboard navigation");
+        int y = frame.y + 5;
+        const std::vector<std::string> lines = {
+            "j/k or arrows   move navigation/session selection",
+            "Tab / Right     focus session list",
+            "Left / Esc      return to navigation",
+            "Enter           activate selected item",
+            "c               open chat",
+            "n               create clean session (Sessions)",
+            "R               refresh session index",
+            "T               switch graphite/neon theme",
+            "m               return here from chat transcript focus",
+            "q               quit",
+        };
+        for (const auto& line : lines) {
+            if (y >= frame.bottom()) break;
+            surface.text({frame.x, y++}, line, theme::text());
+        }
+    }
+
+    void drawFooter(inkcell::Surface& surface, inkcell::Rect row) const {
+        std::string left = model_->dashboard.notice;
+        std::string right = model_->dashboard.focus == model::DashboardFocus::Content
+                                ? "j/k select · Enter resume · n new · Esc navigation"
+                                : "j/k navigate · Enter open · c chat · ? help · q quit";
+        surface.text({row.x, row.y}, inkcell::text::truncate(left, std::max(0, row.w - static_cast<int>(right.size()) - 2)),
+                     theme::green());
+        surface.text({std::max(row.x, row.right() - static_cast<int>(right.size())), row.y}, right, theme::dim());
+    }
+
+    void activate() {
+        auto& dash = model_->dashboard;
+        if (dash.focus == model::DashboardFocus::Content &&
+            dash.section == model::DashboardSection::Sessions) {
+            resumeSelectedSession();
+            return;
+        }
+        switch (dash.section) {
+            case model::DashboardSection::Overview:
+                model_->pendingRoute = "agent";
+                break;
+            case model::DashboardSection::Sessions:
+                dash.focus = model::DashboardFocus::Content;
+                break;
+            case model::DashboardSection::Harness:
+            case model::DashboardSection::Runtime:
+            case model::DashboardSection::Help:
+                break;
+        }
+    }
+
+    void resumeSelectedSession() {
+        if (!model_->rootAgent) {
+            model_->dashboard.notice = "agent runtime unavailable";
+            return;
+        }
+        session::SessionManager sessions;
+        auto result = model::resumeDashboardSession(
+            model_->dashboard, sessions,
+            [&](const std::string& id) { model_->rootAgent->loadSession(id); });
+        if (!result.ok) return;
+        model_->loadSessionRecords(result.records);
+        model_->activeSessionId = result.sessionId;
+        model_->pendingRoute = "agent";
+    }
+
+    void createSession() {
+        if (!model_->rootAgent) {
+            model_->dashboard.notice = "agent runtime unavailable";
+            return;
+        }
+        session::SessionManager sessions;
+        auto result = model::createDashboardSession(
+            model_->dashboard, sessions, model_->rootAgent->name(), cfg_.model, cfg_.provider,
+            [&] { model_->rootAgent->clearHistory(); });
+        if (!result.ok) return;
+        model_->clearTranscript();
+        model_->activeSessionId = result.sessionId;
+        model_->pendingRoute = "agent";
     }
 
     void handle(const inkcell::Action& action) override {
-        if (action.is("scroll.up")) mainIndex_ = std::max(0, mainIndex_ - 1);
-        else if (action.is("scroll.down")) mainIndex_ = std::min(kOptionCount - 1, mainIndex_ + 1);
-    }
-
-    void drawTop(inkcell::Surface& surface, inkcell::Rect p) const {
-        surface.text({p.x, p.y}, "CORTEX MK3", theme::cyan());
-        surface.text({p.x, p.y + 1}, "agent workbench · sessions · harness · provider · chat", theme::dim());
-        int y = p.y + 3;
-        layout::chip(surface, {p.x, y}, "provider " + nonempty(cfg_.provider, "?"), theme::dim());
-        layout::chip(surface, {p.x + 28, y}, "model " + nonempty(cfg_.model, "default"), theme::dim());
-        layout::chip(surface, {p.x + 58, y}, "agent " + nonempty(cfg_.agentName, "builtin"), theme::text());
-        std::string mode = cfg_.manifestPath.empty() ? "main menu" : "manifest loaded → chat-ready";
-        surface.text({std::max(p.x, p.right() - static_cast<int>(mode.size())), y}, mode, theme::amber());
-        layout::section_rule(surface, {p.x, p.y + 5}, p.w, "control board");
-    }
-
-    std::vector<Option> options() const {
-        return {
-            {"1", "Chat / Agent History", cfg_.manifestPath.empty() ? "open builtin chat surface" : "manifest selected: opens directly into chat", "agent"},
-            {"2", "Sessions", "recent sessions and resume context", "sessions"},
-            {"3", "Harness / Manifest", "active prompt stack, manifest, tools and sub-agents", "harness"},
-            {"4", "Provider / Model", "current backend and model context", "provider"},
-            {"q", "Quit", "leave the workbench", "quit"},
-        };
-    }
-
-    void drawOptions(inkcell::Surface& surface, inkcell::Rect r) const {
-        layout::flat_panel(surface, r, theme::panel_bg());
-        auto opts = options();
-        int y = r.y + 1;
-        surface.text({r.x + 1, y++}, "main", theme::bright());
-        y++;
-        for (int i = 0; i < static_cast<int>(opts.size()) && y + 1 < r.bottom(); ++i) {
-            bool sel = i == mainIndex_;
-            layout::selected_row(surface, {r.x + 1, y, r.w - 2, 1},
-                                 std::string(opts[i].key) + "  " + opts[i].title, sel);
-            surface.text({r.x + 5, y + 1}, inkcell::text::truncate(opts[i].hint, std::max(0, r.w - 7)),
-                         sel ? theme::text() : theme::dim());
-            y += 3;
-        }
-    }
-
-    void drawChatContext(inkcell::Surface& surface, inkcell::Rect r) const {
-        layout::flat_panel(surface, r, theme::panel_bg());
-        layout::section_rule(surface, {r.x + 1, r.y + 1}, r.w - 2, "chat context");
-        int y = r.y + 3;
-        surface.text({r.x + 2, y++}, "agent     " + nonempty(cfg_.agentName, "builtin"), theme::text());
-        surface.text({r.x + 2, y++}, "session   " + suffix(cfg_.sessionId), theme::dim());
-        surface.text({r.x + 2, y++}, "mode      " + std::string(cfg_.ephemeral ? "ephemeral" : "persistent"), theme::dim());
-        surface.text({r.x + 2, y++}, "status    " + model_->status, model_->failed ? theme::red() : theme::dim());
-        y++;
-        surface.text({r.x + 2, y++}, cfg_.manifestPath.empty() ? "No -m specified: builtin chat surface is active."
-                                                               : "-m specified: startup drops directly into chat.",
-                     cfg_.manifestPath.empty() ? theme::dim() : theme::green());
-    }
-
-    void drawHarness(inkcell::Surface& surface, inkcell::Rect r) const {
-        layout::flat_panel(surface, r, theme::panel_2());
-        layout::section_rule(surface, {r.x + 1, r.y + 1}, r.w - 2, "harness / manifest");
-        int y = r.y + 3;
-        surface.text({r.x + 2, y++}, "manifest  " + inkcell::text::truncate(cfg_.manifestPath.empty() ? "none" : cfg_.manifestPath, r.w - 13),
-                     cfg_.manifestPath.empty() ? theme::dim() : theme::text());
-        surface.text({r.x + 2, y++}, "harness   " + inkcell::text::truncate(basename(cfg_.harnessPath), r.w - 13), theme::dim());
-        surface.text({r.x + 2, y++}, "system    " + inkcell::text::truncate(basename(cfg_.systemPromptPath), r.w - 13), theme::dim());
-        surface.text({r.x + 2, y++}, "persona   " + inkcell::text::truncate(basename(cfg_.personaPath), r.w - 13), theme::dim());
-        y++;
-        surface.text({r.x + 2, y++}, "tools     " + std::to_string(cfg_.toolCount), theme::text());
-        surface.text({r.x + 2, y++}, "feeds     " + std::to_string(cfg_.feedCount), theme::dim());
-        surface.text({r.x + 2, y++}, "relics    " + std::to_string(cfg_.relicCount), theme::dim());
-        surface.text({r.x + 2, y++}, "agents    " + std::to_string(cfg_.subAgentCount), theme::amber());
-    }
-
-    void drawProvider(inkcell::Surface& surface, inkcell::Rect r) const {
-        layout::flat_panel(surface, r, theme::panel_2());
-        layout::section_rule(surface, {r.x + 1, r.y + 1}, r.w - 2, "provider / model");
-        int y = r.y + 3;
-        surface.text({r.x + 2, y++}, "provider  " + nonempty(cfg_.provider, "unset"), theme::text());
-        surface.text({r.x + 2, y++}, "model     " + nonempty(cfg_.model, "default"), theme::text());
-        y++;
-        surface.text({r.x + 2, y++}, "No live quota probes from this page.", theme::dim());
-        surface.text({r.x + 2, y++}, "Switching UI comes later via command palette.", theme::dim());
-    }
-
-    void drawSessions(inkcell::Surface& surface, inkcell::Rect r) const {
-        layout::flat_panel(surface, r, theme::panel_2());
-        layout::section_rule(surface, {r.x + 1, r.y + 1}, r.w - 2, "recent sessions");
-        int y = r.y + 3;
-        try {
-            session::SessionManager sm;
-            auto list = sm.list();
-            if (list.empty()) {
-                surface.text({r.x + 2, y++}, "No saved sessions yet.", theme::dim());
-                surface.text({r.x + 2, y++}, "Start chat to create one.", theme::dim());
-                return;
-            }
-            int shown = 0;
-            for (const auto& s : list) {
-                if (y >= r.bottom() - 1 || shown >= 6) break;
-                std::string line = suffix(s.id) + "  " + std::to_string(s.turnCount) + " turns  " + s.updated;
-                surface.text({r.x + 2, y++}, inkcell::text::truncate(line, r.w - 4), shown == 0 ? theme::text() : theme::dim());
-                ++shown;
-            }
-        } catch (...) {
-            surface.text({r.x + 2, y++}, "Could not read session index.", theme::red());
-        }
-    }
-
-    void drawWide(inkcell::Surface& surface, inkcell::Rect body) const {
-        int leftW = 34;
-        int midW = std::max(34, (body.w - leftW - 4) / 2);
-        inkcell::Rect left{body.x, body.y, leftW, body.h};
-        inkcell::Rect mid{left.right() + 2, body.y, midW, body.h};
-        inkcell::Rect right{mid.right() + 2, body.y, body.right() - mid.right() - 2, body.h};
-        drawOptions(surface, left);
-        drawChatContext(surface, {mid.x, mid.y, mid.w, std::max(8, mid.h / 2 - 1)});
-        drawSessions(surface, {mid.x, mid.y + std::max(9, mid.h / 2 + 1), mid.w, std::max(6, mid.h / 2 - 1)});
-        drawHarness(surface, {right.x, right.y, right.w, std::max(10, right.h / 2)});
-        drawProvider(surface, {right.x, right.y + std::max(11, right.h / 2 + 1), right.w, std::max(6, right.h / 2 - 1)});
-    }
-
-    void drawStandard(inkcell::Surface& surface, inkcell::Rect body) const {
-        int leftW = std::min(34, std::max(28, body.w / 3));
-        inkcell::Rect left{body.x, body.y, leftW, body.h};
-        inkcell::Rect right{left.right() + 2, body.y, body.right() - left.right() - 2, body.h};
-        drawOptions(surface, left);
-        if (mainIndex_ == 1) drawSessions(surface, right);
-        else if (mainIndex_ == 2) drawHarness(surface, right);
-        else if (mainIndex_ == 3) drawProvider(surface, right);
-        else drawChatContext(surface, right);
+        if (action.is("scroll.up")) model_->dashboard.moveNavigation(-1);
+        else if (action.is("scroll.down")) model_->dashboard.moveNavigation(1);
     }
 };
 

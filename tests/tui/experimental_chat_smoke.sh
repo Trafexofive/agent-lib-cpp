@@ -40,20 +40,24 @@ timeout 8 env MK3_TUI_SNAPSHOT=1 "$bin" -m manifests/agents/coder/agent.yml --tu
 empty="$(strip_ansi "$empty_out")"
 coder="$(strip_ansi "$coder_out")"
 
-assert_contains "$empty" "CORTEX MK3"
-assert_contains "$empty" "› █"
+assert_contains "$empty" "CORTEX MK3  /  DASHBOARD"
+assert_contains "$empty" "Overview"
+assert_contains "$empty" "Sessions"
+assert_contains "$empty" "Harness"
+assert_contains "$empty" "Runtime"
 assert_contains "$coder" "CORTEX MK3"
 assert_contains "$coder" "coder"
 assert_contains "$coder" "› █"
 
 for removed in "No turns yet." "Type a prompt and press Enter to send." "Esc focuses history"; do
-  assert_not_contains "$empty" "$removed"
   assert_not_contains "$coder" "$removed"
 done
+
+assert_not_contains "$coder" "DASHBOARD"
 
 for bad in "control board" "Chat / Agent History" "Harness / Manifest" "╭─ composer" "composer (focus)" "╰"; do
   assert_not_contains "$empty" "$bad"
   assert_not_contains "$coder" "$bad"
 done
 
-echo "experimental chat smoke passed: chat-only surface, no main/menu/boxed composer"
+echo "experimental app smoke passed: dashboard default, -m direct chat, no boxed composer"

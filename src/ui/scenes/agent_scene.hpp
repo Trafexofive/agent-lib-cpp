@@ -37,6 +37,10 @@ class AgentScene final : public BaseScene {
         }
 
         if (model_->timelineFocus || !model_->atRoot() || !model_->composer.focused) {
+            if (event.code == KeyCode::Character && (event.ch == 'm' || event.ch == 'M')) {
+                model_->pendingRoute = "main";
+                return true;
+            }
             if (event.code == KeyCode::Character && event.ch == '?') {
                 model_->helpVisible = true;
                 return true;
@@ -122,7 +126,7 @@ class AgentScene final : public BaseScene {
         vm.path = model_->breadcrumb();
         vm.provider = cfg_.provider;
         vm.model = cfg_.model;
-        vm.sessionId = cfg_.sessionId;
+        vm.sessionId = model_->activeSessionId;
         vm.status = model_->status;
         vm.mode = model_->showRaw ? "RAW" : model_->showThoughts ? "FULL+THOUGHTS" : "FULL";
         vm.running = model_->running;

@@ -14,6 +14,7 @@
 #include "src/ui/model/adapters/agent_tree.hpp"
 #include "src/ui/model/adapters/protocol_to_timeline.hpp"
 #include "src/ui/model/command_model.hpp"
+#include "src/ui/model/dashboard_controller.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
 #include "src/ui/model/navigation_model.hpp"
 
@@ -218,6 +219,52 @@ int countRows(const ShellModel& model, TimelineKind kind) {
     for (const auto& row : model.rootRows)
         if (row.kind == kind) ++count;
     return count;
+}
+
+void test_dashboard_model() {
+    model::DashboardState dashboard;
+    dashboard.moveNavigation(20);
+    check(dashboard.section == model::DashboardSection::Help && dashboard.navigationIndex == 4,
+          "dashboard navigation clamps at final section");
+    dashboard.moveNavigation(-20);
+    check(dashboard.section == model::DashboardSection::Overview && dashboard.navigationIndex == 0,
+          "dashboard navigation clamps at first section");
+
+    session::SessionManager::SessionInfo first;
+    first.id = "first";
+    session::SessionManager::SessionInfo second;
+    second.id = "second";
+    dashboard.sessions = {first, second};
+    dashboard.moveSession(1);
+    check(dashboard.selectedSession() && dashboard.selectedSession()->id == "second",
+          "dashboard session selection moves to next record");
+    dashboard.moveSession(20);
+    check(dashboard.sessionIndex == 1, "dashboard session selection clamps safely");
+}
+
+void test_dashboard_session_controller() {
+    std::string base = "/tmp/mk3-dashboard-sessions-" + std::to_string(::getpid());
+    session::SessionManager sessions(base);
+    Session existing = sessions.create("resume-me", "coder", "gpt-5.5", "openai-codex");
+    existing.records.push_back({SessionRecord::USER, "hello", "", ""});
+    existing.records.push_back({SessionRecord::AGENT, "hi", "", ""});
+    sessions.save(existing);
+
+    model::DashboardState dashboard;
+    dashboard.refreshSessions(sessions);
+    bool loadedAgent = false;
+    auto resumed = model::resumeDashboardSession(
+        dashboard, sessions, [&](const std::string& id) { loadedAgent = id == "resume-me"; });
+    check(resumed.ok && resumed.sessionId == "resume-me" && resumed.records.size() == 2 && loadedAgent,
+          "dashboard controller resumes selected structured session");
+
+    bool clearedAgent = false;
+    auto created = model::createDashboardSession(
+        dashboard, sessions, "coder", "gpt-5.5", "openai-codex",
+        [&] { clearedAgent = true; }, "new-session");
+    check(created.ok && created.sessionId == "new-session" && clearedAgent && sessions.exists("new-session"),
+          "dashboard controller creates and activates clean session");
+    std::filesystem::remove_all(base);
 }
 
 void test_chat_persistence() {
@@ -436,6 +483,8 @@ int main() {
     test_command_inventory_disabled_reasons();
     test_context_status_line();
     test_navigation_stack_agent_drill();
+    test_dashboard_model();
+    test_dashboard_session_controller();
     test_chat_persistence();
     test_chat_ask_dialog_channel();
     test_chat_commands();

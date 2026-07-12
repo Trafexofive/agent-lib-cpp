@@ -6,6 +6,7 @@
 #include <thread>
 
 #include "src/ui/scenes/agent_scene.hpp"
+#include "src/ui/scenes/main_scene.hpp"
 
 using namespace cortex::mk3;
 using namespace cortex::mk3::ui;
@@ -27,6 +28,49 @@ inkcell::KeyEvent key(inkcell::KeyCode code, char ch = 0) {
 
 void type(scenes::AgentScene& scene, const std::string& text) {
     for (char ch : text) scene.on_key(key(inkcell::KeyCode::Character, ch));
+}
+
+std::string surfaceText(const inkcell::Surface& surface) {
+    std::string out;
+    for (int y = 0; y < surface.height(); ++y) {
+        for (int x = 0; x < surface.width(); ++x) out += surface.at({x, y}).glyph;
+        out += '\n';
+    }
+    return out;
+}
+
+void test_dashboard_scene() {
+    InkcellAppConfig cfg;
+    cfg.provider = "openai-codex";
+    cfg.model = "gpt-5.5";
+    cfg.agentName = "builtin";
+    cfg.toolCount = 3;
+    AgentBridge bridge;
+    auto model = std::make_shared<ShellModel>();
+    scenes::MainScene scene(cfg, bridge, model);
+    scene.on_enter();
+    for (const inkcell::Size size : {inkcell::Size{80, 24}, inkcell::Size{120, 34}, inkcell::Size{160, 44}}) {
+        inkcell::Surface surface(size);
+        scene.draw(surface);
+        std::string rendered = surfaceText(surface);
+        check(rendered.find("CORTEX MK3  /  DASHBOARD") != std::string::npos,
+              "dashboard renders header at " + std::to_string(size.w) + "x" + std::to_string(size.h));
+        check(rendered.find("Overview") != std::string::npos &&
+                  rendered.find("Sessions") != std::string::npos &&
+                  rendered.find("Harness") != std::string::npos &&
+                  rendered.find("Runtime") != std::string::npos,
+              "dashboard renders sections at " + std::to_string(size.w) + "x" + std::to_string(size.h));
+    }
+
+    scene.on_key(key(inkcell::KeyCode::Character, 's'));
+    check(model->dashboard.section == model::DashboardSection::Sessions &&
+              model->dashboard.focus == model::DashboardFocus::Content,
+          "dashboard sessions shortcut focuses session inventory");
+    scene.on_key(key(inkcell::KeyCode::Character, 'c'));
+    check(model->pendingRoute == "agent", "dashboard chat shortcut requests chat route");
+    model->pendingRoute.clear();
+    scene.on_key(key(inkcell::KeyCode::Character, 'q'));
+    check(model->pendingRoute == "quit", "dashboard quit shortcut requests app exit");
 }
 
 void test_ask_choice_roundtrip() {
@@ -91,6 +135,9 @@ void test_slash_and_completion() {
     scene.on_key(key(inkcell::KeyCode::Character, 'T'));
     check(theme::activeVariant == theme::Variant::Neon, "uppercase T switches theme in transcript focus");
     theme::set(theme::Variant::Graphite);
+    scene.on_key(key(inkcell::KeyCode::Character, 'm'));
+    check(model->pendingRoute == "main", "chat transcript shortcut requests dashboard route");
+    model->pendingRoute.clear();
 }
 
 void test_ctrl_c_state() {
@@ -107,7 +154,8 @@ void test_ctrl_c_state() {
 }  // namespace
 
 int main() {
-    std::cout << "Chat scene integration tests\n";
+    std::cout << "Chat/dashboard scene integration tests\n";
+    test_dashboard_scene();
     test_ask_choice_roundtrip();
     test_slash_and_completion();
     test_ctrl_c_state();

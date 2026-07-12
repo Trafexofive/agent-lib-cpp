@@ -15,6 +15,7 @@
 #include "inkcell/widgets/textarea.hpp"
 #include "src/core/agent.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
+#include "src/ui/model/dashboard_model.hpp"
 #include "src/ui/bridge/agent_bridge.hpp"
 
 namespace cortex::mk3::ui {
@@ -196,7 +197,9 @@ struct ShellModel {
     int routeTicks = 0;
     std::string activePage = "Agent";
     std::string pendingSubmit;
-    std::string pendingRoute;  // "quit" for the chat-only app
+    std::string pendingRoute;  // "agent" | "main" | "quit"
+    std::string activeSessionId;
+    model::DashboardState dashboard;
     inkcell::widgets::TextAreaState composer;
     std::vector<std::string> promptHistory;
     int promptHistoryIndex = 0;

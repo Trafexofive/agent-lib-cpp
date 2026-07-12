@@ -18,6 +18,7 @@
 #include "src/ui/chat/prompt_history.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
 #include "src/ui/scenes/agent_scene.hpp"
+#include "src/ui/scenes/main_scene.hpp"
 
 namespace cortex::mk3::ui {
 
@@ -55,6 +56,8 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
     } else {
         theme::set(theme::Variant::Graphite);
     }
+    model->activeSessionId = cfg.sessionId;
+    model->dashboard.refreshSessions();
     model->promptHistory = chat::loadPromptHistory();
     model->promptHistoryIndex = static_cast<int>(model->promptHistory.size());
     if (!cfg.sessionId.empty()) {
@@ -63,19 +66,25 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
     }
 }
 
-inline void installChatTick(inkcell::App& app, AgentBridge& bridge, const std::shared_ptr<ShellModel>& model) {
+inline void installAppTick(inkcell::App& app, AgentBridge& bridge, const std::shared_ptr<ShellModel>& model) {
     app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([model, &bridge]() { model->drain(bridge); });
     app.engine().on_tick([model, &bridge, &app](inkcell::Tick) {
         model->drain(bridge);
-        if (model->pendingRoute == "quit") {
+        if (model->pendingRoute == "agent") {
+            model->pendingRoute.clear();
+            app.engine().post_action(inkcell::Action{"scene.agent"});
+        } else if (model->pendingRoute == "main") {
+            model->pendingRoute.clear();
+            app.engine().post_action(inkcell::Action{"scene.main"});
+        } else if (model->pendingRoute == "quit") {
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"app.quit"});
         }
     });
 }
 
-inline inkcell::App makeChatApp(const InkcellAppConfig& cfg, AgentBridge& bridge,
-                                std::shared_ptr<ShellModel> model) {
+inline inkcell::App makeInkcellApp(const InkcellAppConfig& cfg, AgentBridge& bridge,
+                                   std::shared_ptr<ShellModel> model, bool startAtDashboard) {
     inkcell::App app;
     app.tick_ms(33)
         .bind("q", "app.quit", "Quit")
@@ -84,9 +93,13 @@ inline inkcell::App makeChatApp(const InkcellAppConfig& cfg, AgentBridge& bridge
         .bind("r", "shell.toggle_raw", "Toggle raw")
         .bind("t", "shell.toggle_thoughts", "Toggle thoughts")
         .bind("i", "shell.focus_composer", "Focus composer")
+        .bind("m", "scene.main", "Dashboard")
         .bind("esc", "shell.focus_timeline", "Focus history")
+        .route("scene.agent", "agent")
+        .route("scene.main", "main")
+        .scene<scenes::MainScene>("main", cfg, bridge, model)
         .scene<scenes::AgentScene>("agent", cfg, bridge, model)
-        .initial_scene("agent");
+        .initial_scene(startAtDashboard ? "main" : "agent");
     return app;
 }
 
@@ -125,13 +138,13 @@ inline int runInkcellShell(const InkcellAppConfig& cfg, Agent& agent) {
     auto model = std::make_shared<ShellModel>();
     model->setRootAgent(&agent);
     initializeChatModel(model, cfg);
-    auto app = makeChatApp(cfg, bridge, model);
-    installChatTick(app, bridge, model);
+    auto app = makeInkcellApp(cfg, bridge, model, true);
+    installAppTick(app, bridge, model);
     if (snapshotMode()) {
-        app.render_to(std::cout, "agent", {120, 34});
+        app.render_to(std::cout, "main", {120, 34});
         return 0;
     }
-    return app.run("agent");
+    return app.run("main");
 }
 
 inline int runInkcellSmoke(const InkcellAppConfig& cfg, Agent& agent) { return runInkcellShell(cfg, agent); }
@@ -151,8 +164,8 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     std::atomic<bool> done{false};
     std::thread worker([&]() { runAgentTurn(bridge, agent, prompt, sessionId, ephemeral, done); });
 
-    auto app = makeChatApp(cfg, bridge, model);
-    installChatTick(app, bridge, model);
+    auto app = makeInkcellApp(cfg, bridge, model, false);
+    installAppTick(app, bridge, model);
     int rc = 0;
     if (snapshotMode()) {
         while (!done.load(std::memory_order_acquire)) {
@@ -172,7 +185,7 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     return rc;
 }
 
-inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::string& sessionId, bool ephemeral) {
+inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::string& /*sessionId*/, bool ephemeral) {
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
     model->setRootAgent(&agent);
@@ -186,11 +199,18 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
         workerBusy.store(false, std::memory_order_release);
     };
 
-    auto app = makeChatApp(cfg, bridge, model);
+    bool startAtDashboard = cfg.manifestPath.empty();
+    auto app = makeInkcellApp(cfg, bridge, model, startAtDashboard);
     app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([model, &bridge]() { model->drain(bridge); });
-    app.engine().on_tick([model, &bridge, &app, &workerBusy, &worker, &joinWorker, &agent, sessionId, ephemeral](inkcell::Tick) {
+    app.engine().on_tick([model, &bridge, &app, &workerBusy, &worker, &joinWorker, &agent, ephemeral](inkcell::Tick) {
         model->drain(bridge);
-        if (model->pendingRoute == "quit") {
+        if (model->pendingRoute == "agent") {
+            model->pendingRoute.clear();
+            app.engine().post_action(inkcell::Action{"scene.agent"});
+        } else if (model->pendingRoute == "main") {
+            model->pendingRoute.clear();
+            app.engine().post_action(inkcell::Action{"scene.main"});
+        } else if (model->pendingRoute == "quit") {
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"app.quit"});
         }
@@ -206,7 +226,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
             joinWorker();
             worker = std::thread([&, prompt]() {
                 std::atomic<bool> done{false};
-                runAgentTurn(bridge, agent, prompt, sessionId, ephemeral, done);
+                runAgentTurn(bridge, agent, prompt, model->activeSessionId, ephemeral, done);
                 while (!done.load(std::memory_order_acquire))
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 g_running = true;
@@ -216,11 +236,11 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     });
 
     if (snapshotMode()) {
-        app.render_to(std::cout, "agent", {120, 34});
+        app.render_to(std::cout, startAtDashboard ? "main" : "agent", {120, 34});
         return 0;
     }
 
-    int rc = app.run("agent");
+    int rc = app.run(startAtDashboard ? "main" : "agent");
     g_running = false;
     bridge.cancelAsk();
     joinWorker();
