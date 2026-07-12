@@ -33,6 +33,7 @@ struct ChatCommandResult {
     bool copyAll = false;
     bool copyRaw = false;
     std::string title;
+    std::string themeName;
     std::vector<std::string> lines;
     std::string composerReplacement;
 };
@@ -63,9 +64,16 @@ inline ChatCommandResult executeChatCommand(const std::string& command,
         out.lines = {"raw stream visibility toggled"};
         return out;
     }
-    if (command == "/theme") {
+    if (command == "/theme" || command.rfind("/theme ", 0) == 0) {
         out.toggleTheme = true;
         out.title = "theme";
+        if (command.size() > 7) {
+            out.themeName = trimCommandText(command.substr(7));
+            if (out.themeName != "graphite" && out.themeName != "neon") {
+                out.toggleTheme = false;
+                out.lines = {"expected /theme graphite or /theme neon"};
+            }
+        }
         return out;
     }
     if (command == "/prompts") {
@@ -91,7 +99,7 @@ inline ChatCommandResult executeChatCommand(const std::string& command,
             "/clear             clear visible transcript",
             "/thoughts          toggle thought rows",
             "/raw               toggle raw stream rows",
-            "/theme             switch graphite / neon",
+            "/theme [name]      switch or select graphite / neon",
             "/manifests         inspect active harness surface",
             "/sessions          list recent sessions",
             "/prompts           show captured iteration prompts",

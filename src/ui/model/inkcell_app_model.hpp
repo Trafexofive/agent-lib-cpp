@@ -3,6 +3,7 @@
 // Includes timeline block focus + nested sub-agent history drill-down.
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <set>
 #include <sstream>
@@ -314,13 +315,6 @@ struct ShellModel {
         transcriptView.lines.clear();
         blockRowIndex.clear();
 
-        // Breadcrumb always first when nested.
-        if (!atRoot()) {
-            transcriptView.lines.push_back("path  " + breadcrumb());
-            transcriptView.lines.push_back("Esc/Backspace  back · Enter  drill · j/k  select");
-            transcriptView.lines.push_back("");
-        }
-
         if (rows.empty()) {
             if (atRoot()) timelineState = PageState::Empty;
         } else {
@@ -328,22 +322,55 @@ struct ShellModel {
             for (int ri = 0; ri < static_cast<int>(rows.size()); ++ri) {
                 const auto& row = rows[static_cast<size_t>(ri)];
                 if (row.kind == TimelineKind::Thought && !showThoughts) continue;
-                if (row.kind == TimelineKind::Stream && !showRaw && atRoot()) {
-                    // Keep a single live stream line without making it selectable.
-                    transcriptView.lines.push_back(std::string(kindGlyph(row.kind)) + " " + row.title + "  " + row.body);
-                    continue;
-                }
                 if (row.kind == TimelineKind::Stream && !showRaw) continue;
 
                 bool selected = timelineFocus && (focusIdx == selectedBlock);
                 blockRowIndex.push_back(ri);
 
-                std::string marker = selected ? "> " : "  ";
-                std::string head = marker + kindGlyph(row.kind, row.ok) + " " + row.title;
-                transcriptView.lines.push_back(head);
+                std::string label;
+                switch (row.kind) {
+                    case TimelineKind::User:
+                        label = "YOU";
+                        break;
+                    case TimelineKind::Thought:
+                        label = "THOUGHT";
+                        break;
+                    case TimelineKind::Action:
+                        label = row.actionType.empty() ? "ACTION" : row.actionType;
+                        std::transform(label.begin(), label.end(), label.begin(), [](unsigned char c) {
+                            return static_cast<char>(std::toupper(c));
+                        });
+                        if (!row.actionName.empty()) label += "  " + row.actionName;
+                        if (!row.actionId.empty()) label += "  #" + row.actionId;
+                        if (row.drillable) label += "  ↳";
+                        break;
+                    case TimelineKind::Result:
+                        label = row.ok ? "✓ RESULT" : "✗ RESULT";
+                        if (!row.actionName.empty()) label += "  " + row.actionName;
+                        if (!row.actionId.empty()) label += "  #" + row.actionId;
+                        if (row.drillable) label += "  ↳";
+                        break;
+                    case TimelineKind::Response:
+                    case TimelineKind::Final:
+                        label = "CORTEX";
+                        break;
+                    case TimelineKind::Error:
+                        label = "✗ ERROR";
+                        break;
+                    case TimelineKind::Status:
+                        label = "STATUS";
+                        break;
+                    case TimelineKind::Stream:
+                        label = "RAW";
+                        break;
+                    case TimelineKind::Log:
+                        label = row.title.empty() ? "NOTICE" : row.title;
+                        break;
+                }
+                transcriptView.lines.push_back(std::string(selected ? "› " : "  ") + label);
                 for (const auto& line : splitDisplayLines(row.body)) {
                     if (line.empty() && row.body.empty()) continue;
-                    transcriptView.lines.push_back(std::string(selected ? "│ " : "  ") + line);
+                    transcriptView.lines.push_back("    " + line);
                 }
                 transcriptView.lines.push_back("");
                 ++focusIdx;

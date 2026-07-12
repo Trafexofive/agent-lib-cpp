@@ -143,7 +143,7 @@ class AgentScene final : public BaseScene {
         if (model_->running) vm.hint = "Ctrl-C cancel · Esc history · t thoughts · r raw";
         else if (!model_->atRoot()) vm.hint = "Esc/Backspace back · j/k select · Enter drill · g refresh";
         else if (vm.historyFocused) vm.hint = "j/k select · Enter open · i composer · ? help · T theme · q quit";
-        else vm.hint = "Enter send · ↑↓ prompt history · Esc transcript · Ctrl-C cancel · q quit";
+        else vm.hint = "Enter send · ↑↓ history · Esc transcript · Tab commands";
 
         chat::drawChatSurface(surface, p, vm);
         if (model_->askActive)
@@ -259,7 +259,9 @@ class AgentScene final : public BaseScene {
         if (result.toggleThoughts) model_->showThoughts = !model_->showThoughts;
         if (result.toggleRaw) model_->showRaw = !model_->showRaw;
         if (result.toggleTheme) {
-            theme::toggle();
+            if (result.themeName == "graphite") theme::set(theme::Variant::Graphite);
+            else if (result.themeName == "neon") theme::set(theme::Variant::Neon);
+            else theme::toggle();
             result.lines = {std::string("active theme: ") + theme::name()};
         }
         if (result.showPrompts) showCapturedPrompts();

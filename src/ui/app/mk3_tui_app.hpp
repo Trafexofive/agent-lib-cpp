@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <exception>
 #include <iostream>
 #include <memory>
@@ -47,6 +48,13 @@ inline void publishProtocolChanges(AgentBridge& bridge, const std::vector<Protoc
 
 inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
                                const InkcellAppConfig& cfg) {
+    if (const char* requestedTheme = std::getenv("MK3_TUI_THEME")) {
+        std::string value = requestedTheme;
+        if (value == "neon") theme::set(theme::Variant::Neon);
+        else theme::set(theme::Variant::Graphite);
+    } else {
+        theme::set(theme::Variant::Graphite);
+    }
     model->promptHistory = chat::loadPromptHistory();
     model->promptHistoryIndex = static_cast<int>(model->promptHistory.size());
     if (!cfg.sessionId.empty()) {

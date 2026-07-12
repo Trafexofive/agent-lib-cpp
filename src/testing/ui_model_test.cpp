@@ -319,6 +319,10 @@ void test_chat_commands() {
     check(chat::executeChatCommand("/thoughts").toggleThoughts, "chat thoughts command classified");
     check(chat::executeChatCommand("/raw").toggleRaw, "chat raw command classified");
     check(chat::executeChatCommand("/theme").toggleTheme, "chat theme command classified");
+    auto neonTheme = chat::executeChatCommand("/theme neon");
+    check(neonTheme.toggleTheme && neonTheme.themeName == "neon", "chat theme accepts explicit neon selection");
+    auto badTheme = chat::executeChatCommand("/theme radioactive");
+    check(!badTheme.toggleTheme && !badTheme.lines.empty(), "chat theme rejects unknown palette");
     check(chat::executeChatCommand("/prompts").showPrompts, "chat prompts command classified");
     check(chat::executeChatCommand("/dump-prompt").dumpPrompts, "chat dump-prompt command classified");
     check(chat::executeChatCommand("/cp-all").copyAll, "chat copy-all command classified");
@@ -392,6 +396,14 @@ void test_chat_protocol_reducer_updates_in_place() {
     check(countRows(model, TimelineKind::Response) == 1,
           "partial response updates one transcript row");
     check(model.rootRows.back().body == "I pinged reader.", "response row contains latest text");
+    model.rebuildViews();
+    bool hasAgentLabel = false;
+    bool hasCortexLabel = false;
+    for (const auto& line : model.transcriptView.lines) {
+        if (line.find("AGENT  reader") != std::string::npos) hasAgentLabel = true;
+        if (line.find("CORTEX") != std::string::npos) hasCortexLabel = true;
+    }
+    check(hasAgentLabel && hasCortexLabel, "transcript uses semantic agent and assistant labels");
 
     UiEvent done;
     done.kind = UiEventKind::TurnDone;

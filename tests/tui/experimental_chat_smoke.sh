@@ -41,10 +41,10 @@ empty="$(strip_ansi "$empty_out")"
 coder="$(strip_ansi "$coder_out")"
 
 assert_contains "$empty" "CORTEX MK3"
-assert_contains "$empty" "> message"
+assert_contains "$empty" "› █"
 assert_contains "$coder" "CORTEX MK3"
 assert_contains "$coder" "coder"
-assert_contains "$coder" "> message"
+assert_contains "$coder" "› █"
 
 for removed in "No turns yet." "Type a prompt and press Enter to send." "Esc focuses history"; do
   assert_not_contains "$empty" "$removed"

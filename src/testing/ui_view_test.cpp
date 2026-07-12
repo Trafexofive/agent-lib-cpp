@@ -101,7 +101,7 @@ void test_chat_prompt_cursor_position() {
     model.inputCursor = 2;
     model.inputFocused = true;
     chat::drawChatSurface(s, {0, 0, 40, 8}, model);
-    check(containsRow(s, "> ab█cd"), "chat prompt renders cursor at model position");
+    check(containsRow(s, "› ab█cd"), "chat prompt renders cursor at model position");
 }
 
 void test_chat_help_and_theme() {
