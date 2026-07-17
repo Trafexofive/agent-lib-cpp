@@ -188,6 +188,7 @@ struct ShellModel {
     PageState timelineState = PageState::Empty;
     bool running = false;
     int64_t turnStartMs = 0;  // steady_clock ms when the current turn started; 0 when idle. Drives live metrics.
+    int64_t lastTurnElapsedMs = 0;  // duration of the most recently completed turn; persists after the turn ends for the "last" summary.
     bool done = false;
     bool failed = false;
     bool showThoughts = false;
@@ -573,7 +574,10 @@ struct ShellModel {
             case UiEventKind::Error:
                 failed = true;
                 running = false;
-                turnStartMs = 0;
+                if (turnStartMs > 0) {
+                    lastTurnElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() - turnStartMs;
+                    turnStartMs = 0;
+                }
                 status = "error";
                 timelineState = PageState::Error;
                 pushRow({TimelineKind::Error, "error", e.text, false});
@@ -633,7 +637,10 @@ struct ShellModel {
             case UiEventKind::TurnDone: {
                 done = true;
                 running = false;
-                turnStartMs = 0;
+                if (turnStartMs > 0) {
+                    lastTurnElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() - turnStartMs;
+                    turnStartMs = 0;
+                }
                 bool cancelled = e.text == "[cancelled]";
                 status = cancelled ? "cancelled" : failed ? "failed" : "done";
                 finalText = e.text;

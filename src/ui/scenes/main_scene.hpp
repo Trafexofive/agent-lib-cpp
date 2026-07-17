@@ -203,6 +203,12 @@ class MainScene final : public BaseScene {
             char b[8]; std::snprintf(b, sizeof(b), "%02d:%02d", m, s);
             return std::string(b);
         };
+        // Unified live/last line. While running, label "live" shows ticking
+        // elapsed + per-turn counts. When idle after a turn, label "last"
+        // shows the previous turn's outcome + duration + token bytes. When
+        // never run, an em-dash keeps the layout stable. One always-informative
+        // row, no dashboard bloat.
+        const char* liveLabel = model_->running ? "live" : "last";
         std::string liveLine;
         if (model_->running && model_->turnStartMs > 0) {
             auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -212,10 +218,13 @@ class MainScene final : public BaseScene {
                        std::to_string(model_->resultCount) + " results \xc2\xb7 " +
                        std::to_string(model_->pendingOps) + " pending \xc2\xb7 " +
                        std::to_string(model_->tokenBytes) + "b";
+        } else if (!model_->running && model_->lastTurnElapsedMs > 0) {
+            liveLine = model_->status + " " + fmtElapsed(model_->lastTurnElapsedMs) + " \xc2\xb7 " +
+                       std::to_string(model_->tokenBytes) + "b";
         } else {
-            liveLine = "\xe2\x80\x94";  // em-dash
+            liveLine = "\xe2\x80\x94";  // em-dash, never run yet
         }
-        field(surface, frame.x, y++, frame.w, "live", liveLine,
+        field(surface, frame.x, y++, frame.w, liveLabel, liveLine,
               model_->running ? theme::green() : theme::dim());
         field(surface, frame.x, y++, frame.w, "session", suffix(model_->activeSessionId));
         field(surface, frame.x, y++, frame.w, "manifest", cfg_.manifestPath.empty() ? "builtin surface" : cfg_.manifestPath);

@@ -494,6 +494,46 @@ void test_chat_turn_start_timestamp_lifecycle() {
     check(model.turnStartMs > 0 && model.turnStartMs >= firstStart,
           "subsequent turn captures a fresh (non-decreasing) timestamp");
 }
+
+void test_chat_last_turn_summary_lifecycle() {
+    // lastTurnElapsedMs is captured at turn end (TurnDone/Error) and persists
+    // so the dashboard "last" line can show the previous turn's outcome and
+    // duration after running flips back to false. The stored timestamps use
+    // millisecond resolution, so back-to-back apply() calls within the same
+    // millisecond legitimately produce a 0-ms difference; the sleeps below
+    // guarantee a measurable elapsed so the assertions are meaningful.
+    ShellModel model;
+    check(model.lastTurnElapsedMs == 0, "last turn elapsed is zero before any turn");
+
+    model.apply(UiEvent::status("agent running"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    UiEvent done;
+    done.kind = UiEventKind::TurnDone;
+    done.text = "ok";
+    model.apply(done);
+    check(model.lastTurnElapsedMs >= 3,
+          "last turn elapsed captures real elapsed time on TurnDone");
+    check(!model.running && model.turnStartMs == 0,
+          "turn end clears running and turnStartMs after capturing last");
+    int64_t captured = model.lastTurnElapsedMs;
+
+    model.apply(UiEvent::status("agent running"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    done.text = "second";
+    model.apply(done);
+    check(model.lastTurnElapsedMs >= 5 && model.lastTurnElapsedMs >= captured,
+          "subsequent turn updates last turn elapsed with fresh value");
+
+    ShellModel err;
+    err.apply(UiEvent::status("agent running"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    UiEvent errEvt;
+    errEvt.kind = UiEventKind::Error;
+    errEvt.text = "boom";
+    err.apply(errEvt);
+    check(err.lastTurnElapsedMs >= 2 && !err.running,
+          "error path captures last turn elapsed and clears running");
+}
 }  // namespace
 
 int main() {
@@ -515,6 +555,7 @@ int main() {
     test_chat_prompt_history();
     test_chat_protocol_reducer_updates_in_place();
     test_chat_turn_start_timestamp_lifecycle();
+    test_chat_last_turn_summary_lifecycle();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }
