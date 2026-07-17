@@ -15,7 +15,7 @@ Living document tracking Cortex-Prime MK3 agent-lib status, priorities, decision
 | Built-in tools | Deployed — formatted JSON schemas, rich result attrs (ms/bytes/exit) |
 | Tool hot-reload | Deployed — `reload_manifests` tool, disable/enable builtins |
 | Workflow engine | Deployed — code-review workflow, step params, list-item parsing fixed |
-| Result rendering | Deployed — plain-text body, `<result ok="true" ms="12" bytes="2048">` |
+| Result rendering | Deployed — CANON shape `<result status="ok|error|timeout|protocol_error" …>` |
 | System prompt | Deployed — section descriptions, consistent indentation, no CDATA |
 | Session persistence | Deployed — prefix doubling fixed, session load/save roundtrip |
 | Parser streaming | Deployed — `</response>` detection, `final=true` propagation, 9/9 tests |
@@ -25,17 +25,37 @@ Living document tracking Cortex-Prime MK3 agent-lib status, priorities, decision
 | raw.md / iterations.md dumps | Deployed — PROMPT + RESPONSE + LLM RAW OUTPUT + TOOL RESULTS |
 | Crash: `free(): invalid pointer` | Fixed — threads joined on destructor |
 | **Spinner/live typing during LLM** | **Blocked** — `curl_easy_perform` blocks main thread |
-| **LLM protocol compliance** | **~60%** — deepseek-chat ceiling, bare text ~40% of turns |
+| **LLM protocol compliance** | **~60% baseline (remeasure after CANON)** — contract lies removed 2026-07-10 |
+| **Global agent selection / any-CWD** | **Shipped** — `manifests/` only; bare `-m` manager + ownership trees |
+| **TUI (builtin)** | **POC** — legacy path frozen for strangler migration |
+| **inkcell migration** | **Phase 0 shipped** — tracked plan in `docs/INKCELL_MIGRATION.md` + artifact `art-mrflxfd4-gupoyt` |
+| **inkcell MVP widgets** | **Baseline** — TextArea, ScrollView, engine wake/poll, wcwidth |
 | **Persona separation** | **Deployed** — assistant.md + decoupler.md pure behavioral, no protocol leaks |
 
 ---
 
 ## 2. Priority Queue
 
-1. **Async LLM** — non-blocking HTTP (curl_multi or threaded client). Last remaining architectural blocker.
-2. **Runtime compliance enforcement** — strict XML mode: reject turns with bare text, inject error result. Complements ~60% prompt-level ceiling.
-3. **Manifest ecosystem** — bi-directional import, remote resolving, disable unsupported builtins for auto-readonly mode.
-4. **Testing** — automated end-to-end tests: crash on exit, pipeline roundtrip, self-improvement scenarios.
+> **SHORT-TERM HARD GOAL (added 2026-07-17):** Get Cortex-Prime MK3 to **pi-level daily-driver capability** — the threshold where it can be trusted as a primary agent harness for real work, not just demos. Until that threshold clears, use Cortex instances as **sub-agents spawned from pi** (test phase): pi orchestrates, Cortex executes delegated tasks, failures feed back into gap closure. Full gap analysis + integration plan: artifact `cortex-pi-level-gap-analysis`.
+>
+> **Daily-driver bar (must clear all):** (a) protocol compliance ≥90%, (b) async LLM (non-blocking stream + responsive composer), (c) sub-agent delegation, (d) artifact graph + plans, (e) context economy (compaction/squeezer), (f) streaming UX smoothness.
+
+0. **Protocol CANON burn** — **shipped 2026-07-10**. Authority: `docs/protocol/CANON.md`. Remeasure compliance against honest contract.
+1. **Global agent / manifest selection (any-CWD UX)** — **shipped** (`manifests/` only, bare `-m` manager, ownership trees).
+2. **Inkcell full migration** — execute `docs/INKCELL_MIGRATION.md` (skeleton → bridge → AgentShell → protocol widgets → pickers → cutover).
+   - Selection interface: CLI (`--agent <name|path>`, fuzzy list), interactive picker at startup / slash command (`/agent`, `/manifest`).
+   - Resolve harness/system/persona/tools relative to **manifest home**, not process CWD.
+   - Document install layout + env vars; keep one-shot `-m path/to/agent.yml` as escape hatch.
+2. **TUI substrate decision: inkcell vs builtin** — current `src/tui/` is POC-grade. Feasibility study before more UI surface area.
+   - Candidate: sibling repo `../inkcell` (retained Surface, scene/action runtime, themes, snapshot tests, C++17/Makefile, no ncurses).
+   - Spike criteria: stream protocol events (action/result/response/thought) into inkcell scenes; input/readline parity; scrollback; dialog/ask_tool cards; frame budget under live SSE.
+   - Decision gate: **adopt inkcell** (thin adapter, delete/shrink builtin) vs **keep builtin** (rewrite in place) vs **hybrid** (inkcell shell + protocol widgets).
+   - Do not invest in select-block / fancy chrome until this gate lands.
+3. **Async LLM** — non-blocking HTTP (curl_multi or threaded client). Unblocks spinner + typing during stream.
+4. **Runtime compliance enforcement** — strict XML mode already partially in CANON path; harden protocol_error injection + metrics.
+5. **Manifest ecosystem** — bi-directional import, remote resolving, disable unsupported builtins for auto-readonly mode.
+6. **Testing** — automated end-to-end tests: crash on exit, pipeline roundtrip, self-improvement scenarios.
+7. **TUI select-block primitive** — *after* TUI substrate decision. Keyboard-select rendered blocks and jump into/out of action scopes (parent ⇄ sub-agent). Generic: block identity, parent/child, focus stack; later copy/pin/inspect/jump.
 
 ---
 
@@ -55,8 +75,9 @@ Script tools run in `std::thread` with `popen()`. Output streams to `PendingTool
 - **Tool configs** (tool.yml): tool-specific schemas, examples, constraints.
 - **System prompt** (agent.yml persona): agent personality, available tools list.
 
-### Bare text tolerance
-LLM output without `<action>` or `<response>` tags is treated as the final response. This prevents iteration loops from turning 1-turn queries into multi-API-call spirals.
+### Bare text policy (CANON §2 — STRICT)
+Bare text does **not** complete the turn. Runtime injects a protocol correction and continues.
+Only `<response final="true">` completes normally. Authority: `docs/protocol/CANON.md`.
 
 ---
 
@@ -79,7 +100,7 @@ LLM output without `<action>` or `<response>` tags is treated as the final respo
 |------|--------|------------|
 | `curl_easy_perform` blocks main thread | Spinner freezes, can't type during LLM | Ctrl+C responsive via `CURLOPT_XFERINFOFUNCTION`. Full fix: async LLM (#1 priority) |
 | No thread-safe protocol vectors | Potential data race when async LLM added | Acceptable now — single-threaded. Must add mutex before async |
-| LLM emits bare text outside tags | Extra API calls, garbled raw.md | Harness tuning needed. Bare text = response mitigation limits impact |
+| LLM emits bare text outside tags | Extra API calls until correction lands | CANON §2 strict retry (not silent final). Remeasure compliance post-canon |
 | No automated tests | Regressions manually detected | Manual testing for now. Test harness needed |
 | Markdown renderer handles partial text poorly | Live MD can be garbled during streaming | Acceptable — resolves on completion. Lazy rendering option exists |
 
@@ -137,7 +158,7 @@ Results append line-by-line. Each `harvestPendingTools()` call pushes new lines 
 ### Principles
 - **Harness teaches the protocol, not the tools.** The LLM learns HOW to call tools from the harness, but WHAT tools exist from the system prompt.
 - **Tools self-document.** Each tool's `tool.yml` has description + schema. These inject into the system prompt, not the harness.
-- **Bare text is tolerated but not encouraged.** The harness says "wrap everything in XML." But if the LLM doesn't, we treat bare text as the response rather than looping forever.
+- **Bare text does not complete.** Harness and runtime agree (CANON §2): correction + retry, not silent success.
 - **Non-final `<response>` = thinking.** The LLM can emit `<response>I should check X</response>` alongside actions. It appears briefly then vanishes (context management TBD).
 
 ---
@@ -162,4 +183,4 @@ Results append line-by-line. Each `harvestPendingTools()` call pushes new lines 
 
 ---
 
-*Last updated: 2026-05-16 | 61c3a7e*
+*Last updated: 2026-07-10 | protocol CANON burn*
