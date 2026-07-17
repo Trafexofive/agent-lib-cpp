@@ -56,6 +56,7 @@ Living document tracking Cortex-Prime MK3 agent-lib status, priorities, decision
 5. **Manifest ecosystem** — bi-directional import, remote resolving, disable unsupported builtins for auto-readonly mode.
 6. **Testing** — automated end-to-end tests: crash on exit, pipeline roundtrip, self-improvement scenarios.
 7. **TUI select-block primitive** — *after* TUI substrate decision. Keyboard-select rendered blocks and jump into/out of action scopes (parent ⇄ sub-agent). Generic: block identity, parent/child, focus stack; later copy/pin/inspect/jump.
+8. **Dashboard 10x + no-args default** (2026-07-17) — make the dashboard a real operator control surface (live metrics, actionable controls, monitoring), and make `cortex-mk3` with no args open the dashboard instead of erroring. See artifact `cortex-pi-level-gap-analysis` §5.
 
 ---
 
