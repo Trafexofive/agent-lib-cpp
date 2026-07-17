@@ -265,6 +265,17 @@ struct ShellModel {
 
     bool atRoot() const { return agentPath.empty(); }
 
+    // Returns the body of the most recent Response timeline row (the
+    // streaming/final LLM response text), or empty when there is none yet.
+    // The dashboard preview line truncates this for display while a turn is
+    // running. Scans backward so the latest response wins.
+    std::string lastResponseBody() const {
+        for (auto it = rootRows.rbegin(); it != rootRows.rend(); ++it) {
+            if (it->kind == TimelineKind::Response) return it->body;
+        }
+        return {};
+    }
+
     Agent* currentAgent() const {
         if (!rootAgent) return nullptr;
         Agent* cur = rootAgent;

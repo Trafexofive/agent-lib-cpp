@@ -534,6 +534,32 @@ void test_chat_last_turn_summary_lifecycle() {
     check(err.lastTurnElapsedMs >= 2 && !err.running,
           "error path captures last turn elapsed and clears running");
 }
+
+void test_chat_last_response_body() {
+    // The dashboard preview line reads the most recent Response row's body.
+    // The helper returns empty when no Response row exists, and the latest
+    // body when one does. Action/result rows do not count.
+    ShellModel model;
+    check(model.lastResponseBody().empty(),
+          "last response body is empty with no timeline rows");
+
+    ProtocolEvent action = actionEvent("agent", "reader", "ping_reader", "ping");
+    model.apply(UiEvent::protocolEvent(action, 0));
+    ProtocolEvent result = resultEvent("ping_reader", true, "ok", "reader");
+    model.apply(UiEvent::protocolEvent(result, 1));
+    check(model.lastResponseBody().empty(),
+          "last response body is empty when only action/result rows exist");
+
+    model.apply(UiEvent::protocolEvent(responseEvent("streaming partial"), 2));
+    check(model.lastResponseBody() == "streaming partial",
+          "last response body returns the Response row body");
+
+    // A later response event (updated text) replaces the body; the helper
+    // returns the latest.
+    model.apply(UiEvent::protocolEvent(responseEvent("streaming final answer"), 2));
+    check(model.lastResponseBody() == "streaming final answer",
+          "last response body returns the most recent response text");
+}
 }  // namespace
 
 int main() {
@@ -556,6 +582,7 @@ int main() {
     test_chat_protocol_reducer_updates_in_place();
     test_chat_turn_start_timestamp_lifecycle();
     test_chat_last_turn_summary_lifecycle();
+    test_chat_last_response_body();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }

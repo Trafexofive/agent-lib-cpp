@@ -226,6 +226,17 @@ class MainScene final : public BaseScene {
         }
         field(surface, frame.x, y++, frame.w, liveLabel, liveLine,
               model_->running ? theme::green() : theme::dim());
+        // While a turn is running, show a truncated preview of the streaming
+        // response so the operator can watch the agent work from the dashboard
+        // without switching to the chat. Hidden when idle to keep the layout
+        // compact (the live/last line above already carries the signal).
+        if (model_->running) {
+            std::string preview = model_->lastResponseBody().empty()
+                                      ? std::string("\xe2\x80\x94")
+                                      : inkcell::text::truncate(model_->lastResponseBody(),
+                                                                 std::max(1, frame.w - 2));
+            field(surface, frame.x, y++, frame.w, "preview", preview, theme::text());
+        }
         field(surface, frame.x, y++, frame.w, "session", suffix(model_->activeSessionId));
         field(surface, frame.x, y++, frame.w, "manifest", cfg_.manifestPath.empty() ? "builtin surface" : cfg_.manifestPath);
         y += 2;
