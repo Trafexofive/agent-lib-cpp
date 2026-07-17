@@ -99,11 +99,12 @@ inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const C
 }
 
 inline void drawPromptLine(inkcell::Surface& surface, inkcell::Rect row, const ChatSurfaceModel& m) {
+    // The composer always reflects the actual input text (or an empty cursor).
+    // Running state is signalled by the status line (● agent running) — never
+    // by overwriting the input box, which is bad UX mid-turn.
     std::string prompt = m.inputFocused ? "› " : "  ";
     std::string input;
-    if (m.running) {
-        input = "agent running…";
-    } else if (m.input.empty()) {
+    if (m.input.empty()) {
         if (m.inputFocused) input = "█";
     } else {
         input = m.input;

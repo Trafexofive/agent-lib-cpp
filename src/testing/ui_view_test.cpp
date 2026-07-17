@@ -185,6 +185,32 @@ void test_chat_prompt_cursor_position() {
     check(containsRow(s, "› ab█cd"), "chat prompt renders cursor at model position");
 }
 
+void test_chat_prompt_keeps_input_while_running() {
+    // Regression: the composer must not be replaced by a running placeholder.
+    // The status line (● agent running) already communicates the running state.
+    inkcell::Surface s({40, 8});
+    chat::ChatSurfaceModel model;
+    model.input = "hello";
+    model.inputCursor = 5;
+    model.inputFocused = true;
+    model.running = true;
+    model.status = "agent running";
+    chat::drawChatSurface(s, {0, 0, 40, 8}, model);
+    std::string promptRow = rowText(s, 7);
+    check(promptRow.find("hello") != std::string::npos,
+          "composer keeps input text while running");
+    check(promptRow.find("█") != std::string::npos,
+          "composer keeps cursor block while running");
+    check(promptRow.find("agent running") == std::string::npos,
+          "composer is not replaced by running placeholder");
+    // Truthful running signal on the status line is the "pending ... actions ... results ... b"
+    // metrics block (only built when m.running). The left "agent running" indicator can
+    // get squeezed off-row when the metrics string is wide -- a separate drawStatusLine
+    // layout concern, tracked outside this regression.
+    check(rowText(s, 6).find("pending") != std::string::npos,
+          "status line still reports running state via metrics");
+}
+
 void test_chat_help_and_theme() {
     inkcell::Surface s({100, 30});
     theme::set(theme::Variant::Graphite);
@@ -228,6 +254,7 @@ int main() {
     test_chat_wrap_cache();
     test_chat_selection_stays_visible_after_wrap();
     test_chat_prompt_cursor_position();
+    test_chat_prompt_keeps_input_while_running();
     test_chat_help_and_theme();
     test_ask_dialog_overlay();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
