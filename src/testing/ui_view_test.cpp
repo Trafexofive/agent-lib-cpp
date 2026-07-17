@@ -163,6 +163,72 @@ void test_chat_wrap_cache() {
           "chat wrap cache invalidates on transcript version change");
 }
 
+void test_chat_wrap_cache_incremental_tail() {
+    // Incremental wrap: on a transcriptVersion bump at the same width, only the
+    // dirty tail re-wraps. The stable prefix is reused as-is, and code-fence state
+    // carries across the boundary so appended code lines render inside the fence.
+    inkcell::Surface surface({60, 20});
+    std::vector<std::string> source = {
+        "  CORTEX",
+        "    first response line",
+        "    ```cpp",
+        "    int x = 1;",
+    };
+    chat::TranscriptWrapCache cache;
+    chat::ChatSurfaceModel model;
+    model.transcriptSource = &source;
+    model.transcriptCache = &cache;
+    model.transcriptVersion = 1;
+    chat::drawTranscript(surface, {2, 2, 56, 16}, model);
+    size_t initialLines = cache.lines.size();
+    check(initialLines == 4, "incremental wrap baseline produces 4 display lines");
+    check(cache.sourceSnapshot.size() == source.size() &&
+              cache.sourceLineSpans.size() == source.size(),
+          "incremental wrap records source snapshot and per-line spans");
+    check(cache.lines[2].find("┌─ cpp") != std::string::npos,
+          "incremental wrap baseline renders open code fence");
+    std::vector<std::string> prefixCopy(cache.lines.begin(), cache.lines.end());
+
+    // Append a code-body line; fence state must carry (renders with │ prefix).
+    source.push_back("    int y = 2;");
+    model.transcriptVersion = 2;
+    chat::drawTranscript(surface, {2, 2, 56, 16}, model);
+    check(cache.lines.size() == initialLines + 1,
+          "incremental append adds exactly one tail line");
+    check(cache.lines.back().find("│ int y = 2;") != std::string::npos,
+          "incremental wrap carries code-fence state across boundary");
+    bool prefixIntact = true;
+    for (size_t i = 0; i < initialLines; ++i)
+        if (cache.lines[i] != prefixCopy[i]) { prefixIntact = false; break; }
+    check(prefixIntact, "incremental wrap preserves stable prefix on append");
+
+    // Mutate the last line; dirty start = last source line, tail re-wrapped.
+    source[4] = "    int z = 3;";
+    model.transcriptVersion = 3;
+    chat::drawTranscript(surface, {2, 2, 56, 16}, model);
+    check(cache.lines.back().find("│ int z = 3;") != std::string::npos,
+          "incremental wrap re-wraps mutated tail line");
+    check(cache.lines.size() == initialLines + 1,
+          "incremental wrap preserves line count on tail mutate");
+    prefixIntact = true;
+    for (size_t i = 0; i < initialLines; ++i)
+        if (cache.lines[i] != prefixCopy[i]) { prefixIntact = false; break; }
+    check(prefixIntact, "incremental wrap preserves stable prefix on tail mutate");
+
+    // Close the fence; carried open state makes ``` render as └─.
+    source.push_back("    ```");
+    model.transcriptVersion = 4;
+    chat::drawTranscript(surface, {2, 2, 56, 16}, model);
+    check(cache.lines.back().find("└─") != std::string::npos,
+          "incremental wrap renders fence close after carried open state");
+    check(cache.lines.size() == initialLines + 2,
+          "incremental wrap appends fence-close line");
+    prefixIntact = true;
+    for (size_t i = 0; i < initialLines; ++i)
+        if (cache.lines[i] != prefixCopy[i]) { prefixIntact = false; break; }
+    check(prefixIntact, "incremental wrap preserves stable prefix across fence close");
+}
+
 void test_chat_selection_stays_visible_after_wrap() {
     inkcell::Surface s({60, 16});
     chat::ChatSurfaceModel model;
@@ -252,6 +318,7 @@ int main() {
     test_chat_block_primitives();
     test_chat_transcript_wraps_long_lines();
     test_chat_wrap_cache();
+    test_chat_wrap_cache_incremental_tail();
     test_chat_selection_stays_visible_after_wrap();
     test_chat_prompt_cursor_position();
     test_chat_prompt_keeps_input_while_running();

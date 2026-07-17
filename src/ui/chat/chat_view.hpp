@@ -180,13 +180,20 @@ inline std::vector<std::string> wrapWordsLossless(const std::string& value, int 
     return out;
 }
 
-inline std::vector<std::string> wrapTranscript(const std::vector<std::string>& source, int width) {
-    std::vector<std::string> out;
+inline void wrapTranscriptRange(const std::vector<std::string>& source, size_t begin, size_t end,
+                                int width, bool inCodeInit,
+                                std::vector<std::string>& out,
+                                std::vector<int>& spans,
+                                std::vector<bool>& inCodeAfter) {
     width = std::max(1, width);
-    bool inCode = false;
-    for (const auto& original : source) {
+    bool inCode = inCodeInit;
+    for (size_t idx = begin; idx < end; ++idx) {
+        const auto& original = source[idx];
+        size_t before = out.size();
         if (original.empty()) {
             out.push_back("");
+            spans.push_back(static_cast<int>(out.size() - before));
+            inCodeAfter.push_back(inCode);
             continue;
         }
         size_t indentSize = 0;
@@ -207,9 +214,7 @@ inline std::vector<std::string> wrapTranscript(const std::vector<std::string>& s
                               semanticProbe.rfind("✗ ERROR", 0) == 0;
         if (semanticHeader) {
             for (const auto& line : hardWrapUtf8(content, available)) out.push_back(indent + line);
-            continue;
-        }
-        if (content.rfind("```", 0) == 0) {
+        } else if (content.rfind("```", 0) == 0) {
             if (!inCode) {
                 std::string language = content.substr(3);
                 size_t first = language.find_first_not_of(" \t");
@@ -219,17 +224,24 @@ inline std::vector<std::string> wrapTranscript(const std::vector<std::string>& s
                 out.push_back(indent + "└─");
             }
             inCode = !inCode;
-            continue;
-        }
-        if (inCode) {
+        } else if (inCode) {
             for (const auto& line : hardWrapUtf8(content, std::max(1, available - 2)))
                 out.push_back(indent + "│ " + line);
-            continue;
+        } else {
+            auto wrapped = wrapWordsLossless(content, available);
+            if (wrapped.empty()) out.push_back(indent);
+            else for (const auto& line : wrapped) out.push_back(indent + line);
         }
-        auto wrapped = wrapWordsLossless(content, available);
-        if (wrapped.empty()) out.push_back(indent);
-        else for (const auto& line : wrapped) out.push_back(indent + line);
+        spans.push_back(static_cast<int>(out.size() - before));
+        inCodeAfter.push_back(inCode);
     }
+}
+
+inline std::vector<std::string> wrapTranscript(const std::vector<std::string>& source, int width) {
+    std::vector<std::string> out;
+    std::vector<int> spans;
+    std::vector<bool> inCodeAfter;
+    wrapTranscriptRange(source, 0, source.size(), width, false, out, spans, inCodeAfter);
     return out;
 }
 
@@ -267,16 +279,43 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
     std::vector<std::string> uncachedLines;
     const std::vector<std::string>* displayLinesPtr = nullptr;
     if (m.transcriptCache) {
-        if (m.transcriptCache->sourceVersion != m.transcriptVersion ||
-            m.transcriptCache->width != wrapWidth) {
-            m.transcriptCache->lines = wrapTranscript(source, wrapWidth);
-            m.transcriptCache->blockKinds.clear();
-            m.transcriptCache->blockHeaders.clear();
-            m.transcriptCache->blockSelected.clear();
-            m.transcriptCache->sourceVersion = m.transcriptVersion;
-            m.transcriptCache->width = wrapWidth;
+        auto& cache = *m.transcriptCache;
+        if (cache.sourceVersion != m.transcriptVersion || cache.width != wrapWidth) {
+            const bool sameWidth = cache.width == wrapWidth;
+            if (!sameWidth || cache.sourceSnapshot.empty()) {
+                // Full rewrap: new width or first run.
+                cache.lines.clear();
+                cache.sourceLineSpans.clear();
+                cache.inCodeAfter.clear();
+                wrapTranscriptRange(source, 0, source.size(), wrapWidth, false,
+                                    cache.lines, cache.sourceLineSpans, cache.inCodeAfter);
+                cache.sourceSnapshot = source;
+            } else {
+                // Incremental: keep the stable display prefix, re-wrap only the dirty tail.
+                // Find the first source line that differs from the snapshot.
+                size_t d = 0;
+                const auto& snap = cache.sourceSnapshot;
+                while (d < source.size() && d < snap.size() && source[d] == snap[d]) ++d;
+                int stableEnd = 0;
+                for (size_t i = 0; i < d; ++i) stableEnd += cache.sourceLineSpans[i];
+                cache.lines.resize(static_cast<size_t>(stableEnd));
+                cache.sourceLineSpans.resize(d);
+                cache.inCodeAfter.resize(d);
+                bool inCode = d > 0 ? cache.inCodeAfter[d - 1] : false;
+                wrapTranscriptRange(source, d, source.size(), wrapWidth, inCode,
+                                    cache.lines, cache.sourceLineSpans, cache.inCodeAfter);
+                cache.sourceSnapshot = source;
+            }
+            // Block metadata rebuilds on size mismatch (checked below). Clearing here
+            // forces a fresh pass — cheap (no allocs) and avoids stale tail metadata
+            // when the dirty tail produces the same display-line count.
+            cache.blockKinds.clear();
+            cache.blockHeaders.clear();
+            cache.blockSelected.clear();
+            cache.sourceVersion = m.transcriptVersion;
+            cache.width = wrapWidth;
         }
-        displayLinesPtr = &m.transcriptCache->lines;
+        displayLinesPtr = &cache.lines;
     } else {
         uncachedLines = wrapTranscript(source, wrapWidth);
         displayLinesPtr = &uncachedLines;
