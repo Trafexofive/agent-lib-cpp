@@ -2233,10 +2233,16 @@ static int cmdRun(CliConfig& cli) {
         return 0;
     }
 
-    // ── Interactive experimental inkcell chat port ──
-    // Chat-only: no main menu/dashboard. This is the src/ui path intended to
-    // retire src/tui once it reaches parity-or-better against ReplSession.
-    if (cli.tuiMode == "experimental") {
+    // ── Interactive experimental inkcell app ──
+    // Supports both the dashboard (no -m: startAtDashboard = true) and direct
+    // chat (-m: startAtDashboard = false). It is now the default landing
+    // surface for a bare `cortex-mk3` (no prompt, no manifest) so the operator
+    // opens into the control surface instead of the legacy REPL. Explicit
+    // `--tui experimental` continues to route here. With a -m manifest, the
+    // app goes straight to the agent scene; with a -p prompt in one-shot mode,
+    // runInkcellOneShot (above) is used instead.
+    if (cli.tuiMode == "experimental" ||
+        (cli.prompt.empty() && cli.manifestPath.empty())) {
         std::string experimentalSessionId =
             cli.ephemeral
                 ? ""

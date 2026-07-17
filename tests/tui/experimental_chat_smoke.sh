@@ -32,19 +32,27 @@ empty_out="$(mktemp)"
 empty_err="$(mktemp)"
 coder_out="$(mktemp)"
 coder_err="$(mktemp)"
-trap 'rm -f "$empty_out" "$empty_err" "$coder_out" "$coder_err"' EXIT
+bare_out="$(mktemp)"
+bare_err="$(mktemp)"
+trap 'rm -f "$empty_out" "$empty_err" "$coder_out" "$coder_err" "$bare_out" "$bare_err"' EXIT
 
 timeout 8 env MK3_TUI_SNAPSHOT=1 "$bin" --tui experimental --no-session >"$empty_out" 2>"$empty_err"
 timeout 8 env MK3_TUI_SNAPSHOT=1 "$bin" -m manifests/agents/coder/agent.yml --tui experimental --no-session >"$coder_out" 2>"$coder_err"
+# Bare no-args must also open the dashboard (no -m, no --tui, no -p).
+timeout 8 env MK3_TUI_SNAPSHOT=1 "$bin" >"$bare_out" 2>"$bare_err"
 
 empty="$(strip_ansi "$empty_out")"
 coder="$(strip_ansi "$coder_out")"
+bare="$(strip_ansi "$bare_out")"
 
 assert_contains "$empty" "CORTEX MK3  /  DASHBOARD"
 assert_contains "$empty" "Overview"
 assert_contains "$empty" "Sessions"
 assert_contains "$empty" "Harness"
 assert_contains "$empty" "Runtime"
+# Bare no-args (no flags at all) must also land on the dashboard.
+assert_contains "$bare" "CORTEX MK3  /  DASHBOARD"
+assert_contains "$bare" "Overview"
 assert_contains "$coder" "CORTEX MK3"
 assert_contains "$coder" "coder"
 assert_contains "$coder" "› █"
@@ -58,6 +66,7 @@ assert_not_contains "$coder" "DASHBOARD"
 for bad in "control board" "Chat / Agent History" "Harness / Manifest" "╭─ composer" "composer (focus)" "╰"; do
   assert_not_contains "$empty" "$bad"
   assert_not_contains "$coder" "$bad"
+  assert_not_contains "$bare" "$bad"
 done
 
 echo "experimental app smoke passed: dashboard default, -m direct chat, no boxed composer"
