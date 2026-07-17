@@ -392,7 +392,9 @@ inline void drawHelpOverlay(inkcell::Surface& surface, inkcell::Rect page) {
     ++y;
     const std::vector<std::string> lines = {
         "Enter       send prompt",
-        "Up / Down   prompt history (composer)",
+        "Up / Down   prompt history (composer) / scroll (history)",
+        "PgUp / PgDn scroll transcript (any focus)",
+        "Home / End  jump to top / bottom (any focus)",
         "Esc         focus transcript / return to composer",
         "j / k       select transcript blocks",
         "Enter       open selected sub-agent",

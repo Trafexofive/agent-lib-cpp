@@ -8,6 +8,8 @@
 #include "src/ui/scenes/agent_scene.hpp"
 #include "src/ui/scenes/main_scene.hpp"
 
+#include <vector>
+
 using namespace cortex::mk3;
 using namespace cortex::mk3::ui;
 
@@ -151,6 +153,63 @@ void test_ctrl_c_state() {
     check(!g_running && model->status == "cancelling", "Ctrl-C requests active turn cancellation");
     g_running = true;
 }
+void test_chat_scroll_keys() {
+    // Regression for the "no way to actually scroll the history" complaint.
+    // PageUp/PageDown/Home/End scroll from the COMPOSER (peek at history while
+    // typing); in TIMELINE focus ArrowUp/Down scroll line-by-line (the prior
+    // binding jumped between block markers and never free-scrolled).
+    InkcellAppConfig cfg;
+    AgentBridge bridge;
+    auto model = std::make_shared<ShellModel>();
+    scenes::AgentScene scene(cfg, bridge, model);
+    scene.on_enter();
+    model->composer.focused = true;
+    model->timelineFocus = false;
+
+    std::vector<std::string> lines;
+    for (int i = 0; i < 200; ++i) lines.push_back("line " + std::to_string(i));
+    model->transcriptView.viewport_h = 10;
+    model->transcriptView.set_lines(lines);
+    check(model->transcriptView.stick_bottom, "long transcript sticks to bottom by default");
+    int bottom = model->transcriptView.offset;
+    check(bottom == 190, "stick-to-bottom offset is lines - viewport (190)");
+
+    // PageUp from the COMPOSER scrolls up without leaving the composer.
+    scene.on_key(key(inkcell::KeyCode::PageUp));
+    check(model->transcriptView.offset < bottom && !model->transcriptView.stick_bottom,
+          "PageUp scrolls transcript up from the composer and un-sticks");
+    check(model->composer.focused, "PageUp keeps the composer focused");
+
+    // PageDown scrolls back down to the bottom and re-sticks.
+    scene.on_key(key(inkcell::KeyCode::PageDown));
+    check(model->transcriptView.offset == bottom && model->transcriptView.stick_bottom,
+          "PageDown returns to the bottom and re-sticks");
+
+    // Home/End jump to top/bottom.
+    scene.on_key(key(inkcell::KeyCode::Home));
+    check(model->transcriptView.offset == 0 && !model->transcriptView.stick_bottom,
+          "Home jumps to the top of the transcript");
+    scene.on_key(key(inkcell::KeyCode::End));
+    check(model->transcriptView.stick_bottom && model->transcriptView.offset == bottom,
+          "End re-sticks to the bottom");
+
+    // In TIMELINE focus: ArrowUp/Down scroll line-by-line. Esc enters timeline
+    // focus but focusTimeline() rebuilds the view from the model transcript
+    // (empty here), so re-seed the transcript before scrolling — none of the
+    // scroll keys rebuild, so the seeded lines stay for the scroll assertions.
+    scene.on_key(key(inkcell::KeyCode::Escape));  // composer -> timeline
+    check(!model->composer.focused, "Esc leaves the composer for timeline focus");
+    model->transcriptView.viewport_h = 10;
+    model->transcriptView.set_lines(lines);
+    scene.on_key(key(inkcell::KeyCode::Home));   // start from the top
+    check(model->transcriptView.offset == 0, "Home in timeline jumps to top");
+    scene.on_key(key(inkcell::KeyCode::ArrowDown));
+    check(model->transcriptView.offset == 1, "ArrowDown scrolls one line in timeline focus");
+    scene.on_key(key(inkcell::KeyCode::ArrowDown));
+    check(model->transcriptView.offset == 2, "ArrowDown scrolls one line again");
+    scene.on_key(key(inkcell::KeyCode::ArrowUp));
+    check(model->transcriptView.offset == 1, "ArrowUp scrolls one line back");
+}
 }  // namespace
 
 int main() {
@@ -159,6 +218,7 @@ int main() {
     test_ask_choice_roundtrip();
     test_slash_and_completion();
     test_ctrl_c_state();
+    test_chat_scroll_keys();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }

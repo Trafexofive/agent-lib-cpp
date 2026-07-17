@@ -54,12 +54,41 @@ class AgentScene final : public BaseScene {
                 model_->focusComposer();
                 return true;
             }
-            if (event.code == KeyCode::ArrowUp || (event.code == KeyCode::Character && event.ch == 'k')) {
+            // Up/Down scroll the transcript line-by-line (free read scroll through
+            // history). This is the intuitive scroll every chat has; the prior
+            // binding jumped between block markers instead of scrolling.
+            if (event.code == KeyCode::ArrowUp) {
+                model_->transcriptView.scroll_by(-1);
+                return true;
+            }
+            if (event.code == KeyCode::ArrowDown) {
+                model_->transcriptView.scroll_by(1);
+                return true;
+            }
+            // j/k select transcript blocks (drilldown navigation); Enter drills in.
+            if (event.code == KeyCode::Character && (event.ch == 'k' || event.ch == 'K')) {
                 model_->selectDelta(-1);
                 return true;
             }
-            if (event.code == KeyCode::ArrowDown || (event.code == KeyCode::Character && event.ch == 'j')) {
+            if (event.code == KeyCode::Character && (event.ch == 'j' || event.ch == 'J')) {
                 model_->selectDelta(1);
+                return true;
+            }
+            // PageUp/PageDown = half-page scroll; Home/End = top/bottom.
+            if (event.code == KeyCode::PageUp) {
+                model_->transcriptView.scroll_by(-std::max(1, model_->transcriptView.viewport_h / 2));
+                return true;
+            }
+            if (event.code == KeyCode::PageDown) {
+                model_->transcriptView.scroll_by(std::max(1, model_->transcriptView.viewport_h / 2));
+                return true;
+            }
+            if (event.code == KeyCode::Home) {
+                model_->transcriptView.scroll_to_start();
+                return true;
+            }
+            if (event.code == KeyCode::End) {
+                model_->transcriptView.scroll_to_end();
                 return true;
             }
             if (event.code == KeyCode::Enter) {
@@ -110,6 +139,24 @@ class AgentScene final : public BaseScene {
             model_->submitComposer();
             return true;
         }
+        // PageUp/PageDown scroll the transcript without leaving the composer,
+        // so you can peek at history while typing. Home/End jump to top/bottom.
+        if (event.code == KeyCode::PageUp) {
+            model_->transcriptView.scroll_by(-std::max(1, model_->transcriptView.viewport_h / 2));
+            return true;
+        }
+        if (event.code == KeyCode::PageDown) {
+            model_->transcriptView.scroll_by(std::max(1, model_->transcriptView.viewport_h / 2));
+            return true;
+        }
+        if (event.code == KeyCode::Home) {
+            model_->transcriptView.scroll_to_start();
+            return true;
+        }
+        if (event.code == KeyCode::End) {
+            model_->transcriptView.scroll_to_end();
+            return true;
+        }
         if (model_->composer.handle_key(event)) return true;
         return false;
     }
@@ -146,10 +193,10 @@ class AgentScene final : public BaseScene {
         vm.transcriptCache = &model_->transcriptWrapCache;
         vm.input = model_->composer.value;
         vm.inputCursor = model_->composer.cursor;
-        if (model_->running) vm.hint = "Ctrl-C cancel · Esc history · t thoughts · r raw";
-        else if (!model_->atRoot()) vm.hint = "Esc/Backspace back · j/k select · Enter drill · g refresh";
-        else if (vm.historyFocused) vm.hint = "j/k select · Enter open · i composer · ? help · T theme · q quit";
-        else vm.hint = "Enter send · ↑↓ history · Esc transcript · Tab commands";
+        if (model_->running) vm.hint = "Ctrl-C cancel · Esc history · PgUp/Dn scroll · t thoughts · r raw";
+        else if (!model_->atRoot()) vm.hint = "↑↓ scroll · j/k select · Enter drill · Esc back · g refresh";
+        else if (vm.historyFocused) vm.hint = "↑↓ scroll · j/k select · Enter open · PgUp/Dn · i composer · ? help · q quit";
+        else vm.hint = "Enter send · ↑↓ history · PgUp/Dn scroll · Esc transcript · Tab commands";
 
         chat::drawChatSurface(surface, p, vm);
         if (model_->askActive)
