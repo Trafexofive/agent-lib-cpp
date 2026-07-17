@@ -19,7 +19,7 @@ CXXFLAGS  += $(foreach dir,$(INC_DIRS),-I$(dir))
 # Source files (exclude test files)
 SRCS := $(shell find $(SRC_DIR) -name '*.cpp' ! -path '*/testing/*' ! -name 'call_tool.cpp')
 OBJS := $(SRCS:%.cpp=$(BUILD_DIR)/%.o)
-DEPS := $(OBJS:.o=.d) $(BUILD_DIR)/main.o.d $(BUILD_DIR)/server_main.o.d
+DEPS := $(OBJS:.o=.d) $(BUILD_DIR)/main.d $(BUILD_DIR)/server_main.d
 
 # Targets
 BIN_CLI    := cortex-mk3
