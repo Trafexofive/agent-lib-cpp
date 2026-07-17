@@ -101,12 +101,20 @@ void test_chat_block_primitives() {
     chat::ChatSurfaceModel model;
     model.transcript = {"  YOU", "    hello", "", "  TOOL  exec  #e1", "    pwd"};
     chat::drawTranscript(surface, {2, 2, 56, 8}, model);
-    int firstY = 2 + 8 - 5;
+    // Top-anchored: short transcripts start at the top of the body (body.y = 2),
+    // not bottom-anchored with a void above.
+    int firstY = 2;
     auto userBg = chat::blockBackground(chat::ChatBlockKind::User);
     auto execBg = chat::blockBackground(chat::ChatBlockKind::ToolExec);
+    auto baseBg = theme::base_bg().bg;
     check(inkcell::same_color(surface.at({2, firstY}).style.bg, userBg) &&
               inkcell::same_color(surface.at({2, firstY + 1}).style.bg, userBg),
           "chat user background spans header and body");
+    // Empty separator line inherits the prior block's background (contiguous:
+    // no base-bg gutter between the YOU block and the TOOL block).
+    check(inkcell::same_color(surface.at({2, firstY + 2}).style.bg, userBg) &&
+              !inkcell::same_color(surface.at({2, firstY + 2}).style.bg, baseBg),
+          "chat empty separator inherits the prior block background (contiguous)");
     check(inkcell::same_color(surface.at({2, firstY + 3}).style.bg, execBg) &&
               inkcell::same_color(surface.at({2, firstY + 4}).style.bg, execBg),
           "chat builtin background spans header and body");

@@ -256,9 +256,14 @@ inline void buildBlockMetadata(const std::vector<std::string>& lines,
     bool currentSelected = false;
     for (size_t i = 0; i < lines.size(); ++i) {
         const auto& line = lines[i];
+        // Empty separator lines inherit the current block's kind so the block
+        // background flows through them — contiguous rendering with no base-bg
+        // gutters between colored blocks. Separators stay marker-less (header
+        // is false) so the ━▎ only marks real block headers.
         if (line.empty()) {
-            currentKind = ChatBlockKind::None;
-            currentSelected = false;
+            kinds[i] = static_cast<uint8_t>(currentKind);
+            headers[i] = false;
+            selected[i] = currentSelected;
             continue;
         }
         bool header = line.rfind("    ", 0) != 0;
@@ -351,7 +356,12 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
         }
     }
     int visible = std::min(body.h, total - offset);
-    int firstY = body.y + std::max(0, body.h - visible);  // ReplSession-style bottom anchoring.
+    // Top-anchor the visible window within the body: short transcripts start
+    // right below the header and grow downward (contiguous with the header, no
+    // floating void); once the transcript overflows, offset = maxOffset keeps the
+    // newest lines at the bottom of the body (stick-to-bottom). Standard chat
+    // pattern (Slack/Discord): messages start at the top, stick when full.
+    int firstY = body.y;
     for (int y = 0; y < visible; ++y) {
         int idx = offset + y;
         const auto& line = displayLines[static_cast<size_t>(idx)];
