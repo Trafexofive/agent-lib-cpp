@@ -3,6 +3,7 @@
 // Includes timeline block focus + nested sub-agent history drill-down.
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cstdlib>
 #include <set>
@@ -186,6 +187,7 @@ struct ShellModel {
     std::string status = "idle";
     PageState timelineState = PageState::Empty;
     bool running = false;
+    int64_t turnStartMs = 0;  // steady_clock ms when the current turn started; 0 when idle. Drives live metrics.
     bool done = false;
     bool failed = false;
     bool showThoughts = false;
@@ -559,7 +561,9 @@ struct ShellModel {
                     failed = false;
                 }
                 status = e.text;
+                bool wasRunning = running;
                 running = e.text.find("running") != std::string::npos;
+                if (running && !wasRunning) turnStartMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
                 if (running) timelineState = PageState::Loading;
                 break;
             }
@@ -569,6 +573,7 @@ struct ShellModel {
             case UiEventKind::Error:
                 failed = true;
                 running = false;
+                turnStartMs = 0;
                 status = "error";
                 timelineState = PageState::Error;
                 pushRow({TimelineKind::Error, "error", e.text, false});
@@ -628,6 +633,7 @@ struct ShellModel {
             case UiEventKind::TurnDone: {
                 done = true;
                 running = false;
+                turnStartMs = 0;
                 bool cancelled = e.text == "[cancelled]";
                 status = cancelled ? "cancelled" : failed ? "failed" : "done";
                 finalText = e.text;

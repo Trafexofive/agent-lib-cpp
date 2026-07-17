@@ -470,6 +470,30 @@ void test_chat_protocol_reducer_updates_in_place() {
     model.apply(cancelled);
     check(model.status == "cancelled" && !model.running, "cancelled turn has truthful terminal state");
 }
+
+void test_chat_turn_start_timestamp_lifecycle() {
+    // turnStartMs is captured on the false->true running transition (status
+    // event) and cleared on turn end (TurnDone, Error) so the dashboard live
+    // metrics line shows a fresh elapsed each turn and "—" when idle.
+    ShellModel model;
+    check(model.turnStartMs == 0, "turn start timestamp is zero when idle");
+
+    model.apply(UiEvent::status("agent running"));
+    check(model.running && model.turnStartMs > 0,
+          "turn start timestamp is captured when a turn starts");
+
+    int64_t firstStart = model.turnStartMs;
+    UiEvent done;
+    done.kind = UiEventKind::TurnDone;
+    done.text = "ok";
+    model.apply(done);
+    check(!model.running && model.turnStartMs == 0,
+          "turn start timestamp is cleared when the turn completes");
+
+    model.apply(UiEvent::status("agent running"));
+    check(model.turnStartMs > 0 && model.turnStartMs >= firstStart,
+          "subsequent turn captures a fresh (non-decreasing) timestamp");
+}
 }  // namespace
 
 int main() {
@@ -490,6 +514,7 @@ int main() {
     test_chat_commands();
     test_chat_prompt_history();
     test_chat_protocol_reducer_updates_in_place();
+    test_chat_turn_start_timestamp_lifecycle();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }

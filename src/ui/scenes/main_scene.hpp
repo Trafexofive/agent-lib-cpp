@@ -3,6 +3,7 @@
 // harness inventory, runtime inspection, help, quit.
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -192,6 +193,30 @@ class MainScene final : public BaseScene {
         field(surface, frame.x, y++, frame.w, "agent", nonempty(cfg_.agentName, "builtin"), theme::bright());
         field(surface, frame.x, y++, frame.w, "status", model_->running ? "running" : "ready",
               model_->running ? theme::green() : theme::text());
+        // Live operational metrics line. While a turn is running, ticks every
+        // frame (elapsed MM:SS + action/result/pending counts + token bytes).
+        // When idle, shows an em-dash so the row reserves space and the
+        // dashboard layout stays stable.
+        auto fmtElapsed = [](int64_t ms) {
+            int s = static_cast<int>(ms / 1000);
+            int m = s / 60; s %= 60;
+            char b[8]; std::snprintf(b, sizeof(b), "%02d:%02d", m, s);
+            return std::string(b);
+        };
+        std::string liveLine;
+        if (model_->running && model_->turnStartMs > 0) {
+            auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            liveLine = fmtElapsed(now - model_->turnStartMs) + " \xc2\xb7 " +
+                       std::to_string(model_->actionCount) + " actions \xc2\xb7 " +
+                       std::to_string(model_->resultCount) + " results \xc2\xb7 " +
+                       std::to_string(model_->pendingOps) + " pending \xc2\xb7 " +
+                       std::to_string(model_->tokenBytes) + "b";
+        } else {
+            liveLine = "\xe2\x80\x94";  // em-dash
+        }
+        field(surface, frame.x, y++, frame.w, "live", liveLine,
+              model_->running ? theme::green() : theme::dim());
         field(surface, frame.x, y++, frame.w, "session", suffix(model_->activeSessionId));
         field(surface, frame.x, y++, frame.w, "manifest", cfg_.manifestPath.empty() ? "builtin surface" : cfg_.manifestPath);
         y += 2;
