@@ -112,8 +112,6 @@ void Parser::processBuffer() {
             auto fit = responseAttrs_.find("final");
             if (fit != responseAttrs_.end())
                 ev.metadata["is_final"] = fit->second;
-            else
-                ev.metadata["is_final"] = "true";  // closed <response> without final="..." → treat as final
             emit(ev);
             responseAttrs_.clear();
             continue;
@@ -168,11 +166,10 @@ void Parser::processBuffer() {
                     if (fit != responseAttrs_.end()) {
                         ev.metadata["is_final"] = fit->second;
                     } else {
-                        // Closed </response> without final="..." — common
-                        // compliance slip; treat as final. Safe: the
-                        // inResponse_ gate guarantees this only fires on a
-                        // fully-closed tag, never on a partial stream.
-                        ev.metadata["is_final"] = "true";
+                        // Closed </response> without final="..." — leave
+                        // is_final unset so the agent loop can decide (the
+                        // no-progress loop-escape in agent.cpp handles the
+                        // case where the model never emits a valid final).
                     }
                     emit(ev);
                     responseAttrs_.clear();
@@ -511,11 +508,6 @@ void Parser::handleResponse(const std::string& content,
         if (it->second == "true") {
             finalResponseSeen_ = true;
         }
-    } else {
-        // Closed <response> without final="..." → treat as final (compliance
-        // slip tolerance). Only fires on fully-closed tags.
-        ev.metadata["is_final"] = "true";
-        finalResponseSeen_ = true;
     }
     emit(ev);
 }
