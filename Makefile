@@ -290,6 +290,20 @@ $(PROVIDER_MODEL_INFO_TEST_BIN): $(PROVIDER_MODEL_INFO_TEST_SRC) $(BUILD_DIR)/sr
 test-provider-model-info: $(PROVIDER_MODEL_INFO_TEST_BIN)
 	@./$(PROVIDER_MODEL_INFO_TEST_BIN)
 
+# ── ScriptedProvider — test-only queue-driven ILlmProvider fake ──────────────
+# Enabler for the sub-agent test phase: lets a test script the exact protocol
+# responses the parent and child agents emit, so we can drive real
+# <action type="agent"> delegation, tool calls, multi-turn flows, and edge
+# cases without touching the network. Header-only — no .o to link.
+SCRIPTED_PROVIDER_TEST_SRC := src/testing/scripted_provider_test.cpp
+SCRIPTED_PROVIDER_TEST_BIN := scripted-provider-test
+
+$(SCRIPTED_PROVIDER_TEST_BIN): $(SCRIPTED_PROVIDER_TEST_SRC) src/testing/scripted_provider.hpp
+	$(CXX) $(CXXFLAGS) $(SCRIPTED_PROVIDER_TEST_SRC) -o $@ $(LDFLAGS)
+
+test-scripted-provider: $(SCRIPTED_PROVIDER_TEST_BIN)
+	@./$(SCRIPTED_PROVIDER_TEST_BIN)
+
 run: $(BIN_CLI)
 	./$(BIN_CLI)
 
@@ -386,8 +400,19 @@ dev: clean all
 	@$(MAKE) -s test-protocol 2>/dev/null | tail -3
 	@echo "✓ dev build complete"
 
-all-tests: test-yaml test-manifest-classifier test-autoload test-context test-session test-parser test-protocol test-workflows test-feeds test-policy
+all-tests: test-yaml test-manifest-classifier test-autoload test-context test-session test-parser test-protocol test-workflows test-feeds test-policy test-subagent
 	@echo "✓ all tests passed"
+
+# ── Sub-agent delegation test ──
+SUBAGENT_TEST_SRC := src/testing/subagent_delegation_test.cpp
+SUBAGENT_TEST_BIN := subagent-delegation-test
+
+$(SUBAGENT_TEST_BIN): $(SUBAGENT_TEST_SRC) src/testing/scripted_provider.hpp
+	$(CXX) $(CXXFLAGS) $(SUBAGENT_TEST_SRC) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) -o $@ $(LDFLAGS)
+
+test-subagent: $(SUBAGENT_TEST_BIN)
+	./$(SUBAGENT_TEST_BIN)
+
 
 # ── Multi-turn compliance + latency benchmark ──
 BENCH_ARGS ?=
