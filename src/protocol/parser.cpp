@@ -250,13 +250,17 @@ std::string Parser::identifyTag(size_t tagStart) {
     std::string tagName = buffer_.substr(nameStart, nameEnd - nameStart);
 
     // Normalize: <think> (HTML-style, used by some models including minimax-m3
-    // when emitting native reasoning tokens) is the same as <thought>. Without
-    // this, those tokens would be stripped as bare text and the user would see
-    // no reasoning in the TUI.
-    if (tagName == "think")
+    // when emitting native reasoning tokens) and <thinking> are the same as
+    // <thought>. Without this, those tokens would be stripped as bare text and
+    // the user would see no reasoning in the TUI. All three forms fuse to
+    // the same TokenEvent::THOUGHT stream and the same Thought timeline row,
+    // so the harness context is uniform regardless of which alias the model
+    // emits — real test-time-compute thinking and harness-time thinking look
+    // identical downstream.
+    if (tagName == "think" || tagName == "thinking")
         tagName = "thought";
 
-    static const std::vector<std::string> known = {"thought", "action", "response", "result",
+    static const std::vector<std::string> known = {"thought", "thinking", "action", "response", "result",
                                                    "context_feed"};
     for (auto& k : known) {
         if (tagName == k)
@@ -275,7 +279,14 @@ std::string Parser::identifyTag(size_t tagStart) {
 size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
     const std::string openMarker = "<" + tagName;
     const std::string closeMarker = "</" + tagName + ">";
+    // For the thought stream, accept </think> AND </thinking> as valid closes
+    // (the open tag may be <thought>, <think>, or <thinking>; all three fuse
+    // to tagName="thought" above, so all three closes must work too).
     const std::string altCloseMarker = tagName == "thought" ? "</think>" : "";
+    const std::string altCloseMarker2 = tagName == "thought" ? "</thinking>" : "";
+    // <thinking> normalizes to "thought" above, so the parser also needs to
+    // accept </thinking> as a valid close for the thought stream (models that
+    // open <thinking>...</thinking> would otherwise never close).
 
     if (closingScanTag_ != tagName || closingScanContentStart_ != contentStart) {
         closingScanTag_ = tagName;
@@ -322,6 +333,7 @@ size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
         if (c == '<') {
             if (partialAtEnd(i, closeMarker) ||
                 (!altCloseMarker.empty() && partialAtEnd(i, altCloseMarker)) ||
+                (!altCloseMarker2.empty() && partialAtEnd(i, altCloseMarker2)) ||
                 partialAtEnd(i, openMarker)) {
                 closingScanPos_ = i;
                 return std::string::npos;
@@ -330,6 +342,7 @@ size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
                 if (--closingScanDepth_ == 0) {
                     lastCloseLen_ = closeMarker.size();
                     size_t end = i + closeMarker.size();
+
                     resetScan();
                     return end;
                 }
@@ -345,6 +358,17 @@ size_t Parser::findClosingTag(const std::string& tagName, size_t contentStart) {
                     return end;
                 }
                 i += altCloseMarker.size();
+                continue;
+            }
+            if (!altCloseMarker2.empty() &&
+                buffer_.compare(i, altCloseMarker2.size(), altCloseMarker2) == 0) {
+                if (--closingScanDepth_ == 0) {
+                    lastCloseLen_ = altCloseMarker2.size();
+                    size_t end = i + altCloseMarker2.size();
+                    resetScan();
+                    return end;
+                }
+                i += altCloseMarker2.size();
                 continue;
             }
             if (buffer_.compare(i, openMarker.size(), openMarker) == 0) {
@@ -394,7 +418,7 @@ size_t Parser::findResponseClose(size_t contentStart) const {
 // ---------------------------------------------------------------------------
 std::map<std::string, std::string> Parser::parseAttrs(const std::string& tagContent) {
     std::map<std::string, std::string> attrs;
-    size_t pos = tagContent.find_first_of(" \t\r\n");
+    size_t pos = tagContent.find_first_of(" \t\r\n");  // skip tag name
     while (pos != std::string::npos && pos < tagContent.size()) {
         pos = tagContent.find_first_not_of(" \t\r\n", pos);
         if (pos == std::string::npos) break;
@@ -438,12 +462,13 @@ void Parser::handleAction(const std::string& content,
     if (!action)
         return;
 
-    // Enforce: reject duplicate action IDs
+    // Enforce: reject duplicate action IDs (unique across the agent run)
     if (usedActionIds_.count(action->id)) {
-        // Inject error result so model sees the failure
         Json::Value err;
+        err["success"] = false;
+        err["protocol_error"] = true;
         err["error"] =
-            "duplicate action id: " + action->id + " \u2014 each action must have a unique id";
+            "duplicate action id: " + action->id + " — each action must have a unique id";
         results_[action->id] = err;
         completed_[action->id] = true;
         emit({TokenEvent::ACTION_RESULT,
@@ -566,14 +591,38 @@ std::shared_ptr<ParsedAction> Parser::buildAction(const std::string& json,
             attrParams[key] = attrScalar(value);
     }
 
-    // Parse JSON body
-    std::string cleaned = cleanJson(json);
-    Json::Value params;
-    Json::CharReaderBuilder reader;
-    std::string errs;
-    std::istringstream ss(cleaned);
-    if (Json::parseFromStream(reader, ss, &params, &errs)) {
-        action->params = resolveVars(params);
+    // Parse JSON body. Do NOT resolve ${...} here — resolution is dispatch-time
+    // only (after depends_on producers complete). Silent completeJson repair is
+    // forbidden for bodies that look like JSON: fail closed instead.
+    std::string cleaned = trimJson(json);
+    action->params = attrParams;
+
+    auto looksLikeJson = [](const std::string& s) -> bool {
+        if (s.empty())
+            return false;
+        size_t i = s.find_first_not_of(" \t\n\r");
+        if (i == std::string::npos)
+            return false;
+        return s[i] == '{' || s[i] == '[';
+    };
+
+    if (cleaned.empty()) {
+        return action;
+    }
+
+    if (looksLikeJson(cleaned)) {
+        Json::Value params;
+        Json::CharReaderBuilder reader;
+        std::string errs;
+        std::istringstream ss(cleaned);
+        if (!Json::parseFromStream(reader, ss, &params, &errs)) {
+            // Mark for protocol_error at execute — keep id/name for the result tag.
+            action->params["__protocol_error"] =
+                "invalid JSON action body" + (errs.empty() ? "" : (": " + errs));
+            action->content.clear();
+            return action;
+        }
+        action->params = params;
         if (action->params.isObject()) {
             for (const auto& key : attrParams.getMemberNames()) {
                 if (!action->params.isMember(key))
@@ -581,11 +630,8 @@ std::shared_ptr<ParsedAction> Parser::buildAction(const std::string& json,
             }
         }
     } else {
-        action->params = attrParams;
-        if (!json.empty()) {
-            // Not JSON — treat as raw text content (used by agent/relic/tool text calls)
-            action->content = json;
-        }
+        // Plain text body (agent instructions, text-mode tools).
+        action->content = json;
     }
 
     return action;
@@ -598,12 +644,61 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
     if (!executor_)
         return;
 
+    // depends_on is only legal with sync (CANON §4).
+    if (!action->dependsOn.empty() && action->mode != ExecutionMode::SYNC) {
+        Json::Value err;
+        err["success"] = false;
+        err["protocol_error"] = true;
+        err["error"] = "depends_on requires mode=sync";
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            results_[action->id] = err;
+            completed_[action->id] = true;
+        }
+        emit({TokenEvent::ACTION_RESULT,
+              Json::writeString(Json::StreamWriterBuilder(), err),
+              nullptr,
+              {{"id", action->id}}});
+        emit({TokenEvent::ERROR,
+              err["error"].asString(),
+              nullptr,
+              {{"id", action->id}, {"reason", "depends_on_mode"}}});
+        return;
+    }
+
+    // Invalid JSON body marked at parse time — do not execute.
+    if (action->params.isObject() && action->params.isMember("__protocol_error")) {
+        Json::Value err;
+        err["success"] = false;
+        err["protocol_error"] = true;
+        err["error"] = action->params["__protocol_error"].asString();
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            results_[action->id] = err;
+            completed_[action->id] = true;
+        }
+        emit({TokenEvent::ACTION_RESULT,
+              Json::writeString(Json::StreamWriterBuilder(), err),
+              nullptr,
+              {{"id", action->id}}});
+        emit({TokenEvent::ERROR,
+              err["error"].asString(),
+              nullptr,
+              {{"id", action->id}, {"reason", "invalid_json_body"}}});
+        return;
+    }
+
     if (!canExecute(*action)) {
         pending_.push_back(action);
         return;
     }
 
     auto doExecute = [this](std::shared_ptr<ParsedAction> a) {
+        // Dispatch-time resolution only — deps are complete when we get here.
+        a->params = resolveVars(a->params);
+        if (!a->content.empty())
+            a->content = resolveVars(a->content);
+
         Json::Value result = executor_(*a);
 
         std::lock_guard<std::mutex> lock(mtx_);
@@ -620,14 +715,14 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
         case ExecutionMode::SYNC:
             doExecute(action);
             break;
-        case ExecutionMode::ASYNC: {
+        case ExecutionMode::ASYNC:
+        case ExecutionMode::FIRE_AND_FORGET: {
+            // Both are joinable. fire_and_forget means "model should not wait
+            // for a result to plan the next tag", not "abandon the thread".
             std::lock_guard<std::mutex> lock(mtx_);
             futures_.push_back(std::async(std::launch::async, doExecute, action));
             break;
         }
-        case ExecutionMode::FIRE_AND_FORGET:
-            std::thread(doExecute, action).detach();
-            break;
     }
 
     dispatchPending();
@@ -726,10 +821,29 @@ std::map<std::string, Json::Value> Parser::allResults() const {
 }
 
 void Parser::clearResults() {
+    // Between iterations of the same agent run: drop per-turn results so
+    // depends_on does not see stale completion, but KEEP usedActionIds_
+    // (CANON §7 — unique across the whole prompt() invocation).
+    // Also reset generation-local final/response state so a premature final
+    // that was undone does not block the follow-up generation.
     std::lock_guard<std::mutex> lock(mtx_);
     results_.clear();
     completed_.clear();
-    usedActionIds_.clear();
+    pending_.clear();
+    finalResponseSeen_ = false;
+    inResponse_ = false;
+    responseContentStart_ = 0;
+    responseAttrs_.clear();
+    buffer_.clear();
+    readPos_ = 0;
+    lastCloseLen_ = 0;
+    closingScanTag_.clear();
+    closingScanContentStart_ = std::string::npos;
+    closingScanPos_ = 0;
+    closingScanDepth_ = 1;
+    closingScanInString_ = false;
+    closingScanEscape_ = false;
+    // usedActionIds_ intentionally retained
 }
 
 // ---------------------------------------------------------------------------
@@ -760,51 +874,115 @@ void Parser::reset() {
 // ---------------------------------------------------------------------------
 // Variable resolution — ${id} and ${id.field.subfield}
 // ---------------------------------------------------------------------------
+namespace {
+
+// Split "a.b[0].c" / "a.b.0.c" into path segments.
+std::vector<std::string> splitResolvePath(const std::string& path) {
+    std::vector<std::string> parts;
+    std::string cur;
+    for (size_t i = 0; i < path.size(); ++i) {
+        char c = path[i];
+        if (c == '.') {
+            if (!cur.empty()) {
+                parts.push_back(cur);
+                cur.clear();
+            }
+        } else if (c == '[') {
+            if (!cur.empty()) {
+                parts.push_back(cur);
+                cur.clear();
+            }
+            size_t close = path.find(']', i);
+            if (close == std::string::npos) {
+                cur.push_back(c);
+            } else {
+                parts.push_back(path.substr(i + 1, close - i - 1));
+                i = close;
+            }
+        } else {
+            cur.push_back(c);
+        }
+    }
+    if (!cur.empty())
+        parts.push_back(cur);
+    return parts;
+}
+
+Json::Value defaultOutputField(const Json::Value& result) {
+    // ${id} shorthand → output, then stdout, then content, else whole object.
+    if (result.isObject()) {
+        if (result.isMember("output") && !result["output"].isNull())
+            return result["output"];
+        if (result.isMember("stdout") && !result["stdout"].isNull())
+            return result["stdout"];
+        if (result.isMember("content") && !result["content"].isNull())
+            return result["content"];
+    }
+    return result;
+}
+
+Json::Value navigateResult(const Json::Value& root, const std::string& path) {
+    if (path.empty())
+        return defaultOutputField(root);
+    Json::Value val = root;
+    for (const auto& part : splitResolvePath(path)) {
+        if (val.isObject() && val.isMember(part)) {
+            val = val[part];
+        } else if (val.isArray()) {
+            try {
+                int idx = std::stoi(part);
+                if (idx >= 0 && idx < (int)val.size())
+                    val = val[idx];
+                else
+                    return Json::Value();
+            } catch (...) {
+                return Json::Value();
+            }
+        } else {
+            return Json::Value();
+        }
+    }
+    return val;
+}
+
+std::string jsonToResolveString(const Json::Value& val) {
+    if (val.isString())
+        return val.asString();
+    if (val.isNull())
+        return "";
+    if (val.isBool())
+        return val.asBool() ? "true" : "false";
+    if (val.isInt64())
+        return std::to_string(val.asInt64());
+    if (val.isUInt64())
+        return std::to_string(val.asUInt64());
+    if (val.isDouble())
+        return std::to_string(val.asDouble());
+    Json::StreamWriterBuilder w;
+    w["indentation"] = "";
+    return Json::writeString(w, val);
+}
+
+}  // namespace
+
 std::string Parser::resolveVars(const std::string& input) const {
-    std::regex varRe(R"(\$\{(\w+(?:\.\w+)*)\})");
+    // ${id} | ${id.field} | ${id.a.b} | ${id.arr[0]}
+    std::regex varRe(R"(\$\{([A-Za-z_][A-Za-z0-9_-]*)(?:\.([^}]+))?\})");
     std::string out;
     std::string::const_iterator start = input.cbegin();
     std::smatch match;
 
     while (std::regex_search(start, input.cend(), match, varRe)) {
         out += match.prefix().str();
-        std::string path = match[1].str();
+        std::string id = match[1].str();
+        std::string path = match.size() > 2 ? match[2].str() : "";
         std::string replacement = match[0].str();  // preserve unresolved refs
-
-        // Split path by '.'
-        size_t dot = path.find('.');
-        std::string id = path.substr(0, dot);
 
         auto it = results_.find(id);
         if (it != results_.end()) {
-            Json::Value val = it->second;
-            if (dot != std::string::npos) {
-                // Navigate sub-fields
-                std::string remaining = path.substr(dot + 1);
-                std::stringstream ss(remaining);
-                std::string part;
-                while (std::getline(ss, part, '.') && !val.isNull()) {
-                    if (val.isObject()) {
-                        val = val.get(part, Json::Value());
-                    } else if (val.isArray()) {
-                        try {
-                            int idx = std::stoi(part);
-                            if (idx >= 0 && idx < (int)val.size())
-                                val = val[idx];
-                            else
-                                val = Json::Value();
-                        } catch (...) {
-                            val = Json::Value();
-                        }
-                    } else {
-                        val = Json::Value();
-                    }
-                }
-            }
-            if (val.isString())
-                replacement = val.asString();
-            else if (!val.isNull())
-                replacement = Json::writeString(Json::StreamWriterBuilder(), val);
+            Json::Value val = navigateResult(it->second, path);
+            if (!val.isNull() || path.empty())
+                replacement = jsonToResolveString(val);
         }
 
         out += replacement;
@@ -846,14 +1024,18 @@ Json::Value Parser::resolveVars(const Json::Value& input) const {
 // ---------------------------------------------------------------------------
 // JSON helpers
 // ---------------------------------------------------------------------------
-std::string Parser::cleanJson(const std::string& raw) {
-    // Trim whitespace
+std::string Parser::trimJson(const std::string& raw) {
     size_t start = raw.find_first_not_of(" \t\n\r");
     size_t end = raw.find_last_not_of(" \t\n\r");
     if (start == std::string::npos)
-        return "{}";
-    std::string s = raw.substr(start, end - start + 1);
-    return completeJson(s);
+        return "";
+    return raw.substr(start, end - start + 1);
+}
+
+std::string Parser::cleanJson(const std::string& raw) {
+    // Legacy helper: trim only. Do not silently auto-close braces (CANON §4).
+    std::string s = trimJson(raw);
+    return s.empty() ? "{}" : s;
 }
 
 std::string Parser::completeJson(const std::string& raw) {

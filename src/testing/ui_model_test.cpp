@@ -560,6 +560,31 @@ void test_chat_last_response_body() {
     check(model.lastResponseBody() == "streaming final answer",
           "last response body returns the most recent response text");
 }
+
+void test_chat_thought_rows_visible_by_default() {
+    // Thinking tokens (real test-time-compute and harness-time <thought>/
+    // <think>/<thinking> aliases) must stream visibly into the transcript
+    // by default. The operator can hide them with the 't' toggle later.
+    // This pins: (a) showThoughts default = true, (b) a THOUGHT protocol
+    // event produces a Thought timeline row (not skipped), (c) the row's
+    // body carries the thought text so it renders in the chat.
+    ShellModel model;
+    check(model.showThoughts == true,
+          "showThoughts defaults to true (thoughts stream by default)");
+
+    // Apply a THOUGHT protocol event and assert the timeline keeps it.
+    model.apply(UiEvent::protocolEvent(thoughtEvent("reasoning across the thinking tag"), 0));
+    bool found = false;
+    for (const auto& r : model.rootRows) {
+        if (r.kind == TimelineKind::Thought &&
+            r.body.find("reasoning across the thinking tag") != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+    check(found,
+          "thought protocol event produces a Thought timeline row visible by default");
+}
 }  // namespace
 
 int main() {
@@ -583,6 +608,7 @@ int main() {
     test_chat_turn_start_timestamp_lifecycle();
     test_chat_last_turn_summary_lifecycle();
     test_chat_last_response_body();
+    test_chat_thought_rows_visible_by_default();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }

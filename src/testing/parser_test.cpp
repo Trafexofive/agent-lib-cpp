@@ -271,29 +271,210 @@ void test_thought_tag() {
     PASS();
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// Test 8: Variable resolution — ${id}
-// ═══════════════════════════════════════════════════════════════════════
-void test_variable_resolution() {
-    TEST("variable resolution ${id}");
+void test_thinking_tag_alias() {
+    // <thinking> must fuse to the same THOUGHT stream as <thought>/<think> so
+    // the harness context is uniform regardless of which alias the model
+    // emits — real test-time-compute thinking and harness-time thinking
+    // (model emitting <thinking>...</thinking> organically) look identical
+    // downstream.
+    TEST("<thinking> tag aliases to thought and closes on </thinking>");
     TestHarness h;
     Parser parser([&](const ParsedAction& a) { return h.executeAction(a); });
     parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
 
-    // First action produces a result with ID "step1"
+    parser.feed("<thinking>reasoning across the thinking tag</thinking>", true);
+    bool hasThought = false;
+    std::string thoughtText;
+    for (auto& ev : h.events) {
+        if (ev.type == TokenEvent::THOUGHT) {
+            hasThought = true;
+            thoughtText = ev.content;
+        }
+    }
+    CHECK(hasThought, "<thinking> must emit a THOUGHT event (fused stream)");
+    CHECK(thoughtText == "reasoning across the thinking tag",
+          "<thinking> body routes to THOUGHT content");
+    PASS();
+}
+
+void test_thought_streams_accumulate_live() {
+    // Real test-time-compute thinking arrives as a stream of partial tokens
+    // (the provider sends '\x01'-prefixed chunks) and harness-time thinking
+    // arrives as <thought> chunks. Both must accumulate into the same single
+    // thought row in the chat so the operator SEES the reasoning being typed
+    // — not a wall of text at the end. This test feeds the thought body
+    // token-by-token and asserts the parser emits a single accumulated
+    // THOUGHT event with the full body (the agent loop back-appends to the
+    // last THOUGHT ProtocolEvent, so even if multiple THOUGHT events fire the
+    // timeline shows one growing row).
+    TEST("thought stream accumulates progressively across tokens");
+    TestHarness h;
+    Parser parser([&](const ParsedAction& a) { return h.executeAction(a); });
+    parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
+
+    parser.feed("<thought>part ", false);
+    parser.feed("one ", false);
+    parser.feed("part two</thought>", true);
+    int thoughtCount = 0;
+    std::string body;
+    for (auto& ev : h.events) {
+        if (ev.type == TokenEvent::THOUGHT) {
+            ++thoughtCount;
+            body += ev.content;
+        }
+    }
+    CHECK(thoughtCount >= 1, "thought stream emits at least one THOUGHT event");
+    CHECK(body == "part one part two",
+          "thought body accumulates across streamed chunks");
+    PASS();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Test 8: Variable resolution — ${id}
+// ═══════════════════════════════════════════════════════════════════════
+void test_variable_resolution() {
+    TEST("variable resolution ${id} / ${id.field} dispatch-time");
+    std::string step2Cmd;
+    std::string step3Cmd;
+    Parser parser([&](const ParsedAction& a) -> Json::Value {
+        if (a.id == "step2" && a.params.isMember("command"))
+            step2Cmd = a.params["command"].asString();
+        if (a.id == "step3" && a.params.isMember("command"))
+            step3Cmd = a.params["command"].asString();
+        Json::Value r;
+        r["success"] = true;
+        r["id"] = a.id;
+        r["name"] = a.name;
+        r["result"] = "ok";
+        r["output"] = "hello-from-" + a.id;
+        return r;
+    });
+
     parser.feed(
         "<action type=\"tool\" name=\"exec\" id=\"step1\" mode=\"sync\">"
         "{\"command\":\"echo hello\"}</action>",
         false);
 
-    // Second action references ${step1} — should be resolved
+    // Field path
     parser.feed(
-        "<action type=\"tool\" name=\"exec\" id=\"step2\" mode=\"sync\">"
+        "<action type=\"tool\" name=\"exec\" id=\"step2\" mode=\"sync\" depends_on=\"step1\">"
         "{\"command\":\"${step1.result}\"}</action>",
+        false);
+
+    // ${id} shorthand → output (CANON §6)
+    parser.feed(
+        "<action type=\"tool\" name=\"exec\" id=\"step3\" mode=\"sync\" depends_on=\"step1\">"
+        "{\"command\":\"${step1}\"}</action>",
         true);
 
     CHECK(parser.getResult("step1").isObject(), "step1 should have result");
     CHECK(parser.getResult("step2").isObject(), "step2 should have result");
+    CHECK(step2Cmd == "ok", (std::string("step2 cmd expected 'ok', got '") + step2Cmd + "'").c_str());
+    CHECK(step3Cmd == "hello-from-step1",
+          (std::string("${id} shorthand expected output, got '") + step3Cmd + "'").c_str());
+    PASS();
+}
+
+void test_clear_results_keeps_used_ids() {
+    TEST("clearResults keeps usedActionIds across iterations");
+    int execCount = 0;
+    Parser parser([&](const ParsedAction& a) -> Json::Value {
+        (void)a;
+        execCount++;
+        Json::Value r;
+        r["success"] = true;
+        r["output"] = "x";
+        return r;
+    });
+    bool sawDupError = false;
+    parser.onEvent([&](const TokenEvent& ev) {
+        if (ev.type == TokenEvent::ERROR &&
+            ev.metadata.count("reason") &&
+            ev.metadata.at("reason") == "duplicate_action_id")
+            sawDupError = true;
+    });
+
+    parser.feed(
+        "<action type=\"tool\" name=\"list\" id=\"same\" mode=\"sync\">{\"path\":\".\"}</action>",
+        true);
+    CHECK(execCount == 1, "first action should execute");
+
+    parser.clearResults();  // end of iteration — must NOT free the id
+
+    parser.feed(
+        "<action type=\"tool\" name=\"list\" id=\"same\" mode=\"sync\">{\"path\":\"/tmp\"}</action>",
+        true);
+    CHECK(execCount == 1, "duplicate id after clearResults must not re-execute");
+    CHECK(sawDupError, "expected duplicate_action_id error");
+    Json::Value dup = parser.getResult("same");
+    CHECK(dup.isObject() && dup.get("protocol_error", false).asBool(),
+          "expected protocol_error result for duplicate");
+    PASS();
+}
+
+void test_invalid_json_body_fail_closed() {
+    TEST("invalid JSON body fail-closed");
+    int execCount = 0;
+    Parser parser([&](const ParsedAction& a) -> Json::Value {
+        (void)a;
+        execCount++;
+        Json::Value r;
+        r["success"] = true;
+        return r;
+    });
+    bool sawJsonError = false;
+    parser.onEvent([&](const TokenEvent& ev) {
+        if (ev.type == TokenEvent::ERROR &&
+            ev.metadata.count("reason") &&
+            ev.metadata.at("reason") == "invalid_json_body")
+            sawJsonError = true;
+    });
+
+    parser.feed(
+        "<action type=\"tool\" name=\"exec\" id=\"bad1\" mode=\"sync\">"
+        "{\"command\": \"echo hi\""
+        "</action>",
+        true);
+
+    CHECK(execCount == 0, "invalid JSON must not execute tool");
+    CHECK(sawJsonError, "expected invalid_json_body error");
+    Json::Value r = parser.getResult("bad1");
+    CHECK(r.isObject() && r.get("protocol_error", false).asBool(),
+          "expected protocol_error result");
+    PASS();
+}
+
+void test_depends_on_async_rejected() {
+    TEST("depends_on + async → protocol_error");
+    int execCount = 0;
+    Parser parser([&](const ParsedAction& a) -> Json::Value {
+        (void)a;
+        execCount++;
+        Json::Value r;
+        r["success"] = true;
+        r["output"] = "ok";
+        return r;
+    });
+    bool sawModeError = false;
+    parser.onEvent([&](const TokenEvent& ev) {
+        if (ev.type == TokenEvent::ERROR &&
+            ev.metadata.count("reason") &&
+            ev.metadata.at("reason") == "depends_on_mode")
+            sawModeError = true;
+    });
+
+    parser.feed(
+        "<action type=\"tool\" name=\"list\" id=\"p1\" mode=\"sync\">{\"path\":\".\"}</action>"
+        "<action type=\"tool\" name=\"list\" id=\"c1\" mode=\"async\" depends_on=\"p1\">"
+        "{\"path\":\"/tmp\"}</action>",
+        true);
+    parser.waitForActions();
+
+    CHECK(execCount == 1, "only producer should execute");
+    CHECK(sawModeError, "expected depends_on_mode error");
+    Json::Value c1 = parser.getResult("c1");
+    CHECK(c1.isObject() && c1.get("protocol_error", false).asBool(),
+          "expected protocol_error on consumer");
     PASS();
 }
 
@@ -543,6 +724,8 @@ int main() {
     test_action_streaming();
     test_action_then_response();
     test_thought_tag();
+    test_thinking_tag_alias();
+    test_thought_streams_accumulate_live();
     test_variable_resolution();
     test_text_between_tags();
     test_PP01_nested_action_substring();
@@ -552,6 +735,9 @@ int main() {
     test_PP05_unresolved_refs_preserved();
     test_PP06_action_attrs_and_text_body();
     test_model_result_tags_ignored();
+    test_clear_results_keeps_used_ids();
+    test_invalid_json_body_fail_closed();
+    test_depends_on_async_rejected();
 
     std::cout << "\n──────────────────────────────────────────\n";
     std::cout << "  " << passed << " passed, " << failed << " failed\n";

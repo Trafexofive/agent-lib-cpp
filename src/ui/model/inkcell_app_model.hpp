@@ -191,7 +191,7 @@ struct ShellModel {
     int64_t lastTurnElapsedMs = 0;  // duration of the most recently completed turn; persists after the turn ends for the "last" summary.
     bool done = false;
     bool failed = false;
-    bool showThoughts = false;
+    bool showThoughts = true;
     bool showRaw = false;
     int tokenBytes = 0;
     int actionCount = 0;
