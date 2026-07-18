@@ -242,53 +242,7 @@ void test_submit_locks_to_bottom() {
           "submitComposer drops the viewport to the bottom (stick_bottom=true)");
 }
 
-void test_ctrl_shift_jk_jump_by_block() {
-    // Ctrl-Shift-J / Ctrl-Shift-K jump by block (one focusable row per
-    // press, like j/K selectDelta but with the viewport re-anchored to
-    // keep the selected block in view, and with input disabled via the
-    // Ctrl+Shift modifier so the keystroke never reaches the composer).
-    InkcellAppConfig cfg;
-    AgentBridge bridge;
-    auto model = std::make_shared<ShellModel>();
-    scenes::AgentScene scene(cfg, bridge, model);
-    scene.on_enter();
-    model->composer.focused = true;
-    model->timelineFocus = false;
 
-    // Seed a transcript of focusable blocks (User rows) so selectDelta
-    // has multiple blocks to jump between.
-    for (int i = 0; i < 20; ++i) {
-        model->composer.value = "prompt " + std::to_string(i);
-        model->composer.cursor = static_cast<int>(model->composer.value.size());
-        model->submitComposer();
-    }
-    int selectedBefore = model->selectedBlock;
-
-    // Ctrl-Shift-J in composer focus: jumps selection forward by one block
-    // and re-anchors the viewport to keep the selected block in view.
-    inkcell::KeyEvent ctrlShiftJ;
-    ctrlShiftJ.code = inkcell::KeyCode::Character;
-    ctrlShiftJ.ch = 'j';
-    ctrlShiftJ.modifiers = inkcell::ModCtrl | inkcell::ModShift;
-    scene.on_key(ctrlShiftJ);
-    check(model->selectedBlock == selectedBefore + 1,
-          "Ctrl-Shift-J in composer jumps selection forward by one block");
-
-    // Ctrl-Shift-K jumps back by one block.
-    inkcell::KeyEvent ctrlShiftK;
-    ctrlShiftK.code = inkcell::KeyCode::Character;
-    ctrlShiftK.ch = 'k';
-    ctrlShiftK.modifiers = inkcell::ModCtrl | inkcell::ModShift;
-    scene.on_key(ctrlShiftK);
-    check(model->selectedBlock == selectedBefore,
-          "Ctrl-Shift-K in composer jumps selection back by one block");
-
-    // Timeline focus: Ctrl-Shift-J also jumps by block.
-    model->timelineFocus = true;
-    scene.on_key(ctrlShiftJ);
-    check(model->selectedBlock == selectedBefore + 1,
-          "Ctrl-Shift-J in timeline focus also jumps by block");
-}
 
 void test_ctrl_c_state() {
     InkcellAppConfig cfg;
@@ -369,7 +323,6 @@ int main() {
     test_chat_scroll_keys();
     test_ctrl_j_k_history_navigation();
     test_submit_locks_to_bottom();
-    test_ctrl_shift_jk_jump_by_block();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }

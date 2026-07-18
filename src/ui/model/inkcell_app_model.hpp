@@ -232,6 +232,12 @@ struct ShellModel {
     bool timelineFocus = false;          // false = composer owns keys
     // Maps visible block index -> rootRows/nested row index
     std::vector<int> blockRowIndex;
+    // Per-row line-start index into transcriptView.lines (one entry per
+    // processed row). Used by rebuildViews to do delta/append/tail-replace
+    // updates so streaming tokens don't full-clear and re-wrap the entire
+    // transcript (which caused the 'constantly refreshing and clearing'
+    // visual). One entry per row that contributed lines, in order.
+    std::vector<size_t> rowLineStart;
     // Nested frame cache (rebuilt on enter/refresh)
     std::vector<TimelineRow> nestedRows;
 
@@ -366,28 +372,81 @@ struct ShellModel {
         ++viewRebuildCount;
         ++transcriptVersion;
         const auto& rows = activeRows();
-        transcriptView.lines.clear();
-        blockRowIndex.clear();
+
+        // Delta strategy — keep the stable prefix intact so streaming tokens
+        // don't full-clear and re-wrap the entire transcript (which caused
+        // the 'constantly refreshing and clearing' visual):
+        //   fullRebuild  = first build, rows shrank, or no prior line-start
+        //                  record (e.g. after clearTranscript/loadSession).
+        //   deltaAppend  = rows grew (pushRow / setStreamProgress added a
+        //                  new row). Append the new rows' lines only.
+        //   tailReplace  = row count unchanged AND the last row's body
+        //                  changed (streaming token update of a Response
+        //                  row). Replace only the last row's lines so the
+        //                  entire transcript isn't re-wrapped per token.
+        bool fullRebuild = rows.empty()
+                               ? (transcriptView.lines.empty() && rowLineStart.empty())
+                                     ? false
+                                     : true
+                               : (rowLineStart.empty() || rows.size() < rowLineStart.size());
+        bool tailReplace = !fullRebuild && !rows.empty() &&
+                           rows.size() == rowLineStart.size() &&
+                           !rowLineStart.empty();
+        // For the empty-rows case: treat as full rebuild so we clear stale
+        // lines from a prior non-empty transcript.
+        if (rows.empty() && (!transcriptView.lines.empty() || !rowLineStart.empty())) {
+            fullRebuild = true;
+        }
+        if (fullRebuild) {
+            transcriptView.lines.clear();
+            blockRowIndex.clear();
+            rowLineStart.clear();
+        } else if (tailReplace) {
+            // Erase the last row's lines and its focusable entry (if any),
+            // so we can re-emit the last row in place with its new body.
+            size_t lastStart = rowLineStart.back();
+            rowLineStart.pop_back();
+            transcriptView.lines.resize(lastStart);
+            // Pop the last focusable entry if the last row was focusable
+            // (i.e. its index was the last entry of blockRowIndex). During
+            // streaming the last row IS the Response (focusable), so this
+            // hits. For a non-focusable last row (skipped Thought/Stream)
+            // blockRowIndex.back() != rows.size()-1 and we leave it alone.
+            if (!blockRowIndex.empty() && blockRowIndex.back() == static_cast<int>(rows.size()) - 1) {
+                blockRowIndex.pop_back();
+            }
+        }
+
+        // The row index to start processing from and the focusable count
+        // already built (for the selected-block math).
+        size_t riStart = fullRebuild ? 0
+                        : tailReplace ? (rows.empty() ? 0 : rows.size() - 1)
+                        : rowLineStart.size();
+        int focusIdxStart = static_cast<int>(blockRowIndex.size());
 
         if (rows.empty()) {
             if (atRoot()) timelineState = PageState::Empty;
         } else {
-            int focusIdx = 0;
-            for (int ri = 0; ri < static_cast<int>(rows.size()); ++ri) {
+            int focusIdx = focusIdxStart;
+            for (size_t ri = riStart; ri < rows.size(); ++ri) {
+                // Record every row's line-start (before skip/push) so
+                // rowLineStart.size() stays in sync with rows.size() for the
+                // delta bookkeeping. Skipped rows share a line-start with
+                // the next row (no lines pushed for them).
+                rowLineStart.push_back(transcriptView.lines.size());
                 // Nested-subagent emission state: a drillable AGENT Result
-                // gets the child's final response appended as a sub-block
-                // INSIDE the Result, not as separate top-level lines that
-                // leak into the parent transcript. Lines are marked with
-                // '\x1f' so the render draws them as a contained sub-region
-                // (sub-bg, 1px padding on all 4 sides).
+                // gets the child's final response appended as extra body
+                // lines inside the Result (same block, parent's own bg,
+                // 2-deeper indent). '↳ enter' on the header still drills
+                // into the full nested timeline.
                 bool emitNested = false;
                 std::vector<std::string> nestedPayload;
-                const auto& row = rows[static_cast<size_t>(ri)];
+                const auto& row = rows[ri];
                 if (row.kind == TimelineKind::Thought && !showThoughts) continue;
                 if (row.kind == TimelineKind::Stream && !showRaw) continue;
 
                 bool selected = timelineFocus && (focusIdx == selectedBlock);
-                blockRowIndex.push_back(ri);
+                blockRowIndex.push_back(static_cast<int>(ri));
 
                 std::string label;
                 switch (row.kind) {
@@ -790,6 +849,7 @@ struct ShellModel {
 
     void loadSessionRecords(const std::vector<SessionRecord>& records) {
         rootRows.clear();
+        rowLineStart.clear();
         for (const auto& record : records) {
             TimelineRow row;
             row.body = record.content;
@@ -831,6 +891,7 @@ struct ShellModel {
         completedResultIds.clear();
         pendingOps = 0;
         selectedBlock = 0;
+        rowLineStart.clear();
         rebuildViews();
     }
 

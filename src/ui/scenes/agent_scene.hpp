@@ -91,20 +91,6 @@ class AgentScene final : public BaseScene {
                 model_->transcriptView.scroll_by(-1);
                 return true;
             }
-            // Ctrl-Shift-J / Ctrl-Shift-K: jump by block (one focusable row
-            // at a time, like j/K selectDelta but by BLOCK boundary and with
-            // the viewport re-anchored to keep the selected block in view).
-            // Works in both focuses; Ctrl+Shift disables input.
-            if (event.code == KeyCode::Character && event.ctrl() && event.shift() &&
-                (event.ch == 'j' || event.ch == 'J')) {
-                model_->selectDelta(1);
-                return true;
-            }
-            if (event.code == KeyCode::Character && event.ctrl() && event.shift() &&
-                (event.ch == 'k' || event.ch == 'K')) {
-                model_->selectDelta(-1);
-                return true;
-            }
             // PageUp/PageDown = half-page scroll; Home/End = top/bottom.
             if (event.code == KeyCode::PageUp) {
                 model_->transcriptView.scroll_by(-std::max(1, model_->transcriptView.viewport_h / 2));
@@ -181,17 +167,6 @@ class AgentScene final : public BaseScene {
         if (event.code == KeyCode::Character && event.ctrl() && !event.shift() &&
             (event.ch == 'k' || event.ch == 'K')) {
             model_->transcriptView.scroll_by(-1);
-            return true;
-        }
-        // Ctrl-Shift-J / Ctrl-Shift-K: jump by block from the composer too.
-        if (event.code == KeyCode::Character && event.ctrl() && event.shift() &&
-            (event.ch == 'j' || event.ch == 'J')) {
-            model_->selectDelta(1);
-            return true;
-        }
-        if (event.code == KeyCode::Character && event.ctrl() && event.shift() &&
-            (event.ch == 'k' || event.ch == 'K')) {
-            model_->selectDelta(-1);
             return true;
         }
         // PageUp/PageDown scroll the transcript without leaving the composer,
