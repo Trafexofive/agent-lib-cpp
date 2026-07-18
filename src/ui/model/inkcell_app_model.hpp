@@ -525,9 +525,16 @@ struct ShellModel {
                         break;
                 }
                 transcriptView.lines.push_back(std::string(selected ? "› " : "  ") + label);
-                for (const auto& line : splitDisplayLines(row.body)) {
-                    if (line.empty() && row.body.empty()) continue;
-                    transcriptView.lines.push_back("    " + line);
+                // For a drillable AGENT Result, the nested sub-content is
+                // the sub-agent's actual response — it supersedes the Result
+                // body's summary (which is often the same text), so we
+                // skip the body to avoid the duplicate. For everything
+                // else, emit the body as normal.
+                if (!emitNested) {
+                    for (const auto& line : splitDisplayLines(row.body)) {
+                        if (line.empty() && row.body.empty()) continue;
+                        transcriptView.lines.push_back("    " + line);
+                    }
                 }
                 // Nested sub-agent content: the child's final response
                 // becomes extra body lines of THIS Result block (no frame,
@@ -536,8 +543,10 @@ struct ShellModel {
                 // body lines) so the render paints them with the parent's
                 // own bg — padding with the main parent bg/block, as
                 // instructed. The extra 2-space indent (6 vs the parent's
-                // 4) marks the visual nesting depth. '↳ enter' on the
-                // header still drills into the full nested timeline.
+                // 4) marks the visual nesting depth. The delta rebuildViews
+                // tail-replaces the last row's lines as the sub-agent
+                // streams, so this nests AND stream-renders live. '↳ enter'
+                // on the header still drills into the full nested timeline.
                 if (emitNested) {
                     for (const auto& nl : nestedPayload) {
                         transcriptView.lines.push_back("      " + nl);
