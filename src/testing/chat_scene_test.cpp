@@ -142,6 +142,61 @@ void test_slash_and_completion() {
     model->pendingRoute.clear();
 }
 
+void test_ctrl_j_k_history_navigation() {
+    // Ctrl-J / Ctrl-K scroll the transcript by one line in BOTH the
+    // timeline focus and the composer focus, and the Ctrl modifier
+    // means the keystroke never reaches the composer's text widget
+    // (so typing isn't disrupted). This is the "history/context
+    // navigation that disables input" the operator asked for.
+    InkcellAppConfig cfg;
+    AgentBridge bridge;
+    auto model = std::make_shared<ShellModel>();
+    scenes::AgentScene scene(cfg, bridge, model);
+    scene.on_enter();
+    model->composer.focused = true;
+    model->timelineFocus = false;
+
+    std::vector<std::string> lines;
+    for (int i = 0; i < 100; ++i) lines.push_back("line " + std::to_string(i));
+    model->transcriptView.viewport_h = 10;
+    model->transcriptView.set_lines(lines);
+    int bottom = model->transcriptView.offset;  // sticks to bottom
+    check(bottom == 90, "long transcript sticks to bottom (offset=lines-viewport)");
+
+    // Ctrl-J from the COMPOSER at the bottom: offset stays at max and
+    // re-sticks (no overflow, scroll_by at max arms stick_bottom).
+    inkcell::KeyEvent ctrlJ;
+    ctrlJ.code = inkcell::KeyCode::Character;
+    ctrlJ.ch = 'j';
+    ctrlJ.modifiers = inkcell::ModCtrl;
+    scene.on_key(ctrlJ);
+    check(model->transcriptView.offset == 90 && model->transcriptView.stick_bottom,
+          "Ctrl-J at the bottom keeps the transcript stuck (no overflow)");
+
+    // Now in TIMELINE focus: Ctrl-K scrolls up one line and un-sticks.
+    model->timelineFocus = true;
+    model->transcriptView.viewport_h = 10;
+    model->transcriptView.set_lines(lines);
+    inkcell::KeyEvent ctrlK;
+    ctrlK.code = inkcell::KeyCode::Character;
+    ctrlK.ch = 'k';
+    ctrlK.modifiers = inkcell::ModCtrl;
+    scene.on_key(ctrlK);
+    check(model->transcriptView.offset == 89 && !model->transcriptView.stick_bottom,
+          "Ctrl-K in timeline focus scrolls up one line and un-sticks");
+
+    // Ctrl-J in timeline scrolls back down by one.
+    scene.on_key(ctrlJ);
+    check(model->transcriptView.offset == 90,
+          "Ctrl-J in timeline scrolls down one line");
+
+    // Confirm Ctrl-J does NOT reach the composer: the composer's value
+    // must be unchanged (the Ctrl modifier means the text widget never
+    // sees the keystroke, so 'j' isn't appended to the input).
+    check(model->composer.value.empty(),
+          "Ctrl-J does not insert 'j' into the composer (input disabled for the binding)");
+}
+
 void test_ctrl_c_state() {
     InkcellAppConfig cfg;
     AgentBridge bridge;
@@ -219,6 +274,7 @@ int main() {
     test_slash_and_completion();
     test_ctrl_c_state();
     test_chat_scroll_keys();
+    test_ctrl_j_k_history_navigation();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }
