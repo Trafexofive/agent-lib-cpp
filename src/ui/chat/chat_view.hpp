@@ -119,6 +119,26 @@ inline void drawPromptLine(inkcell::Surface& surface, inkcell::Rect row, const C
             input.insert(static_cast<size_t>(cursor), "█");
         }
     }
+    // Empty + focused: show a dim placeholder to the right of the prompt
+    // + cursor so a fresh operator sees what the box is for instead of a
+    // lone blinking block. The placeholder is dim (same as the unfocused
+    // composer) so the cursor remains the brightest element when typing
+    // starts.
+    if (m.input.empty() && m.inputFocused) {
+        constexpr const char* kCursor = "\xe2\x96\x88";  // █
+        std::string prefix = prompt + kCursor;
+        surface.text({row.x, row.y}, inkcell::text::truncate(prefix, row.w),
+                     theme::dim());
+        int used = inkcell::text::display_width(prefix);
+        int x = row.x + used;
+        int avail = std::max(0, row.w - used);
+        if (avail > 1) {
+            const std::string placeholder = "Ask anything \xe2\x80\x94 /help for commands";
+            surface.text({x, row.y}, inkcell::text::truncate(placeholder, avail),
+                         theme::dim());
+        }
+        return;
+    }
     surface.text({row.x, row.y}, inkcell::text::truncate(prompt + input, row.w),
                  m.inputFocused ? theme::bright() : theme::dim());
 }

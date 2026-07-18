@@ -265,6 +265,46 @@ void test_chat_selection_stays_visible_after_wrap() {
     check(containsRow(s, "› CORTEX"), "selected transcript block remains visible");
 }
 
+void test_chat_prompt_placeholder_when_empty() {
+    // First-run UX: a focused, empty composer must show a dim placeholder so
+    // a fresh operator knows the box is for input (and what to type), instead
+    // of a lone blinking cursor. The cursor stays; the placeholder sits to
+    // its right. The placeholder is dim and the cursor is also dim, so when
+    // the operator starts typing (input becomes non-empty) the cursor
+    // disappears and the typed text renders in bright.
+    inkcell::Surface s({60, 8});
+    chat::ChatSurfaceModel model;
+    model.input = "";               // empty
+    model.inputCursor = 0;
+    model.inputFocused = true;
+    chat::drawChatSurface(s, {0, 0, 60, 8}, model);
+    std::string prompt = rowText(s, 7);  // bottom row
+    check(prompt.find("Ask anything") != std::string::npos,
+          "empty focused composer shows the placeholder text");
+    check(prompt.find("\xe2\x96\x88") != std::string::npos,
+          "empty focused composer still shows the cursor block");
+    // Unfocused: no placeholder, no cursor (same as the cursor test's contract).
+    chat::ChatSurfaceModel unfocused;
+    unfocused.input = "";
+    unfocused.inputCursor = 0;
+    unfocused.inputFocused = false;
+    chat::drawChatSurface(s, {0, 0, 60, 8}, unfocused);
+    std::string unfocusedPrompt = rowText(s, 7);
+    check(unfocusedPrompt.find("Ask anything") == std::string::npos,
+          "unfocused composer does not show the placeholder");
+    // Non-empty: placeholder must NOT show (input takes over).
+    chat::ChatSurfaceModel typing;
+    typing.input = "hello";
+    typing.inputCursor = 5;
+    typing.inputFocused = true;
+    chat::drawChatSurface(s, {0, 0, 60, 8}, typing);
+    std::string typingPrompt = rowText(s, 7);
+    check(typingPrompt.find("hello") != std::string::npos,
+          "typing renders the input in the composer");
+    check(typingPrompt.find("Ask anything") == std::string::npos,
+          "typing suppresses the placeholder");
+}
+
 void test_chat_prompt_cursor_position() {
     inkcell::Surface s({40, 8});
     chat::ChatSurfaceModel model;
@@ -388,6 +428,7 @@ int main() {
     test_chat_selection_stays_visible_after_wrap();
     test_chat_prompt_cursor_position();
     test_chat_prompt_keeps_input_while_running();
+    test_chat_prompt_placeholder_when_empty();
     test_chat_subagent_scope_chrome();
     test_chat_help_and_theme();
     test_ask_dialog_overlay();
