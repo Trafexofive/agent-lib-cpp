@@ -266,35 +266,33 @@ void test_chat_selection_stays_visible_after_wrap() {
 }
 
 void test_chat_nested_sub_block_rendering() {
-    // Sub-agent nesting: lines prefixed with '\x1f' are drawn as a contained
-    // sub-region (sub-bg) inside the parent block, with 1px padding on all
-    // 4 sides (left/right via 1-col inset in the fill; top/bottom via the
-    // sub-pad rows emitted by rebuildViews). This pins the visual contract
-    // so the sub-agent's final response is contained inside the parent's
-    // Result block instead of leaking into the top-level transcript.
+    // Sub-agent nesting, the clean way: the child's final response is
+    // appended as extra body lines of the parent's Result block (6-space
+    // indent, 2 deeper than the parent's own 4-space body). No sub-rect,
+    // no new color — the lines inherit the parent block's kind via
+    // buildBlockMetadata, so the render paints them with the parent's
+    // own bg. 'Pad with the main parent bg/block' — one cohesive block.
     inkcell::Surface s({60, 14});
     chat::ChatSurfaceModel model;
-    // 3 lines: header, one '\x1f' content line, one '\x1f' pad line
-    // (simulating a 1-line sub-block: sub-pad, content, sub-pad).
+    // 2 lines: a Result header + an indented sub-content body line
+    // (the rebuildViews sub-content prefix is "      " = 6 spaces).
     model.transcript = {"  \xe2\x9c\x93 RESULT  reader  #r1  \xe2\x86\xb3",
-                       "\x1fchild final answer here",
-                       "\x1f"};
+                       "      child final answer here"};
     chat::drawTranscript(s, {2, 2, 56, 8}, model);
-    // The nested content row (idx 1, rendered at firstY=2 -> row 3) must
-    // be painted with a sub-bg that DIFFERS from the parent's ResultOk
-    // bg (the header at row 2) — proving the sub-region is visually
-    // distinct (contained sub-block, not a leak into parent context).
-    auto parentCell = s.at({3, 2});   // header row, x=3
-    auto nestedCell = s.at({3, 3});   // nested content row, x=3
-    check(!inkcell::same_color(nestedCell.style.bg, parentCell.style.bg),
-          "nested sub-block has a distinct bg from the parent (contained, not leaked)");
-    // 1px left padding is enforced by the render (fill starts at
-    // body.x+1, text at body.x+2). The test pins the sub-region
-    // contract: the nested row is a visually distinct sub-bg (not a
-    // leak into parent context) and the content text lands at x+2.
-    auto textCell = s.at({4, 3});
-    check(!textCell.glyph.empty(),
-          "nested sub-block content text is drawn at x=body.x+2 (1px left pad respected)");
+    // Both the header row and the sub-content row share the parent
+    // block's bg (ResultOk) — no separate sub-rect, no frame, no
+    // distinct sub-color. The sub-content is a padded, indented part
+    // of the parent block.
+    auto headerCell = s.at({3, 2});   // header row, x=3
+    auto subCell    = s.at({3, 3});   // sub-content row, x=3
+    check(inkcell::same_color(subCell.style.bg, headerCell.style.bg),
+          "nested sub-content shares the parent block's bg (no frame, no sub-color)");
+    // The sub-content text starts at x=body.x+6 (2 deeper than the
+    // parent's body at body.x+4), marking the visual nesting depth
+    // while staying inside the parent's padded bg.
+    auto subText = s.at({2 + 6, 3});
+    check(!subText.glyph.empty(),
+          "nested sub-content text is drawn at x=body.x+6 (indented within parent bg)");
 }
 
 void test_chat_transcript_empty_state() {

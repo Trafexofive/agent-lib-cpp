@@ -470,18 +470,19 @@ struct ShellModel {
                     if (line.empty() && row.body.empty()) continue;
                     transcriptView.lines.push_back("    " + line);
                 }
-                // Nested sub-agent content: sub-pad row (1px top padding),
-                // sub-content rows (the child's final response), sub-pad
-                // row (1px bottom padding). All marked '\x1f' so the render
-                // draws them as a contained sub-region inside this Result
-                // block instead of leaking into the parent transcript.
+                // Nested sub-agent content: the child's final response
+                // becomes extra body lines of THIS Result block (no frame,
+                // no sub-rect). They inherit the parent block's kind via
+                // buildBlockMetadata (currentKind persists for non-empty
+                // body lines) so the render paints them with the parent's
+                // own bg — padding with the main parent bg/block, as
+                // instructed. The extra 2-space indent (6 vs the parent's
+                // 4) marks the visual nesting depth. '↳ enter' on the
+                // header still drills into the full nested timeline.
                 if (emitNested) {
-                    constexpr const char* kNested = "\x1f";
-                    transcriptView.lines.push_back(kNested);
                     for (const auto& nl : nestedPayload) {
-                        transcriptView.lines.push_back(std::string(kNested) + nl);
+                        transcriptView.lines.push_back("      " + nl);
                     }
-                    transcriptView.lines.push_back(kNested);
                 }
                 transcriptView.lines.push_back("");
                 ++focusIdx;
