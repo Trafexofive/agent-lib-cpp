@@ -51,6 +51,7 @@ struct ChatSurfaceModel {
     std::string input;
     int inputCursor = 0;
     std::string hint;
+    std::string agentName;  // real agent display name for the assistant label (replaces CORTEX)
 };
 
 inline std::string suffix(const std::string& id) {
@@ -58,11 +59,14 @@ inline std::string suffix(const std::string& id) {
     return id.size() > 8 ? id.substr(id.size() - 8) : id;
 }
 
-inline inkcell::Style lineStyle(const std::string& line, bool selected) {
+inline inkcell::Style lineStyle(const std::string& line, bool selected,
+                             const std::string& agentName = {}) {
     if (selected) return theme::selected_style();
     size_t first = line.find_first_not_of(' ');
     std::string content = first == std::string::npos ? std::string() : line.substr(first);
     if (content.rfind("YOU", 0) == 0) return theme::green();
+    // Assistant label is the real agent name (or CORTEX fallback) + meta.
+    if (!agentName.empty() && content.rfind(agentName, 0) == 0) return theme::cyan();
     if (content.rfind("CORTEX", 0) == 0) return theme::cyan();
     if (content.rfind("AGENT", 0) == 0 || content.rfind("TOOL", 0) == 0 ||
         content.rfind("FEED", 0) == 0 || content.rfind("RELIC", 0) == 0 ||
@@ -184,7 +188,8 @@ inline void wrapTranscriptRange(const std::vector<std::string>& source, size_t b
                                 int width, bool inCodeInit,
                                 std::vector<std::string>& out,
                                 std::vector<int>& spans,
-                                std::vector<bool>& inCodeAfter) {
+                                std::vector<bool>& inCodeAfter,
+                                const std::string& agentName = {}) {
     width = std::max(1, width);
     bool inCode = inCodeInit;
     for (size_t idx = begin; idx < end; ++idx) {
@@ -205,7 +210,9 @@ inline void wrapTranscriptRange(const std::vector<std::string>& source, size_t b
         std::string semanticProbe = content.rfind(selectionPrefix, 0) == 0
                                         ? content.substr(selectionPrefix.size())
                                         : content;
-        bool semanticHeader = semanticProbe.rfind("YOU", 0) == 0 || semanticProbe.rfind("CORTEX", 0) == 0 ||
+        bool semanticHeader = semanticProbe.rfind("YOU", 0) == 0 ||
+                              (!agentName.empty() && semanticProbe.rfind(agentName, 0) == 0) ||
+                              semanticProbe.rfind("CORTEX", 0) == 0 ||
                               semanticProbe.rfind("AGENT", 0) == 0 || semanticProbe.rfind("TOOL", 0) == 0 ||
                               semanticProbe.rfind("FEED", 0) == 0 || semanticProbe.rfind("RELIC", 0) == 0 ||
                               semanticProbe.rfind("WORKFLOW", 0) == 0 || semanticProbe.rfind("ACTION", 0) == 0 ||
@@ -237,18 +244,20 @@ inline void wrapTranscriptRange(const std::vector<std::string>& source, size_t b
     }
 }
 
-inline std::vector<std::string> wrapTranscript(const std::vector<std::string>& source, int width) {
+inline std::vector<std::string> wrapTranscript(const std::vector<std::string>& source, int width,
+                                              const std::string& agentName = {}) {
     std::vector<std::string> out;
     std::vector<int> spans;
     std::vector<bool> inCodeAfter;
-    wrapTranscriptRange(source, 0, source.size(), width, false, out, spans, inCodeAfter);
+    wrapTranscriptRange(source, 0, source.size(), width, false, out, spans, inCodeAfter, agentName);
     return out;
 }
 
 inline void buildBlockMetadata(const std::vector<std::string>& lines,
                                std::vector<uint8_t>& kinds,
                                std::vector<bool>& headers,
-                               std::vector<bool>& selected) {
+                               std::vector<bool>& selected,
+                               const std::string& agentName = {}) {
     kinds.assign(lines.size(), static_cast<uint8_t>(ChatBlockKind::None));
     headers.assign(lines.size(), false);
     selected.assign(lines.size(), false);
@@ -268,7 +277,7 @@ inline void buildBlockMetadata(const std::vector<std::string>& lines,
         }
         bool header = line.rfind("    ", 0) != 0;
         if (header) {
-            currentKind = classifyChatBlock(line);
+            currentKind = classifyChatBlock(line, agentName);
             currentSelected = line.rfind("› ", 0) == 0;
         }
         kinds[i] = static_cast<uint8_t>(currentKind);
@@ -293,7 +302,8 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
                 cache.sourceLineSpans.clear();
                 cache.inCodeAfter.clear();
                 wrapTranscriptRange(source, 0, source.size(), wrapWidth, false,
-                                    cache.lines, cache.sourceLineSpans, cache.inCodeAfter);
+                                    cache.lines, cache.sourceLineSpans, cache.inCodeAfter,
+                                    m.agentName);
                 cache.sourceSnapshot = source;
             } else {
                 // Incremental: keep the stable display prefix, re-wrap only the dirty tail.
@@ -308,7 +318,8 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
                 cache.inCodeAfter.resize(d);
                 bool inCode = d > 0 ? cache.inCodeAfter[d - 1] : false;
                 wrapTranscriptRange(source, d, source.size(), wrapWidth, inCode,
-                                    cache.lines, cache.sourceLineSpans, cache.inCodeAfter);
+                                    cache.lines, cache.sourceLineSpans, cache.inCodeAfter,
+                                    m.agentName);
                 cache.sourceSnapshot = source;
             }
             // Block metadata rebuilds on size mismatch (checked below). Clearing here
@@ -322,7 +333,7 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
         }
         displayLinesPtr = &cache.lines;
     } else {
-        uncachedLines = wrapTranscript(source, wrapWidth);
+        uncachedLines = wrapTranscript(source, wrapWidth, m.agentName);
         displayLinesPtr = &uncachedLines;
     }
     const auto& displayLines = *displayLinesPtr;
@@ -337,12 +348,13 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
     if (m.transcriptCache) {
         if (m.transcriptCache->blockKinds.size() != displayLines.size())
             buildBlockMetadata(displayLines, m.transcriptCache->blockKinds,
-                               m.transcriptCache->blockHeaders, m.transcriptCache->blockSelected);
+                               m.transcriptCache->blockHeaders, m.transcriptCache->blockSelected,
+                               m.agentName);
         blockKinds = &m.transcriptCache->blockKinds;
         blockHeaders = &m.transcriptCache->blockHeaders;
         blockSelected = &m.transcriptCache->blockSelected;
     } else {
-        buildBlockMetadata(displayLines, localKinds, localHeaders, localSelected);
+        buildBlockMetadata(displayLines, localKinds, localHeaders, localSelected, m.agentName);
     }
 
     int maxOffset = std::max(0, total - body.h);

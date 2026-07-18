@@ -97,6 +97,22 @@ void test_chat_block_primitives() {
     check(chat::classifyChatBlock("  TOOL  fs_write  #w1") == chat::ChatBlockKind::ToolWrite,
           "chat block classifies write builtin");
 
+    // Agent-name aware classification: the assistant label is now the real agent
+    // name (e.g. "coder") + model/provider meta, not the generic "CORTEX" sentinel.
+    // The classifier matches the agent name first, with "CORTEX" kept as a
+    // fallback for standalone tests that never wire agentName.
+    const std::string agent = "coder";
+    check(chat::classifyChatBlock("  coder  openai-codex/gpt-5.5", agent) ==
+              chat::ChatBlockKind::Assistant,
+          "chat block classifies real agent-name assistant label");
+    check(chat::classifyChatBlock("  AGENT  reader  #ping  ↳", agent) ==
+              chat::ChatBlockKind::Agent,
+          "chat block classifies subagent action (name + id + drillable)");
+    check(chat::classifyChatBlock("  CORTEX", agent) == chat::ChatBlockKind::Assistant,
+          "chat block falls back to CORTEX sentinel when no agent name wired");
+    check(chat::classifyChatBlock("  coder", "") != chat::ChatBlockKind::Assistant,
+          "chat block does not mis-classify a bare agent name as Assistant when no agent name is wired");
+
     inkcell::Surface surface({60, 14});
     chat::ChatSurfaceModel model;
     model.transcript = {"  YOU", "    hello", "", "  TOOL  exec  #e1", "    pwd"};

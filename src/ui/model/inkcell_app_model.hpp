@@ -203,6 +203,14 @@ struct ShellModel {
     std::string pendingSubmit;
     std::string pendingRoute;  // "agent" | "main" | "quit"
     std::string activeSessionId;
+    // Agent display identity for the chat transcript labels. The assistant's own
+    // turns (Response/Final) are labeled with agentName + agentModel/agentProvider
+    // instead of the generic "CORTEX" sentinel, and subagent Action turns show
+    // the subagent name + metadata. Set once by initializeChatModel from the
+    // InkcellAppConfig (manifest-resolved).
+    std::string agentName;
+    std::string agentModel;
+    std::string agentProvider;
     model::DashboardState dashboard;
     inkcell::widgets::TextAreaState composer;
     std::vector<std::string> promptHistory;
@@ -365,24 +373,50 @@ struct ShellModel {
                     case TimelineKind::Thought:
                         label = "THOUGHT";
                         break;
-                    case TimelineKind::Action:
-                        label = row.actionType.empty() ? "ACTION" : row.actionType;
-                        std::transform(label.begin(), label.end(), label.begin(), [](unsigned char c) {
-                            return static_cast<char>(std::toupper(c));
-                        });
-                        if (!row.actionName.empty()) label += "  " + row.actionName;
-                        if (!row.actionId.empty()) label += "  #" + row.actionId;
-                        if (row.drillable) label += "  ↳";
+                    case TimelineKind::Action: {
+                        // Subagent turns: lead with the subagent NAME (actionName) and
+                        // metadata (type, id, drillable), not a generic "AGENT" sentinel.
+                        // For non-agent actions (tools/feeds/relics/workflows) the type is
+                        // the kind label (TOOL/FEED/...) and actionName is the tool name.
+                        std::string type = row.actionType.empty() ? "ACTION" : row.actionType;
+                        std::transform(type.begin(), type.end(), type.begin(),
+                                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+                        if (type == "AGENT" && !row.actionName.empty()) {
+                            // Subagent: "AGENT  <name>  #<id>  ↳" — name is the headline.
+                            label = "AGENT  " + row.actionName;
+                            if (!row.actionId.empty()) label += "  #" + row.actionId;
+                            if (row.drillable) label += "  ↳";
+                        } else {
+                            label = type;
+                            if (!row.actionName.empty()) label += "  " + row.actionName;
+                            if (!row.actionId.empty()) label += "  #" + row.actionId;
+                            if (row.drillable) label += "  ↳";
+                        }
                         break;
+                    }
                     case TimelineKind::Result:
                         label = row.ok ? "✓ RESULT" : "✗ RESULT";
                         if (!row.actionName.empty()) label += "  " + row.actionName;
                         if (!row.actionId.empty()) label += "  #" + row.actionId;
                         if (row.drillable) label += "  ↳";
                         break;
+                    // The assistant's own turns: label with the real agent name +
+                    // model/provider metadata instead of the generic "CORTEX" sentinel.
+                    // Falls back to "CORTEX" only if the agent identity was never wired
+                    // (e.g. standalone unit tests that don't call initializeChatModel).
                     case TimelineKind::Response:
                     case TimelineKind::Final:
-                        label = "CORTEX";
+                        label = agentName.empty() ? "CORTEX" : agentName;
+                        if (!agentModel.empty() || !agentProvider.empty()) {
+                            label += "  ";
+                            std::string meta;
+                            if (!agentProvider.empty()) meta = agentProvider;
+                            if (!agentModel.empty()) {
+                                if (!meta.empty()) meta += "/";
+                                meta += agentModel;
+                            }
+                            label += meta;
+                        }
                         break;
                     case TimelineKind::Error:
                         label = "✗ ERROR";

@@ -34,9 +34,14 @@ inline std::string stripSelectionMarker(const std::string& line) {
     return value;
 }
 
-inline ChatBlockKind classifyChatBlock(const std::string& header) {
+// Classify a semantic chat block header. `agentName` is the real assistant
+// display name (replaces the CORTEX sentinel) — Assistant kind matches it
+// first, then falls back to "CORTEX" for standalone tests that never wire it.
+inline ChatBlockKind classifyChatBlock(const std::string& header,
+                                       const std::string& agentName = {}) {
     std::string value = stripSelectionMarker(header);
     if (value.rfind("YOU", 0) == 0) return ChatBlockKind::User;
+    if (!agentName.empty() && value.rfind(agentName, 0) == 0) return ChatBlockKind::Assistant;
     if (value.rfind("CORTEX", 0) == 0) return ChatBlockKind::Assistant;
     if (value.rfind("AGENT", 0) == 0) return ChatBlockKind::Agent;
     if (value.rfind("✓ RESULT", 0) == 0) return ChatBlockKind::ResultOk;

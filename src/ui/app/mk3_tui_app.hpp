@@ -62,6 +62,12 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
         theme::set(theme::Variant::Graphite);
     }
     model->activeSessionId = cfg.sessionId;
+    // Wire the agent display identity so the chat transcript labels the
+    // assistant's own turns with the real agent name + model/provider (not the
+    // generic "CORTEX" sentinel) and subagent turns with the subagent name.
+    model->agentName = cfg.agentName.empty() ? "cortex" : cfg.agentName;
+    model->agentModel = cfg.model;
+    model->agentProvider = cfg.provider;
     model->dashboard.refreshSessions();
     model->promptHistory = chat::loadPromptHistory();
     model->promptHistoryIndex = static_cast<int>(model->promptHistory.size());
