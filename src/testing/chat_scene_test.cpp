@@ -242,7 +242,124 @@ void test_submit_locks_to_bottom() {
           "submitComposer drops the viewport to the bottom (stick_bottom=true)");
 }
 
+void test_jk_block_navigation_with_streaming() {
+    // Regression for the delta-rebuildViews j/k bug. The transcript has
+    // multiple focusable blocks; j/k in timeline focus must move the '›'
+    // marker block-by-block, and a streaming body update on the last row
+    // (tail-replace) must NOT jump the marker off the selected block. The
+    // delta strategy preserves the stable prefix, but the focusable-block
+    // math inside the delta paths was broken: the prefix kept its old
+    // '›' from the prior build and the newly-selected block didn't get
+    // re-emitted with '›'. The fix tracks appliedSelectedBlock /
+    // appliedTimelineFocus / appliedShowThoughts / appliedShowRaw and
+    // forces a full re-emit when any of them diverge from the current
+    // state, so all '›' markers are refreshed.
+    InkcellAppConfig cfg;
+    AgentBridge bridge;
+    auto model = std::make_shared<ShellModel>();
+    scenes::AgentScene scene(cfg, bridge, model);
+    scene.on_enter();
+    model->timelineFocus = true;
 
+    // Seed 5 focusable User blocks (each: header + 1-line body + blank = 3 lines).
+    for (int i = 0; i < 5; ++i) {
+        TimelineRow row;
+        row.kind = TimelineKind::User;
+        row.title = "you";
+        row.body = "block " + std::to_string(i);
+        model->rootRows.push_back(std::move(row));
+    }
+    model->rebuildViews();
+
+    check(model->blockRowIndex.size() == 5, "5 focusable blocks seeded into blockRowIndex");
+    check(model->selectedBlock == 0, "selectedBlock starts at 0 (first focusable)");
+    check(model->transcriptView.lines[0].rfind("› ", 0) == 0,
+          "initial '›' is on block 0 header (line 0)");
+    check(model->transcriptView.lines[3].rfind("  ", 0) == 0,
+          "block 1 header has no '›' initially");
+
+    // Press j: selectDelta(+1) -> selectedBlock=1. The '›' must move
+    // off block 0 and onto block 1.
+    model->selectDelta(1);
+    check(model->selectedBlock == 1, "j moves selectedBlock from 0 to 1");
+    check(model->transcriptView.lines[0].rfind("  ", 0) == 0,
+          "block 0 loses '›' after j");
+    check(model->transcriptView.lines[3].rfind("› ", 0) == 0,
+          "block 1 gains '›' after j");
+    check(model->transcriptView.lines[6].rfind("  ", 0) == 0,
+          "block 2 still has no '›' after j");
+
+    // Press j twice more: selectedBlock=3. The '›' must move to block 3.
+    model->selectDelta(1);
+    model->selectDelta(1);
+    check(model->selectedBlock == 3, "j j moves selectedBlock to 3");
+    check(model->transcriptView.lines[9].rfind("› ", 0) == 0,
+          "block 3 header has '›' after j j");
+    check(model->transcriptView.lines[3].rfind("  ", 0) == 0,
+          "block 1 no longer has '›'");
+
+    // Press k: selectDelta(-1) -> selectedBlock=2.
+    model->selectDelta(-1);
+    check(model->selectedBlock == 2, "k moves selectedBlock from 3 to 2");
+    check(model->transcriptView.lines[6].rfind("› ", 0) == 0,
+          "block 2 gains '›' after k");
+    check(model->transcriptView.lines[9].rfind("  ", 0) == 0,
+          "block 3 loses '›' after k");
+
+    // Simulate a streaming body update on the last row (row 4, Response-style
+    // body that grows token-by-token). The tail-replace path re-emits only
+    // the last row; selectedBlock=2 must stay on block 2 and the '›' on
+    // block 4 (the last) must NOT appear.
+    model->rootRows.back().body = "block 4 updated body (streaming token 1)";
+    model->rebuildViews();
+    check(model->selectedBlock == 2,
+          "selectedBlock unchanged after tail-replace body update");
+    check(model->transcriptView.lines[6].rfind("› ", 0) == 0,
+          "'›' still on block 2 after tail-replace (selection stable)");
+    check(model->transcriptView.lines[12].rfind("  ", 0) == 0,
+          "block 4 (last) has no '›' after tail-replace (selectedBlock=2)");
+
+    // Another tail-replace: body grows further. Selection still stable.
+    model->rootRows.back().body = "block 4 updated body (streaming token 2 — longer)";
+    model->rebuildViews();
+    check(model->selectedBlock == 2,
+          "selectedBlock unchanged after second tail-replace");
+    check(model->transcriptView.lines[6].rfind("› ", 0) == 0,
+          "'›' still on block 2 after second tail-replace");
+
+    // j to the last block: selectedBlock=4. Now another tail-replace:
+    // '›' should stay on block 4 (the last row, re-emitted correctly).
+    model->selectDelta(2);
+    check(model->selectedBlock == 4, "j j moves selectedBlock to 4 (last block)");
+    check(model->transcriptView.lines[12].rfind("› ", 0) == 0,
+          "block 4 has '›' after j j");
+    model->rootRows.back().body = "block 4 updated body (streaming token 3)";
+    model->rebuildViews();
+    check(model->selectedBlock == 4,
+          "selectedBlock unchanged on last block after tail-replace");
+    check(model->transcriptView.lines[12].rfind("› ", 0) == 0,
+          "'›' still on block 4 (last) after tail-replace");
+
+    // Append a new focusable row (deltaAppend path). The new row joins
+    // the end; with selectedBlock=4 (still pointing at the OLD last
+    // block), the marker should remain on the now-second-to-last block,
+    // and the new last block has no '›'. (In running mode, pushRow
+    // would bump selectedBlock to the new last; here we test the
+    // deltaAppend directly without running so we can assert the
+    // selection moves correctly to a non-last target.)
+    TimelineRow newRow;
+    newRow.kind = TimelineKind::User;
+    newRow.title = "you";
+    newRow.body = "block 5";
+    model->rootRows.push_back(std::move(newRow));
+    model->rebuildViews();
+    check(model->blockRowIndex.size() == 6, "deltaAppend added 6th focusable block");
+    check(model->selectedBlock == 4, "selectedBlock still 4 after deltaAppend (old last is now second-to-last)");
+    check(model->transcriptView.lines[12].rfind("› ", 0) == 0,
+          "'›' still on old last (block 4) after deltaAppend");
+    check(model->transcriptView.lines[15].rfind("  ", 0) == 0,
+          "new last (block 5) has no '›' (selectedBlock=4)");
+}
 
 void test_ctrl_c_state() {
     InkcellAppConfig cfg;
@@ -323,6 +440,7 @@ int main() {
     test_chat_scroll_keys();
     test_ctrl_j_k_history_navigation();
     test_submit_locks_to_bottom();
+    test_jk_block_navigation_with_streaming();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }

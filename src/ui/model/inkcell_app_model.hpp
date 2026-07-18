@@ -230,6 +230,18 @@ struct ShellModel {
     std::vector<std::string> agentPath;  // nested sub-agent names from root
     int selectedBlock = 0;               // index into visible focusable blocks
     bool timelineFocus = false;          // false = composer owns keys
+    // The selection / focus / visibility state as last APPLIED to the
+    // transcript lines by rebuildViews(). When any of these diverge from
+    // the current values, the delta paths (deltaAppend / tailReplace)
+    // would re-emit the wrong '›' markers — the previously selected
+    // block keeps its old '›' from the prior build while the newly
+    // selected block doesn't get re-emitted with '›'. rebuildViews()
+    // detects the divergence and forces a full re-emit so all '›'
+    // markers reflect the new state.
+    int appliedSelectedBlock = 0;
+    bool appliedTimelineFocus = false;
+    bool appliedShowThoughts = true;
+    bool appliedShowRaw = false;
     // Maps visible block index -> rootRows/nested row index
     std::vector<int> blockRowIndex;
     // Per-row line-start index into transcriptView.lines (one entry per
@@ -290,28 +302,6 @@ struct ShellModel {
         return {};
     }
 
-    // Returns the final response text of a registered sub-agent (the
-    // child's last RESPONSE protocol event), or empty if the sub-agent
-    // has not produced a final response yet.
-    std::string subagentFinalText(const std::string& name) const {
-        if (!rootAgent) return {};
-        Agent* sub = rootAgent->getSubAgent(name);
-        if (!sub) return {};
-        const auto& evs = sub->protocolEvents();
-        for (auto it = evs.rbegin(); it != evs.rend(); ++it) {
-            if (it->kind == ProtocolEventKind::RESPONSE) return it->text;
-        }
-        return {};
-    }
-
-    // Append a nested sub-region containing the child sub-agent's own
-    // timeline (the SAME blocks the main chat renders: Thought, Action,
-    // Result, Response — with their own ▎ headers, fg colors, and
-    // kind-based bg). The sub-region is padded with 1px sub-bg on all 4
-    // sides so the child's blocks are visually contained inside the
-    // parent's Result block (no leak, no separate top-level island).
-    // The render detects the '\x1f' marker and draws the sub-region
-    // (sub-bg padding + child block lines with their own kind style).
     // Cap the number of body lines per row in the transcript. A single
     // tool result (grep, file read) can return thousands of lines and
     // blow up the transcript, pushing the next response far below the
@@ -338,89 +328,6 @@ struct ShellModel {
             transcriptView.lines.push_back(
                 indent + "\xe2\x80\xa6 (" + std::to_string(total - shown) +
                 " more lines, drill to expand)");
-        }
-    }
-    void appendSubagentBlocks(const std::string& name) {
-        if (!rootAgent) return;
-        Agent* sub = rootAgent->getSubAgent(name);
-        if (!sub) return;
-        auto childRows = rowsFromAgent(sub);
-        for (const auto& cr : childRows) {
-            if (cr.kind == TimelineKind::Thought && !showThoughts) continue;
-            if (cr.kind == TimelineKind::Stream && !showRaw) continue;
-            // Build the child's label with the SAME switch the main chat
-            // uses so the nested blocks look identical to the main
-            // chat blocks (▎, fg, kind-bg) when the render classifies
-            // and paints them via the normal kind-based path.
-            std::string childLabel;
-            switch (cr.kind) {
-                case TimelineKind::User:
-                    childLabel = "YOU";
-                    break;
-                case TimelineKind::Thought:
-                    childLabel = "THOUGHT";
-                    break;
-                case TimelineKind::Action: {
-                    std::string type = cr.actionType.empty() ? "ACTION" : cr.actionType;
-                    std::transform(type.begin(), type.end(), type.begin(),
-                                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-                    if (type == "AGENT" && !cr.actionName.empty()) {
-                        childLabel = "AGENT  " + cr.actionName;
-                        if (!cr.actionId.empty()) childLabel += "  #" + cr.actionId;
-                        if (cr.drillable) childLabel += "  ↳";
-                    } else {
-                        childLabel = type;
-                        if (!cr.actionName.empty()) childLabel += "  " + cr.actionName;
-                        if (!cr.actionId.empty()) childLabel += "  #" + cr.actionId;
-                        if (cr.drillable) childLabel += "  ↳";
-                    }
-                    break;
-                }
-                case TimelineKind::Result:
-                    childLabel = cr.ok ? "✓ RESULT" : "✗ RESULT";
-                    if (!cr.actionName.empty()) childLabel += "  " + cr.actionName;
-                    if (!cr.actionId.empty()) childLabel += "  #" + cr.actionId;
-                    if (cr.drillable) childLabel += "  ↳";
-                    break;
-                case TimelineKind::Response:
-                case TimelineKind::Final:
-                    childLabel = agentName.empty() ? std::string("CORTEX") : agentName;
-                    if (!agentModel.empty() || !agentProvider.empty()) {
-                        childLabel += "  ";
-                        std::string meta;
-                        if (!agentProvider.empty()) meta = agentProvider;
-                        if (!agentModel.empty()) {
-                            if (!meta.empty()) meta += "/";
-                            meta += agentModel;
-                        }
-                        childLabel += meta;
-                    }
-                    break;
-                case TimelineKind::Error:
-                    childLabel = "✗ ERROR";
-                    break;
-                case TimelineKind::Status:
-                    childLabel = "STATUS";
-                    break;
-                case TimelineKind::Stream:
-                    childLabel = "RAW";
-                    break;
-                case TimelineKind::Log:
-                    childLabel = cr.title.empty() ? "NOTICE" : cr.title;
-                    break;
-            }
-            // Header line: 2-space prefix so buildBlockMetadata's header
-            // check (rfind("    ",0)!=0) classifies it as a header →
-            // the render draws the ▎ marker and the kind's own fg/bg.
-            transcriptView.lines.push_back("  " + childLabel);
-            // Body lines: 6-space prefix (2 deeper than the parent
-            // body's 4) — visually nested inside the parent block, with
-            // the parent block's own bg as the padding on all 4 sides
-            // (contiguity). No custom render path, no sub-bg frame —
-            // the child blocks go through the EXACT same kind-based
-            // render as the main chat (▎, fg, kind-bg) so j/k block
-            // highlighting and the focusable block logic are unchanged.
-            pushBodyLines(cr.body, "      ");
         }
     }
 
@@ -515,6 +422,22 @@ struct ShellModel {
         if (rows.empty() && (!transcriptView.lines.empty() || !rowLineStart.empty())) {
             fullRebuild = true;
         }
+        // Force a full re-emit when the selection / focus / visibility state
+        // has changed since the last build. The delta paths (deltaAppend /
+        // tailReplace) only re-emit a subset of the rows; if the '›' marker
+        // is moving off the previously-selected block onto a block that
+        // isn't re-emitted, the prefix keeps the old '›' and the new
+        // block keeps '  ' — the marker visibly doesn't move. Re-emitting
+        // all rows is the only correct way to refresh the markers when the
+        // applied state diverges from the current state. The wrap cache
+        // handles re-wrapping incrementally, so the visible-prefix cost is
+        // just the line iteration (microseconds for typical transcripts).
+        if (selectedBlock != appliedSelectedBlock ||
+            timelineFocus != appliedTimelineFocus ||
+            showThoughts != appliedShowThoughts ||
+            showRaw != appliedShowRaw) {
+            fullRebuild = true;
+        }
         if (fullRebuild) {
             transcriptView.lines.clear();
             blockRowIndex.clear();
@@ -553,12 +476,6 @@ struct ShellModel {
                 // the next row (no lines pushed for them).
                 rowLineStart.push_back(transcriptView.lines.size());
                 const auto& row = rows[ri];
-                // Nested sub-agent emission flag: set in the Result case
-                // for a drillable AGENT Result. The child's OWN blocks
-                // (Thought/Action/Result/Response, same as the main
-                // chat) are nested inside the parent Result with 1px
-                // sub-bg padding on all 4 sides.
-                bool emitNested = false;
                 if (row.kind == TimelineKind::Thought && !showThoughts) continue;
                 if (row.kind == TimelineKind::Stream && !showRaw) continue;
 
@@ -599,21 +516,14 @@ struct ShellModel {
                         if (!row.actionName.empty()) label += "  " + row.actionName;
                         if (!row.actionId.empty()) label += "  #" + row.actionId;
                         if (row.drillable) label += "  ↳";
-                        // A drillable AGENT Result nests the sub-agent's
-                        // OWN timeline (the same blocks the main chat
-                        // shows — Thought, Action, Result, Response)
-                        // as indented body lines inside the parent
-                        // Result. The child blocks go through the
-                        // normal kind-based render (▎, fg, kind-bg)
-                        // so they look identical to the main chat
-                        // blocks and j/k highlighting of the parent
-                        // drillable blocks is unchanged. Tools /
-                        // non-agent Results stay flat. '↳ enter' on
-                        // the header still drills into the full
-                        // nested timeline for the complete context.
-                        if (row.drillable && row.actionType == "agent") {
-                            emitNested = true;
-                        }
+                        // A drillable AGENT Result is drillable via the
+                        // '↳ enter' on the header — the user enters
+                        // the full sub-agent timeline. The Result's
+                        // OWN body (the short result summary) is shown
+                        // here; the sub-agent's nested blocks are NOT
+                        // inlined into the parent transcript (parent
+                        // must only show its own rows). Tools /
+                        // non-agent Results stay flat.
                         break;
                     // The assistant's own turns: label with the real agent name +
                     // model/provider metadata instead of the generic "CORTEX" sentinel.
@@ -647,17 +557,12 @@ struct ShellModel {
                         break;
                 }
                 transcriptView.lines.push_back(std::string(selected ? "› " : "  ") + label);
-                // For a drillable AGENT Result, the sub-agent's own blocks
-                // (the SAME blocks the main chat shows) are nested inside
-                // the parent Result with 1px sub-bg padding on all 4
-                // sides. The sub-region replaces the Result's body — no
-                // duplicate emission. For everything else, emit the body
-                // as normal.
-                if (emitNested) {
-                    appendSubagentBlocks(row.actionName);
-                } else {
-                    pushBodyLines(row.body, "    ");
-                }
+                // Body of the row — the parent transcript only emits its
+                // OWN row's body (the short Result summary, Response text,
+                // etc.). A drillable AGENT Result's body is the result
+                // summary; the sub-agent's own timeline is reached via
+                // the '↳ enter' drilldown, NEVER inlined here.
+                pushBodyLines(row.body, "    ");
                 transcriptView.lines.push_back("");
                 ++focusIdx;
             }
@@ -668,6 +573,16 @@ struct ShellModel {
         int focusable = static_cast<int>(blockRowIndex.size());
         if (focusable <= 0) selectedBlock = 0;
         else selectedBlock = std::max(0, std::min(selectedBlock, focusable - 1));
+
+        // Snapshot the state that was actually APPLIED to the lines this
+        // build. The next build compares against this to decide whether
+        // a full re-emit is needed (see the divergence check at the top
+        // of rebuildViews). Must be set after the clamp above so the
+        // snapshot reflects the post-clamp selectedBlock.
+        appliedSelectedBlock = selectedBlock;
+        appliedTimelineFocus = timelineFocus;
+        appliedShowThoughts = showThoughts;
+        appliedShowRaw = showRaw;
 
         // Keep selected block in view when timeline-focused; stick-bottom while running at root.
         if (running && atRoot() && !timelineFocus) {
