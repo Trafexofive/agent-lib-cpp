@@ -398,7 +398,28 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
     }
     const auto& displayLines = *displayLinesPtr;
     int total = static_cast<int>(displayLines.size());
-    if (total <= 0) return;
+    if (total <= 0) {
+        // First-run empty state: the body would otherwise be a void between
+        // the header and the status line. Show a centered dim headline + a
+        // tip so a fresh operator knows what this surface is and how to
+        // start. Hidden once any content exists.
+        const std::string headline = "No conversation yet";
+        const std::string tip = "Type a prompt below and press Enter \xe2\x80\x94 or press ? for help";
+        int yHeadline = body.y + std::max(0, body.h / 2 - 1);
+        int yTip = yHeadline + 1;
+        if (yTip < body.y + body.h) {
+            int xHeadline = body.x + std::max(0, (body.w - inkcell::text::display_width(headline)) / 2);
+            int xTip = body.x + std::max(0, (body.w - inkcell::text::display_width(tip)) / 2);
+            if (yHeadline >= body.y)
+                surface.text({xHeadline, yHeadline},
+                             inkcell::text::truncate(headline, std::max(0, body.w - (xHeadline - body.x))),
+                             theme::dim());
+            surface.text({xTip, yTip},
+                         inkcell::text::truncate(tip, std::max(0, body.w - (xTip - body.x))),
+                         theme::dim());
+        }
+        return;
+    }
     std::vector<uint8_t> localKinds;
     std::vector<bool> localHeaders;
     std::vector<bool> localSelected;

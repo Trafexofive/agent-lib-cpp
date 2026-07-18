@@ -265,6 +265,36 @@ void test_chat_selection_stays_visible_after_wrap() {
     check(containsRow(s, "› CORTEX"), "selected transcript block remains visible");
 }
 
+void test_chat_transcript_empty_state() {
+    // First-run UX: an empty transcript body must show a centered dim
+    // headline + tip instead of a blank void between the header and the
+    // status line. The empty state is hidden the moment any content exists.
+    inkcell::Surface s({60, 14});
+    chat::ChatSurfaceModel model;
+    model.transcript = {};   // empty
+    chat::drawTranscript(s, {2, 2, 56, 8}, model);
+    // The empty state renders the headline + tip centered in the body.
+    // The body starts at y=2 and is 8 rows tall, so the headline sits at
+    // y = 2 + (8/2 - 1) = 5 and the tip at y = 6.
+    std::string headline = rowText(s, 5);
+    std::string tip = rowText(s, 6);
+    check(headline.find("No conversation yet") != std::string::npos,
+          "empty transcript shows the centered headline");
+    check(tip.find("Type a prompt below") != std::string::npos,
+          "empty transcript shows the centered tip line");
+    // Non-empty transcript: the empty state must NOT show. Use a fresh
+    // surface so leftover cells from the empty-state draw above don't
+    // false-positive the suppression check.
+    inkcell::Surface s2({60, 14});
+    chat::ChatSurfaceModel populated;
+    populated.transcript = {"  YOU", "    hello"};
+    chat::drawTranscript(s2, {2, 2, 56, 8}, populated);
+    std::string anyRow2;
+    for (int y = 2; y < 10; ++y) anyRow2 += rowText(s2, y);
+    check(anyRow2.find("No conversation yet") == std::string::npos,
+          "populated transcript suppresses the empty state headline");
+}
+
 void test_chat_prompt_placeholder_when_empty() {
     // First-run UX: a focused, empty composer must show a dim placeholder so
     // a fresh operator knows the box is for input (and what to type), instead
@@ -429,6 +459,7 @@ int main() {
     test_chat_prompt_cursor_position();
     test_chat_prompt_keeps_input_while_running();
     test_chat_prompt_placeholder_when_empty();
+    test_chat_transcript_empty_state();
     test_chat_subagent_scope_chrome();
     test_chat_help_and_theme();
     test_ask_dialog_overlay();
