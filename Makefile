@@ -304,6 +304,19 @@ $(SCRIPTED_PROVIDER_TEST_BIN): $(SCRIPTED_PROVIDER_TEST_SRC) src/testing/scripte
 test-scripted-provider: $(SCRIPTED_PROVIDER_TEST_BIN)
 	@./$(SCRIPTED_PROVIDER_TEST_BIN)
 
+# ── Live smoke: real-model mid-low live test against opencode-go ───────────
+# Runs cortex-mk3 against a real LLM on the opencode-go router and asserts
+# the rendered chat surface contains the expected response + header. Catches
+# what offline tests cannot: real provider HTTP, real streaming, real
+# protocol shape. Graceful skip when OPENCODE_API_KEY is unset (live tests
+# are opt-in; never breaks keyless/CI runs).
+LIVE_SMOKE_BIN ?= $(BIN_CLI)
+LIVE_SMOKE_MODEL ?= deepseek-v4-flash
+LIVE_SMOKE_TIMEOUT ?= 90
+
+live-smoke: $(LIVE_SMOKE_BIN)
+	@bash tests/tui/live_smoke.sh $(LIVE_SMOKE_BIN) $(LIVE_SMOKE_MODEL) $(LIVE_SMOKE_TIMEOUT)
+
 run: $(BIN_CLI)
 	./$(BIN_CLI)
 
