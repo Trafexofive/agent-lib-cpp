@@ -312,6 +312,34 @@ struct ShellModel {
     // parent's Result block (no leak, no separate top-level island).
     // The render detects the '\x1f' marker and draws the sub-region
     // (sub-bg padding + child block lines with their own kind style).
+    // Cap the number of body lines per row in the transcript. A single
+    // tool result (grep, file read) can return thousands of lines and
+    // blow up the transcript, pushing the next response far below the
+    // viewport. Truncating to kMaxBodyLines + a note keeps the chat
+    // usable. The full body is preserved in row.body and available via
+    // drilldown (the drilldown's nestedRows / protocol events hold the
+    // complete text).
+    static constexpr int kMaxBodyLines = 50;
+
+    // Push body lines for a row, capped at kMaxBodyLines. If the body
+    // has more lines, append a single dim "… (N more lines, drill to
+    // expand)" note. The indent is prepended to each line (the standard
+    // body indent is "    ").
+    void pushBodyLines(const std::string& body, const std::string& indent) {
+        auto lines = splitDisplayLines(body);
+        int total = static_cast<int>(lines.size());
+        int shown = std::min(total, kMaxBodyLines);
+        for (int i = 0; i < shown; ++i) {
+            const auto& line = lines[static_cast<size_t>(i)];
+            if (line.empty() && body.empty()) continue;
+            transcriptView.lines.push_back(indent + line);
+        }
+        if (total > shown) {
+            transcriptView.lines.push_back(
+                indent + "\xe2\x80\xa6 (" + std::to_string(total - shown) +
+                " more lines, drill to expand)");
+        }
+    }
     void appendSubagentNestedLines(const std::string& name) {
         if (!rootAgent) return;
         Agent* sub = rootAgent->getSubAgent(name);
@@ -383,10 +411,7 @@ struct ShellModel {
                     break;
             }
             transcriptView.lines.push_back(std::string(kNested) + "  " + childLabel);
-            for (const auto& line : splitDisplayLines(cr.body)) {
-                if (line.empty() && cr.body.empty()) continue;
-                transcriptView.lines.push_back(std::string(kNested) + "    " + line);
-            }
+            pushBodyLines(cr.body, std::string(kNested) + "    ");
             transcriptView.lines.push_back(kNested);  // separator between child blocks
         }
         transcriptView.lines.push_back(kNested);  // 1px bottom pad
@@ -622,10 +647,7 @@ struct ShellModel {
                 if (emitNested) {
                     appendSubagentNestedLines(row.actionName);
                 } else {
-                    for (const auto& line : splitDisplayLines(row.body)) {
-                        if (line.empty() && row.body.empty()) continue;
-                        transcriptView.lines.push_back("    " + line);
-                    }
+                    pushBodyLines(row.body, "    ");
                 }
                 transcriptView.lines.push_back("");
                 ++focusIdx;

@@ -585,6 +585,45 @@ void test_chat_thought_rows_visible_by_default() {
     check(found,
           "thought protocol event produces a Thought timeline row visible by default");
 }
+
+void test_chat_long_body_truncation() {
+    // A single tool result (grep, file read) can return thousands of
+    // lines. The transcript caps body lines at kMaxBodyLines and appends
+    // a "... (N more lines, drill to expand)" note so the chat stays
+    // usable and the next response isn't pushed far below the viewport.
+    ShellModel model;
+    TimelineRow row;
+    row.kind = TimelineKind::Response;
+    row.title = "coder";
+    std::string big;
+    for (int i = 0; i < 200; ++i) {
+        if (i > 0) big += '\n';
+        big += "line " + std::to_string(i);
+    }
+    row.body = big;
+    model.rootRows.push_back(std::move(row));
+    model.rebuildViews();
+    bool foundNote = false;
+    int remaining = -1;
+    for (const auto& l : model.transcriptView.lines) {
+        if (l.find("more lines, drill to expand") != std::string::npos) {
+            foundNote = true;
+            auto pos = l.find('(');
+            if (pos != std::string::npos) {
+                auto end = l.find(' ', pos + 1);
+                if (end != std::string::npos) {
+                    try { remaining = std::stoi(l.substr(pos + 1, end - pos - 1)); } catch (...) {}
+                }
+            }
+            break;
+        }
+    }
+    check(foundNote, "long body produces a truncation note in the transcript");
+    check(remaining == 200 - 50,
+          "truncation note reports the correct remaining line count");
+    check(model.rootRows.back().body == big,
+          "truncation is render-only; the full body is preserved in rootRows");
+}
 }  // namespace
 
 int main() {
@@ -609,6 +648,7 @@ int main() {
     test_chat_last_turn_summary_lifecycle();
     test_chat_last_response_body();
     test_chat_thought_rows_visible_by_default();
+    test_chat_long_body_truncation();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }
