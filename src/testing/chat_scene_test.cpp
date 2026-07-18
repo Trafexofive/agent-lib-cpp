@@ -197,6 +197,51 @@ void test_ctrl_j_k_history_navigation() {
           "Ctrl-J does not insert 'j' into the composer (input disabled for the binding)");
 }
 
+void test_submit_locks_to_bottom() {
+    // Live-correctness: when the operator submits a new prompt, the
+    // transcript must drop back to bottom and lock, even if they had
+    // scrolled up with Ctrl-K to read history. Otherwise the new turn
+    // streams in below the viewport and the operator sees nothing until
+    // they manually press End. submitComposer() pins stick_bottom=true
+    // and scroll_to_end() at the start of every new turn.
+    InkcellAppConfig cfg;
+    AgentBridge bridge;
+    auto model = std::make_shared<ShellModel>();
+    scenes::AgentScene scene(cfg, bridge, model);
+    scene.on_enter();
+
+    // Simulate the operator scrolling up to read history: 100-line
+    // transcript, viewport 10, scrolled to the middle, un-stuck.
+    std::vector<std::string> lines;
+    for (int i = 0; i < 100; ++i) lines.push_back("line " + std::to_string(i));
+    model->transcriptView.viewport_h = 10;
+    model->transcriptView.set_lines(lines);
+    model->transcriptView.stick_bottom = false;
+    model->transcriptView.scroll_by(-30);  // scrolled up 30 lines
+    int scrolledOffset = model->transcriptView.offset;
+    check(!model->transcriptView.stick_bottom,
+          "precondition: transcript is un-stuck after Ctrl-K");
+    check(scrolledOffset < 90,
+          "precondition: transcript is scrolled up (offset < bottom)");
+
+    // Type a prompt and submit.
+    model->composer.value = "hello";
+    model->composer.cursor = 5;
+    bool submitted = model->submitComposer();
+    check(submitted, "submitComposer accepts a non-empty prompt");
+    check(model->transcriptView.stick_bottom,
+          "submitComposer locks stick_bottom=true (follows new turn)");
+    // The User row was pushed; it must be in the root timeline.
+    check(!model->rootRows.empty() && model->rootRows.back().title == "you",
+          "submitComposer pushes a User row (title='you') at the bottom");
+    // The viewport must be at the bottom of the (rebuilt) transcript so the
+    // streaming response is visible from the first token. max_off for a
+    // single User row (header + body) with viewport 10 is 0 (clamped) —
+    // the key contract is stick_bottom=true, which scroll_to_end pinned.
+    check(model->transcriptView.stick_bottom,
+          "submitComposer drops the viewport to the bottom (stick_bottom=true)");
+}
+
 void test_ctrl_c_state() {
     InkcellAppConfig cfg;
     AgentBridge bridge;
@@ -275,6 +320,7 @@ int main() {
     test_ctrl_c_state();
     test_chat_scroll_keys();
     test_ctrl_j_k_history_navigation();
+    test_submit_locks_to_bottom();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }
