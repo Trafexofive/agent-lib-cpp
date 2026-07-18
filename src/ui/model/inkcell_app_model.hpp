@@ -284,6 +284,22 @@ struct ShellModel {
         return {};
     }
 
+    // Returns the final response text of a registered sub-agent (the
+    // child's last RESPONSE protocol event), or empty if the sub-agent
+    // has not produced a final response yet. Used to nest the sub-agent's
+    // answer inside the parent's Result block instead of leaking it
+    // into the top-level parent transcript.
+    std::string subagentFinalText(const std::string& name) const {
+        if (!rootAgent) return {};
+        Agent* sub = rootAgent->getSubAgent(name);
+        if (!sub) return {};
+        const auto& evs = sub->protocolEvents();
+        for (auto it = evs.rbegin(); it != evs.rend(); ++it) {
+            if (it->kind == ProtocolEventKind::RESPONSE) return it->text;
+        }
+        return {};
+    }
+
     Agent* currentAgent() const {
         if (!rootAgent) return nullptr;
         Agent* cur = rootAgent;
@@ -358,6 +374,14 @@ struct ShellModel {
         } else {
             int focusIdx = 0;
             for (int ri = 0; ri < static_cast<int>(rows.size()); ++ri) {
+                // Nested-subagent emission state: a drillable AGENT Result
+                // gets the child's final response appended as a sub-block
+                // INSIDE the Result, not as separate top-level lines that
+                // leak into the parent transcript. Lines are marked with
+                // '\x1f' so the render draws them as a contained sub-region
+                // (sub-bg, 1px padding on all 4 sides).
+                bool emitNested = false;
+                std::vector<std::string> nestedPayload;
                 const auto& row = rows[static_cast<size_t>(ri)];
                 if (row.kind == TimelineKind::Thought && !showThoughts) continue;
                 if (row.kind == TimelineKind::Stream && !showRaw) continue;
@@ -399,6 +423,16 @@ struct ShellModel {
                         if (!row.actionName.empty()) label += "  " + row.actionName;
                         if (!row.actionId.empty()) label += "  #" + row.actionId;
                         if (row.drillable) label += "  ↳";
+                        // A drillable AGENT Result gets the child's final
+                        // response nested inside it (sub-block, 1px padding).
+                        // Anything else (tools, etc.) stays as a flat Result.
+                        if (row.drillable && row.actionType == "agent") {
+                            std::string childText = subagentFinalText(row.actionName);
+                            if (!childText.empty()) {
+                                emitNested = true;
+                                nestedPayload = splitDisplayLines(childText);
+                            }
+                        }
                         break;
                     // The assistant's own turns: label with the real agent name +
                     // model/provider metadata instead of the generic "CORTEX" sentinel.
@@ -435,6 +469,19 @@ struct ShellModel {
                 for (const auto& line : splitDisplayLines(row.body)) {
                     if (line.empty() && row.body.empty()) continue;
                     transcriptView.lines.push_back("    " + line);
+                }
+                // Nested sub-agent content: sub-pad row (1px top padding),
+                // sub-content rows (the child's final response), sub-pad
+                // row (1px bottom padding). All marked '\x1f' so the render
+                // draws them as a contained sub-region inside this Result
+                // block instead of leaking into the parent transcript.
+                if (emitNested) {
+                    constexpr const char* kNested = "\x1f";
+                    transcriptView.lines.push_back(kNested);
+                    for (const auto& nl : nestedPayload) {
+                        transcriptView.lines.push_back(std::string(kNested) + nl);
+                    }
+                    transcriptView.lines.push_back(kNested);
                 }
                 transcriptView.lines.push_back("");
                 ++focusIdx;

@@ -265,6 +265,38 @@ void test_chat_selection_stays_visible_after_wrap() {
     check(containsRow(s, "› CORTEX"), "selected transcript block remains visible");
 }
 
+void test_chat_nested_sub_block_rendering() {
+    // Sub-agent nesting: lines prefixed with '\x1f' are drawn as a contained
+    // sub-region (sub-bg) inside the parent block, with 1px padding on all
+    // 4 sides (left/right via 1-col inset in the fill; top/bottom via the
+    // sub-pad rows emitted by rebuildViews). This pins the visual contract
+    // so the sub-agent's final response is contained inside the parent's
+    // Result block instead of leaking into the top-level transcript.
+    inkcell::Surface s({60, 14});
+    chat::ChatSurfaceModel model;
+    // 3 lines: header, one '\x1f' content line, one '\x1f' pad line
+    // (simulating a 1-line sub-block: sub-pad, content, sub-pad).
+    model.transcript = {"  \xe2\x9c\x93 RESULT  reader  #r1  \xe2\x86\xb3",
+                       "\x1fchild final answer here",
+                       "\x1f"};
+    chat::drawTranscript(s, {2, 2, 56, 8}, model);
+    // The nested content row (idx 1, rendered at firstY=2 -> row 3) must
+    // be painted with a sub-bg that DIFFERS from the parent's ResultOk
+    // bg (the header at row 2) — proving the sub-region is visually
+    // distinct (contained sub-block, not a leak into parent context).
+    auto parentCell = s.at({3, 2});   // header row, x=3
+    auto nestedCell = s.at({3, 3});   // nested content row, x=3
+    check(!inkcell::same_color(nestedCell.style.bg, parentCell.style.bg),
+          "nested sub-block has a distinct bg from the parent (contained, not leaked)");
+    // 1px left padding is enforced by the render (fill starts at
+    // body.x+1, text at body.x+2). The test pins the sub-region
+    // contract: the nested row is a visually distinct sub-bg (not a
+    // leak into parent context) and the content text lands at x+2.
+    auto textCell = s.at({4, 3});
+    check(!textCell.glyph.empty(),
+          "nested sub-block content text is drawn at x=body.x+2 (1px left pad respected)");
+}
+
 void test_chat_transcript_empty_state() {
     // First-run UX: an empty transcript body must show a centered dim
     // headline + tip instead of a blank void between the header and the
@@ -460,6 +492,7 @@ int main() {
     test_chat_prompt_keeps_input_while_running();
     test_chat_prompt_placeholder_when_empty();
     test_chat_transcript_empty_state();
+    test_chat_nested_sub_block_rendering();
     test_chat_subagent_scope_chrome();
     test_chat_help_and_theme();
     test_ask_dialog_overlay();

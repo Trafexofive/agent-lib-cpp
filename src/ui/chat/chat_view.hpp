@@ -455,9 +455,39 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
     // newest lines at the bottom of the body (stick-to-bottom). Standard chat
     // pattern (Slack/Discord): messages start at the top, stick when full.
     int firstY = body.y;
+    // Sub-block (nested sub-agent) rendering: lines marked '\x1f' are drawn
+    // as a contained sub-region inside their parent block, with sub-bg and
+    // 1px padding on all 4 sides (left/right via 1-col inset in the fill;
+    // top/bottom via dedicated sub-pad rows emitted by rebuildViews). The
+    // sub-style is a dim purple shade so it reads as a sub-region of the
+    // parent block (matches the AGENT kind color family, dimmer).
+    const inkcell::Style subStyle = []() {
+        inkcell::Style s;
+        s.bg = inkcell::Color::rgb(34, 24, 42);
+        s.fg = inkcell::Color::rgb(160, 140, 180);
+        s.dim = true;
+        s.bold = false;
+        return s;
+    }();
     for (int y = 0; y < visible; ++y) {
         int idx = offset + y;
         const auto& line = displayLines[static_cast<size_t>(idx)];
+        // Nested sub-block line: strip the '\x1f' marker and draw as a
+        // sub-region (sub-bg, 1px left/right inset, text at x+2). Sub-pad
+        // rows (just the marker) draw sub-bg only, providing the 1px
+        // top/bottom padding within the transcript.
+        if (!line.empty() && line[0] == '\x1f') {
+            int blockWidth = std::max(1, body.w - (total > body.h ? 1 : 0));
+            int subW = std::max(1, blockWidth - 2);  // 1px padding L+R
+            surface.fill({body.x + 1, firstY + y, subW, 1}, " ", subStyle);
+            const std::string content = line.size() > 1 ? line.substr(1) : std::string();
+            if (!content.empty()) {
+                surface.text({body.x + 2, firstY + y},
+                             inkcell::text::fit_left(content, std::max(1, subW - 1)),
+                             subStyle);
+            }
+            continue;
+        }
         ChatBlockKind kind = static_cast<ChatBlockKind>((*blockKinds)[static_cast<size_t>(idx)]);
         bool header = (*blockHeaders)[static_cast<size_t>(idx)];
         bool selected = m.historyFocused && (*blockSelected)[static_cast<size_t>(idx)];
