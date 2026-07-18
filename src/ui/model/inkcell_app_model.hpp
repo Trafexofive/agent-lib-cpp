@@ -434,14 +434,15 @@ struct ShellModel {
                 // delta bookkeeping. Skipped rows share a line-start with
                 // the next row (no lines pushed for them).
                 rowLineStart.push_back(transcriptView.lines.size());
-                // Nested-subagent emission state: a drillable AGENT Result
-                // gets the child's final response appended as extra body
-                // lines inside the Result (same block, parent's own bg,
-                // 2-deeper indent). '↳ enter' on the header still drills
-                // into the full nested timeline.
-                bool emitNested = false;
-                std::vector<std::string> nestedPayload;
                 const auto& row = rows[ri];
+                // The text rendered as this row's body. Defaults to
+                // row.body; a drillable AGENT Result overrides it with
+                // the sub-agent's final response so the response is
+                // nested (one emission, no duplicate) inside the parent
+                // block — padded with the parent block's bg on all sides
+                // via the contiguity pattern, exactly like the rest of
+                // the main chat.
+                std::string effectiveBody = row.body;
                 if (row.kind == TimelineKind::Thought && !showThoughts) continue;
                 if (row.kind == TimelineKind::Stream && !showRaw) continue;
 
@@ -482,14 +483,18 @@ struct ShellModel {
                         if (!row.actionName.empty()) label += "  " + row.actionName;
                         if (!row.actionId.empty()) label += "  #" + row.actionId;
                         if (row.drillable) label += "  ↳";
-                        // A drillable AGENT Result gets the child's final
-                        // response nested inside it (sub-block, 1px padding).
-                        // Anything else (tools, etc.) stays as a flat Result.
+                        // A drillable AGENT Result: the sub-agent's final
+                        // response becomes the Result's body (nested with
+                        // padding inside the parent block's bg). This
+                        // replaces the Result's summary body so there is
+                        // exactly ONE emission of the response — no
+                        // duplicate. '↳ enter' on the header still drills
+                        // into the full nested timeline for the complete
+                        // context (thoughts, tool calls, etc.).
                         if (row.drillable && row.actionType == "agent") {
                             std::string childText = subagentFinalText(row.actionName);
                             if (!childText.empty()) {
-                                emitNested = true;
-                                nestedPayload = splitDisplayLines(childText);
+                                effectiveBody = childText;
                             }
                         }
                         break;
@@ -525,32 +530,15 @@ struct ShellModel {
                         break;
                 }
                 transcriptView.lines.push_back(std::string(selected ? "› " : "  ") + label);
-                // For a drillable AGENT Result, the nested sub-content is
-                // the sub-agent's actual response — it supersedes the Result
-                // body's summary (which is often the same text), so we
-                // skip the body to avoid the duplicate. For everything
-                // else, emit the body as normal.
-                if (!emitNested) {
-                    for (const auto& line : splitDisplayLines(row.body)) {
-                        if (line.empty() && row.body.empty()) continue;
-                        transcriptView.lines.push_back("    " + line);
-                    }
-                }
-                // Nested sub-agent content: the child's final response
-                // becomes extra body lines of THIS Result block (no frame,
-                // no sub-rect). They inherit the parent block's kind via
-                // buildBlockMetadata (currentKind persists for non-empty
-                // body lines) so the render paints them with the parent's
-                // own bg — padding with the main parent bg/block, as
-                // instructed. The extra 2-space indent (6 vs the parent's
-                // 4) marks the visual nesting depth. The delta rebuildViews
-                // tail-replaces the last row's lines as the sub-agent
-                // streams, so this nests AND stream-renders live. '↳ enter'
-                // on the header still drills into the full nested timeline.
-                if (emitNested) {
-                    for (const auto& nl : nestedPayload) {
-                        transcriptView.lines.push_back("      " + nl);
-                    }
+                // Body emission. For a drillable AGENT Result, effectiveBody
+                // is the sub-agent's final response (set in the Result case
+                // above); for everything else it is row.body. One emission
+                // per row — no separate nested concept, no duplicate.
+                // The parent block's full-width bg provides the padding
+                // around the indented body lines (contiguity pattern).
+                for (const auto& line : splitDisplayLines(effectiveBody)) {
+                    if (line.empty() && effectiveBody.empty()) continue;
+                    transcriptView.lines.push_back("    " + line);
                 }
                 transcriptView.lines.push_back("");
                 ++focusIdx;
