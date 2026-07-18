@@ -1,0 +1,46 @@
+kind: Agent
+name: tool-expert
+version: "1.0"
+summary: "Manifest specialist for tool authoring — schemas, entrypoints, validation"
+
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: nemotron-3-ultra-free
+    parameters:
+      temperature: 0.2
+      max_tokens: 32768
+
+context:
+  system: ./system-prompts/tool-expert.md
+  persona: ./system-prompts/tool-expert.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+sandbox:
+  mode: process
+  allowed_commands: [python3, bash, cat, ls, grep, head, tail, find, yaml, yq, chmod, test]
+  allowed_paths: ["./", "../../harness/", "../../manifests/"]
+  allowed_hosts: []
+  readonly: false
+  network: out
+
+runtime:
+  max_iterations: 8
+  history_cap: 50
+
+import:
+  tools:
+    - exec
+    - grep
+    - list
+    - fs_read
+    - fs_write
+    - json
+    - ask_tool
+  feeds: []
+  agents: []
+  env: []

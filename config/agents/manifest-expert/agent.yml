@@ -1,0 +1,42 @@
+kind: Agent
+name: manifest-expert
+version: "1.0"
+summary: "Manifest expert orchestrator — coordinates all manifest specialist sub-agents for agent manifest authoring"
+
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: nemotron-3-ultra-free
+    parameters:
+      temperature: 0.3
+      max_tokens: 32768
+
+persona:
+  agent: ./system-prompts/manifest-expert.md
+
+sandbox:
+  mode: process
+  allowed_commands: [python3, bash, cat, ls, grep, head, tail, find, yaml, yq, jq, curl]
+  allowed_paths: ["./", "../../harness/", "../../manifests/", "../../staged-manifests/"]
+  allowed_hosts: []
+  readonly: false
+  network: out
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: true
+    usage_examples: true
+
+runtime:
+  max_iterations: 8
+  history_cap: 80
+
+import:
+  agents:
+    - feed-expert
+    - tool-expert
+    - workflow-expert
+    - relic-expert
+    - agent-expert
+  env:
+    - MANIFEST_BASE_URL=file:///home/mlamkadm/repos/active/agent-lib-cpp

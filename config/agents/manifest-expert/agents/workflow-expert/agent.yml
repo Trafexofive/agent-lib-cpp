@@ -1,0 +1,45 @@
+kind: Agent
+name: workflow-expert
+version: "1.0"
+summary: "Workflow manifest specialist — designs, implements, and validates Workflow manifests (executable pipelines)"
+
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: nemotron-3-ultra-free
+    parameters:
+      temperature: 0.2
+      max_tokens: 32768
+
+context:
+  system: ./system-prompts/workflow-expert.md
+  persona: ./system-prompts/workflow-expert.md
+
+sandbox:
+  mode: process
+  allowed_commands: [python3, bash, cat, ls, grep, head, tail, find, yaml, yq]
+  allowed_paths: ["./", "../../harness/", "../../manifests/"]
+  allowed_hosts: []
+  readonly: false
+  network: out
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: true
+    usage_examples: true
+
+runtime:
+  max_iterations: 6
+  history_cap: 50
+
+import:
+  tools:
+    - exec
+    - list
+    - fs_read
+    - fs_write
+    - json
+    - grep
+  feeds: []
+  env:
+    - MANIFEST_BASE_URL=file:///home/mlamkadm/repos/active/agent-lib-cpp

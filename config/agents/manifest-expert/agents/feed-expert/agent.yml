@@ -1,0 +1,45 @@
+kind: Agent
+name: feed-expert
+version: "1.0"
+summary: "Feed manifest specialist — designs, implements, and validates Feed manifests (polling data sources)"
+
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: nemotron-3-ultra-free
+    parameters:
+      temperature: 0.2
+      max_tokens: 32768
+
+context:
+  system: ./system-prompts/feed-expert.md
+  persona: ./system-prompts/feed-expert.md
+
+sandbox:
+  mode: process
+  allowed_commands: [python3, bash, cat, ls, grep, head, tail, find, yaml, yq, curl]
+  allowed_paths: ["./", "../../harness/", "../../manifests/"]
+  allowed_hosts: []
+  readonly: false
+  network: out
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: true
+    usage_examples: true
+
+runtime:
+  max_iterations: 6
+  history_cap: 50
+
+import:
+  tools:
+    - exec
+    - list
+    - fs_read
+    - fs_write
+    - json
+    - grep
+  feeds: []
+  env:
+    - MANIFEST_BASE_URL=file:///home/mlamkadm/repos/active/agent-lib-cpp
