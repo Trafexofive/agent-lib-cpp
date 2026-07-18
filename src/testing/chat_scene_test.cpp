@@ -636,12 +636,10 @@ void test_jk_nav_strict_marker_invariant() {
 
 class FreezeNoopProvider : public ILlmProvider {
    public:
-    std::string generate(const ChatMessages&) override {
-        return "<response final=\"true\">ok</response>";
-    }
-    void generateStream(const ChatMessages&, StreamCallback cb) override {
-        cb("<response final=\"true\">ok</response>", true);
-    }
+    explicit FreezeNoopProvider(std::string resp = "<response final=\"true\">ok</response>")
+        : resp_(std::move(resp)) {}
+    std::string generate(const ChatMessages&) override { return resp_; }
+    void generateStream(const ChatMessages&, StreamCallback cb) override { cb(resp_, true); }
     void setModel(const std::string&) override {}
     void setTemperature(double) override {}
     void setMaxTokens(int) override {}
@@ -651,29 +649,115 @@ class FreezeNoopProvider : public ILlmProvider {
     int getMaxTokens() const override { return 65536; }
     std::vector<ModelInfo> listModels() override { return {}; }
     std::string providerName() const override { return "noop"; }
+   private:
+    std::string resp_;
 };
 
 void test_drilldown_agent_result_no_hang() {
-    // Build root agent with noop provider
+    // Faithful repro of the drilldown freeze: the sub-agent must have REAL
+    // protocol events (it actually ran) and a multi-line response body like
+    // the 'reader' sub-agent's repo listing. Then drilldown + RENDER via
+    // scene.draw() must not hang.
+    // Build a multi-line response mimicking a repo listing.
+    std::string listing = "<response final=\"true\">";
+    for (int i = 0; i < 1000; ++i) listing += "src/path/to/some/deep/module/file_number_" + std::to_string(i) + "_with_a_long_descriptive_suffix.cpp  - entry description text here\n";
+    listing += "</response>";
+
     AgentConfig rootCfg;
     rootCfg.name = "root";
     rootCfg.provider = "noop";
     rootCfg.model = "noop";
-    auto rootProvider = std::make_shared<FreezeNoopProvider>();
-    auto rootAgent = std::make_unique<Agent>(rootCfg, rootProvider);
+    auto rootAgent = std::make_unique<Agent>(rootCfg, std::make_shared<FreezeNoopProvider>());
 
-    // Build child agent
     AgentConfig childCfg;
     childCfg.name = "reader";
     childCfg.provider = "noop";
     childCfg.model = "noop";
-    auto childProvider = std::make_shared<FreezeNoopProvider>();
-    auto childAgent = std::make_unique<Agent>(childCfg, childProvider);
-
-    // Add child as sub-agent of root
+    auto childAgent = std::make_unique<Agent>(childCfg, std::make_shared<FreezeNoopProvider>(listing));
+    Agent* childRaw = childAgent.get();
     rootAgent->addSubAgent(std::move(childAgent));
 
-    // Create model and set root agent
+    // Run the child so its protocolEvents populate (RESPONSE with the listing).
+    childRaw->prompt("list the repo", nullptr, "", true);
+
+    ShellModel model;
+    model.setRootAgent(rootAgent.get());
+
+    // Mimic the parent reducer's rows for a completed sub-agent turn:
+    // AGENT action (drillable), instruction body, RESULT (drillable, agent).
+    TimelineRow actionRow;
+    actionRow.kind = TimelineKind::Action;
+    actionRow.actionType = "agent";
+    actionRow.actionName = "reader";
+    actionRow.actionId = "r1";
+    actionRow.drillable = true;
+    actionRow.title = "#r1 reader";
+    actionRow.body = "Map the top-level structure of this repo.";
+    model.rootRows.push_back(std::move(actionRow));
+
+    TimelineRow resultRow;
+    resultRow.kind = TimelineKind::Result;
+    resultRow.title = "#r1 reader";
+    resultRow.body = "sub-agent output summary";
+    resultRow.ok = true;
+    resultRow.actionType = "agent";
+    resultRow.actionName = "reader";
+    resultRow.actionId = "r1";
+    resultRow.drillable = true;
+    model.rootRows.push_back(std::move(resultRow));
+
+    model.timelineFocus = true;
+    model.rebuildViews();
+
+    // Select the RESULT block.
+    int resultBlockIdx = -1;
+    for (size_t i = 0; i < model.blockRowIndex.size(); ++i) {
+        int ri = model.blockRowIndex[i];
+        if (ri >= 0 && ri < (int)model.rootRows.size() &&
+            model.rootRows[ri].kind == TimelineKind::Result &&
+            model.rootRows[ri].drillable) {
+            resultBlockIdx = static_cast<int>(i);
+            break;
+        }
+    }
+    check(resultBlockIdx >= 0, "drillable AGENT Result block is focusable");
+    model.selectedBlock = resultBlockIdx;
+
+    // Drive the drilldown through the SCENE (real key path) and RENDER.
+    InkcellAppConfig cfg;
+    AgentBridge bridge;
+    auto smodel = std::make_shared<ShellModel>(std::move(model));
+    scenes::AgentScene scene(cfg, bridge, smodel);
+    scene.on_enter();
+    smodel->timelineFocus = true;
+    smodel->selectedBlock = resultBlockIdx;
+    inkcell::KeyEvent enter;
+    enter.code = inkcell::KeyCode::Enter;
+    scene.on_key(enter);  // drilldown — must not hang
+    check(!smodel->atRoot(), "atRoot() is false after Enter drilldown");
+
+    // Render the nested view — must not hang.
+    inkcell::Surface surface({100, 30});
+    scene.draw(surface);  // <-- this is where a freeze would hang
+    check(true, "scene.draw() after drilldown returns (no hang)");
+    check(!smodel->nestedRows.empty(), "nestedRows populated with sub-agent timeline");
+}
+
+void test_drilldown_agent_result_no_hang_model_only() {
+    // Original model-only check (kept for layer coverage).
+    AgentConfig rootCfg;
+    rootCfg.name = "root";
+    rootCfg.provider = "noop";
+    rootCfg.model = "noop";
+    auto rootAgent = std::make_unique<Agent>(rootCfg, std::make_shared<FreezeNoopProvider>());
+
+    AgentConfig childCfg;
+    childCfg.name = "reader";
+    childCfg.provider = "noop";
+    childCfg.model = "noop";
+    auto childAgent = std::make_unique<Agent>(childCfg, std::make_shared<FreezeNoopProvider>());
+    rootAgent->addSubAgent(std::move(childAgent));
+
     ShellModel model;
     model.setRootAgent(rootAgent.get());
 
@@ -742,6 +826,7 @@ int main() {
     test_jk_block_navigation_with_streaming();
     test_drillable_agent_result_no_body_leak();
     test_jk_nav_strict_marker_invariant();
+    test_drilldown_agent_result_no_hang_model_only();
     test_drilldown_agent_result_no_hang();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
