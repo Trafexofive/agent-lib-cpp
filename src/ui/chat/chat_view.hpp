@@ -455,58 +455,9 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
     // newest lines at the bottom of the body (stick-to-bottom). Standard chat
     // pattern (Slack/Discord): messages start at the top, stick when full.
     int firstY = body.y;
-    // Sub-region (nested sub-agent) sub-bg: a dim purple, darker than the
-    // Agent kind bg, used for the 1px padding frame around the child's
-    // own blocks inside the parent Result.
-    const inkcell::Color subBg = inkcell::Color::rgb(28, 22, 36);
     for (int y = 0; y < visible; ++y) {
         int idx = offset + y;
         const auto& line = displayLines[static_cast<size_t>(idx)];
-        // Nested sub-region line ('\x1f' prefix). Strip the marker and
-        // classify the child's label so the block renders with the
-        // child sub-agent's own kind-based style (the SAME blocks the
-        // main chat shows: Thought=dim, Action=amber, Result=green,
-        // Response=cyan, etc.). A bare '\x1f' line is a sub-pad row
-        // (1px top/bottom padding) — sub-bg only, no text.
-        if (!line.empty() && line[0] == '\x1f') {
-            int blockWidth = std::max(1, body.w - (total > body.h ? 1 : 0));
-            int subW = std::max(1, blockWidth - 2);  // 1px L+R padding
-            // Sub-bg fills the full sub-region row (1px top/bottom pad
-            // rows + content rows). The 1-col left/right inset shows as
-            // the sub-bg border on the sides.
-            surface.fill({body.x + 1, firstY + y, subW, 1}, " ", inkcell::Style{}.with_bg(subBg));
-            if (line.size() > 1) {
-                // Child block content line: render with the CHILD's
-                // own kind-based style (▎ header, kind fg, kind bg) so
-                // the nested blocks look identical to the main chat
-                // blocks, contained inside the sub-bg padded sub-region.
-                const std::string stripped = line.substr(1);  // drop '\x1f'
-                // Detect header vs body: header lines have a 2-space
-                // "  " prefix in the emission ("\x1f  LABEL"); body
-                // lines have a 4-space prefix ("\x1f    text").
-                bool isHeader = (stripped.size() >= 2 && stripped[0] == ' ' && stripped[1] == ' ' &&
-                                  !(stripped.size() >= 4 && stripped[2] == ' ' && stripped[3] == ' '));
-                // Classify the header text to get the child block kind.
-                ChatBlockKind childKind = isHeader ? classifyChatBlock(stripped.substr(2), m.agentName) : ChatBlockKind::None;
-                if (isHeader && childKind != ChatBlockKind::None) {
-                    auto style = blockStyle(childKind, true, false);
-                    surface.text({body.x + 1, firstY + y}, "▎", style);
-                    surface.text({body.x + 2, firstY + y},
-                                 inkcell::text::fit_left(stripped.substr(2), std::max(1, subW - 1)),
-                                 style);
-                } else {
-                    // Body / sub-pad-like line: text in the child kind
-                    // fg (if we classified one) or dim. For body lines
-                    // of a child block, the line is "    text" — render
-                    // text starting at x+2 with a space (no ▎).
-                    auto style = isHeader ? theme::text() : (childKind != ChatBlockKind::None ? blockStyle(childKind, false, false) : theme::text());
-                    surface.text({body.x + 2, firstY + y},
-                                 inkcell::text::fit_left(stripped, std::max(1, subW - 1)),
-                                 style);
-                }
-            }
-            continue;
-        }
         ChatBlockKind kind = static_cast<ChatBlockKind>((*blockKinds)[static_cast<size_t>(idx)]);
         bool header = (*blockHeaders)[static_cast<size_t>(idx)];
         bool selected = m.historyFocused && (*blockSelected)[static_cast<size_t>(idx)];

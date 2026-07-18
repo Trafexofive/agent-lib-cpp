@@ -340,19 +340,18 @@ struct ShellModel {
                 " more lines, drill to expand)");
         }
     }
-    void appendSubagentNestedLines(const std::string& name) {
+    void appendSubagentBlocks(const std::string& name) {
         if (!rootAgent) return;
         Agent* sub = rootAgent->getSubAgent(name);
         if (!sub) return;
         auto childRows = rowsFromAgent(sub);
-        constexpr const char* kNested = "\x1f";
-        transcriptView.lines.push_back(kNested);  // 1px top pad
         for (const auto& cr : childRows) {
             if (cr.kind == TimelineKind::Thought && !showThoughts) continue;
             if (cr.kind == TimelineKind::Stream && !showRaw) continue;
-            // Build the child's label the same way the main chat does
-            // (same switch, same metadata) so the nested blocks look
-            // IDENTICAL to the main chat blocks.
+            // Build the child's label with the SAME switch the main chat
+            // uses so the nested blocks look identical to the main
+            // chat blocks (▎, fg, kind-bg) when the render classifies
+            // and paints them via the normal kind-based path.
             std::string childLabel;
             switch (cr.kind) {
                 case TimelineKind::User:
@@ -410,11 +409,19 @@ struct ShellModel {
                     childLabel = cr.title.empty() ? "NOTICE" : cr.title;
                     break;
             }
-            transcriptView.lines.push_back(std::string(kNested) + "  " + childLabel);
-            pushBodyLines(cr.body, std::string(kNested) + "    ");
-            transcriptView.lines.push_back(kNested);  // separator between child blocks
+            // Header line: 2-space prefix so buildBlockMetadata's header
+            // check (rfind("    ",0)!=0) classifies it as a header →
+            // the render draws the ▎ marker and the kind's own fg/bg.
+            transcriptView.lines.push_back("  " + childLabel);
+            // Body lines: 6-space prefix (2 deeper than the parent
+            // body's 4) — visually nested inside the parent block, with
+            // the parent block's own bg as the padding on all 4 sides
+            // (contiguity). No custom render path, no sub-bg frame —
+            // the child blocks go through the EXACT same kind-based
+            // render as the main chat (▎, fg, kind-bg) so j/k block
+            // highlighting and the focusable block logic are unchanged.
+            pushBodyLines(cr.body, "      ");
         }
-        transcriptView.lines.push_back(kNested);  // 1px bottom pad
     }
 
     Agent* currentAgent() const {
@@ -595,13 +602,15 @@ struct ShellModel {
                         // A drillable AGENT Result nests the sub-agent's
                         // OWN timeline (the same blocks the main chat
                         // shows — Thought, Action, Result, Response)
-                        // inside the parent Result, padded on all 4
-                        // sides with a sub-bg frame. The sub-agent's
-                        // blocks are the content of the Result (no
-                        // separate body summary, no duplicate). '↳
-                        // enter' on the header still drills into the
-                        // full nested timeline for the complete
-                        // context. Tools / non-agent Results stay flat.
+                        // as indented body lines inside the parent
+                        // Result. The child blocks go through the
+                        // normal kind-based render (▎, fg, kind-bg)
+                        // so they look identical to the main chat
+                        // blocks and j/k highlighting of the parent
+                        // drillable blocks is unchanged. Tools /
+                        // non-agent Results stay flat. '↳ enter' on
+                        // the header still drills into the full
+                        // nested timeline for the complete context.
                         if (row.drillable && row.actionType == "agent") {
                             emitNested = true;
                         }
@@ -645,7 +654,7 @@ struct ShellModel {
                 // duplicate emission. For everything else, emit the body
                 // as normal.
                 if (emitNested) {
-                    appendSubagentNestedLines(row.actionName);
+                    appendSubagentBlocks(row.actionName);
                 } else {
                     pushBodyLines(row.body, "    ");
                 }
