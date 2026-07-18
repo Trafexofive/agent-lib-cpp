@@ -194,6 +194,7 @@ class AgentScene final : public BaseScene {
         vm.input = model_->composer.value;
         vm.inputCursor = model_->composer.cursor;
         vm.agentName = model_->agentName;
+        vm.scopeName = model_->atRoot() ? std::string() : model_->agentPath.back();
         if (model_->running) vm.hint = "Ctrl-C cancel · Esc history · PgUp/Dn scroll · t thoughts · r raw";
         else if (!model_->atRoot()) vm.hint = "↑↓ scroll · j/k select · Enter drill · Esc back · g refresh";
         else if (vm.historyFocused) vm.hint = "↑↓ scroll · j/k select · Enter open · PgUp/Dn · i composer · ? help · q quit";

@@ -301,6 +301,48 @@ void test_chat_prompt_keeps_input_while_running() {
           "status line still reports running state via metrics");
 }
 
+void test_chat_subagent_scope_chrome() {
+    // Subagent drilldown UX: the header breadcrumb highlights the current scope
+    // (amber, matching AGENT blocks) and the status line shows a ◀ <name>
+    // indicator so the operator knows WHERE they are in the agent tree.
+    inkcell::Surface s({120, 24});
+    chat::ChatSurfaceModel model;
+    model.title = "CORTEX MK3";
+    model.path = "root / reader";
+    model.provider = "openai-codex";
+    model.model = "gpt-5.5";
+    model.scopeName = "reader";
+    chat::drawHeader(s, {0, 0, 120, 1}, model);
+    std::string header = rowText(s, 0);
+    check(header.find("CORTEX MK3") != std::string::npos,
+          "header renders the title");
+    check(header.find("root") != std::string::npos && header.find("reader") != std::string::npos,
+          "header renders the full breadcrumb path");
+    // The drilled-in scope segment should be styled amber; find any amber cell
+    // in the header row to confirm the highlight.
+    int amberCol = -1;
+    for (int x = 0; x < s.width(); ++x) {
+        if (inkcell::same_color(s.at({x, 0}).style.fg, theme::amber().fg)) { amberCol = x; break; }
+    }
+    check(amberCol >= 0, "header highlights the drilled-in scope in amber");
+
+    // Status line: when scoped, it carries the ◀ reader indicator.
+    chat::drawStatusLine(s, {0, 4, 120, 1}, model);
+    std::string status = rowText(s, 4);
+    check(status.find("\xe2\x97\x80") != std::string::npos && status.find("reader") != std::string::npos,
+          "status line shows the drilled-in scope indicator when scoped");
+    // At root: no scope indicator.
+    chat::ChatSurfaceModel rootModel;
+    rootModel.title = "CORTEX MK3";
+    rootModel.path = "root";
+    rootModel.provider = "openai-codex";
+    rootModel.model = "gpt-5.5";
+    chat::drawStatusLine(s, {0, 5, 120, 1}, rootModel);
+    std::string rootStatus = rowText(s, 5);
+    check(rootStatus.find("\xe2\x97\x80") == std::string::npos,
+          "status line omits the scope indicator at root");
+}
+
 void test_chat_help_and_theme() {
     inkcell::Surface s({100, 30});
     theme::set(theme::Variant::Graphite);
@@ -346,6 +388,7 @@ int main() {
     test_chat_selection_stays_visible_after_wrap();
     test_chat_prompt_cursor_position();
     test_chat_prompt_keeps_input_while_running();
+    test_chat_subagent_scope_chrome();
     test_chat_help_and_theme();
     test_ask_dialog_overlay();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";

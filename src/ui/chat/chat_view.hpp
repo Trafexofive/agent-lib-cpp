@@ -52,6 +52,7 @@ struct ChatSurfaceModel {
     int inputCursor = 0;
     std::string hint;
     std::string agentName;  // real agent display name for the assistant label (replaces CORTEX)
+    std::string scopeName;  // drilled-in subagent name (empty at root) for header/status scope indicator
 };
 
 inline std::string suffix(const std::string& id) {
@@ -87,6 +88,7 @@ inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const C
     auto st = m.failed ? theme::red() : m.running ? theme::green() : theme::dim();
     std::string state = m.status == "idle" ? "ready" : m.status;
     std::string left = std::string(m.running ? "●" : m.failed ? "✗" : "○") + " " + state;
+    if (!m.scopeName.empty()) left += "  ◀ " + m.scopeName;  // drilled-in scope indicator
     left += " · " + m.mode + " · " + theme::name();
     std::string right;
     if (m.running) {
@@ -123,13 +125,51 @@ inline void drawPromptLine(inkcell::Surface& surface, inkcell::Rect row, const C
 
 inline void drawHeader(inkcell::Surface& surface, inkcell::Rect frame, const ChatSurfaceModel& m) {
     std::string path = m.path.empty() ? "root" : m.path;
-    std::string left = m.title + "  /  " + path;
+    // Render the title + path with a highlighted drilled-in segment so the
+    // operator can see WHERE they are in the agent tree at a glance. The root
+    // segment stays bright; the current scope (last path segment) is rendered
+    // in the agent-amber color to match AGENT blocks. Intermediate segments
+    // are dim to convey the breadcrumb hierarchy.
+    std::string left = m.title + "  /  ";
+    int x = frame.x;
+    int rightReserve = std::max(0, frame.w - x);
+    surface.text({x, frame.y}, inkcell::text::truncate(left, rightReserve), theme::bright());
+    int used = inkcell::text::display_width(left);
+    x += used; rightReserve = std::max(0, frame.w - x);
+    if (rightReserve <= 0) return;
+    // Split the path on " / " and render each segment with hierarchy styling.
+    std::vector<std::string> segments;
+    size_t start = 0;
+    while (start <= path.size()) {
+        size_t end = path.find(" / ", start);
+        if (end == std::string::npos) { segments.push_back(path.substr(start)); break; }
+        segments.push_back(path.substr(start, end - start));
+        start = end + 3;
+    }
+    auto segStyle = [&](size_t i) -> inkcell::Style {
+        if (i + 1 == segments.size() && !m.scopeName.empty()) return theme::amber(); // current scope
+        if (i == 0) return theme::bright();                                            // root
+        return theme::dim();                                                            // intermediate
+    };
+    for (size_t i = 0; i < segments.size() && rightReserve > 0; ++i) {
+        if (i > 0) {
+            std::string sep = " / ";
+            surface.text({x, frame.y}, inkcell::text::truncate(sep, rightReserve), theme::dim());
+            int w = inkcell::text::display_width(sep);
+            x += w; rightReserve = std::max(0, frame.w - x);
+            if (rightReserve <= 0) break;
+        }
+        surface.text({x, frame.y}, inkcell::text::truncate(segments[i], rightReserve), segStyle(i));
+        int w = inkcell::text::display_width(segments[i]);
+        x += w; rightReserve = std::max(0, frame.w - x);
+    }
+    // Backend + session suffix on the right edge, dim.
     std::string backend = (m.provider.empty() ? "provider?" : m.provider) + "/" +
                           (m.model.empty() ? "default" : m.model);
     std::string right = backend + "  ·  " + suffix(m.sessionId);
     int rightWidth = inkcell::text::display_width(right);
-    surface.text({frame.x, frame.y}, inkcell::text::truncate(left, std::max(0, frame.w - rightWidth - 2)), theme::bright());
-    surface.text({std::max(frame.x, frame.right() - rightWidth), frame.y}, right, theme::dim());
+    surface.text({std::max(frame.x, frame.right() - rightWidth), frame.y},
+                 inkcell::text::truncate(right, std::max(0, frame.w - rightWidth - 2)), theme::dim());
 }
 
 inline std::vector<std::string> hardWrapUtf8(const std::string& value, int width) {
