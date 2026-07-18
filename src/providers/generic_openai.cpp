@@ -332,6 +332,15 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
         curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)bodyStr.size());
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+        // Low-speed stall guard: if the connection is open but delivers ZERO
+        // bytes for 60s (a dead/hung stream — server keeps the socket open
+        // but sends nothing), abort instead of waiting the full 120s
+        // CURLOPT_TIMEOUT. 60s is conservative — a legitimately slow model
+        // that emits even one token inside the window resets the timer, so
+        // long thinking pauses are NOT killed. This caps a stalled stream
+        // at 60s instead of freezing the UI for 2 minutes.
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
 
         struct curl_slist* headers = nullptr;
         headers = curl_slist_append(headers, "Content-Type: application/json");
