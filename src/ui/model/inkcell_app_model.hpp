@@ -292,9 +292,7 @@ struct ShellModel {
 
     // Returns the final response text of a registered sub-agent (the
     // child's last RESPONSE protocol event), or empty if the sub-agent
-    // has not produced a final response yet. Used to nest the sub-agent's
-    // answer inside the parent's Result block instead of leaking it
-    // into the top-level parent transcript.
+    // has not produced a final response yet.
     std::string subagentFinalText(const std::string& name) const {
         if (!rootAgent) return {};
         Agent* sub = rootAgent->getSubAgent(name);
@@ -304,6 +302,94 @@ struct ShellModel {
             if (it->kind == ProtocolEventKind::RESPONSE) return it->text;
         }
         return {};
+    }
+
+    // Append a nested sub-region containing the child sub-agent's own
+    // timeline (the SAME blocks the main chat renders: Thought, Action,
+    // Result, Response — with their own ▎ headers, fg colors, and
+    // kind-based bg). The sub-region is padded with 1px sub-bg on all 4
+    // sides so the child's blocks are visually contained inside the
+    // parent's Result block (no leak, no separate top-level island).
+    // The render detects the '\x1f' marker and draws the sub-region
+    // (sub-bg padding + child block lines with their own kind style).
+    void appendSubagentNestedLines(const std::string& name) {
+        if (!rootAgent) return;
+        Agent* sub = rootAgent->getSubAgent(name);
+        if (!sub) return;
+        auto childRows = rowsFromAgent(sub);
+        constexpr const char* kNested = "\x1f";
+        transcriptView.lines.push_back(kNested);  // 1px top pad
+        for (const auto& cr : childRows) {
+            if (cr.kind == TimelineKind::Thought && !showThoughts) continue;
+            if (cr.kind == TimelineKind::Stream && !showRaw) continue;
+            // Build the child's label the same way the main chat does
+            // (same switch, same metadata) so the nested blocks look
+            // IDENTICAL to the main chat blocks.
+            std::string childLabel;
+            switch (cr.kind) {
+                case TimelineKind::User:
+                    childLabel = "YOU";
+                    break;
+                case TimelineKind::Thought:
+                    childLabel = "THOUGHT";
+                    break;
+                case TimelineKind::Action: {
+                    std::string type = cr.actionType.empty() ? "ACTION" : cr.actionType;
+                    std::transform(type.begin(), type.end(), type.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+                    if (type == "AGENT" && !cr.actionName.empty()) {
+                        childLabel = "AGENT  " + cr.actionName;
+                        if (!cr.actionId.empty()) childLabel += "  #" + cr.actionId;
+                        if (cr.drillable) childLabel += "  ↳";
+                    } else {
+                        childLabel = type;
+                        if (!cr.actionName.empty()) childLabel += "  " + cr.actionName;
+                        if (!cr.actionId.empty()) childLabel += "  #" + cr.actionId;
+                        if (cr.drillable) childLabel += "  ↳";
+                    }
+                    break;
+                }
+                case TimelineKind::Result:
+                    childLabel = cr.ok ? "✓ RESULT" : "✗ RESULT";
+                    if (!cr.actionName.empty()) childLabel += "  " + cr.actionName;
+                    if (!cr.actionId.empty()) childLabel += "  #" + cr.actionId;
+                    if (cr.drillable) childLabel += "  ↳";
+                    break;
+                case TimelineKind::Response:
+                case TimelineKind::Final:
+                    childLabel = agentName.empty() ? std::string("CORTEX") : agentName;
+                    if (!agentModel.empty() || !agentProvider.empty()) {
+                        childLabel += "  ";
+                        std::string meta;
+                        if (!agentProvider.empty()) meta = agentProvider;
+                        if (!agentModel.empty()) {
+                            if (!meta.empty()) meta += "/";
+                            meta += agentModel;
+                        }
+                        childLabel += meta;
+                    }
+                    break;
+                case TimelineKind::Error:
+                    childLabel = "✗ ERROR";
+                    break;
+                case TimelineKind::Status:
+                    childLabel = "STATUS";
+                    break;
+                case TimelineKind::Stream:
+                    childLabel = "RAW";
+                    break;
+                case TimelineKind::Log:
+                    childLabel = cr.title.empty() ? "NOTICE" : cr.title;
+                    break;
+            }
+            transcriptView.lines.push_back(std::string(kNested) + "  " + childLabel);
+            for (const auto& line : splitDisplayLines(cr.body)) {
+                if (line.empty() && cr.body.empty()) continue;
+                transcriptView.lines.push_back(std::string(kNested) + "    " + line);
+            }
+            transcriptView.lines.push_back(kNested);  // separator between child blocks
+        }
+        transcriptView.lines.push_back(kNested);  // 1px bottom pad
     }
 
     Agent* currentAgent() const {
@@ -435,14 +521,12 @@ struct ShellModel {
                 // the next row (no lines pushed for them).
                 rowLineStart.push_back(transcriptView.lines.size());
                 const auto& row = rows[ri];
-                // The text rendered as this row's body. Defaults to
-                // row.body; a drillable AGENT Result overrides it with
-                // the sub-agent's final response so the response is
-                // nested (one emission, no duplicate) inside the parent
-                // block — padded with the parent block's bg on all sides
-                // via the contiguity pattern, exactly like the rest of
-                // the main chat.
-                std::string effectiveBody = row.body;
+                // Nested sub-agent emission flag: set in the Result case
+                // for a drillable AGENT Result. The child's OWN blocks
+                // (Thought/Action/Result/Response, same as the main
+                // chat) are nested inside the parent Result with 1px
+                // sub-bg padding on all 4 sides.
+                bool emitNested = false;
                 if (row.kind == TimelineKind::Thought && !showThoughts) continue;
                 if (row.kind == TimelineKind::Stream && !showRaw) continue;
 
@@ -483,19 +567,18 @@ struct ShellModel {
                         if (!row.actionName.empty()) label += "  " + row.actionName;
                         if (!row.actionId.empty()) label += "  #" + row.actionId;
                         if (row.drillable) label += "  ↳";
-                        // A drillable AGENT Result: the sub-agent's final
-                        // response becomes the Result's body (nested with
-                        // padding inside the parent block's bg). This
-                        // replaces the Result's summary body so there is
-                        // exactly ONE emission of the response — no
-                        // duplicate. '↳ enter' on the header still drills
-                        // into the full nested timeline for the complete
-                        // context (thoughts, tool calls, etc.).
+                        // A drillable AGENT Result nests the sub-agent's
+                        // OWN timeline (the same blocks the main chat
+                        // shows — Thought, Action, Result, Response)
+                        // inside the parent Result, padded on all 4
+                        // sides with a sub-bg frame. The sub-agent's
+                        // blocks are the content of the Result (no
+                        // separate body summary, no duplicate). '↳
+                        // enter' on the header still drills into the
+                        // full nested timeline for the complete
+                        // context. Tools / non-agent Results stay flat.
                         if (row.drillable && row.actionType == "agent") {
-                            std::string childText = subagentFinalText(row.actionName);
-                            if (!childText.empty()) {
-                                effectiveBody = childText;
-                            }
+                            emitNested = true;
                         }
                         break;
                     // The assistant's own turns: label with the real agent name +
@@ -530,15 +613,19 @@ struct ShellModel {
                         break;
                 }
                 transcriptView.lines.push_back(std::string(selected ? "› " : "  ") + label);
-                // Body emission. For a drillable AGENT Result, effectiveBody
-                // is the sub-agent's final response (set in the Result case
-                // above); for everything else it is row.body. One emission
-                // per row — no separate nested concept, no duplicate.
-                // The parent block's full-width bg provides the padding
-                // around the indented body lines (contiguity pattern).
-                for (const auto& line : splitDisplayLines(effectiveBody)) {
-                    if (line.empty() && effectiveBody.empty()) continue;
-                    transcriptView.lines.push_back("    " + line);
+                // For a drillable AGENT Result, the sub-agent's own blocks
+                // (the SAME blocks the main chat shows) are nested inside
+                // the parent Result with 1px sub-bg padding on all 4
+                // sides. The sub-region replaces the Result's body — no
+                // duplicate emission. For everything else, emit the body
+                // as normal.
+                if (emitNested) {
+                    appendSubagentNestedLines(row.actionName);
+                } else {
+                    for (const auto& line : splitDisplayLines(row.body)) {
+                        if (line.empty() && row.body.empty()) continue;
+                        transcriptView.lines.push_back("    " + line);
+                    }
                 }
                 transcriptView.lines.push_back("");
                 ++focusIdx;
