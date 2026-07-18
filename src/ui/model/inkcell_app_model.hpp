@@ -242,6 +242,15 @@ struct ShellModel {
     bool appliedTimelineFocus = false;
     bool appliedShowThoughts = true;
     bool appliedShowRaw = false;
+    // Track whether the last rebuild was for the root view or a nested
+    // sub-agent view. When atRoot() transitions (enter/exit drilldown),
+    // the delta bookkeeping (rowLineStart, blockRowIndex) is for the
+    // wrong row set — we MUST force a full rebuild. Without this, if the
+    // user was at block 0 with timelineFocus in the root view and enters
+    // a sub-agent (also starting at block 0 with timelineFocus), the
+    // divergence check sees no change and the delta path corrupts the
+    // transcript with stale rootRows bookkeeping against nestedRows.
+    bool appliedAtRoot = true;
     // Maps visible block index -> rootRows/nested row index
     std::vector<int> blockRowIndex;
     // Per-row line-start index into transcriptView.lines (one entry per
@@ -432,10 +441,15 @@ struct ShellModel {
         // applied state diverges from the current state. The wrap cache
         // handles re-wrapping incrementally, so the visible-prefix cost is
         // just the line iteration (microseconds for typical transcripts).
+        // ALSO force full rebuild when atRoot() transitions (enter/exit
+        // drilldown). The delta bookkeeping (rowLineStart, blockRowIndex)
+        // is built for one row set (rootRows or nestedRows); switching
+        // between them with stale bookkeeping corrupts the transcript.
         if (selectedBlock != appliedSelectedBlock ||
             timelineFocus != appliedTimelineFocus ||
             showThoughts != appliedShowThoughts ||
-            showRaw != appliedShowRaw) {
+            showRaw != appliedShowRaw ||
+            atRoot() != appliedAtRoot) {
             fullRebuild = true;
         }
         if (fullRebuild) {
@@ -560,9 +574,15 @@ struct ShellModel {
                 // Body of the row — the parent transcript only emits its
                 // OWN row's body (the short Result summary, Response text,
                 // etc.). A drillable AGENT Result's body is the result
-                // summary; the sub-agent's own timeline is reached via
-                // the '↳ enter' drilldown, NEVER inlined here.
-                pushBodyLines(row.body, "    ");
+                // summary set by makeSubAgentResult (summary = it->result.summary),
+                // which is the child's output text — emitting it here
+                // would LEAK the subagent's content into the parent scope.
+                // The subagent's full timeline is reached via the '↳ enter'
+                // drilldown (nestedRows / rowsFromAgent / agentPath) and
+                // must NEVER be inlined into the parent transcript. Tools
+                // and non-drillable Results keep their body flat.
+                bool suppressBody = (row.kind == TimelineKind::Result && row.drillable && row.actionType == "agent");
+                if (!suppressBody) pushBodyLines(row.body, "    ");
                 transcriptView.lines.push_back("");
                 ++focusIdx;
             }
@@ -583,6 +603,7 @@ struct ShellModel {
         appliedTimelineFocus = timelineFocus;
         appliedShowThoughts = showThoughts;
         appliedShowRaw = showRaw;
+        appliedAtRoot = atRoot();
 
         // Keep selected block in view when timeline-focused; stick-bottom while running at root.
         if (running && atRoot() && !timelineFocus) {
