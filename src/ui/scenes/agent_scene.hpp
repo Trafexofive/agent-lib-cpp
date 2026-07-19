@@ -66,43 +66,12 @@ class AgentScene final : public BaseScene {
                 return true;
             }
             // j/k select transcript blocks (drilldown navigation); Enter drills in.
-            // !ctrl() guard so Ctrl-J / Ctrl-K (history navigation) fall through
-            // to the dedicated handlers below instead of triggering block select.
-            if (event.code == KeyCode::Character && !event.ctrl() && (event.ch == 'k' || event.ch == 'K')) {
+            if (event.code == KeyCode::Character && (event.ch == 'k' || event.ch == 'K')) {
                 model_->selectDelta(-1);
                 return true;
             }
-            if (event.code == KeyCode::Character && !event.ctrl() && (event.ch == 'j' || event.ch == 'J')) {
+            if (event.code == KeyCode::Character && (event.ch == 'j' || event.ch == 'J')) {
                 model_->selectDelta(1);
-                return true;
-            }
-            // Ctrl-J / Ctrl-K: history navigation (scroll the transcript by one
-            // line). These bypass block-selection (j/k) and work in BOTH
-            // timeline and composer focus — the Ctrl modifier disables input,
-            // so the keystroke never reaches the composer's text widget even
-            // when the cursor is in the input box.
-            if (event.code == KeyCode::Character && event.ctrl() && !event.shift() &&
-                (event.ch == 'j' || event.ch == 'J')) {
-                model_->transcriptView.scroll_by(1);
-                return true;
-            }
-            if (event.code == KeyCode::Character && event.ctrl() && !event.shift() &&
-                (event.ch == 'k' || event.ch == 'K')) {
-                model_->transcriptView.scroll_by(-1);
-                return true;
-            }
-            // Ctrl-Shift-J / Ctrl-Shift-K: jump by block (one focusable row
-            // at a time, like j/K selectDelta but by BLOCK boundary and with
-            // the viewport re-anchored to keep the selected block in view).
-            // Works in both focuses; Ctrl+Shift disables input.
-            if (event.code == KeyCode::Character && event.ctrl() && event.shift() &&
-                (event.ch == 'j' || event.ch == 'J')) {
-                model_->selectDelta(1);
-                return true;
-            }
-            if (event.code == KeyCode::Character && event.ctrl() && event.shift() &&
-                (event.ch == 'k' || event.ch == 'K')) {
-                model_->selectDelta(-1);
                 return true;
             }
             // PageUp/PageDown = half-page scroll; Home/End = top/bottom.
@@ -168,30 +137,6 @@ class AgentScene final : public BaseScene {
         if (event.code == KeyCode::Enter) {
             if (runSlashCommand()) return true;
             model_->submitComposer();
-            return true;
-        }
-        // Ctrl-J / Ctrl-K: history navigation from the composer. Bypasses
-        // prompt history (↑/↓) and scrolls the transcript by one line. The
-        // Ctrl modifier means the keystroke is never seen by the text widget.
-        if (event.code == KeyCode::Character && event.ctrl() && !event.shift() &&
-            (event.ch == 'j' || event.ch == 'J')) {
-            model_->transcriptView.scroll_by(1);
-            return true;
-        }
-        if (event.code == KeyCode::Character && event.ctrl() && !event.shift() &&
-            (event.ch == 'k' || event.ch == 'K')) {
-            model_->transcriptView.scroll_by(-1);
-            return true;
-        }
-        // Ctrl-Shift-J / Ctrl-Shift-K: jump by block from the composer too.
-        if (event.code == KeyCode::Character && event.ctrl() && event.shift() &&
-            (event.ch == 'j' || event.ch == 'J')) {
-            model_->selectDelta(1);
-            return true;
-        }
-        if (event.code == KeyCode::Character && event.ctrl() && event.shift() &&
-            (event.ch == 'k' || event.ch == 'K')) {
-            model_->selectDelta(-1);
             return true;
         }
         // PageUp/PageDown scroll the transcript without leaving the composer,

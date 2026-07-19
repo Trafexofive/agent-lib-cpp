@@ -437,12 +437,6 @@ std::string Agent::runLoop(AgentContext& ctx) {
     // Parser lives across iterations — usedActionIds_ and finalResponseSeen_
     // persist so duplicate-ID and post-final enforcement works cross-turn.
     protocol::Parser parser;
-    // No-progress escape: the model occasionally loops emitting thoughts/bare
-    // text (e.g. "Let me write the final response...") without ever producing
-    // a valid <response final="true"> or any action. Two consecutive iterations
-    // of zero progress is enough to declare the turn done rather than burning
-    // the full iterationCap (~16 LLM calls ≈ 60-90s of "agent running").
-    int noProgressCount = 0;
     for (ctx.iteration = 1; ctx.iteration <= config_.iterationCap; ctx.iteration++) {
         if (!g_running) {
             fullResponse = "[cancelled]";
@@ -517,21 +511,6 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 err["success"] = false;
                 err["error"] = "Unknown sub-agent: " + agentName;
                 return err;
-            }
-            // Per-turn delegation cap. A parent that re-delegates (often
-            // because a sub-agent returned an empty/unhelpful result) would
-            // otherwise loop for the full iterationCap, each delegation a
-            // full sub-agent prompt cycle — a multi-minute freeze. Cap at 4
-            // delegations per turn; past that, return an explicit stop
-            // signal so the parent emits a final response instead of
-            // re-delegating. 4 is generous for legitimate fan-out (2-3
-            // specialists) while catching the retry-loop pathology fast.
-            if (++ctx.delegationCount > 4) {
-                Json::Value stop;
-                stop["success"] = true;
-                stop["output"] = "[delegation cap reached: " + std::to_string(ctx.delegationCount - 1) +
-                                  " sub-agent calls this turn. Stop re-delegating and produce a final response with what you have.]";
-                return stop;
             }
 
             bool forceEphemeral = jsonBool(action.params, "ephemeral", false);
@@ -1238,41 +1217,6 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 nonFinalProtocolRetry = true;
                 taskComplete = false;
                 responseOutput_.clear();
-            }
-        }
-
-        // No-progress bookkeeping: an iteration "made progress" if it either
-        // produced a final response (taskComplete) or dispatched at least one
-        // action (results non-empty). forceResultFollowup also counts as
-        // progress because actions were taken. Truly empty upstream responses
-        // already set taskComplete=true above, so they too count as progress.
-        {
-            bool iterProgress = taskComplete || !results.empty();
-            if (iterProgress) {
-                noProgressCount = 0;
-            } else {
-                ++noProgressCount;
-            }
-            if (noProgressCount >= 2) {
-                // Two consecutive iterations with no actions and no final
-                // response. Either the model is "thinking out loud" and
-                // forgetting to emit the final tag, or it is wedged.
-                // Accept whatever it has produced and end the turn rather
-                // than looping to max_iterations.
-                if (!responseOutput_.empty()) {
-                    history_.push_back(
-                        "[loop-escape] model emitted no valid final response for " +
-                        std::to_string(noProgressCount) +
-                        " iterations; accepting accumulated response text as final");
-                } else {
-                    const std::string msg =
-                        "[no valid response produced after " +
-                        std::to_string(noProgressCount) +
-                        " attempts — model emitted only thoughts]";
-                    history_.push_back("[loop-escape] " + msg);
-                    responseOutput_ = msg;
-                }
-                taskComplete = true;
             }
         }
 

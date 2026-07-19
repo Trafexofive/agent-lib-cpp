@@ -165,11 +165,6 @@ void Parser::processBuffer() {
                     auto fit = responseAttrs_.find("final");
                     if (fit != responseAttrs_.end()) {
                         ev.metadata["is_final"] = fit->second;
-                    } else {
-                        // Closed </response> without final="..." — leave
-                        // is_final unset so the agent loop can decide (the
-                        // no-progress loop-escape in agent.cpp handles the
-                        // case where the model never emits a valid final).
                     }
                     emit(ev);
                     responseAttrs_.clear();

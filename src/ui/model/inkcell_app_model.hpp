@@ -823,14 +823,6 @@ struct ShellModel {
 
     bool submitComposer() {
         if (running || !atRoot()) return false;
-        // Drop back to bottom and lock to the bottom for the new turn. The
-        // operator just sent a prompt — they want to watch the response
-        // stream in. If they had scrolled up with Ctrl-K to read history,
-        // a new turn must not start half-off-screen; it must be visible
-        // from the first token. stick_bottom=true makes the render loop
-        // follow new content via scroll_to_end() on each push.
-        transcriptView.stick_bottom = true;
-        transcriptView.scroll_to_end();
         std::string text = composer.value;
         while (!text.empty() && (text.back() == '\n' || text.back() == ' ' || text.back() == '\t')) text.pop_back();
         size_t start = 0;

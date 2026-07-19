@@ -585,7 +585,6 @@ void test_chat_thought_rows_visible_by_default() {
     check(found,
           "thought protocol event produces a Thought timeline row visible by default");
 }
-
 }  // namespace
 
 int main() {

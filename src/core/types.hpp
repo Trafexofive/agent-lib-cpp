@@ -212,12 +212,6 @@ struct AgentContext {
     std::string userInput;
     std::string sessionId;
     int iteration = 0;
-    // Per-turn count of sub-agent delegations. Capped to stop a parent
-    // from re-delegating endlessly (e.g. when a sub-agent returns an
-    // empty result and the parent keeps retrying to get a non-empty
-    // answer) — that re-delegation resets the no-progress loop-escape
-    // and would otherwise burn the full iterationCap (16 LLM calls).
-    int delegationCount = 0;
     bool streaming = false;
     bool ephemeral = false;
     bool debug = false;
