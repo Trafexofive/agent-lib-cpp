@@ -78,7 +78,14 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
 }
 
 inline void installAppTick(inkcell::App& app, AgentBridge& bridge, const std::shared_ptr<ShellModel>& model) {
-    app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([model, &bridge]() { model->drain(bridge); });
+    // on_wake is a no-op: the engine already drains the eventfd (engine.hpp
+    // ~line 300). We do NOT drain the UiEvent queue here — that would run
+    // rebuildViews+redraw on EVERY token (often 50-100/sec), a wake-storm
+    // that made the TUI feel unusably slow. Instead on_tick (30fps, below)
+    // does the single drain+rebuild per frame, coalescing all tokens that
+    // arrived in the last 33ms into one redraw. Input stays responsive
+    // because select still wakes immediately on keypresses.
+    app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([]() {});
     app.engine().on_tick([model, &bridge, &app](inkcell::Tick) {
         model->drain(bridge);
         if (model->pendingRoute == "agent") {
@@ -218,7 +225,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
 
     bool startAtDashboard = cfg.manifestPath.empty();
     auto app = makeInkcellApp(cfg, bridge, model, startAtDashboard);
-    app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([model, &bridge]() { model->drain(bridge); });
+    app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([]() {});
     app.engine().on_tick([model, &bridge, &app, &workerBusy, &worker, &joinWorker, &agent, ephemeral](inkcell::Tick) {
         model->drain(bridge);
         if (model->pendingRoute == "agent") {
