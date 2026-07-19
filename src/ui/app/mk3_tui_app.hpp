@@ -128,11 +128,20 @@ inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& p
         size_t rawSeen = 0;
         std::vector<ProtocolEvent> previousEvents;
         auto lastUiFlush = std::chrono::steady_clock::now() - std::chrono::milliseconds(16);
-        auto onToken = [&](const std::string&, bool finalChunk) {
+        auto onToken = [&](const std::string& token, bool finalChunk) {
             auto now = std::chrono::steady_clock::now();
             if (!finalChunk && now - lastUiFlush < std::chrono::milliseconds(16)) return;
             lastUiFlush = now;
             std::vector<UiEvent> batch;
+            // Forwarded child tokens (non-empty) publish directly so the UI
+            // stays alive during a synchronous sub-agent call — the child's
+            // bytes don't appear in the parent's rawLlOutput, so the delta
+            // read below wouldn't see them. For the parent's own stream,
+            // 'token' is empty (content lands in rawLlOutput) and the delta
+            // read handles it.
+            if (!token.empty()) {
+                batch.push_back(UiEvent::token(token));
+            }
             const std::string& raw = agent.rawLlOutput();
             if (raw.size() > rawSeen) {
                 batch.push_back(UiEvent::token(raw.substr(rawSeen)));

@@ -517,9 +517,27 @@ std::string Agent::runLoop(AgentContext& ctx) {
             bool dumpContext = jsonBool(action.params, "dump_context", false);
             std::string childSessionId =
                 forceEphemeral ? "" : deriveSubAgentSessionId(ctx, config_, agentName);
+            // Stream the child's progress to the parent's UI so it stays alive
+            // (byte counter + spinner) during the synchronous sub-agent call.
+            // Without this, the child runs for seconds with zero UI updates —
+            // the 'freeze after the first thought block ends' symptom. The
+            // child's generateStream calls ctx.onToken("") as a heartbeat but
+            // the actual bytes land in the CHILD's rawLlOutput_, so we forward
+            // the child's raw delta through the parent's onToken. The parent's
+            // onToken publishes non-empty tokens directly (see runAgentTurn).
+            Agent* childPtr = it->second.get();
+            std::shared_ptr<size_t> childSeen = std::make_shared<size_t>(0);
+            StreamCallback childProgress = [childPtr, childSeen, &ctx](const std::string&, bool) {
+                if (!ctx.onToken) return;
+                const std::string& r = childPtr->rawLlOutput();
+                if (r.size() > *childSeen) {
+                    ctx.onToken(r.substr(*childSeen), false);
+                    *childSeen = r.size();
+                }
+            };
             std::string result = childSessionId.empty()
-                                     ? it->second->prompt(instruction, "", forceEphemeral)
-                                     : it->second->prompt(instruction, childSessionId, false);
+                                     ? it->second->prompt(instruction, childProgress, "", forceEphemeral)
+                                     : it->second->prompt(instruction, childProgress, childSessionId, false);
             std::string trace;
             if (dumpContext) {
                 trace = formatDelegatedTrace(agentName, instruction, it->second->iterationPrompts(),
