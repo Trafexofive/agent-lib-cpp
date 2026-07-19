@@ -230,35 +230,8 @@ struct ShellModel {
     std::vector<std::string> agentPath;  // nested sub-agent names from root
     int selectedBlock = 0;               // index into visible focusable blocks
     bool timelineFocus = false;          // false = composer owns keys
-    // The selection / focus / visibility state as last APPLIED to the
-    // transcript lines by rebuildViews(). When any of these diverge from
-    // the current values, the delta paths (deltaAppend / tailReplace)
-    // would re-emit the wrong '›' markers — the previously selected
-    // block keeps its old '›' from the prior build while the newly
-    // selected block doesn't get re-emitted with '›'. rebuildViews()
-    // detects the divergence and forces a full re-emit so all '›'
-    // markers reflect the new state.
-    int appliedSelectedBlock = 0;
-    bool appliedTimelineFocus = false;
-    bool appliedShowThoughts = true;
-    bool appliedShowRaw = false;
-    // Track whether the last rebuild was for the root view or a nested
-    // sub-agent view. When atRoot() transitions (enter/exit drilldown),
-    // the delta bookkeeping (rowLineStart, blockRowIndex) is for the
-    // wrong row set — we MUST force a full rebuild. Without this, if the
-    // user was at block 0 with timelineFocus in the root view and enters
-    // a sub-agent (also starting at block 0 with timelineFocus), the
-    // divergence check sees no change and the delta path corrupts the
-    // transcript with stale rootRows bookkeeping against nestedRows.
-    bool appliedAtRoot = true;
     // Maps visible block index -> rootRows/nested row index
     std::vector<int> blockRowIndex;
-    // Per-row line-start index into transcriptView.lines (one entry per
-    // processed row). Used by rebuildViews to do delta/append/tail-replace
-    // updates so streaming tokens don't full-clear and re-wrap the entire
-    // transcript (which caused the 'constantly refreshing and clearing'
-    // visual). One entry per row that contributed lines, in order.
-    std::vector<size_t> rowLineStart;
     // Nested frame cache (rebuilt on enter/refresh)
     std::vector<TimelineRow> nestedRows;
 
@@ -309,35 +282,6 @@ struct ShellModel {
             if (it->kind == TimelineKind::Response) return it->body;
         }
         return {};
-    }
-
-    // Cap the number of body lines per row in the transcript. A single
-    // tool result (grep, file read) can return thousands of lines and
-    // blow up the transcript, pushing the next response far below the
-    // viewport. Truncating to kMaxBodyLines + a note keeps the chat
-    // usable. The full body is preserved in row.body and available via
-    // drilldown (the drilldown's nestedRows / protocol events hold the
-    // complete text).
-    static constexpr int kMaxBodyLines = 50;
-
-    // Push body lines for a row, capped at kMaxBodyLines. If the body
-    // has more lines, append a single dim "… (N more lines, drill to
-    // expand)" note. The indent is prepended to each line (the standard
-    // body indent is "    ").
-    void pushBodyLines(const std::string& body, const std::string& indent) {
-        auto lines = splitDisplayLines(body);
-        int total = static_cast<int>(lines.size());
-        int shown = std::min(total, kMaxBodyLines);
-        for (int i = 0; i < shown; ++i) {
-            const auto& line = lines[static_cast<size_t>(i)];
-            if (line.empty() && body.empty()) continue;
-            transcriptView.lines.push_back(indent + line);
-        }
-        if (total > shown) {
-            transcriptView.lines.push_back(
-                indent + "\xe2\x80\xa6 (" + std::to_string(total - shown) +
-                " more lines, drill to expand)");
-        }
     }
 
     Agent* currentAgent() const {
@@ -406,95 +350,20 @@ struct ShellModel {
         ++viewRebuildCount;
         ++transcriptVersion;
         const auto& rows = activeRows();
-
-        // Delta strategy — keep the stable prefix intact so streaming tokens
-        // don't full-clear and re-wrap the entire transcript (which caused
-        // the 'constantly refreshing and clearing' visual):
-        //   fullRebuild  = first build, rows shrank, or no prior line-start
-        //                  record (e.g. after clearTranscript/loadSession).
-        //   deltaAppend  = rows grew (pushRow / setStreamProgress added a
-        //                  new row). Append the new rows' lines only.
-        //   tailReplace  = row count unchanged AND the last row's body
-        //                  changed (streaming token update of a Response
-        //                  row). Replace only the last row's lines so the
-        //                  entire transcript isn't re-wrapped per token.
-        bool fullRebuild = rows.empty()
-                               ? (transcriptView.lines.empty() && rowLineStart.empty())
-                                     ? false
-                                     : true
-                               : (rowLineStart.empty() || rows.size() < rowLineStart.size());
-        bool tailReplace = !fullRebuild && !rows.empty() &&
-                           rows.size() == rowLineStart.size() &&
-                           !rowLineStart.empty();
-        // For the empty-rows case: treat as full rebuild so we clear stale
-        // lines from a prior non-empty transcript.
-        if (rows.empty() && (!transcriptView.lines.empty() || !rowLineStart.empty())) {
-            fullRebuild = true;
-        }
-        // Force a full re-emit when the selection / focus / visibility state
-        // has changed since the last build. The delta paths (deltaAppend /
-        // tailReplace) only re-emit a subset of the rows; if the '›' marker
-        // is moving off the previously-selected block onto a block that
-        // isn't re-emitted, the prefix keeps the old '›' and the new
-        // block keeps '  ' — the marker visibly doesn't move. Re-emitting
-        // all rows is the only correct way to refresh the markers when the
-        // applied state diverges from the current state. The wrap cache
-        // handles re-wrapping incrementally, so the visible-prefix cost is
-        // just the line iteration (microseconds for typical transcripts).
-        // ALSO force full rebuild when atRoot() transitions (enter/exit
-        // drilldown). The delta bookkeeping (rowLineStart, blockRowIndex)
-        // is built for one row set (rootRows or nestedRows); switching
-        // between them with stale bookkeeping corrupts the transcript.
-        if (selectedBlock != appliedSelectedBlock ||
-            timelineFocus != appliedTimelineFocus ||
-            showThoughts != appliedShowThoughts ||
-            showRaw != appliedShowRaw ||
-            atRoot() != appliedAtRoot) {
-            fullRebuild = true;
-        }
-        if (fullRebuild) {
-            transcriptView.lines.clear();
-            blockRowIndex.clear();
-            rowLineStart.clear();
-        } else if (tailReplace) {
-            // Erase the last row's lines and its focusable entry (if any),
-            // so we can re-emit the last row in place with its new body.
-            size_t lastStart = rowLineStart.back();
-            rowLineStart.pop_back();
-            transcriptView.lines.resize(lastStart);
-            // Pop the last focusable entry if the last row was focusable
-            // (i.e. its index was the last entry of blockRowIndex). During
-            // streaming the last row IS the Response (focusable), so this
-            // hits. For a non-focusable last row (skipped Thought/Stream)
-            // blockRowIndex.back() != rows.size()-1 and we leave it alone.
-            if (!blockRowIndex.empty() && blockRowIndex.back() == static_cast<int>(rows.size()) - 1) {
-                blockRowIndex.pop_back();
-            }
-        }
-
-        // The row index to start processing from and the focusable count
-        // already built (for the selected-block math).
-        size_t riStart = fullRebuild ? 0
-                        : tailReplace ? (rows.empty() ? 0 : rows.size() - 1)
-                        : rowLineStart.size();
-        int focusIdxStart = static_cast<int>(blockRowIndex.size());
+        transcriptView.lines.clear();
+        blockRowIndex.clear();
 
         if (rows.empty()) {
             if (atRoot()) timelineState = PageState::Empty;
         } else {
-            int focusIdx = focusIdxStart;
-            for (size_t ri = riStart; ri < rows.size(); ++ri) {
-                // Record every row's line-start (before skip/push) so
-                // rowLineStart.size() stays in sync with rows.size() for the
-                // delta bookkeeping. Skipped rows share a line-start with
-                // the next row (no lines pushed for them).
-                rowLineStart.push_back(transcriptView.lines.size());
-                const auto& row = rows[ri];
+            int focusIdx = 0;
+            for (int ri = 0; ri < static_cast<int>(rows.size()); ++ri) {
+                const auto& row = rows[static_cast<size_t>(ri)];
                 if (row.kind == TimelineKind::Thought && !showThoughts) continue;
                 if (row.kind == TimelineKind::Stream && !showRaw) continue;
 
                 bool selected = timelineFocus && (focusIdx == selectedBlock);
-                blockRowIndex.push_back(static_cast<int>(ri));
+                blockRowIndex.push_back(ri);
 
                 std::string label;
                 switch (row.kind) {
@@ -530,14 +399,6 @@ struct ShellModel {
                         if (!row.actionName.empty()) label += "  " + row.actionName;
                         if (!row.actionId.empty()) label += "  #" + row.actionId;
                         if (row.drillable) label += "  ↳";
-                        // A drillable AGENT Result is drillable via the
-                        // '↳ enter' on the header — the user enters
-                        // the full sub-agent timeline. The Result's
-                        // OWN body (the short result summary) is shown
-                        // here; the sub-agent's nested blocks are NOT
-                        // inlined into the parent transcript (parent
-                        // must only show its own rows). Tools /
-                        // non-agent Results stay flat.
                         break;
                     // The assistant's own turns: label with the real agent name +
                     // model/provider metadata instead of the generic "CORTEX" sentinel.
@@ -571,18 +432,10 @@ struct ShellModel {
                         break;
                 }
                 transcriptView.lines.push_back(std::string(selected ? "› " : "  ") + label);
-                // Body of the row — the parent transcript only emits its
-                // OWN row's body (the short Result summary, Response text,
-                // etc.). A drillable AGENT Result's body is the result
-                // summary set by makeSubAgentResult (summary = it->result.summary),
-                // which is the child's output text — emitting it here
-                // would LEAK the subagent's content into the parent scope.
-                // The subagent's full timeline is reached via the '↳ enter'
-                // drilldown (nestedRows / rowsFromAgent / agentPath) and
-                // must NEVER be inlined into the parent transcript. Tools
-                // and non-drillable Results keep their body flat.
-                bool suppressBody = (row.kind == TimelineKind::Result && row.drillable && row.actionType == "agent");
-                if (!suppressBody) pushBodyLines(row.body, "    ");
+                for (const auto& line : splitDisplayLines(row.body)) {
+                    if (line.empty() && row.body.empty()) continue;
+                    transcriptView.lines.push_back("    " + line);
+                }
                 transcriptView.lines.push_back("");
                 ++focusIdx;
             }
@@ -593,17 +446,6 @@ struct ShellModel {
         int focusable = static_cast<int>(blockRowIndex.size());
         if (focusable <= 0) selectedBlock = 0;
         else selectedBlock = std::max(0, std::min(selectedBlock, focusable - 1));
-
-        // Snapshot the state that was actually APPLIED to the lines this
-        // build. The next build compares against this to decide whether
-        // a full re-emit is needed (see the divergence check at the top
-        // of rebuildViews). Must be set after the clamp above so the
-        // snapshot reflects the post-clamp selectedBlock.
-        appliedSelectedBlock = selectedBlock;
-        appliedTimelineFocus = timelineFocus;
-        appliedShowThoughts = showThoughts;
-        appliedShowRaw = showRaw;
-        appliedAtRoot = atRoot();
 
         // Keep selected block in view when timeline-focused; stick-bottom while running at root.
         if (running && atRoot() && !timelineFocus) {
@@ -900,7 +742,6 @@ struct ShellModel {
 
     void loadSessionRecords(const std::vector<SessionRecord>& records) {
         rootRows.clear();
-        rowLineStart.clear();
         for (const auto& record : records) {
             TimelineRow row;
             row.body = record.content;
@@ -942,7 +783,6 @@ struct ShellModel {
         completedResultIds.clear();
         pendingOps = 0;
         selectedBlock = 0;
-        rowLineStart.clear();
         rebuildViews();
     }
 

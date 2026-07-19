@@ -518,6 +518,21 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 err["error"] = "Unknown sub-agent: " + agentName;
                 return err;
             }
+            // Per-turn delegation cap. A parent that re-delegates (often
+            // because a sub-agent returned an empty/unhelpful result) would
+            // otherwise loop for the full iterationCap, each delegation a
+            // full sub-agent prompt cycle — a multi-minute freeze. Cap at 4
+            // delegations per turn; past that, return an explicit stop
+            // signal so the parent emits a final response instead of
+            // re-delegating. 4 is generous for legitimate fan-out (2-3
+            // specialists) while catching the retry-loop pathology fast.
+            if (++ctx.delegationCount > 4) {
+                Json::Value stop;
+                stop["success"] = true;
+                stop["output"] = "[delegation cap reached: " + std::to_string(ctx.delegationCount - 1) +
+                                  " sub-agent calls this turn. Stop re-delegating and produce a final response with what you have.]";
+                return stop;
+            }
 
             bool forceEphemeral = jsonBool(action.params, "ephemeral", false);
             bool dumpContext = jsonBool(action.params, "dump_context", false);

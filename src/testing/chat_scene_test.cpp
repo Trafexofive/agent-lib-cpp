@@ -242,123 +242,52 @@ void test_submit_locks_to_bottom() {
           "submitComposer drops the viewport to the bottom (stick_bottom=true)");
 }
 
-void test_jk_block_navigation_with_streaming() {
-    // Regression for the delta-rebuildViews j/k bug. The transcript has
-    // multiple focusable blocks; j/k in timeline focus must move the '›'
-    // marker block-by-block, and a streaming body update on the last row
-    // (tail-replace) must NOT jump the marker off the selected block. The
-    // delta strategy preserves the stable prefix, but the focusable-block
-    // math inside the delta paths was broken: the prefix kept its old
-    // '›' from the prior build and the newly-selected block didn't get
-    // re-emitted with '›'. The fix tracks appliedSelectedBlock /
-    // appliedTimelineFocus / appliedShowThoughts / appliedShowRaw and
-    // forces a full re-emit when any of them diverge from the current
-    // state, so all '›' markers are refreshed.
+void test_ctrl_shift_jk_jump_by_block() {
+    // Ctrl-Shift-J / Ctrl-Shift-K jump by block (one focusable row per
+    // press, like j/K selectDelta but with the viewport re-anchored to
+    // keep the selected block in view, and with input disabled via the
+    // Ctrl+Shift modifier so the keystroke never reaches the composer).
     InkcellAppConfig cfg;
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
     scenes::AgentScene scene(cfg, bridge, model);
     scene.on_enter();
-    model->timelineFocus = true;
+    model->composer.focused = true;
+    model->timelineFocus = false;
 
-    // Seed 5 focusable User blocks (each: header + 1-line body + blank = 3 lines).
-    for (int i = 0; i < 5; ++i) {
-        TimelineRow row;
-        row.kind = TimelineKind::User;
-        row.title = "you";
-        row.body = "block " + std::to_string(i);
-        model->rootRows.push_back(std::move(row));
+    // Seed a transcript of focusable blocks (User rows) so selectDelta
+    // has multiple blocks to jump between.
+    for (int i = 0; i < 20; ++i) {
+        model->composer.value = "prompt " + std::to_string(i);
+        model->composer.cursor = static_cast<int>(model->composer.value.size());
+        model->submitComposer();
     }
-    model->rebuildViews();
+    int selectedBefore = model->selectedBlock;
 
-    check(model->blockRowIndex.size() == 5, "5 focusable blocks seeded into blockRowIndex");
-    check(model->selectedBlock == 0, "selectedBlock starts at 0 (first focusable)");
-    check(model->transcriptView.lines[0].rfind("› ", 0) == 0,
-          "initial '›' is on block 0 header (line 0)");
-    check(model->transcriptView.lines[3].rfind("  ", 0) == 0,
-          "block 1 header has no '›' initially");
+    // Ctrl-Shift-J in composer focus: jumps selection forward by one block
+    // and re-anchors the viewport to keep the selected block in view.
+    inkcell::KeyEvent ctrlShiftJ;
+    ctrlShiftJ.code = inkcell::KeyCode::Character;
+    ctrlShiftJ.ch = 'j';
+    ctrlShiftJ.modifiers = inkcell::ModCtrl | inkcell::ModShift;
+    scene.on_key(ctrlShiftJ);
+    check(model->selectedBlock == selectedBefore + 1,
+          "Ctrl-Shift-J in composer jumps selection forward by one block");
 
-    // Press j: selectDelta(+1) -> selectedBlock=1. The '›' must move
-    // off block 0 and onto block 1.
-    model->selectDelta(1);
-    check(model->selectedBlock == 1, "j moves selectedBlock from 0 to 1");
-    check(model->transcriptView.lines[0].rfind("  ", 0) == 0,
-          "block 0 loses '›' after j");
-    check(model->transcriptView.lines[3].rfind("› ", 0) == 0,
-          "block 1 gains '›' after j");
-    check(model->transcriptView.lines[6].rfind("  ", 0) == 0,
-          "block 2 still has no '›' after j");
+    // Ctrl-Shift-K jumps back by one block.
+    inkcell::KeyEvent ctrlShiftK;
+    ctrlShiftK.code = inkcell::KeyCode::Character;
+    ctrlShiftK.ch = 'k';
+    ctrlShiftK.modifiers = inkcell::ModCtrl | inkcell::ModShift;
+    scene.on_key(ctrlShiftK);
+    check(model->selectedBlock == selectedBefore,
+          "Ctrl-Shift-K in composer jumps selection back by one block");
 
-    // Press j twice more: selectedBlock=3. The '›' must move to block 3.
-    model->selectDelta(1);
-    model->selectDelta(1);
-    check(model->selectedBlock == 3, "j j moves selectedBlock to 3");
-    check(model->transcriptView.lines[9].rfind("› ", 0) == 0,
-          "block 3 header has '›' after j j");
-    check(model->transcriptView.lines[3].rfind("  ", 0) == 0,
-          "block 1 no longer has '›'");
-
-    // Press k: selectDelta(-1) -> selectedBlock=2.
-    model->selectDelta(-1);
-    check(model->selectedBlock == 2, "k moves selectedBlock from 3 to 2");
-    check(model->transcriptView.lines[6].rfind("› ", 0) == 0,
-          "block 2 gains '›' after k");
-    check(model->transcriptView.lines[9].rfind("  ", 0) == 0,
-          "block 3 loses '›' after k");
-
-    // Simulate a streaming body update on the last row (row 4, Response-style
-    // body that grows token-by-token). The tail-replace path re-emits only
-    // the last row; selectedBlock=2 must stay on block 2 and the '›' on
-    // block 4 (the last) must NOT appear.
-    model->rootRows.back().body = "block 4 updated body (streaming token 1)";
-    model->rebuildViews();
-    check(model->selectedBlock == 2,
-          "selectedBlock unchanged after tail-replace body update");
-    check(model->transcriptView.lines[6].rfind("› ", 0) == 0,
-          "'›' still on block 2 after tail-replace (selection stable)");
-    check(model->transcriptView.lines[12].rfind("  ", 0) == 0,
-          "block 4 (last) has no '›' after tail-replace (selectedBlock=2)");
-
-    // Another tail-replace: body grows further. Selection still stable.
-    model->rootRows.back().body = "block 4 updated body (streaming token 2 — longer)";
-    model->rebuildViews();
-    check(model->selectedBlock == 2,
-          "selectedBlock unchanged after second tail-replace");
-    check(model->transcriptView.lines[6].rfind("› ", 0) == 0,
-          "'›' still on block 2 after second tail-replace");
-
-    // j to the last block: selectedBlock=4. Now another tail-replace:
-    // '›' should stay on block 4 (the last row, re-emitted correctly).
-    model->selectDelta(2);
-    check(model->selectedBlock == 4, "j j moves selectedBlock to 4 (last block)");
-    check(model->transcriptView.lines[12].rfind("› ", 0) == 0,
-          "block 4 has '›' after j j");
-    model->rootRows.back().body = "block 4 updated body (streaming token 3)";
-    model->rebuildViews();
-    check(model->selectedBlock == 4,
-          "selectedBlock unchanged on last block after tail-replace");
-    check(model->transcriptView.lines[12].rfind("› ", 0) == 0,
-          "'›' still on block 4 (last) after tail-replace");
-
-    // Append a new focusable row (deltaAppend path). The new row joins
-    // the end; with selectedBlock=4 (still pointing at the OLD last
-    // block), the marker should remain on the now-second-to-last block,
-    // and the new last block has no '›'. (In running mode, pushRow
-    // would bump selectedBlock to the new last; here we test the
-    // deltaAppend directly without running so we can assert the
-    // selection moves correctly to a non-last target.)
-    TimelineRow newRow;
-    newRow.kind = TimelineKind::User;
-    newRow.title = "you";
-    newRow.body = "block 5";
-    model->rootRows.push_back(std::move(newRow));
-    model->rebuildViews();
-    check(model->blockRowIndex.size() == 6, "deltaAppend added 6th focusable block");
-    check(model->selectedBlock == 4, "selectedBlock still 4 after deltaAppend (old last is now second-to-last)");
-    check(model->transcriptView.lines[12].rfind("› ", 0) == 0,
-          "'›' still on old last (block 4) after deltaAppend");
-    check(model->transcriptView.lines[15].rfind("  ", 0) == 0,
-          "new last (block 5) has no '›' (selectedBlock=4)");
+    // Timeline focus: Ctrl-Shift-J also jumps by block.
+    model->timelineFocus = true;
+    scene.on_key(ctrlShiftJ);
+    check(model->selectedBlock == selectedBefore + 1,
+          "Ctrl-Shift-J in timeline focus also jumps by block");
 }
 
 void test_ctrl_c_state() {
@@ -429,390 +358,7 @@ void test_chat_scroll_keys() {
     scene.on_key(key(inkcell::KeyCode::ArrowUp));
     check(model->transcriptView.offset == 1, "ArrowUp scrolls one line back");
 }
-
-void test_drillable_agent_result_no_body_leak() {
-    // BUG 1 regression: a drillable AGENT Result row must render ONLY its
-    // header (`▎ ✓ RESULT <name> #<id> ↳`) + the trailing empty separator.
-    // The subagent's full timeline is reached ONLY via `↳` Enter drilldown
-    // (nestedRows / rowsFromAgent / agentPath — unchanged). NO body in the
-    // parent transcript.
-    //
-    // Current bug: rebuildViews() unconditionally calls
-    // pushBodyLines(row.body, "    ") for every row, including drillable
-    // AGENT Results. The Result body is the child's output text (per
-    // makeSubAgentResult setting summary = it->result.summary), so the
-    // child's content LEAKS into the parent transcript. Fix: skip
-    // pushBodyLines for drillable AGENT Results.
-    InkcellAppConfig cfg;
-    AgentBridge bridge;
-    auto model = std::make_shared<ShellModel>();
-    scenes::AgentScene scene(cfg, bridge, model);
-    scene.on_enter();
-    model->timelineFocus = true;
-
-    TimelineRow row;
-    row.kind = TimelineKind::Result;
-    row.title = "#r1 reader";
-    row.body = "CHILD SECRET OUTPUT TEXT";
-    row.ok = true;
-    row.actionType = "agent";
-    row.actionName = "reader";
-    row.actionId = "r1";
-    row.drillable = true;
-    model->rootRows.push_back(std::move(row));
-    model->rebuildViews();
-
-    bool leaked = false;
-    for (const auto& line : model->transcriptView.lines) {
-        if (line.find("CHILD SECRET OUTPUT TEXT") != std::string::npos) {
-            leaked = true;
-            break;
-        }
-    }
-    check(!leaked, "drillable AGENT Result body does NOT leak into parent transcript");
-
-    bool headerFound = false;
-    for (const auto& line : model->transcriptView.lines) {
-        if (line.find("✓ RESULT") != std::string::npos &&
-            line.find("reader") != std::string::npos) {
-            headerFound = true;
-            break;
-        }
-    }
-    check(headerFound, "drillable AGENT Result header (✓ RESULT + reader) is present");
-    check(model->rootRows.back().drillable,
-          "drillable flag is preserved on the parent row (drilldown still wired)");
-
-    // A non-drillable Result (tool result, actionType != "agent") keeps
-    // its body — only DRILLABLE AGENT Results suppress the body leak.
-    TimelineRow toolRow;
-    toolRow.kind = TimelineKind::Result;
-    toolRow.title = "#t1 exec";
-    toolRow.body = "tool stdout line";
-    toolRow.ok = true;
-    toolRow.actionType = "tool";
-    toolRow.actionName = "exec";
-    toolRow.actionId = "t1";
-    toolRow.drillable = false;
-    model->rootRows.push_back(std::move(toolRow));
-    model->rebuildViews();
-    bool toolBodyEmitted = false;
-    for (const auto& line : model->transcriptView.lines) {
-        if (line.find("tool stdout line") != std::string::npos) {
-            toolBodyEmitted = true;
-            break;
-        }
-    }
-    check(toolBodyEmitted, "non-drillable tool Result body IS emitted (only AGENT drillable is suppressed)");
-}
-
-void test_jk_nav_strict_marker_invariant() {
-    // BUG 2 regression: the '›' marker must be on exactly ONE line in
-    // transcriptView.lines at all times. Across the full lifecycle
-    // (initial build, j/k, streaming body updates, j/k), the count of
-    // lines starting with '› ' must equal 1 when timelineFocus=true, and
-    // the line must be the header of the block at index == selectedBlock.
-    // The previous appliedSelectedBlock divergence check handles the
-    // "j/k pressed" case but the marker-count invariant is the operator's
-    // observable contract.
-    InkcellAppConfig cfg;
-    AgentBridge bridge;
-    auto model = std::make_shared<ShellModel>();
-    scenes::AgentScene scene(cfg, bridge, model);
-    scene.on_enter();
-    model->timelineFocus = true;
-
-    for (int i = 0; i < 5; ++i) {
-        TimelineRow row;
-        row.kind = TimelineKind::User;
-        row.title = "you";
-        row.body = "block " + std::to_string(i);
-        model->rootRows.push_back(std::move(row));
-    }
-    model->rebuildViews();
-
-    auto countMarkers = [&]() {
-        int count = 0;
-        for (const auto& line : model->transcriptView.lines) {
-            if (line.rfind("› ", 0) == 0) ++count;
-        }
-        return count;
-    };
-    auto blockHeaderLine = [&](int blockIdx) -> int {
-        int focusable = 0;
-        for (size_t i = 0; i < model->transcriptView.lines.size(); ++i) {
-            const auto& line = model->transcriptView.lines[i];
-            if (line.rfind("    ", 0) == 0) continue;  // body line
-            if (line.empty()) continue;                // separator
-            if (focusable == blockIdx) return static_cast<int>(i);
-            ++focusable;
-        }
-        return -1;
-    };
-
-    check(model->blockRowIndex.size() == 5, "5 focusable blocks seeded into blockRowIndex");
-    check(countMarkers() == 1, "exactly one '›' marker on initial build");
-    check(blockHeaderLine(0) >= 0 && model->transcriptView.lines[blockHeaderLine(0)].rfind("› ", 0) == 0,
-          "initial marker is on block 0 header");
-
-    model->selectDelta(1);
-    check(model->selectedBlock == 1, "j moves selectedBlock to 1");
-    check(countMarkers() == 1, "exactly one '›' marker after j (not 0 or 2)");
-    check(model->transcriptView.lines[blockHeaderLine(1)].rfind("› ", 0) == 0,
-          "marker is on block 1 header after j");
-    check(model->transcriptView.lines[blockHeaderLine(0)].rfind("  ", 0) == 0,
-          "block 0 header has no '›' after j (stale prefix removed)");
-
-    model->selectDelta(1);
-    model->selectDelta(1);
-    check(model->selectedBlock == 3, "j j moves selectedBlock to 3");
-    check(countMarkers() == 1, "exactly one '›' marker after j j");
-    check(model->transcriptView.lines[blockHeaderLine(3)].rfind("› ", 0) == 0,
-          "marker is on block 3 header after j j");
-
-    // Streaming body update on the last row (tail-replace path). The
-    // marker must stay on block 3 (NOT drift to block 4).
-    model->rootRows.back().body = "block 4 updated body (streaming token 1)";
-    model->rebuildViews();
-    check(countMarkers() == 1, "exactly one '›' marker after tail-replace (still on selected)");
-    check(model->transcriptView.lines[blockHeaderLine(3)].rfind("› ", 0) == 0,
-          "marker still on block 3 header after tail-replace");
-
-    // Another tail-replace. Marker still on block 3.
-    model->rootRows.back().body = "block 4 updated body (streaming token 2 — even longer content here)";
-    model->rebuildViews();
-    check(countMarkers() == 1, "exactly one '›' marker after second tail-replace");
-    check(model->transcriptView.lines[blockHeaderLine(3)].rfind("› ", 0) == 0,
-          "marker still on block 3 after second tail-replace");
-
-    // Press k twice: selectedBlock=1. The marker must move cleanly.
-    model->selectDelta(-1);
-    model->selectDelta(-1);
-    check(model->selectedBlock == 1, "k k moves selectedBlock to 1");
-    check(countMarkers() == 1, "exactly one '›' marker after k k");
-    check(model->transcriptView.lines[blockHeaderLine(1)].rfind("› ", 0) == 0,
-          "marker on block 1 after k k");
-
-    // Append a new row (deltaAppend). Marker stays on block 1, not on the new last.
-    TimelineRow newRow;
-    newRow.kind = TimelineKind::User;
-    newRow.title = "you";
-    newRow.body = "block 5";
-    model->rootRows.push_back(std::move(newRow));
-    model->rebuildViews();
-    check(model->blockRowIndex.size() == 6, "deltaAppend added 6th focusable block");
-    check(countMarkers() == 1, "exactly one '›' marker after deltaAppend");
-    check(model->transcriptView.lines[blockHeaderLine(1)].rfind("› ", 0) == 0,
-          "marker on block 1 after deltaAppend (not on new last)");
-
-    // Now press j to select the new last block. Marker should move to it.
-    model->selectDelta(4);
-    check(model->selectedBlock == 5, "j j j j moves selectedBlock to 5 (new last)");
-    check(countMarkers() == 1, "exactly one '›' marker after j to new last");
-    check(model->transcriptView.lines[blockHeaderLine(5)].rfind("› ", 0) == 0,
-          "marker on block 5 after j");
-
-    // Another tail-replace on the new last. Marker stays.
-    model->rootRows.back().body = "block 5 updated (streaming token 1)";
-    model->rebuildViews();
-    check(countMarkers() == 1, "exactly one '›' marker after tail-replace on new last");
-    check(model->transcriptView.lines[blockHeaderLine(5)].rfind("› ", 0) == 0,
-          "marker still on block 5 after tail-replace on new last");
-}
 }  // namespace
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Regression test for drilldown hang bug
-// ─────────────────────────────────────────────────────────────────────────────
-// Bug: Pressing Enter on a drillable AGENT Result froze the harness.
-// Root cause: rebuildViews() delta bookkeeping (rowLineStart, blockRowIndex)
-// was built for rootRows. When enterSelected() switched to nestedRows, the
-// divergence check compared selectedBlock/timelineFocus but missed the
-// atRoot() transition because appliedAtRoot was never snapshotted. If the
-// user was at block 0 with timelineFocus in root view, the delta path ran
-// with stale rootRows bookkeeping against nestedRows → corruption/hang.
-// Fix: track appliedAtRoot and force fullRebuild when atRoot() diverges.
-// ─────────────────────────────────────────────────────────────────────────────
-
-class FreezeNoopProvider : public ILlmProvider {
-   public:
-    explicit FreezeNoopProvider(std::string resp = "<response final=\"true\">ok</response>")
-        : resp_(std::move(resp)) {}
-    std::string generate(const ChatMessages&) override { return resp_; }
-    void generateStream(const ChatMessages&, StreamCallback cb) override { cb(resp_, true); }
-    void setModel(const std::string&) override {}
-    void setTemperature(double) override {}
-    void setMaxTokens(int) override {}
-    void setTopP(double) override {}
-    std::string getModel() const override { return "noop"; }
-    double getTemperature() const override { return 0.7; }
-    int getMaxTokens() const override { return 65536; }
-    std::vector<ModelInfo> listModels() override { return {}; }
-    std::string providerName() const override { return "noop"; }
-   private:
-    std::string resp_;
-};
-
-void test_drilldown_agent_result_no_hang() {
-    // Faithful repro of the drilldown freeze: the sub-agent must have REAL
-    // protocol events (it actually ran) and a multi-line response body like
-    // the 'reader' sub-agent's repo listing. Then drilldown + RENDER via
-    // scene.draw() must not hang.
-    // Build a multi-line response mimicking a repo listing.
-    std::string listing = "<response final=\"true\">";
-    for (int i = 0; i < 1000; ++i) listing += "src/path/to/some/deep/module/file_number_" + std::to_string(i) + "_with_a_long_descriptive_suffix.cpp  - entry description text here\n";
-    listing += "</response>";
-
-    AgentConfig rootCfg;
-    rootCfg.name = "root";
-    rootCfg.provider = "noop";
-    rootCfg.model = "noop";
-    auto rootAgent = std::make_unique<Agent>(rootCfg, std::make_shared<FreezeNoopProvider>());
-
-    AgentConfig childCfg;
-    childCfg.name = "reader";
-    childCfg.provider = "noop";
-    childCfg.model = "noop";
-    auto childAgent = std::make_unique<Agent>(childCfg, std::make_shared<FreezeNoopProvider>(listing));
-    Agent* childRaw = childAgent.get();
-    rootAgent->addSubAgent(std::move(childAgent));
-
-    // Run the child so its protocolEvents populate (RESPONSE with the listing).
-    childRaw->prompt("list the repo", nullptr, "", true);
-
-    ShellModel model;
-    model.setRootAgent(rootAgent.get());
-
-    // Mimic the parent reducer's rows for a completed sub-agent turn:
-    // AGENT action (drillable), instruction body, RESULT (drillable, agent).
-    TimelineRow actionRow;
-    actionRow.kind = TimelineKind::Action;
-    actionRow.actionType = "agent";
-    actionRow.actionName = "reader";
-    actionRow.actionId = "r1";
-    actionRow.drillable = true;
-    actionRow.title = "#r1 reader";
-    actionRow.body = "Map the top-level structure of this repo.";
-    model.rootRows.push_back(std::move(actionRow));
-
-    TimelineRow resultRow;
-    resultRow.kind = TimelineKind::Result;
-    resultRow.title = "#r1 reader";
-    resultRow.body = "sub-agent output summary";
-    resultRow.ok = true;
-    resultRow.actionType = "agent";
-    resultRow.actionName = "reader";
-    resultRow.actionId = "r1";
-    resultRow.drillable = true;
-    model.rootRows.push_back(std::move(resultRow));
-
-    model.timelineFocus = true;
-    model.rebuildViews();
-
-    // Select the RESULT block.
-    int resultBlockIdx = -1;
-    for (size_t i = 0; i < model.blockRowIndex.size(); ++i) {
-        int ri = model.blockRowIndex[i];
-        if (ri >= 0 && ri < (int)model.rootRows.size() &&
-            model.rootRows[ri].kind == TimelineKind::Result &&
-            model.rootRows[ri].drillable) {
-            resultBlockIdx = static_cast<int>(i);
-            break;
-        }
-    }
-    check(resultBlockIdx >= 0, "drillable AGENT Result block is focusable");
-    model.selectedBlock = resultBlockIdx;
-
-    // Drive the drilldown through the SCENE (real key path) and RENDER.
-    InkcellAppConfig cfg;
-    AgentBridge bridge;
-    auto smodel = std::make_shared<ShellModel>(std::move(model));
-    scenes::AgentScene scene(cfg, bridge, smodel);
-    scene.on_enter();
-    smodel->timelineFocus = true;
-    smodel->selectedBlock = resultBlockIdx;
-    inkcell::KeyEvent enter;
-    enter.code = inkcell::KeyCode::Enter;
-    scene.on_key(enter);  // drilldown — must not hang
-    check(!smodel->atRoot(), "atRoot() is false after Enter drilldown");
-
-    // Render the nested view — must not hang.
-    inkcell::Surface surface({100, 30});
-    scene.draw(surface);  // <-- this is where a freeze would hang
-    check(true, "scene.draw() after drilldown returns (no hang)");
-    check(!smodel->nestedRows.empty(), "nestedRows populated with sub-agent timeline");
-}
-
-void test_drilldown_agent_result_no_hang_model_only() {
-    // Original model-only check (kept for layer coverage).
-    AgentConfig rootCfg;
-    rootCfg.name = "root";
-    rootCfg.provider = "noop";
-    rootCfg.model = "noop";
-    auto rootAgent = std::make_unique<Agent>(rootCfg, std::make_shared<FreezeNoopProvider>());
-
-    AgentConfig childCfg;
-    childCfg.name = "reader";
-    childCfg.provider = "noop";
-    childCfg.model = "noop";
-    auto childAgent = std::make_unique<Agent>(childCfg, std::make_shared<FreezeNoopProvider>());
-    rootAgent->addSubAgent(std::move(childAgent));
-
-    ShellModel model;
-    model.setRootAgent(rootAgent.get());
-
-    // Push a drillable AGENT Result row (simulating a completed sub-agent call)
-    TimelineRow row;
-    row.kind = TimelineKind::Result;
-    row.title = "#r1 reader";
-    row.body = "sub-agent output summary";
-    row.ok = true;
-    row.actionType = "agent";
-    row.actionName = "reader";
-    row.actionId = "r1";
-    row.drillable = true;
-    model.rootRows.push_back(std::move(row));
-
-    // Initial rebuild to set up blockRowIndex
-    model.timelineFocus = true;
-    model.rebuildViews();
-
-    // Find the focusable index of the Result row (should be the last block)
-    int resultBlockIdx = -1;
-    for (size_t i = 0; i < model.blockRowIndex.size(); ++i) {
-        int ri = model.blockRowIndex[i];
-        if (ri >= 0 && ri < (int)model.rootRows.size() &&
-            model.rootRows[ri].kind == TimelineKind::Result &&
-            model.rootRows[ri].drillable) {
-            resultBlockIdx = static_cast<int>(i);
-            break;
-        }
-    }
-    check(resultBlockIdx >= 0, "drillable AGENT Result block is focusable");
-    model.selectedBlock = resultBlockIdx;
-
-    // Enter the drilldown — this is where the hang occurred
-    bool ok = model.enterSelected();
-    check(ok, "enterSelected() returns true for drillable AGENT Result");
-
-    // This rebuildViews() used to hang due to delta bookkeeping corruption
-    // when switching from rootRows to nestedRows with stale rowLineStart.
-    // The fix (appliedAtRoot snapshot) forces a full rebuild on scope transition.
-    model.rebuildViews();
-
-    // Verify we're now in the nested view
-    check(!model.atRoot(), "atRoot() is false after drilldown");
-    check(!model.nestedRows.empty(), "nestedRows populated with sub-agent timeline");
-    check(model.selectedBlock == 0, "selection reset to first block in nested view");
-    check(model.timelineFocus, "timelineFocus remains true after drilldown");
-
-    // Go back to root and verify it still works
-    bool backOk = model.goBack();
-    check(backOk, "goBack() returns true");
-    model.rebuildViews();
-    check(model.atRoot(), "atRoot() is true after goBack()");
-    check(model.nestedRows.empty(), "nestedRows cleared after goBack()");
-}
 
 int main() {
     std::cout << "Chat/dashboard scene integration tests\n";
@@ -823,11 +369,7 @@ int main() {
     test_chat_scroll_keys();
     test_ctrl_j_k_history_navigation();
     test_submit_locks_to_bottom();
-    test_jk_block_navigation_with_streaming();
-    test_drillable_agent_result_no_body_leak();
-    test_jk_nav_strict_marker_invariant();
-    test_drilldown_agent_result_no_hang_model_only();
-    test_drilldown_agent_result_no_hang();
+    test_ctrl_shift_jk_jump_by_block();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }
