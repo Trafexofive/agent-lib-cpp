@@ -40,6 +40,15 @@ class NestNoopProvider : public ILlmProvider {
     int getMaxTokens() const override { return 65536; }
     std::vector<ModelInfo> listModels() override { return {}; }
     std::string providerName() const override { return "noop"; }
+    // Report anyContent=true so the agent loop accepts the stream and
+    // doesn't retry (the default lastStreamStats() returns anyContent=false,
+    // which made runLoop clear protocolEvents_ and bail with 'stopped
+    // without emitting').
+    StreamStats lastStreamStats() const override {
+        StreamStats s;
+        s.anyContent = true;
+        return s;
+    }
    private:
     std::string resp_;
 };
@@ -671,11 +680,7 @@ void test_chat_drillable_agent_result_nests_child_blocks() {
             break;
         }
     }
-
-    // The nesting code path (appendSubagentBlocks) ran without crash.
-    // The child.s events depend on the noop fixture parsing a final response,
-    // which is flaky at this baseline; the live pty repro is the real proof.
-    check(headerFound, "drillable AGENT Result nesting path runs without crash");
+    check(nestedResponse, "child's final response is nested inside the parent Result");
 }
 }  // namespace
 
