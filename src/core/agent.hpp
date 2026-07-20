@@ -60,10 +60,18 @@ class Agent {
     ~Agent() = default;
 
     // ---- Execution ----
+    // source/sourceName let sub-agents label history as User vs Parent(agent).
     std::string prompt(const std::string& input, const std::string& sessionId = "",
-                       bool ephemeral = false);
+                       bool ephemeral = false,
+                       PromptSource source = PromptSource::Human,
+                       const std::string& sourceName = "");
     std::string prompt(const std::string& input, StreamCallback onToken,
-                       const std::string& sessionId = "", bool ephemeral = false);
+                       const std::string& sessionId = "", bool ephemeral = false,
+                       PromptSource source = PromptSource::Human,
+                       const std::string& sourceName = "");
+
+    // Read-only snapshot of an agent (self or via parent inspect action).
+    Json::Value inspectContext(int lastN = 20) const;
 
     // ---- Modes ----
     void setRaw(bool v) {

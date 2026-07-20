@@ -162,6 +162,11 @@ struct AgentConfig {
     // don't natively emit thinking tokens (e.g. minimax-m3) and for
     // users who want visible reasoning in the TUI.
     bool requireThought = false;
+    // Manifest runtime defaults (CLI flags override when explicitly set).
+    // noSession  → do not load/save session for this agent run
+    // ephemeral  → prefer exit-on-done / one-shot lifecycle at the app layer
+    bool defaultNoSession = false;
+    bool defaultEphemeral = false;
     int maxTokens = 0;
     int iterationCap =
         50;  // agent turns before forced response (override via manifest max_iterations)
@@ -208,6 +213,10 @@ struct AgentConfig {
 // ---------------------------------------------------------------------------
 // Agent execution context (per-run state)
 // ---------------------------------------------------------------------------
+// Who initiated this prompt turn. Sub-agents use this so history can
+// distinguish a human operator from a parent agent delegate call.
+enum class PromptSource { Human, ParentAgent, Internal };
+
 struct AgentContext {
     std::string userInput;
     std::string sessionId;
@@ -217,6 +226,8 @@ struct AgentContext {
     bool debug = false;
     bool verbose = false;
     bool raw = false;
+    PromptSource source = PromptSource::Human;
+    std::string sourceName;  // parent agent name when source == ParentAgent
     StreamCallback onToken;
     std::map<std::string, std::string> variables;
     std::map<std::string, Json::Value> actionResults;

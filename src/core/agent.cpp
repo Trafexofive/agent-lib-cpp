@@ -140,18 +140,22 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
 // Execution Entry Points
 // ═══════════════════════════════════════════════════════════════════════
 
-std::string Agent::prompt(const std::string& input, const std::string& sessionId, bool ephemeral) {
-    return prompt(input, nullptr, sessionId, ephemeral);
+std::string Agent::prompt(const std::string& input, const std::string& sessionId, bool ephemeral,
+                          PromptSource source, const std::string& sourceName) {
+    return prompt(input, nullptr, sessionId, ephemeral, source, sourceName);
 }
 
 std::string Agent::prompt(const std::string& input, StreamCallback onToken,
-                          const std::string& sessionId, bool ephemeral) {
+                          const std::string& sessionId, bool ephemeral,
+                          PromptSource source, const std::string& sourceName) {
     AgentContext ctx;
     ctx.userInput = input;
     ctx.sessionId = sessionId;
     ctx.streaming = (onToken != nullptr);
     ctx.onToken = std::move(onToken);
     ctx.ephemeral = ephemeral;
+    ctx.source = source;
+    ctx.sourceName = sourceName;
     ctx.raw = raw_;
     ctx.verbose = verbose_;
     ctx.debug = (env_.count("__DEBUG_MODE__") && env_["__DEBUG_MODE__"] == "true");
@@ -166,6 +170,59 @@ std::string Agent::prompt(const std::string& input, StreamCallback onToken,
     dumpSessionArtifacts();
 
     return result;
+}
+
+Json::Value Agent::inspectContext(int lastN) const {
+    Json::Value r(Json::objectValue);
+    r["success"] = true;
+    r["name"] = config_.name;
+    r["provider"] = config_.provider;
+    r["model"] = config_.model;
+    r["response_output"] = responseOutput_;
+    r["thought_bytes"] = static_cast<Json::UInt64>(thoughtOutput_.size());
+    r["raw_bytes"] = static_cast<Json::UInt64>(rawLlOutput_.size());
+    r["protocol_events"] = static_cast<int>(protocolEvents_.size());
+    r["sub_agents"] = Json::Value(Json::arrayValue);
+    for (const auto& kv : subAgents_)
+        r["sub_agents"].append(kv.first);
+
+    Json::Value hist(Json::arrayValue);
+    int start = 0;
+    if (lastN > 0 && static_cast<int>(history_.size()) > lastN)
+        start = static_cast<int>(history_.size()) - lastN;
+    for (int i = start; i < static_cast<int>(history_.size()); ++i) {
+        const std::string& h = history_[static_cast<size_t>(i)];
+        Json::Value entry(Json::objectValue);
+        if (h.rfind("User: ", 0) == 0) {
+            entry["role"] = "user";
+            entry["content"] = h.substr(6);
+        } else if (h.rfind("Parent(", 0) == 0) {
+            entry["role"] = "parent";
+            auto close = h.find(')');
+            if (close != std::string::npos && close + 2 <= h.size()) {
+                entry["from"] = h.substr(7, close - 7);
+                entry["content"] = h.substr(close + 2);  // skip ") "
+                if (!entry["content"].asString().empty() && entry["content"].asString()[0] == ' ')
+                    entry["content"] = entry["content"].asString().substr(1);
+            } else {
+                entry["content"] = h;
+            }
+        } else if (h.rfind("Agent: ", 0) == 0) {
+            entry["role"] = "agent";
+            entry["content"] = h.substr(7);
+        } else if (h.rfind("System: ", 0) == 0) {
+            entry["role"] = "system";
+            entry["content"] = h.substr(8);
+        } else {
+            entry["role"] = "other";
+            entry["content"] = h;
+        }
+        hist.append(entry);
+    }
+    r["history"] = hist;
+    r["history_total"] = static_cast<int>(history_.size());
+    r["context"] = contextSnapshot();
+    return r;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -431,8 +488,16 @@ std::string Agent::runLoop(AgentContext& ctx) {
     protocolResults_.clear();
     protocolEvents_.clear();
 
-    // Push user input to history once at start (NOT per-iteration)
-    history_.push_back("User: " + ctx.userInput);
+    // Push initiator input once at start (NOT per-iteration). Parent-agent
+    // delegates are labeled so the child can distinguish them from the human.
+    if (ctx.source == PromptSource::ParentAgent) {
+        std::string from = ctx.sourceName.empty() ? "parent" : ctx.sourceName;
+        history_.push_back("Parent(" + from + "): " + ctx.userInput);
+    } else if (ctx.source == PromptSource::Internal) {
+        history_.push_back("System: " + ctx.userInput);
+    } else {
+        history_.push_back("User: " + ctx.userInput);
+    }
 
     // Parser lives across iterations — usedActionIds_ and finalResponseSeen_
     // persist so duplicate-ID and post-final enforcement works cross-turn.
@@ -513,6 +578,43 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 return err;
             }
 
+            // op: prompt (default) | inspect | context | history
+            // XML attrs land in params (parser extra-attr path), e.g.
+            //   <action type="agent" name="reader" op="inspect" last_n="10"/>
+            //   <action type="agent" name="reader" inspect="true"/>
+            std::string op = "prompt";
+            if (action.params.isMember("op") && action.params["op"].isString() &&
+                !action.params["op"].asString().empty())
+                op = action.params["op"].asString();
+            else if (action.params.isMember("inspect")) {
+                const auto& iv = action.params["inspect"];
+                if ((iv.isBool() && iv.asBool()) ||
+                    (iv.isString() && (iv.asString() == "true" || iv.asString() == "1")) ||
+                    (iv.isInt() && iv.asInt() != 0))
+                    op = "inspect";
+            }
+
+            if (op == "inspect" || op == "context" || op == "history") {
+                int lastN = action.params.get("last_n", 20).asInt();
+                if (lastN <= 0) lastN = 20;
+                Json::Value snap = it->second->inspectContext(lastN);
+                snap["op"] = op;
+                snap["agent"] = agentName;
+                // Compact summary for the RESULT card body.
+                std::ostringstream sum;
+                sum << agentName << " context: history="
+                    << snap.get("history_total", 0).asInt()
+                    << " events=" << snap.get("protocol_events", 0).asInt();
+                if (!snap.get("response_output", "").asString().empty()) {
+                    std::string ro = snap["response_output"].asString();
+                    if (ro.size() > 200) ro = ro.substr(0, 200) + "…";
+                    sum << "\nlast: " << ro;
+                }
+                snap["output"] = sum.str();
+                snap["success"] = true;
+                return snap;
+            }
+
             bool forceEphemeral = jsonBool(action.params, "ephemeral", false);
             bool dumpContext = jsonBool(action.params, "dump_context", false);
             std::string childSessionId =
@@ -535,9 +637,14 @@ std::string Agent::runLoop(AgentContext& ctx) {
                     *childSeen = r.size();
                 }
             };
-            std::string result = childSessionId.empty()
-                                     ? it->second->prompt(instruction, childProgress, "", forceEphemeral)
-                                     : it->second->prompt(instruction, childProgress, childSessionId, false);
+            // Further prompts reuse the child session id → continuous history.
+            // Label source as ParentAgent so the child sees who asked.
+            std::string result =
+                childSessionId.empty()
+                    ? it->second->prompt(instruction, childProgress, "", forceEphemeral,
+                                         PromptSource::ParentAgent, config_.name)
+                    : it->second->prompt(instruction, childProgress, childSessionId, false,
+                                         PromptSource::ParentAgent, config_.name);
             std::string trace;
             if (dumpContext) {
                 trace = formatDelegatedTrace(agentName, instruction, it->second->iterationPrompts(),
@@ -1540,10 +1647,26 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
                 // message, not replayed inside the system prompt transcript.
                 if (ctx.iteration <= 1 && hi + 1 == history_.size() && h.substr(6) == ctx.userInput)
                     continue;
-                emitted = "<user turn=\"" + std::to_string(userTurn) + "\"";
+                emitted = "<user turn=\"" + std::to_string(userTurn) + "\" source=\"human\"";
                 if (!ctx.sessionId.empty())
                     emitted += " session=\"" + xmlAttr(ctx.sessionId) + "\"";
                 emitted += ">" + h.substr(6) + "</user>";
+            } else if (h.rfind("Parent(", 0) == 0) {
+                // Parent-agent delegate — distinct from human operator turns.
+                auto close = h.find(')');
+                std::string from = "parent";
+                std::string body = h;
+                if (close != std::string::npos) {
+                    from = h.substr(7, close - 7);
+                    body = (close + 1 < h.size() && h[close + 1] == ':')
+                               ? h.substr(close + 2)
+                               : h.substr(close + 1);
+                    if (!body.empty() && body[0] == ' ') body = body.substr(1);
+                }
+                if (ctx.iteration <= 1 && hi + 1 == history_.size() && body == ctx.userInput)
+                    continue;
+                emitted = "<user turn=\"parent\" source=\"parent_agent\" from=\"" +
+                          xmlAttr(from) + "\">" + body + "</user>";
             } else {
                 emitted = h;
             }
@@ -1557,6 +1680,13 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
 }
 
 std::string Agent::buildUserPrompt(const AgentContext& ctx) const {
+    // Surface initiator identity in the live user message so the model can
+    // tell a human operator apart from a parent-agent delegate without
+    // relying solely on history replay.
+    if (ctx.source == PromptSource::ParentAgent) {
+        std::string from = ctx.sourceName.empty() ? "parent" : ctx.sourceName;
+        return std::string("[FROM parent agent \"") + from + "\"]\n" + ctx.userInput;
+    }
     return ctx.userInput;
 }
 

@@ -135,8 +135,9 @@ class ManifestLoader {
 
         // Context block — prompt paths + runtime config
         // Each prompt path defaults to a global default when omitted.
+        // Resolve relative paths against the manifest directory (not process CWD).
         auto* context = ManifestYaml::find(root, "context");
-        fs::path base = fs::path(manifestPath).parent_path();
+        fs::path base = fs::absolute(fs::path(manifestPath).parent_path());
 
         // Harness prompt (protocol spec)
         std::string harnessRel = context ? ManifestYaml::get(*context, "harness") : "";
@@ -210,6 +211,18 @@ class ManifestLoader {
             std::string hc = ManifestYaml::get(*runtime, "history_cap");
             if (!hc.empty())
                 cfg.historyCap = std::stoi(hc);
+            // Orthogonal lifecycle defaults (CLI flags OR with these):
+            //   no_session → don't load/save session records
+            //   ephemeral  → exit when the agent turn finishes (app layer)
+            auto truthy = [](const std::string& v) {
+                return v == "true" || v == "1" || v == "yes";
+            };
+            std::string ns = ManifestYaml::get(*runtime, "no_session");
+            if (truthy(ns))
+                cfg.defaultNoSession = true;
+            std::string ep = ManifestYaml::get(*runtime, "ephemeral");
+            if (truthy(ep))
+                cfg.defaultEphemeral = true;
             auto* subagents = ManifestYaml::find(*runtime, "subagents");
             if (subagents) {
                 std::string persistence = ManifestYaml::get(*subagents, "persistence");
@@ -260,8 +273,8 @@ class ManifestLoader {
             }
         }
 
-        // Manifest directory for resolving relative paths
-        cfg.manifestDir = fs::path(manifestPath).parent_path().string();
+        // Manifest directory for resolving relative paths (absolute)
+        cfg.manifestDir = base.string();
 
         return cfg;
     }

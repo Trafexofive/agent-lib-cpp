@@ -657,8 +657,17 @@ struct ShellModel {
     void apply(const UiEvent& e) {
         switch (e.kind) {
             case UiEventKind::Status: {
-                bool startsTurn = e.text.find("running") != std::string::npos && !running;
-                if (startsTurn) {
+                // A fresh "running" status always opens a new protocol-mapping
+                // epoch. The agent clears protocolEvents_ at runLoop start so
+                // indices restart at 0; if we keep the previous turn's
+                // activeProtocolRows, upsertProtocolRow OVERWRITES the top of
+                // the transcript (second-query clobber bug).
+                //
+                // Do NOT gate this on !running: the REPL may set running=true
+                // before the worker publishes status, which would skip the
+                // reset and corrupt contiguity.
+                bool isRunningStatus = e.text.find("running") != std::string::npos;
+                if (isRunningStatus) {
                     activeProtocolRows.clear();
                     pendingActionIds.clear();
                     completedResultIds.clear();
@@ -669,12 +678,15 @@ struct ShellModel {
                     raw.clear();
                     done = false;
                     failed = false;
+                    if (!running) {
+                        turnStartMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count();
+                    }
+                    timelineState = PageState::Loading;
                 }
                 status = e.text;
-                bool wasRunning = running;
-                running = e.text.find("running") != std::string::npos;
-                if (running && !wasRunning) turnStartMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-                if (running) timelineState = PageState::Loading;
+                running = isRunningStatus;
                 break;
             }
             case UiEventKind::Log:

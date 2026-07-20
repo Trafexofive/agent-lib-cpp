@@ -619,6 +619,99 @@ void test_chat_thought_rows_visible_by_default() {
 }
 
 
+
+void test_chat_multi_turn_does_not_clobber() {
+    // Second turn must APPEND protocol rows, never overwrite the first turn.
+    // Regression for the "overrides from the top" contiguity bug: REPL may
+    // pre-set running=true before status("agent running"), so the mapping
+    // epoch must still reset on every running status.
+    ShellModel model;
+    model.agentName = "coder";
+
+    // Turn 1 user + response
+    model.pushRow({TimelineKind::User, "you", "first question", true});
+    model.running = true;  // simulate REPL pre-set before status
+    {
+        UiEvent st;
+        st.kind = UiEventKind::Status;
+        st.text = "agent running";
+        model.apply(st);
+    }
+    {
+        UiEvent pe;
+        pe.kind = UiEventKind::Protocol;
+        pe.protocolIndex = 0;
+        pe.protocol.kind = ProtocolEventKind::THOUGHT;
+        pe.protocol.text = "thinking about first";
+        model.apply(pe);
+    }
+    {
+        UiEvent pe;
+        pe.kind = UiEventKind::Protocol;
+        pe.protocolIndex = 1;
+        pe.protocol.kind = ProtocolEventKind::RESPONSE;
+        pe.protocol.text = "answer one";
+        model.apply(pe);
+    }
+    {
+        UiEvent td;
+        td.kind = UiEventKind::TurnDone;
+        td.text = "answer one";
+        model.apply(td);
+    }
+
+    // Turn 2 — running already true again (REPL pattern)
+    model.pushRow({TimelineKind::User, "you", "second question", true});
+    model.running = true;
+    {
+        UiEvent st;
+        st.kind = UiEventKind::Status;
+        st.text = "agent running";
+        model.apply(st);
+    }
+    {
+        UiEvent pe;
+        pe.kind = UiEventKind::Protocol;
+        pe.protocolIndex = 0;  // agent cleared protocolEvents — index restarts
+        pe.protocol.kind = ProtocolEventKind::THOUGHT;
+        pe.protocol.text = "thinking about second";
+        model.apply(pe);
+    }
+    {
+        UiEvent pe;
+        pe.kind = UiEventKind::Protocol;
+        pe.protocolIndex = 1;
+        pe.protocol.kind = ProtocolEventKind::RESPONSE;
+        pe.protocol.text = "answer two";
+        model.apply(pe);
+    }
+
+    bool hasFirst = false, hasSecond = false, hasAns1 = false, hasAns2 = false;
+    bool clobbered = false;
+    for (const auto& l : model.transcriptView.lines) {
+        if (l.find("first question") != std::string::npos) hasFirst = true;
+        if (l.find("second question") != std::string::npos) hasSecond = true;
+        if (l.find("answer one") != std::string::npos) hasAns1 = true;
+        if (l.find("answer two") != std::string::npos) hasAns2 = true;
+        if (l.find("thinking about first") != std::string::npos &&
+            l.find("thinking about second") != std::string::npos)
+            clobbered = true;  // same line somehow
+    }
+    // Count thought bodies
+    int thoughtFirst = 0, thoughtSecond = 0;
+    for (const auto& l : model.transcriptView.lines) {
+        if (l.find("thinking about first") != std::string::npos) ++thoughtFirst;
+        if (l.find("thinking about second") != std::string::npos) ++thoughtSecond;
+    }
+    check(hasFirst, "multi-turn keeps first user message");
+    check(hasSecond, "multi-turn keeps second user message");
+    check(hasAns1, "multi-turn keeps first answer");
+    check(hasAns2, "multi-turn keeps second answer");
+    check(thoughtFirst >= 1, "first turn thought still present");
+    check(thoughtSecond >= 1, "second turn thought present");
+    check(!clobbered, "thoughts not merged onto one line");
+}
+
 void test_chat_empty_thoughts_not_rendered() {
     ShellModel model;
     model.showThoughts = true;
@@ -728,6 +821,7 @@ int main() {
     test_chat_last_turn_summary_lifecycle();
     test_chat_last_response_body();
     test_chat_thought_rows_visible_by_default();
+    test_chat_multi_turn_does_not_clobber();
     test_chat_empty_thoughts_not_rendered();
     test_chat_subagent_result_shows_final_no_auto_enter();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";

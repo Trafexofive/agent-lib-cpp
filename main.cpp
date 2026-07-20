@@ -2162,6 +2162,11 @@ static int cmdRun(CliConfig& cli) {
     Agent agent(acfg, provider);
     if (cli.iterations > 0)
         agent.setIterationCap(cli.iterations);
+    // Manifest runtime.{no_session,ephemeral} OR with CLI flags (orthogonal).
+    if (acfg.defaultNoSession)
+        cli.noSession = true;
+    if (acfg.defaultEphemeral)
+        cli.ephemeral = true;
     tui::TuiRenderer renderer(80);
     renderer.setToolAnsiPassthrough(cli.toolAnsi);
 
