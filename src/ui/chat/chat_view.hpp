@@ -42,6 +42,9 @@ struct ChatSurfaceModel {
     int actionCount = 0;
     int resultCount = 0;
     int tokenBytes = 0;
+    int64_t turnElapsedMs = 0;   // live elapsed while running, else last turn
+    int64_t lastTurnElapsedMs = 0;
+    uint64_t nowMs = 0;          // animation clock (steady_clock ms)
     int scrollOffset = 0;
     bool followBottom = true;
     std::vector<std::string> transcript;  // standalone/test fallback
@@ -89,63 +92,145 @@ inline inkcell::Style lineStyle(const std::string& line, bool selected,
     return theme::dim();
 }
 
-inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const ChatSurfaceModel& m) {
-    auto st = m.failed ? theme::red() : m.running ? theme::green() : theme::dim();
-    std::string state = m.status == "idle" ? "ready" : m.status;
-    std::string left = std::string(m.running ? "●" : m.failed ? "✗" : "○") + " " + state;
-    if (!m.scopeName.empty()) left += "  ◀ " + m.scopeName;  // drilled-in scope indicator
-    left += " · " + m.mode + " · " + theme::name();
-    std::string right;
-    if (m.running) {
-        right = "pending " + std::to_string(m.pendingOps) + " · " +
-                std::to_string(m.actionCount) + " actions · " +
-                std::to_string(m.resultCount) + " results · " +
-                std::to_string(m.tokenBytes) + "b";
-    } else {
-        right = m.hint;
+inline std::string fmtCompactBytes(int bytes) {
+    if (bytes < 1024) return std::to_string(bytes) + "B";
+    if (bytes < 1024 * 1024) {
+        int tenths = (bytes * 10) / 1024;
+        return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10) + "KB";
     }
-    int rightWidth = inkcell::text::display_width(right);
-    surface.text({row.x, row.y}, inkcell::text::truncate(left, std::max(0, row.w - rightWidth - 2)), st);
-    surface.text({std::max(row.x, row.right() - rightWidth), row.y}, inkcell::text::truncate(right, row.w), theme::dim());
+    int tenths = (bytes * 10) / (1024 * 1024);
+    return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10) + "MB";
+}
+
+inline std::string fmtCompactElapsed(int64_t ms) {
+    if (ms < 0) ms = 0;
+    if (ms < 1000) return std::to_string(static_cast<int>(ms)) + "ms";
+    if (ms < 60000) {
+        int tenths = static_cast<int>(ms / 100);
+        return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10) + "s";
+    }
+    int secs = static_cast<int>(ms / 1000);
+    int m = secs / 60;
+    int s = secs % 60;
+    return std::to_string(m) + "m" + (s < 10 ? "0" : "") + std::to_string(s) + "s";
+}
+
+// Braille spinner — only while running. Phase from nowMs (~12.5 fps feel).
+inline const char* liveSpinner(uint64_t nowMs) {
+    static const char* kFrames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+    return kFrames[(nowMs / 80) % 10];
+}
+
+// Blinking block cursor when focused; solid when typing recently is overkill —
+// simple 530ms duty cycle keeps it zen without fighting the input stream.
+inline bool cursorVisible(uint64_t nowMs, bool focused) {
+    if (!focused) return false;
+    return ((nowMs / 530) % 2) == 0;
+}
+
+// Elevated footer: status metrics row + prompt row on a raised panel.
+// No placeholder copy. Running state is the spinner + live chips, never the
+// input text. Completion menus sit above this block (caller reserves space).
+inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const ChatSurfaceModel& m) {
+    const bool focusBar = m.inputFocused && !m.running;
+    auto bg = focusBar ? theme::footer_bg_focus() : theme::footer_bg();
+    surface.fill(row, " ", bg);
+
+    // Left accent tick (reads as elevation / focus without a full box).
+    auto accent = m.running   ? theme::footer_accent_live()
+                  : m.failed  ? theme::footer_warn()
+                  : focusBar  ? theme::footer_accent_focus()
+                              : theme::footer_accent_idle();
+    surface.text({row.x, row.y}, "▌", accent);
+
+    auto stateStyle = m.failed ? theme::footer_warn()
+                      : m.running ? theme::footer_live()
+                                  : theme::footer_dim();
+    std::string glyph = m.running ? liveSpinner(m.nowMs)
+                        : m.failed ? "✗"
+                                   : "○";
+    std::string state = m.status.empty() || m.status == "idle" ? "ready" : m.status;
+    // Drop noisy "cancelling (...)" tails in the tight left cluster.
+    if (state.rfind("cancelling", 0) == 0) state = "cancelling";
+
+    // Build one dense left cluster so narrow terminals still show live signal.
+    // Prefer: spinner · state · elapsed · scope · pend/act/res/bytes
+    std::string left = glyph + " " + state;
+    int64_t elapsed = m.running ? m.turnElapsedMs : m.lastTurnElapsedMs;
+    if (m.running || elapsed > 0)
+        left += " " + fmtCompactElapsed(elapsed);
+    if (!m.scopeName.empty())
+        left += " ◀" + m.scopeName;
+    if (m.pendingOps > 0) left += " pend" + std::to_string(m.pendingOps);
+    if (m.actionCount > 0) left += " act" + std::to_string(m.actionCount);
+    if (m.resultCount > 0) left += " res" + std::to_string(m.resultCount);
+    if (m.tokenBytes > 0) left += " " + fmtCompactBytes(m.tokenBytes);
+
+    // Right: mode pills + theme. Hints only when idle and room remains.
+    std::string right = m.mode + " · " + theme::name();
+    if (!m.running && !m.hint.empty() && row.w >= 110)
+        right = m.hint;
+
+    int x = row.x + 2;
+    int rightW = inkcell::text::display_width(right);
+    int avail = std::max(0, row.w - 2 - rightW - 1);
+    // Prefer metrics over long status prose when squeezed.
+    if (inkcell::text::display_width(left) > avail && m.running) {
+        left = glyph;
+        if (elapsed > 0) left += " " + fmtCompactElapsed(elapsed);
+        if (m.pendingOps > 0) left += " pend" + std::to_string(m.pendingOps);
+        if (m.actionCount > 0) left += " act" + std::to_string(m.actionCount);
+        if (m.resultCount > 0) left += " res" + std::to_string(m.resultCount);
+        if (m.tokenBytes > 0) left += " " + fmtCompactBytes(m.tokenBytes);
+    }
+    surface.text({x, row.y}, inkcell::text::truncate(left, avail), stateStyle);
+    surface.text({std::max(row.x, row.right() - rightW), row.y},
+                 inkcell::text::truncate(right, row.w), theme::footer_dim());
 }
 
 inline void drawPromptLine(inkcell::Surface& surface, inkcell::Rect row, const ChatSurfaceModel& m) {
-    // The composer always reflects the actual input text (or an empty cursor).
-    // Running state is signalled by the status line (● agent running) — never
-    // by overwriting the input box, which is bad UX mid-turn.
-    std::string prompt = m.inputFocused ? "› " : "  ";
-    std::string input;
-    if (m.input.empty()) {
-        if (m.inputFocused) input = "█";
-    } else {
-        input = m.input;
-        if (m.inputFocused) {
-            int cursor = std::max(0, std::min(m.inputCursor, static_cast<int>(input.size())));
-            input.insert(static_cast<size_t>(cursor), "█");
-        }
+    // Elevated prompt surface. Input always wins over any status copy.
+    const bool focusBar = m.inputFocused;
+    auto bg = focusBar ? theme::footer_bg_focus() : theme::footer_bg();
+    surface.fill(row, " ", bg);
+
+    auto accent = m.running  ? theme::footer_accent_live()
+                  : focusBar ? theme::footer_accent_focus()
+                             : theme::footer_accent_idle();
+    surface.text({row.x, row.y}, "▌", accent);
+
+    auto textSt = focusBar ? theme::footer_bright() : theme::footer_dim();
+    const std::string glyph = focusBar ? "› " : "  ";
+
+    std::string body = m.input;
+    const bool showCursor = cursorVisible(m.nowMs, focusBar);
+    if (focusBar) {
+        int cursor = std::max(0, std::min(m.inputCursor, static_cast<int>(body.size())));
+        if (showCursor)
+            body.insert(static_cast<size_t>(cursor), "█");
+        else if (cursor >= static_cast<int>(body.size()))
+            body.push_back(' ');  // keep layout stable on blink-off at EOL
+        else
+            body.insert(static_cast<size_t>(cursor), " ");
     }
-    // Empty + focused: show a dim placeholder to the right of the prompt
-    // + cursor so a fresh operator sees what the box is for instead of a
-    // lone blinking block. The placeholder is dim (same as the unfocused
-    // composer) so the cursor remains the brightest element when typing
-    // starts.
-    if (m.input.empty() && m.inputFocused) {
-        constexpr const char* kCursor = "\xe2\x96\x88";  // █
-        std::string prefix = prompt + kCursor;
-        surface.text({row.x, row.y}, inkcell::text::truncate(prefix, row.w),
-                     theme::dim());
-        int used = inkcell::text::display_width(prefix);
-        int x = row.x + used;
-        int avail = std::max(0, row.w - used);
-        if (avail > 1) {
-            const std::string placeholder = "Ask anything \xe2\x80\x94 /help for commands";
-            surface.text({x, row.y}, inkcell::text::truncate(placeholder, avail),
-                         theme::dim());
+
+    // Keep the cursor end in view for long input (simple tail window).
+    int maxW = std::max(1, row.w - 4);
+    std::string shown = glyph + body;
+    if (inkcell::text::display_width(shown) > maxW) {
+        // Drop from the left of body until it fits, then mark with ellipsis.
+        std::string tail = body;
+        while (!tail.empty() && inkcell::text::display_width(glyph + "…" + tail) > maxW) {
+            size_t len = 1;
+            while (len < tail.size() &&
+                   (static_cast<unsigned char>(tail[len]) & 0xc0) == 0x80)
+                ++len;
+            tail.erase(0, len);
         }
-        return;
+        shown = glyph + "…" + tail;
     }
-    surface.text({row.x, row.y}, inkcell::text::truncate(prompt + input, row.w),
-                 m.inputFocused ? theme::bright() : theme::dim());
+
+    surface.text({row.x + 2, row.y}, inkcell::text::truncate(shown, maxW), textSt);
 }
 
 inline void drawHeader(inkcell::Surface& surface, inkcell::Rect frame, const ChatSurfaceModel& m) {
@@ -506,10 +591,14 @@ inline void drawHelpOverlay(inkcell::Surface& surface, inkcell::Rect page) {
         "Esc         focus transcript / return to composer",
         "j / k       select transcript blocks",
         "Enter       open selected sub-agent",
-        "t / r       toggle thoughts / raw",
+        "Ctrl-T      toggle thoughts (works while typing)",
+        "Ctrl-O      toggle body truncation",
+        "Ctrl-R      toggle raw stream",
+        "t / r       toggle thoughts / raw (history focus)",
         "T           switch graphite / neon",
         "Tab         complete slash command",
-        "Ctrl-C      cancel active turn",
+        "Ctrl-C/X    stop active turn",
+        "Ctrl-C      cancel active turn / quit if idle",
         "q           quit (outside composer)",
         "/help       command catalog",
     };

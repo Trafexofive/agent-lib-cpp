@@ -112,6 +112,8 @@ inline inkcell::App makeInkcellApp(const InkcellAppConfig& cfg, AgentBridge& bri
         .bind("down", "scroll.down", "Down")
         .bind("r", "shell.toggle_raw", "Toggle raw")
         .bind("t", "shell.toggle_thoughts", "Toggle thoughts")
+        // Ctrl chords are handled in AgentScene::on_key so they work while typing:
+        //   Ctrl-T thoughts · Ctrl-O truncate · Ctrl-R raw · Ctrl-X stop
         .bind("i", "shell.focus_composer", "Focus composer")
         .bind("m", "scene.main", "Dashboard")
         .bind("esc", "shell.focus_timeline", "Focus history")

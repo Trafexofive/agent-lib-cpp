@@ -3,6 +3,8 @@
 // Product chat surface: inkcell-native port of ReplSession composition
 // (transcript + status + prompt), not the old experimental card UI.
 
+#include <chrono>
+
 #include "base_scene.hpp"
 #include "src/ui/chat/chat_commands.hpp"
 #include "src/ui/chat/chat_io.hpp"
@@ -39,6 +41,25 @@ class AgentScene final : public BaseScene {
             (event.ch == 'x' || event.ch == 'X')) {
             stopAgentLoop("ctrl-x");
             return true;
+        }
+        // Global view toggles that must work while typing in the composer.
+        // (plain t/r only fire via keymap when the composer is unfocused).
+        if (event.code == KeyCode::Character && event.ctrl()) {
+            if (event.ch == 't' || event.ch == 'T') {
+                model_->showThoughts = !model_->showThoughts;
+                model_->rebuildViews();
+                return true;
+            }
+            if (event.ch == 'o' || event.ch == 'O') {
+                model_->truncateBodies = !model_->truncateBodies;
+                model_->rebuildViews();
+                return true;
+            }
+            if (event.ch == 'r' || event.ch == 'R') {
+                model_->showRaw = !model_->showRaw;
+                model_->rebuildViews();
+                return true;
+            }
         }
 
         if (model_->timelineFocus || !model_->atRoot() || !model_->composer.focused) {
@@ -187,8 +208,11 @@ class AgentScene final : public BaseScene {
         vm.sessionId = model_->activeSessionId;
         vm.status = model_->status;
         {
-            std::string mode = model_->showRaw ? "RAW" : model_->showThoughts ? "FULL+THOUGHTS" : "FULL";
-            if (!model_->truncateBodies) mode += "+FULLBODY";
+            // Compact mode chips for the elevated status bar.
+            std::string mode;
+            if (model_->showRaw) mode = "raw";
+            else mode = model_->showThoughts ? "think" : "clean";
+            mode += model_->truncateBodies ? " · trunc" : " · full";
             vm.mode = mode;
         }
         vm.running = model_->running;
@@ -201,6 +225,18 @@ class AgentScene final : public BaseScene {
         vm.actionCount = model_->actionCount;
         vm.resultCount = model_->resultCount;
         vm.tokenBytes = model_->tokenBytes;
+        {
+            using clock = std::chrono::steady_clock;
+            const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 clock::now().time_since_epoch())
+                                 .count();
+            vm.nowMs = static_cast<uint64_t>(now < 0 ? 0 : now);
+            vm.lastTurnElapsedMs = model_->lastTurnElapsedMs;
+            if (model_->running && model_->turnStartMs > 0)
+                vm.turnElapsedMs = static_cast<int64_t>(now) - model_->turnStartMs;
+            else
+                vm.turnElapsedMs = model_->lastTurnElapsedMs;
+        }
         vm.scrollOffset = model_->transcriptView.offset;
         vm.followBottom = model_->transcriptView.stick_bottom;
         vm.transcriptSource = &model_->transcriptView.lines;
@@ -222,15 +258,15 @@ class AgentScene final : public BaseScene {
         vm.completionMenu = model_->tabMatches;
         vm.completionSelected = model_->tabMatchIndex;
         if (model_->running)
-            vm.hint = "Ctrl-C/X stop · Esc history · PgUp/Dn scroll · t thoughts · r raw";
+            vm.hint = "^C/^X stop  ^T thoughts  ^O trunc  Esc history";
         else if (!model_->atRoot())
             vm.hint = "↑↓ scroll · j/k select · Enter drill · Esc back · g refresh";
         else if (vm.historyFocused)
-            vm.hint = "↑↓ scroll · j/k select · Enter open · PgUp/Dn · i composer · ? help · q quit";
+            vm.hint = "↑↓ scroll · j/k · Enter open · i composer · ^T thoughts · ^O trunc";
         else if (!model_->tabMatches.empty())
             vm.hint = "Tab cycle · Shift-Tab back · Enter run · type to filter";
         else
-            vm.hint = "Enter send · ↑↓ history · Tab complete · Ctrl-X stop · Esc transcript";
+            vm.hint = "Enter send · Tab complete · ^T thoughts · ^O trunc · ^X stop";
 
         // Reserve transcript height for completion menu rows (same math as draw).
         int menuH = chat::completionMenuHeight(vm, p.w);

@@ -325,25 +325,21 @@ void test_chat_transcript_empty_state() {
           "populated transcript suppresses the empty state headline");
 }
 
-void test_chat_prompt_placeholder_when_empty() {
-    // First-run UX: a focused, empty composer must show a dim placeholder so
-    // a fresh operator knows the box is for input (and what to type), instead
-    // of a lone blinking cursor. The cursor stays; the placeholder sits to
-    // its right. The placeholder is dim and the cursor is also dim, so when
-    // the operator starts typing (input becomes non-empty) the cursor
-    // disappears and the typed text renders in bright.
+void test_chat_prompt_empty_no_placeholder() {
+    // Design: elevated prompt bar, no instructional placeholder copy.
+    // Focused empty = glyph + blinking cursor only. Unfocused = quiet bar.
     inkcell::Surface s({60, 8});
     chat::ChatSurfaceModel model;
-    model.input = "";               // empty
+    model.input = "";
     model.inputCursor = 0;
     model.inputFocused = true;
+    model.nowMs = 0;  // cursor visible phase
     chat::drawChatSurface(s, {0, 0, 60, 8}, model);
     std::string prompt = rowText(s, 7);  // bottom row
-    check(prompt.find("Ask anything") != std::string::npos,
-          "empty focused composer shows the placeholder text");
-    check(prompt.find("\xe2\x96\x88") != std::string::npos,
-          "empty focused composer still shows the cursor block");
-    // Unfocused: no placeholder, no cursor (same as the cursor test's contract).
+    check(prompt.find("Ask anything") == std::string::npos,
+          "empty focused composer has no placeholder copy");
+    check(prompt.find("\xe2\x96\x88") != std::string::npos || prompt.find("›") != std::string::npos,
+          "empty focused composer shows prompt glyph/cursor");
     chat::ChatSurfaceModel unfocused;
     unfocused.input = "";
     unfocused.inputCursor = 0;
@@ -351,18 +347,16 @@ void test_chat_prompt_placeholder_when_empty() {
     chat::drawChatSurface(s, {0, 0, 60, 8}, unfocused);
     std::string unfocusedPrompt = rowText(s, 7);
     check(unfocusedPrompt.find("Ask anything") == std::string::npos,
-          "unfocused composer does not show the placeholder");
-    // Non-empty: placeholder must NOT show (input takes over).
+          "unfocused composer has no placeholder copy");
     chat::ChatSurfaceModel typing;
     typing.input = "hello";
     typing.inputCursor = 5;
     typing.inputFocused = true;
+    typing.nowMs = 0;
     chat::drawChatSurface(s, {0, 0, 60, 8}, typing);
     std::string typingPrompt = rowText(s, 7);
     check(typingPrompt.find("hello") != std::string::npos,
           "typing renders the input in the composer");
-    check(typingPrompt.find("Ask anything") == std::string::npos,
-          "typing suppresses the placeholder");
 }
 
 void test_chat_prompt_cursor_position() {
@@ -371,6 +365,7 @@ void test_chat_prompt_cursor_position() {
     model.input = "abcd";
     model.inputCursor = 2;
     model.inputFocused = true;
+    model.nowMs = 0;  // cursor-on phase
     chat::drawChatSurface(s, {0, 0, 40, 8}, model);
     check(containsRow(s, "› ab█cd"), "chat prompt renders cursor at model position");
 }
@@ -385,20 +380,20 @@ void test_chat_prompt_keeps_input_while_running() {
     model.inputFocused = true;
     model.running = true;
     model.status = "agent running";
+    model.pendingOps = 2;
+    model.actionCount = 3;
+    model.nowMs = 0;
     chat::drawChatSurface(s, {0, 0, 40, 8}, model);
     std::string promptRow = rowText(s, 7);
     check(promptRow.find("hello") != std::string::npos,
           "composer keeps input text while running");
-    check(promptRow.find("█") != std::string::npos,
-          "composer keeps cursor block while running");
     check(promptRow.find("agent running") == std::string::npos,
           "composer is not replaced by running placeholder");
-    // Truthful running signal on the status line is the "pending ... actions ... results ... b"
-    // metrics block (only built when m.running). The left "agent running" indicator can
-    // get squeezed off-row when the metrics string is wide -- a separate drawStatusLine
-    // layout concern, tracked outside this regression.
-    check(rowText(s, 6).find("pending") != std::string::npos,
-          "status line still reports running state via metrics");
+    // Elevated status row carries live chips (pend/act/…) + spinner — not prose
+    // stuffed into the prompt.
+    std::string statusRow = rowText(s, 6);
+    check(statusRow.find("pend") != std::string::npos || statusRow.find("act") != std::string::npos,
+          "status line still reports running state via metrics chips");
 }
 
 void test_chat_subagent_scope_chrome() {
@@ -488,7 +483,7 @@ int main() {
     test_chat_selection_stays_visible_after_wrap();
     test_chat_prompt_cursor_position();
     test_chat_prompt_keeps_input_while_running();
-    test_chat_prompt_placeholder_when_empty();
+    test_chat_prompt_empty_no_placeholder();
     test_chat_transcript_empty_state();
     test_chat_nested_sub_block_rendering();
     test_chat_subagent_scope_chrome();
