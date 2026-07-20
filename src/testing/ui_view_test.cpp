@@ -443,9 +443,9 @@ void test_chat_help_and_theme() {
     theme::set(theme::Variant::Graphite);
     check(std::string(theme::name()) == "graphite", "graphite is the default chat theme");
     chat::drawHelpOverlay(s, {2, 2, 96, 26});
-    check(containsRow(s, "CHAT HELP"), "chat help overlay renders on demand");
-    check(containsRow(s, "T           switch graphite / neon"),
-          "chat help documents theme switching");
+    check(containsRow(s, "HELP"), "chat help overlay renders on demand");
+    check(containsRow(s, "Ctrl-T") && containsRow(s, "theme graphite"),
+          "chat help documents thoughts toggle and theme switching");
     theme::toggle();
     check(std::string(theme::name()) == "neon", "chat theme toggles to neon");
     theme::set(theme::Variant::Graphite);

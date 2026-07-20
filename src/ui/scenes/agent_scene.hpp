@@ -257,20 +257,12 @@ class AgentScene final : public BaseScene {
         // Transient readline completion listing — chrome only, never history.
         vm.completionMenu = model_->tabMatches;
         vm.completionSelected = model_->tabMatchIndex;
-        if (model_->running)
-            vm.hint = "^C/^X stop  ^T thoughts  ^O trunc  Esc history";
-        else if (!model_->atRoot())
-            vm.hint = "↑↓ scroll · j/k select · Enter drill · Esc back · g refresh";
-        else if (vm.historyFocused)
-            vm.hint = "↑↓ scroll · j/k · Enter open · i composer · ^T thoughts · ^O trunc";
-        else if (!model_->tabMatches.empty())
-            vm.hint = "Tab cycle · Shift-Tab back · Enter run · type to filter";
-        else
-            vm.hint = "Enter send · Tab complete · ^T thoughts · ^O trunc · ^X stop";
+        // No keybind hint spam on the status bar — help overlay owns that.
+        vm.hint.clear();
 
-        // Reserve transcript height for completion menu rows (same math as draw).
+        // Reserve transcript height for completion menu + footer (no sep line).
         int menuH = chat::completionMenuHeight(vm, p.w);
-        model_->transcriptView.viewport_h = std::max(1, p.h - 7 - menuH);
+        model_->transcriptView.viewport_h = std::max(1, p.h - 6 - menuH);
         if (model_->transcriptView.stick_bottom) model_->transcriptView.scroll_to_end();
         else model_->transcriptView.clamp();
 

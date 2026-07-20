@@ -166,10 +166,8 @@ inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const C
     if (m.resultCount > 0) left += " res" + std::to_string(m.resultCount);
     if (m.tokenBytes > 0) left += " " + fmtCompactBytes(m.tokenBytes);
 
-    // Right: mode pills + theme. Hints only when idle and room remains.
+    // Right: mode pills + theme only. Keybind prose lives in help (?).
     std::string right = m.mode + " · " + theme::name();
-    if (!m.running && !m.hint.empty() && row.w >= 110)
-        right = m.hint;
 
     int x = row.x + 2;
     int rightW = inkcell::text::display_width(right);
@@ -572,41 +570,68 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
 }
 
 inline void drawHelpOverlay(inkcell::Surface& surface, inkcell::Rect page) {
-    int width = std::max(44, std::min(page.w - 4, 76));
-    int height = std::max(16, std::min(page.h - 4, 22));
+    // Sectioned, color-keyed help. Keys colored by domain; actions stay quiet.
+    int width = std::max(48, std::min(page.w - 4, 78));
+    int height = std::max(20, std::min(page.h - 2, 28));
     inkcell::Rect frame{page.x + (page.w - width) / 2, page.y + (page.h - height) / 2, width, height};
     surface.fill(frame, " ", theme::panel_2());
-    surface.box(frame, inkcell::BorderStyle::Square, theme::dim());
+    surface.box(frame, inkcell::BorderStyle::Rounded, theme::cyan());
+    surface.hline({frame.x + 1, frame.y + 1}, std::max(0, frame.w - 2), "─", theme::footer_accent_focus());
+
     int x = frame.x + 2;
-    int y = frame.y + 1;
+    int y = frame.y + 2;
     int inner = frame.w - 4;
-    surface.text({x, y++}, "CHAT HELP", theme::bright());
-    surface.text({x, y++}, std::string("theme: ") + theme::name(), theme::dim());
-    ++y;
-    const std::vector<std::string> lines = {
-        "Enter       send prompt",
-        "Up / Down   prompt history (composer) / scroll (history)",
-        "PgUp / PgDn scroll transcript (any focus)",
-        "Home / End  jump to top / bottom (any focus)",
-        "Esc         focus transcript / return to composer",
-        "j / k       select transcript blocks",
-        "Enter       open selected sub-agent",
-        "Ctrl-T      toggle thoughts (works while typing)",
-        "Ctrl-O      toggle body truncation",
-        "Ctrl-R      toggle raw stream",
-        "t / r       toggle thoughts / raw (history focus)",
-        "T           switch graphite / neon",
-        "Tab         complete slash command",
-        "Ctrl-C/X    stop active turn",
-        "Ctrl-C      cancel active turn / quit if idle",
-        "q           quit (outside composer)",
-        "/help       command catalog",
+    const int keyCol = 14;
+
+    auto section = [&](const char* title, inkcell::Style st) {
+        if (y >= frame.bottom() - 3) return;
+        if (y > frame.y + 2) ++y;
+        surface.text({x, y++}, inkcell::text::truncate(title, inner), st);
     };
-    for (const auto& line : lines) {
-        if (y >= frame.bottom() - 2) break;
-        surface.text({x, y++}, inkcell::text::truncate(line, inner), theme::text());
-    }
-    surface.text({x, frame.bottom() - 2}, "? or Esc close", theme::dim());
+    auto row = [&](const char* key, const char* desc, inkcell::Style keySt) {
+        if (y >= frame.bottom() - 2) return;
+        std::string k = key;
+        while (inkcell::text::display_width(k) < keyCol) k.push_back(' ');
+        surface.text({x, y}, inkcell::text::truncate(k, keyCol), keySt);
+        surface.text({x + keyCol, y},
+                     inkcell::text::truncate(desc, std::max(0, inner - keyCol)), theme::text());
+        ++y;
+    };
+
+    surface.text({x, y++}, "HELP", theme::bright());
+    surface.text({x, y++},
+                 inkcell::text::truncate(std::string("theme ") + theme::name() + "  ·  ? or Esc closes",
+                                         inner),
+                 theme::dim());
+
+    section("COMPOSE", theme::green());
+    row("Enter", "send prompt", theme::green());
+    row("↑ / ↓", "prompt history", theme::green());
+    row("Tab", "slash complete (LCP → cycle)", theme::green());
+    row("Shift-Tab", "cycle completions backward", theme::green());
+    row("/…", "slash commands  ·  /help catalog", theme::green());
+
+    section("NAVIGATE", theme::amber());
+    row("Esc", "transcript ↔ composer  ·  back nested", theme::amber());
+    row("PgUp/PgDn", "scroll transcript", theme::amber());
+    row("Home/End", "jump top / bottom", theme::amber());
+    row("j / k", "select blocks (history focus)", theme::amber());
+    row("Enter", "open selected sub-agent", theme::amber());
+    row("i", "focus composer", theme::amber());
+
+    section("VIEW", theme::cyan());
+    row("Ctrl-T", "toggle thoughts", theme::cyan());
+    row("Ctrl-O", "toggle body truncation", theme::cyan());
+    row("Ctrl-R", "toggle raw stream", theme::cyan());
+    row("t / r", "thoughts / raw (history focus)", theme::cyan());
+    row("T", "theme graphite ↔ neon", theme::cyan());
+
+    section("CONTROL", theme::red());
+    row("Ctrl-X", "stop agent loop", theme::red());
+    row("Ctrl-C", "stop if running  ·  quit if idle", theme::red());
+    row("q", "quit (outside composer)", theme::red());
+
+    surface.text({x, frame.bottom() - 2}, "?  Esc  close", theme::dim());
 }
 
 inline void drawAskDialog(inkcell::Surface& surface, inkcell::Rect page, const DialogState& state,
@@ -752,10 +777,9 @@ inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, cons
     int statusY = frame.bottom() - 2;
     int menuH = completionMenuHeight(m, frame.w);
     int menuY = statusY - menuH;
-    int sepY = menuY - 1;
-    inkcell::Rect body{frame.x, frame.y + 2, frame.w, std::max(1, sepY - (frame.y + 2))};
+    // No separator rule — elevated footer is the visual break.
+    inkcell::Rect body{frame.x, frame.y + 2, frame.w, std::max(1, menuY - (frame.y + 2))};
     drawTranscript(surface, body, m);
-    surface.hline({frame.x, sepY}, frame.w, "─", theme::dim());
     if (menuH > 0)
         drawCompletionMenu(surface, {frame.x, menuY, frame.w, menuH}, m);
     drawStatusLine(surface, {frame.x, statusY, frame.w, 1}, m);
