@@ -146,12 +146,28 @@ inline std::vector<TimelineRow> rowsFromAgent(Agent* agent) {
         return out;
     }
 
-    // Prefer the durable multi-prompt history_ (survives across parent→child
-    // calls). protocolEvents alone used to be wiped every prompt(), so drilling
-    // into a non-ephemeral sub-agent only showed the latest call.
-    const auto& hist = agent->history();
-    if (!hist.empty()) {
-        for (const auto& h : hist) {
+    // Prefer structured protocolEvents_ (same Thought/Action/Result/Response
+    // path as the parent chat — full palette). Events now accumulate across
+    // non-ephemeral prompt() calls. Fall back to history_ only when events
+    // are empty (e.g. session restore without event replay).
+    const auto& events = agent->protocolEvents();
+    if (!events.empty()) {
+        for (const auto& pe : events) {
+            TimelineRow row = rowFromProtocol(pe);
+            if (row.kind == TimelineKind::Result && agent->hasSubAgent(row.actionName)) {
+                row.drillable = true;
+                row.actionType = "agent";
+                if (row.title.find("↳") == std::string::npos) row.title += "  ↳ enter";
+            } else if (row.kind == TimelineKind::Action && row.actionType == "agent") {
+                row.drillable = agent->hasSubAgent(row.actionName);
+            }
+            out.push_back(std::move(row));
+        }
+        // Parent missions that only exist in history_ (User/Parent lines) are
+        // not protocol events — prepend missing initiator turns from history
+        // so the nested chat still shows who spoke, then the structured body.
+        std::vector<TimelineRow> inits;
+        for (const auto& h : agent->history()) {
             TimelineRow row;
             row.ok = true;
             if (h.rfind("User: ", 0) == 0) {
@@ -171,40 +187,55 @@ inline std::vector<TimelineRow> rowsFromAgent(Agent* agent) {
                 }
                 row.title = "parent:" + from;
                 row.body = body;
-            } else if (h.rfind("Agent: ", 0) == 0) {
-                // Agent history may embed raw protocol; surface as response body.
-                row.kind = TimelineKind::Response;
-                row.title = "response";
-                row.body = h.substr(7);
-            } else if (h.rfind("System: ", 0) == 0) {
-                row.kind = TimelineKind::Log;
-                row.title = "system";
-                row.body = h.substr(8);
             } else {
-                row.kind = TimelineKind::Log;
-                row.title = "note";
-                row.body = h;
+                continue;
             }
-            if (!row.body.empty()) out.push_back(std::move(row));
+            if (!row.body.empty()) inits.push_back(std::move(row));
         }
+        if (!inits.empty()) {
+            // Interleave is hard without timestamps; show initiators first then
+            // the full structured event stream (matches multi-prompt continuity).
+            inits.insert(inits.end(), out.begin(), out.end());
+            out.swap(inits);
+        }
+        return out;
     }
 
-    // Live structured events (current + prior prompts when not cleared).
-    // Skip if history already painted a rich view; still useful when history
-    // is empty mid-stream on the first call.
-    if (out.empty()) {
-        const auto& events = agent->protocolEvents();
-        for (const auto& pe : events) {
-            TimelineRow row = rowFromProtocol(pe);
-            if (row.kind == TimelineKind::Result && agent->hasSubAgent(row.actionName)) {
-                row.drillable = true;
-                row.actionType = "agent";
-                if (row.title.find("↳") == std::string::npos) row.title += "  ↳ enter";
-            } else if (row.kind == TimelineKind::Action && row.actionType == "agent") {
-                row.drillable = agent->hasSubAgent(row.actionName);
+    // History-only fallback (no structured events).
+    for (const auto& h : agent->history()) {
+        TimelineRow row;
+        row.ok = true;
+        if (h.rfind("User: ", 0) == 0) {
+            row.kind = TimelineKind::User;
+            row.title = "user";
+            row.body = h.substr(6);
+        } else if (h.rfind("Parent(", 0) == 0) {
+            row.kind = TimelineKind::User;
+            auto close = h.find(')');
+            std::string from = "parent";
+            std::string body = h;
+            if (close != std::string::npos) {
+                from = h.substr(7, close - 7);
+                body = (close + 1 < h.size() && h[close + 1] == ':') ? h.substr(close + 2)
+                                                                     : h.substr(close + 1);
+                if (!body.empty() && body[0] == ' ') body = body.substr(1);
             }
-            out.push_back(std::move(row));
+            row.title = "parent:" + from;
+            row.body = body;
+        } else if (h.rfind("Agent: ", 0) == 0) {
+            row.kind = TimelineKind::Response;
+            row.title = "response";
+            row.body = h.substr(7);
+        } else if (h.rfind("System: ", 0) == 0) {
+            row.kind = TimelineKind::Log;
+            row.title = "system";
+            row.body = h.substr(8);
+        } else {
+            row.kind = TimelineKind::Log;
+            row.title = "note";
+            row.body = h;
         }
+        if (!row.body.empty()) out.push_back(std::move(row));
     }
 
     if (out.empty()) {

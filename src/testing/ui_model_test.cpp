@@ -256,7 +256,7 @@ int countRows(const ShellModel& model, TimelineKind kind) {
 void test_dashboard_model() {
     model::DashboardState dashboard;
     dashboard.moveNavigation(20);
-    check(dashboard.section == model::DashboardSection::Help && dashboard.navigationIndex == 4,
+    check(dashboard.section == model::DashboardSection::Help && dashboard.navigationIndex == 5,
           "dashboard navigation clamps at final section");
     dashboard.moveNavigation(-20);
     check(dashboard.section == model::DashboardSection::Overview && dashboard.navigationIndex == 0,

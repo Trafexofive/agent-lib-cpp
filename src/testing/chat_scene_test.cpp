@@ -59,6 +59,7 @@ void test_dashboard_scene() {
               "dashboard renders header at " + std::to_string(size.w) + "x" + std::to_string(size.h));
         check(rendered.find("Overview") != std::string::npos &&
                   rendered.find("Sessions") != std::string::npos &&
+                  rendered.find("Agents") != std::string::npos &&
                   rendered.find("Harness") != std::string::npos &&
                   rendered.find("Runtime") != std::string::npos,
               "dashboard renders sections at " + std::to_string(size.w) + "x" + std::to_string(size.h));

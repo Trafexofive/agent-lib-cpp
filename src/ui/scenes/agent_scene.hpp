@@ -197,7 +197,15 @@ class AgentScene final : public BaseScene {
         vm.transcriptCache = &model_->transcriptWrapCache;
         vm.input = model_->composer.value;
         vm.inputCursor = model_->composer.cursor;
-        vm.agentName = model_->agentName;
+        // Classification/palette keys off the assistant label text. In a nested
+        // sub-agent scope that label is the CHILD name — use it here too so
+        // blocks get the same cyan/kind backgrounds as the parent chat.
+        if (!model_->atRoot()) {
+            if (Agent* cur = model_->currentAgent()) vm.agentName = cur->name();
+            else vm.agentName = model_->agentPath.back();
+        } else {
+            vm.agentName = model_->agentName;
+        }
         vm.scopeName = model_->atRoot() ? std::string() : model_->agentPath.back();
         if (model_->running) vm.hint = "Ctrl-C cancel · Esc history · PgUp/Dn scroll · t thoughts · r raw";
         else if (!model_->atRoot()) vm.hint = "↑↓ scroll · j/k select · Enter drill · Esc back · g refresh";

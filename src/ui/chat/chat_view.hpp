@@ -65,7 +65,7 @@ inline inkcell::Style lineStyle(const std::string& line, bool selected,
     if (selected) return theme::selected_style();
     size_t first = line.find_first_not_of(' ');
     std::string content = first == std::string::npos ? std::string() : line.substr(first);
-    if (content.rfind("YOU", 0) == 0) return theme::green();
+    if (content.rfind("YOU", 0) == 0 || content.rfind("PARENT", 0) == 0) return theme::green();
     // Assistant label is the real agent name (or CORTEX fallback) + meta.
     if (!agentName.empty() && content.rfind(agentName, 0) == 0) return theme::cyan();
     if (content.rfind("CORTEX", 0) == 0) return theme::cyan();

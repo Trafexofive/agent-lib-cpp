@@ -41,6 +41,7 @@ inline ChatBlockKind classifyChatBlock(const std::string& header,
                                        const std::string& agentName = {}) {
     std::string value = stripSelectionMarker(header);
     if (value.rfind("YOU", 0) == 0) return ChatBlockKind::User;
+    if (value.rfind("PARENT", 0) == 0) return ChatBlockKind::User;  // parent-agent mission in child chat
     if (!agentName.empty() && value.rfind(agentName, 0) == 0) return ChatBlockKind::Assistant;
     if (value.rfind("CORTEX", 0) == 0) return ChatBlockKind::Assistant;
     if (value.rfind("AGENT", 0) == 0) return ChatBlockKind::Agent;
