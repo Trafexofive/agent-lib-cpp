@@ -710,6 +710,36 @@ void test_model_result_tags_ignored() {
 // ═══════════════════════════════════════════════════════════════════════
 // main
 // ═══════════════════════════════════════════════════════════════════════
+
+void test_provisional_action_on_open_tag() {
+    // Opening <action ...> should emit ACTION_START before </action> arrives
+    // so the UI can paint the card while the body streams.
+    protocol::Parser parser;
+    std::vector<protocol::TokenEvent> events;
+    parser.onEvent([&](const protocol::TokenEvent& ev) { events.push_back(ev); });
+    parser.setExecutor([](const protocol::ParsedAction&) {
+        Json::Value r; r["success"] = true; r["output"] = "ok"; return r;
+    });
+    parser.feed("<action type=\"tool\" name=\"exec\" id=\"e1\">", false);
+    bool sawProvisional = false;
+    for (const auto& ev : events) {
+        if (ev.type == protocol::TokenEvent::ACTION_START && ev.action &&
+            ev.action->id == "e1" &&
+            ev.metadata.count("provisional") && ev.metadata.at("provisional") == "true")
+            sawProvisional = true;
+    }
+    CHECK(sawProvisional, "provisional ACTION_START on open tag before body closes");
+    size_t n = events.size();
+    parser.feed("{\"command\":\"true\"}</action>", true);
+    bool sawFinal = false;
+    for (size_t i = n; i < events.size(); ++i) {
+        if (events[i].type == protocol::TokenEvent::ACTION_START && events[i].action &&
+            events[i].action->id == "e1")
+            sawFinal = true;
+    }
+    CHECK(sawFinal, "final ACTION_START after body closes (same id)");
+}
+
 int main() {
     std::cout.setf(std::ios::unitbuf);
     std::cout << "\n╔══════════════════════════════════════════╗\n";
@@ -738,6 +768,7 @@ int main() {
     test_clear_results_keeps_used_ids();
     test_invalid_json_body_fail_closed();
     test_depends_on_async_rejected();
+    test_provisional_action_on_open_tag();
 
     std::cout << "\n──────────────────────────────────────────\n";
     std::cout << "  " << passed << " passed, " << failed << " failed\n";

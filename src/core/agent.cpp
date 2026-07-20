@@ -1100,13 +1100,36 @@ std::string Agent::runLoop(AgentContext& ctx) {
                         }
                         ProtocolAction protocolAction{typeStr, ev.action->name, ev.action->id, body,
                                                       modeStr == "sync", modeStr, modifiers};
-                        protocolActions_.push_back(protocolAction);
-                        protocolEvents_.push_back(
-                            {ProtocolEventKind::ACTION, "", protocolAction, {}});
+                        // Provisional open-tag then full close share one id — update
+                        // the existing ACTION event/card in place (stream-as-fast-as-parse).
+                        bool merged = false;
+                        for (auto it = protocolEvents_.rbegin(); it != protocolEvents_.rend();
+                             ++it) {
+                            if (it->kind == ProtocolEventKind::ACTION &&
+                                it->action.id == protocolAction.id) {
+                                it->action = protocolAction;
+                                merged = true;
+                                break;
+                            }
+                        }
+                        if (!merged) {
+                            protocolActions_.push_back(protocolAction);
+                            protocolEvents_.push_back(
+                                {ProtocolEventKind::ACTION, "", protocolAction, {}});
+                        } else {
+                            // Keep protocolActions_ tail in sync when present.
+                            for (auto it = protocolActions_.rbegin(); it != protocolActions_.rend();
+                                 ++it) {
+                                if (it->id == protocolAction.id) {
+                                    *it = protocolAction;
+                                    break;
+                                }
+                            }
+                        }
                         // Notify the TUI immediately on ACTION_START, before
                         // sync dispatch blocks on tools/sub-agents. The action
                         // card must render first; results arrive later.
-                        if (ctx.onToken && ctx.streaming)
+                        if (ctx.onToken)
                             ctx.onToken("", false);
                         std::ostringstream ax;
                         ax << "<action type=\""

@@ -65,6 +65,7 @@ void Parser::compactBuffer() {
     buffer_.erase(0, consumed);
     readPos_ = 0;
     responseContentStart_ = responseContentStart_ >= consumed ? responseContentStart_ - consumed : 0;
+    thoughtContentStart_ = thoughtContentStart_ >= consumed ? thoughtContentStart_ - consumed : 0;
     if (closingScanContentStart_ != std::string::npos) {
         closingScanContentStart_ = closingScanContentStart_ >= consumed
                                        ? closingScanContentStart_ - consumed
@@ -77,7 +78,53 @@ void Parser::compactBuffer() {
 // Core parse loop
 // ---------------------------------------------------------------------------
 void Parser::processBuffer() {
+    // Hold back a suffix that might be a partial closing tag across token boundaries.
+    auto holdPartialClose = [](const std::string& closeMarker, size_t emitEnd, size_t readPos,
+                               const std::string& buffer) -> size_t {
+        if (emitEnd <= readPos) return emitEnd;
+        size_t maxKeep = std::min(closeMarker.size() - 1, emitEnd - readPos);
+        for (size_t keep = maxKeep; keep > 0; --keep) {
+            if (buffer.compare(emitEnd - keep, keep, closeMarker, 0, keep) == 0)
+                return emitEnd - keep;
+        }
+        return emitEnd;
+    };
+
     while (true) {
+        // Stream <thought>/<think>/<thinking> body as it arrives — paint the
+        // Thought card from the first closed-open, not after the whole block.
+        if (inThought_) {
+            static const std::vector<std::string> closes = {"</thought>", "</think>",
+                                                           "</thinking>"};
+            size_t closePos = std::string::npos;
+            size_t closeLen = 0;
+            for (const auto& m : closes) {
+                size_t p = buffer_.find(m, readPos_);
+                if (p != std::string::npos && (closePos == std::string::npos || p < closePos)) {
+                    closePos = p;
+                    closeLen = m.size();
+                }
+            }
+            size_t emitEnd = (closePos == std::string::npos) ? buffer_.size() : closePos;
+            if (closePos == std::string::npos) {
+                // Prefer holding against the longest possible partial close.
+                size_t held = emitEnd;
+                for (const auto& m : closes)
+                    held = std::min(held, holdPartialClose(m, emitEnd, readPos_, buffer_));
+                emitEnd = held;
+            }
+            if (emitEnd > readPos_) {
+                emit({TokenEvent::THOUGHT, buffer_.substr(readPos_, emitEnd - readPos_), {}, {}});
+            }
+            if (closePos == std::string::npos) {
+                readPos_ = emitEnd;
+                return;
+            }
+            readPos_ = closePos + closeLen;
+            inThought_ = false;
+            continue;
+        }
+
         // Once inside <response>, treat everything as user-visible text until
         // the real closing </response>. Literal protocol examples like
         // `<response>` or `<action ...>` inside markdown/code spans must not be
@@ -87,17 +134,8 @@ void Parser::processBuffer() {
             const std::string closeMarker = "</response>";
             size_t closePos = findResponseClose(readPos_);
             size_t emitEnd = (closePos == std::string::npos) ? buffer_.size() : closePos;
-            if (closePos == std::string::npos) {
-                // Do not emit a suffix that could be the start of a streamed
-                // closing tag, e.g. token boundary: "</response" then ">".
-                size_t maxKeep = std::min(closeMarker.size() - 1, emitEnd - readPos_);
-                for (size_t keep = maxKeep; keep > 0; --keep) {
-                    if (buffer_.compare(emitEnd - keep, keep, closeMarker, 0, keep) == 0) {
-                        emitEnd -= keep;
-                        break;
-                    }
-                }
-            }
+            if (closePos == std::string::npos)
+                emitEnd = holdPartialClose(closeMarker, emitEnd, readPos_, buffer_);
             if (emitEnd > readPos_) {
                 emit({TokenEvent::RESPONSE, buffer_.substr(readPos_, emitEnd - readPos_), {}, {}});
             }
@@ -119,13 +157,18 @@ void Parser::processBuffer() {
 
         size_t tagStart = findNextTag();
         if (tagStart == std::string::npos) {
-            // No more tags — if inside <response>, emit remaining content as stream
+            // No more tags — drain any open stream bodies.
             if (inResponse_ && readPos_ < buffer_.size()) {
                 std::string partial = buffer_.substr(readPos_);
                 readPos_ = buffer_.size();
-                if (!partial.empty()) {
+                if (!partial.empty())
                     emit({TokenEvent::RESPONSE, partial, {}, {}});
-                }
+            }
+            if (inThought_ && readPos_ < buffer_.size()) {
+                std::string partial = buffer_.substr(readPos_);
+                readPos_ = buffer_.size();
+                if (!partial.empty())
+                    emit({TokenEvent::THOUGHT, partial, {}, {}});
             }
             return;
         }
@@ -198,6 +241,46 @@ void Parser::processBuffer() {
             responseContentStart_ = contentStart;
             readPos_ = contentStart;
             continue;
+        } else if (tagName == "thought") {
+            // STREAMING thought — paint from first body bytes, not after </thought>.
+            contentStart = gt + 1;
+            inThought_ = true;
+            thoughtContentStart_ = contentStart;
+            readPos_ = contentStart;
+            continue;
+        } else if (tagName == "action") {
+            // Emit a provisional ACTION_START as soon as the opening tag is
+            // complete (name/id/type visible) so the UI paints the card before
+            // a large JSON body finishes streaming. Execute only on full close.
+            contentStart = gt + 1;
+            openingTag = buffer_.substr(readPos_ + 1, contentStart - readPos_ - 2);
+            auto openAttrs = parseAttrs(openingTag);
+            closingPos = findClosingTag(tagName, contentStart);
+            if (closingPos == std::string::npos) {
+                // Provisional UI-only emit (no execute, no usedActionIds).
+                if (!finalResponseSeen_ && !hasProvisionalAction_) {
+                    auto provisional = buildAction("", openAttrs);
+                    if (provisional) {
+                        hasProvisionalAction_ = true;
+                        provisionalActionId_ = provisional->id;
+                        TokenEvent pev{TokenEvent::ACTION_START, "", provisional, {}};
+                        pev.metadata["provisional"] = "true";
+                        emit(pev);
+                    }
+                }
+                return;  // wait for </action>
+            }
+            size_t closingTagStart = closingPos - lastCloseLen_;
+            content = buffer_.substr(contentStart, closingTagStart - contentStart);
+            // Reuse provisional id so the UI card updates in place.
+            if (hasProvisionalAction_ && openAttrs.find("id") == openAttrs.end() &&
+                !provisionalActionId_.empty())
+                openAttrs["id"] = provisionalActionId_;
+            hasProvisionalAction_ = false;
+            provisionalActionId_.clear();
+            handleAction(content, openAttrs);
+            readPos_ = closingPos;
+            continue;
         } else {
             closingPos = findClosingTag(tagName, gt + 1);
             if (closingPos == std::string::npos)
@@ -212,10 +295,8 @@ void Parser::processBuffer() {
 
         auto attrs = parseAttrs(openingTag);
 
-        // Dispatch to handler
-        if (tagName == "thought")
-            handleThought(content);
-        else if (tagName == "action")
+        // Dispatch to handler (thought/response handled via stream modes above)
+        if (tagName == "action")
             handleAction(content, attrs);
         else if (tagName == "response")
             handleResponse(content, attrs);
@@ -223,6 +304,8 @@ void Parser::processBuffer() {
             handleResult(content, attrs);
         else if (tagName == "context_feed")
             handleContextFeed(content, attrs);
+        else if (tagName == "thought" && selfClosing)
+            handleThought(content);
 
         // Advance past closing tag
         if (selfClosing) {
@@ -833,7 +916,11 @@ void Parser::clearResults() {
     finalResponseSeen_ = false;
     inResponse_ = false;
     responseContentStart_ = 0;
+    inThought_ = false;
+    thoughtContentStart_ = 0;
     responseAttrs_.clear();
+    hasProvisionalAction_ = false;
+    provisionalActionId_.clear();
     buffer_.clear();
     readPos_ = 0;
     lastCloseLen_ = 0;
@@ -861,8 +948,12 @@ void Parser::reset() {
     finalResponseSeen_ = false;
     inResponse_ = false;
     responseContentStart_ = 0;
+    inThought_ = false;
+    thoughtContentStart_ = 0;
     usedActionIds_.clear();
     responseAttrs_.clear();
+    hasProvisionalAction_ = false;
+    provisionalActionId_.clear();
     closingScanTag_.clear();
     closingScanContentStart_ = std::string::npos;
     closingScanPos_ = 0;

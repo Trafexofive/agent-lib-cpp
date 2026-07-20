@@ -134,8 +134,9 @@ class Parser {
     Json::Value resolveVars(const Json::Value& input) const;
 
     // JSON helpers
-    std::string cleanJson(const std::string& raw);
-    std::string completeJson(const std::string& raw);
+    std::string trimJson(const std::string& raw);
+    std::string cleanJson(const std::string& raw);  // trim only — no silent repair
+    std::string completeJson(const std::string& raw);  // retained for tests/debug; not used on action bodies
     bool isCompleteJson(const std::string& s);
 
     // Enum parsers
@@ -164,9 +165,14 @@ class Parser {
     bool inResponse_ = false;  // true between <response> and </response> for streaming
     size_t responseContentStart_ =
         0;  // start of active response body for code-span-aware close scans
+    bool inThought_ = false;  // stream thought body as tokens arrive (same as response)
+    size_t thoughtContentStart_ = 0;
     bool finalResponseSeen_ = false;  // true after first <response final="true">
     std::map<std::string, std::string>
         responseAttrs_;  // attrs from opening <response>, applied when streaming closes
+    // At most one incomplete action while its body streams — stable id for UI card.
+    bool hasProvisionalAction_ = false;
+    std::string provisionalActionId_;
 
     // Results
     std::map<std::string, Json::Value> results_;

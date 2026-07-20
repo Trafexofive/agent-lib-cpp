@@ -131,8 +131,22 @@ inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& p
         std::vector<ProtocolEvent> previousEvents;
         auto lastUiFlush = std::chrono::steady_clock::now() - std::chrono::milliseconds(16);
         auto onToken = [&](const std::string& token, bool finalChunk) {
+            // Stream-as-fast-as-parse: never delay a closed (or provisional)
+            // protocol event. Only coalesce pure byte heartbeats (~60fps).
+            const auto& cur = agent.protocolEvents();
+            bool protocolDirty = cur.size() != previousEvents.size();
+            if (!protocolDirty) {
+                for (size_t i = 0; i < cur.size(); ++i) {
+                    if (i >= previousEvents.size() || !sameProtocolEvent(cur[i], previousEvents[i])) {
+                        protocolDirty = true;
+                        break;
+                    }
+                }
+            }
             auto now = std::chrono::steady_clock::now();
-            if (!finalChunk && now - lastUiFlush < std::chrono::milliseconds(16)) return;
+            if (!finalChunk && !protocolDirty &&
+                now - lastUiFlush < std::chrono::milliseconds(16))
+                return;
             lastUiFlush = now;
             std::vector<UiEvent> batch;
             // Forwarded child tokens (non-empty) publish directly so the UI
@@ -150,7 +164,8 @@ inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& p
                 rawSeen = raw.size();
             }
             collectProtocolChanges(batch, agent.protocolEvents(), previousEvents);
-            bridge.publishMany(std::move(batch));
+            if (!batch.empty())
+                bridge.publishMany(std::move(batch));
         };
         std::string result = agent.prompt(prompt, onToken, sessionId, ephemeral);
         onToken("", true);
