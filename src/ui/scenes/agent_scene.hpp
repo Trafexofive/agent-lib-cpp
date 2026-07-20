@@ -180,10 +180,6 @@ class AgentScene final : public BaseScene {
         if (layout::render_min_size_notice(surface)) return;
         auto p = layout::page(surface);
 
-        model_->transcriptView.viewport_h = std::max(1, p.h - 7);
-        if (model_->transcriptView.stick_bottom) model_->transcriptView.scroll_to_end();
-        else model_->transcriptView.clamp();
-
         chat::ChatSurfaceModel vm;
         vm.path = model_->breadcrumb();
         vm.provider = cfg_.provider;
@@ -222,14 +218,25 @@ class AgentScene final : public BaseScene {
             vm.agentName = model_->agentName;
         }
         vm.scopeName = model_->atRoot() ? std::string() : model_->agentPath.back();
+        // Transient readline completion listing — chrome only, never history.
+        vm.completionMenu = model_->tabMatches;
+        vm.completionSelected = model_->tabMatchIndex;
         if (model_->running)
             vm.hint = "Ctrl-C/X stop · Esc history · PgUp/Dn scroll · t thoughts · r raw";
         else if (!model_->atRoot())
             vm.hint = "↑↓ scroll · j/k select · Enter drill · Esc back · g refresh";
         else if (vm.historyFocused)
             vm.hint = "↑↓ scroll · j/k select · Enter open · PgUp/Dn · i composer · ? help · q quit";
+        else if (!model_->tabMatches.empty())
+            vm.hint = "Tab cycle · Shift-Tab back · Enter run · type to filter";
         else
             vm.hint = "Enter send · ↑↓ history · Tab complete · Ctrl-X stop · Esc transcript";
+
+        // Reserve transcript height for completion menu rows (same math as draw).
+        int menuH = chat::completionMenuHeight(vm, p.w);
+        model_->transcriptView.viewport_h = std::max(1, p.h - 7 - menuH);
+        if (model_->transcriptView.stick_bottom) model_->transcriptView.scroll_to_end();
+        else model_->transcriptView.clamp();
 
         chat::drawChatSurface(surface, p, vm);
         if (model_->askActive)
@@ -477,30 +484,30 @@ class AgentScene final : public BaseScene {
         }
         auto& matches = model_->tabMatches;
         if (matches.empty()) {
-            model_->appendNotice("completions", {"(no matches for " + prefix + ")"});
+            // Silent — no matches. Menu stays empty; do not pollute transcript.
             return;
         }
 
         if (matches.size() == 1) {
             model_->composer.value = matches.front() + " ";
             model_->composer.cursor = static_cast<int>(model_->composer.value.size());
-            model_->clearTabCompletion();
+            model_->clearTabCompletion();  // menu disappears after unique resolve
             return;
         }
 
         std::string lcp = chat::commonPrefixOf(matches);
         // First press (or after typing): jump to LCP if it extends the prefix.
+        // Menu stays visible with the narrowed candidate set (readline list).
         if (model_->tabMatchIndex < 0 && lcp.size() > prefix.size()) {
             model_->composer.value = lcp;
             model_->composer.cursor = static_cast<int>(lcp.size());
             model_->tabStem = lcp;
-            // Rebuild matches under the extended stem so cycle list stays tight.
             model_->tabMatches = chat::completeChatCommand(lcp);
-            model_->appendNotice("completions", model_->tabMatches);
+            model_->tabMatchIndex = -1;  // highlight none until cycle
             return;
         }
 
-        // Cycle through full matches.
+        // Cycle through full matches — composer shows the pick; menu highlights it.
         if (model_->tabMatchIndex < 0)
             model_->tabMatchIndex = reverse ? static_cast<int>(matches.size()) - 1 : 0;
         else if (reverse)
@@ -515,12 +522,7 @@ class AgentScene final : public BaseScene {
         model_->composer.value = pick;
         model_->composer.cursor = static_cast<int>(pick.size());
         model_->tabStem = pick;
-
-        std::vector<std::string> menu;
-        for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
-            menu.push_back((i == model_->tabMatchIndex ? "> " : "  ") + matches[static_cast<size_t>(i)]);
-        }
-        model_->appendNotice("completions", menu);
+        // tabMatches unchanged → draw layer paints the menu with selection.
     }
 
     void handle(const inkcell::Action& action) override {

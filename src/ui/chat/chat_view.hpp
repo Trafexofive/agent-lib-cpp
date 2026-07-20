@@ -53,6 +53,11 @@ struct ChatSurfaceModel {
     std::string hint;
     std::string agentName;  // real agent display name for the assistant label (replaces CORTEX)
     std::string scopeName;  // drilled-in subagent name (empty at root) for header/status scope indicator
+    // Transient readline-style completion menu (NOT transcript history).
+    // Drawn between the body separator and the status line; cleared when the
+    // operator types, submits, or leaves the stem.
+    std::vector<std::string> completionMenu;
+    int completionSelected = -1;  // index highlighted while cycling; -1 = none
 };
 
 inline std::string suffix(const std::string& id) {
@@ -603,16 +608,67 @@ inline void drawAskDialog(inkcell::Surface& surface, inkcell::Rect page, const D
     surface.text({x, frame.bottom() - 2}, inkcell::text::truncate(hint, inner), theme::dim());
 }
 
+// Paint a readline-style completion listing just above the status/prompt chrome.
+// Multi-column when it fits; wraps to extra rows. Never touches the transcript.
+inline int completionMenuHeight(const ChatSurfaceModel& m, int width) {
+    if (m.completionMenu.empty() || width <= 0) return 0;
+    // Cap at 4 rows so a huge catalog does not eat the whole screen.
+    const int maxRows = 4;
+    int colW = 1;
+    for (const auto& s : m.completionMenu)
+        colW = std::max(colW, inkcell::text::display_width(s) + 2);
+    colW = std::min(colW, std::max(8, width));
+    int cols = std::max(1, width / colW);
+    int rows = static_cast<int>((m.completionMenu.size() + static_cast<size_t>(cols) - 1) /
+                               static_cast<size_t>(cols));
+    return std::min(maxRows, std::max(1, rows));
+}
+
+inline void drawCompletionMenu(inkcell::Surface& surface, inkcell::Rect area,
+                               const ChatSurfaceModel& m) {
+    if (m.completionMenu.empty() || area.h <= 0 || area.w <= 0) return;
+    int colW = 1;
+    for (const auto& s : m.completionMenu)
+        colW = std::max(colW, inkcell::text::display_width(s) + 2);
+    colW = std::min(colW, std::max(8, area.w));
+    int cols = std::max(1, area.w / colW);
+    int maxItems = cols * area.h;
+    for (int i = 0; i < static_cast<int>(m.completionMenu.size()) && i < maxItems; ++i) {
+        int row = i / cols;
+        int col = i % cols;
+        int x = area.x + col * colW;
+        bool selected = (i == m.completionSelected);
+        std::string cell = m.completionMenu[static_cast<size_t>(i)];
+        if (selected) cell = cell;  // style carries selection
+        surface.text({x, area.y + row},
+                     inkcell::text::truncate(cell, colW - 1),
+                     selected ? theme::selected_style() : theme::dim());
+    }
+    if (static_cast<int>(m.completionMenu.size()) > maxItems) {
+        // Last cell slot: overflow marker
+        int i = maxItems - 1;
+        int row = i / cols;
+        int col = i % cols;
+        surface.text({area.x + col * colW, area.y + row}, "…",
+                     theme::dim());
+    }
+}
+
 inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, const ChatSurfaceModel& m) {
     surface.clear(theme::base_bg());
     if (frame.w <= 0 || frame.h <= 0) return;
     // One flat page, no nested boxes. Leave the app-level page inset to caller.
     drawHeader(surface, frame, m);
-    int statusY = frame.bottom() - 2;
     int promptY = frame.bottom() - 1;
-    inkcell::Rect body{frame.x, frame.y + 2, frame.w, std::max(1, statusY - (frame.y + 2) - 1)};
+    int statusY = frame.bottom() - 2;
+    int menuH = completionMenuHeight(m, frame.w);
+    int menuY = statusY - menuH;
+    int sepY = menuY - 1;
+    inkcell::Rect body{frame.x, frame.y + 2, frame.w, std::max(1, sepY - (frame.y + 2))};
     drawTranscript(surface, body, m);
-    surface.hline({frame.x, statusY - 1}, frame.w, "─", theme::dim());
+    surface.hline({frame.x, sepY}, frame.w, "─", theme::dim());
+    if (menuH > 0)
+        drawCompletionMenu(surface, {frame.x, menuY, frame.w, menuH}, m);
     drawStatusLine(surface, {frame.x, statusY, frame.w, 1}, m);
     drawPromptLine(surface, {frame.x, promptY, frame.w, 1}, m);
 }
