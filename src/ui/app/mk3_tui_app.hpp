@@ -68,6 +68,8 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
     model->agentName = cfg.agentName.empty() ? "cortex" : cfg.agentName;
     model->agentModel = cfg.model;
     model->agentProvider = cfg.provider;
+    model->showThoughts = cfg.showThoughts;
+    model->truncateBodies = cfg.truncateBodies;
     model->dashboard.refreshSessions();
     model->promptHistory = chat::loadPromptHistory();
     model->promptHistoryIndex = static_cast<int>(model->promptHistory.size());
@@ -184,6 +186,12 @@ inline int runInkcellSmoke(const InkcellAppConfig& cfg, Agent& agent) { return r
 
 inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const std::string& prompt,
                              const std::string& sessionId, bool ephemeral) {
+    // -p / --prompt one-shot: run the prompt, render the turn, exit when the
+    // agent stops. Does NOT imply --ephemeral/--no-session (session still
+    // saved unless those flags are set). Does NOT stay interactive — for
+    // multi-turn after a seed prompt use --repl -p, or launch without -p.
+    // Note: second typed queries in this mode intentionally do nothing; the
+    // process is exiting. That is not a submit bug — use interactive mode.
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
     model->setRootAgent(&agent);
@@ -198,7 +206,19 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     std::thread worker([&]() { runAgentTurn(bridge, agent, prompt, sessionId, ephemeral, done); });
 
     auto app = makeInkcellApp(cfg, bridge, model, false);
-    installAppTick(app, bridge, model);
+    std::atomic<bool> quitPosted{false};
+    app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([]() {});
+    app.engine().on_tick([model, &bridge, &app, &done, &quitPosted](inkcell::Tick) {
+        model->drain(bridge);
+        if (model->pendingRoute == "quit") {
+            model->pendingRoute.clear();
+            app.engine().post_action(inkcell::Action{"app.quit"});
+        }
+        // Close when the one-shot turn completes (after draining final events).
+        if (done.load(std::memory_order_acquire) && !quitPosted.exchange(true)) {
+            app.engine().post_action(inkcell::Action{"app.quit"});
+        }
+    });
     int rc = 0;
     if (snapshotMode()) {
         while (!done.load(std::memory_order_acquire)) {

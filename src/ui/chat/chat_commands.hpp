@@ -26,6 +26,7 @@ struct ChatCommandResult {
     bool quit = false;
     bool clearTranscript = false;
     bool toggleThoughts = false;
+    bool toggleTruncate = false;
     bool toggleRaw = false;
     bool toggleTheme = false;
     bool showPrompts = false;
@@ -56,6 +57,12 @@ inline ChatCommandResult executeChatCommand(const std::string& command,
         out.toggleThoughts = true;
         out.title = "thoughts";
         out.lines = {"thought visibility toggled"};
+        return out;
+    }
+    if (command == "/truncate") {
+        out.toggleTruncate = true;
+        out.title = "truncate";
+        out.lines = {"body truncation toggled"};
         return out;
     }
     if (command == "/raw") {
@@ -98,6 +105,7 @@ inline ChatCommandResult executeChatCommand(const std::string& command,
             "/help, /commands   show this list",
             "/clear             clear visible transcript",
             "/thoughts          toggle thought rows",
+            "/truncate          toggle long-body truncation (pi-like)",
             "/raw               toggle raw stream rows",
             "/theme [name]      switch or select graphite / neon",
             "/manifests         inspect active harness surface",

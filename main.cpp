@@ -89,6 +89,9 @@ struct CliConfig {
     std::string harnessPromptPath;
     std::string personaPath;
     bool ephemeral = false;
+    // Chat render modifiers (orthogonal to -p / ephemeral / session).
+    bool showThoughts = true;     // --no-thoughts to hide Thought rows
+    bool truncateBodies = true;   // --no-truncate for full bodies
     bool raw = false;
     bool toolAnsi = true;
     bool replMode = false;
@@ -253,7 +256,9 @@ void printHelpRun() {
     std::cout << R"(Usage: cortex-mk3 run [flags]
 
 Flags:
-  -p, --prompt <text>    One-shot prompt
+  -p, --prompt <text>    One-shot prompt (run, then exit when the turn ends;
+                         does NOT imply --no-session; stack freely with session flags.
+                         Multi-turn after a seed prompt: --repl -p "...")
   -f, --file <path>      Read prompt from file
   -m, --manifest [name|path]  Agent name (catalog) or path; bare -m opens manager
   --agent [name|path]    Alias for --manifest
@@ -262,8 +267,10 @@ Flags:
   --session <id>         Use specific session id
   -c, --continue         Continue previous session
   -r, --resume           Select a session to resume
-  --no-session           Don't save session (ephemeral)
-  --ephemeral            Alias for --no-session
+  --no-session           Don't save session
+  --ephemeral            Alias for --no-session (orthogonal to -p)
+  --thoughts / --no-thoughts   Show/hide Thought rows (default: show)
+  --truncate / --no-truncate   Cap long bodies pi-style (default: on)
   --no-tool-ansi         Strip ANSI/color escapes from tool result rendering
   --repl                 Force interactive mode even with --prompt
   --tui <legacy|inkcell|experimental> Select TUI backend
@@ -415,6 +422,10 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"no-session", no_argument, 0, 'e'},
                                        {"ephemeral", no_argument, 0, 'e'},
                                        {"repl", no_argument, 0, 'E'},
+                                       {"thoughts", no_argument, 0, 1030},
+                                       {"no-thoughts", no_argument, 0, 1031},
+                                       {"truncate", no_argument, 0, 1032},
+                                       {"no-truncate", no_argument, 0, 1033},
 
                                        // Serve
                                        {"host", required_argument, 0, 'o'},
@@ -605,6 +616,18 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 break;
             case 'E':
                 cli.replMode = true;
+                break;
+            case 1030:
+                cli.showThoughts = true;
+                break;
+            case 1031:
+                cli.showThoughts = false;
+                break;
+            case 1032:
+                cli.truncateBodies = true;
+                break;
+            case 1033:
+                cli.truncateBodies = false;
                 break;
 
             // Serve
@@ -2210,6 +2233,8 @@ static int cmdRun(CliConfig& cli) {
             icfg.relicCount = static_cast<int>(agent.relicNames().size());
             icfg.subAgentCount = static_cast<int>(agent.subAgentNames().size());
             icfg.ephemeral = cli.ephemeral;
+            icfg.showThoughts = cli.showThoughts;
+            icfg.truncateBodies = cli.truncateBodies;
             return ui::runInkcellOneShot(icfg, agent, cli.prompt, promptSessionId, cli.ephemeral);
         }
 
@@ -2263,6 +2288,8 @@ static int cmdRun(CliConfig& cli) {
         icfg.relicCount = static_cast<int>(agent.relicNames().size());
         icfg.subAgentCount = static_cast<int>(agent.subAgentNames().size());
         icfg.ephemeral = cli.ephemeral;
+        icfg.showThoughts = cli.showThoughts;
+        icfg.truncateBodies = cli.truncateBodies;
         return ui::runInkcellRepl(icfg, agent, experimentalSessionId, cli.ephemeral);
     }
 

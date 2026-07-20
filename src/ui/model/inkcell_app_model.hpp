@@ -36,6 +36,9 @@ struct InkcellAppConfig {
     int relicCount = 0;
     int subAgentCount = 0;
     bool ephemeral = false;
+    // Chat render modifiers (orthogonal to -p / session flags).
+    bool showThoughts = true;
+    bool truncateBodies = true;
 };
 
 enum class PageState { Loading, Populated, Empty, Error };
@@ -193,6 +196,10 @@ struct ShellModel {
     bool failed = false;
     bool showThoughts = true;
     bool showRaw = false;
+    // When true, long block bodies are capped (pi-like truncation) with a
+    // "… N more lines" note. Toggle via /truncate or CLI --[no-]truncate.
+    bool truncateBodies = true;
+    static constexpr int kMaxBodyLines = 50;
     int tokenBytes = 0;
     int actionCount = 0;
     int resultCount = 0;
@@ -367,6 +374,15 @@ struct ShellModel {
             for (int ri = 0; ri < static_cast<int>(rows.size()); ++ri) {
                 const auto& row = rows[static_cast<size_t>(ri)];
                 if (row.kind == TimelineKind::Thought && !showThoughts) continue;
+                // Empty/whitespace-only thoughts are parser noise or open-tag
+                // placeholders — never paint a hollow ▎ THOUGHT block.
+                if (row.kind == TimelineKind::Thought) {
+                    bool any = false;
+                    for (char c : row.body) {
+                        if (c != ' ' && c != '\t' && c != '\n' && c != '\r') { any = true; break; }
+                    }
+                    if (!any) continue;
+                }
                 if (row.kind == TimelineKind::Stream && !showRaw) continue;
 
                 bool selected = timelineFocus && (focusIdx == selectedBlock);
@@ -444,9 +460,26 @@ struct ShellModel {
                 // Always emit the row body. For sub-agent Results this is the
                 // child's final response text (summary/output) — not nested
                 // child blocks. Full child timeline is manual ↳ Enter only.
-                for (const auto& line : splitDisplayLines(row.body)) {
-                    if (line.empty() && row.body.empty()) continue;
-                    transcriptView.lines.push_back("    " + line);
+                // Optional truncation (pi-like): cap body lines when enabled.
+                {
+                    auto bodyLines = splitDisplayLines(row.body);
+                    int shown = 0;
+                    int total = 0;
+                    for (const auto& line : bodyLines) {
+                        if (line.empty() && row.body.empty()) continue;
+                        ++total;
+                    }
+                    for (const auto& line : bodyLines) {
+                        if (line.empty() && row.body.empty()) continue;
+                        if (truncateBodies && shown >= kMaxBodyLines) break;
+                        transcriptView.lines.push_back("    " + line);
+                        ++shown;
+                    }
+                    if (truncateBodies && total > shown) {
+                        transcriptView.lines.push_back(
+                            "    … (" + std::to_string(total - shown) +
+                            " more lines — /truncate off or ↳ drill to expand)");
+                    }
                 }
                 transcriptView.lines.push_back("");
                 ++focusIdx;

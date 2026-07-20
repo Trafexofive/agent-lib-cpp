@@ -175,7 +175,11 @@ class AgentScene final : public BaseScene {
         vm.model = cfg_.model;
         vm.sessionId = model_->activeSessionId;
         vm.status = model_->status;
-        vm.mode = model_->showRaw ? "RAW" : model_->showThoughts ? "FULL+THOUGHTS" : "FULL";
+        {
+            std::string mode = model_->showRaw ? "RAW" : model_->showThoughts ? "FULL+THOUGHTS" : "FULL";
+            if (!model_->truncateBodies) mode += "+FULLBODY";
+            vm.mode = mode;
+        }
         vm.running = model_->running;
         vm.failed = model_->failed;
         vm.inputFocused = model_->composer.focused && !model_->timelineFocus && model_->atRoot();
@@ -311,7 +315,14 @@ class AgentScene final : public BaseScene {
         model_->composer.cursor = 0;
         if (result.quit) model_->pendingRoute = "quit";
         if (result.clearTranscript) model_->clearTranscript();
-        if (result.toggleThoughts) model_->showThoughts = !model_->showThoughts;
+        if (result.toggleThoughts) {
+            model_->showThoughts = !model_->showThoughts;
+            model_->rebuildViews();
+        }
+        if (result.toggleTruncate) {
+            model_->truncateBodies = !model_->truncateBodies;
+            model_->rebuildViews();
+        }
         if (result.toggleRaw) model_->showRaw = !model_->showRaw;
         if (result.toggleTheme) {
             if (result.themeName == "graphite") theme::set(theme::Variant::Graphite);

@@ -618,6 +618,31 @@ void test_chat_thought_rows_visible_by_default() {
           "thought protocol event produces a Thought timeline row visible by default");
 }
 
+
+void test_chat_empty_thoughts_not_rendered() {
+    ShellModel model;
+    model.showThoughts = true;
+    TimelineRow empty;
+    empty.kind = TimelineKind::Thought;
+    empty.title = "thought";
+    empty.body = "   \n\t";
+    TimelineRow real;
+    real.kind = TimelineKind::Thought;
+    real.title = "thought";
+    real.body = "actual reasoning";
+    model.rootRows.push_back(std::move(empty));
+    model.rootRows.push_back(std::move(real));
+    model.rebuildViews();
+    int thoughtHeaders = 0;
+    bool hasReal = false;
+    for (const auto& l : model.transcriptView.lines) {
+        if (l.find("THOUGHT") != std::string::npos) ++thoughtHeaders;
+        if (l.find("actual reasoning") != std::string::npos) hasReal = true;
+    }
+    check(thoughtHeaders == 1, "empty/whitespace thought rows are not rendered");
+    check(hasReal, "non-empty thought body still renders");
+}
+
 void test_chat_subagent_result_shows_final_no_auto_enter() {
     // Sub-agent RESULT in the parent transcript shows the child's final
     // response text as the body. No nested child blocks. No auto-enter —
@@ -703,6 +728,7 @@ int main() {
     test_chat_last_turn_summary_lifecycle();
     test_chat_last_response_body();
     test_chat_thought_rows_visible_by_default();
+    test_chat_empty_thoughts_not_rendered();
     test_chat_subagent_result_shows_final_no_auto_enter();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
