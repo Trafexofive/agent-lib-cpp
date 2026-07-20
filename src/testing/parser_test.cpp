@@ -714,30 +714,31 @@ void test_model_result_tags_ignored() {
 void test_provisional_action_on_open_tag() {
     // Opening <action ...> should emit ACTION_START before </action> arrives
     // so the UI can paint the card while the body streams.
-    protocol::Parser parser;
-    std::vector<protocol::TokenEvent> events;
-    parser.onEvent([&](const protocol::TokenEvent& ev) { events.push_back(ev); });
-    parser.setExecutor([](const protocol::ParsedAction&) {
-        Json::Value r; r["success"] = true; r["output"] = "ok"; return r;
-    });
+    TEST("provisional ACTION_START on open tag before body closes");
+    TestHarness h;
+    Parser parser([&](const ParsedAction& a) { return h.executeAction(a); });
+    parser.onEvent([&](const TokenEvent& ev) { h.onEvent(ev); });
+
     parser.feed("<action type=\"tool\" name=\"exec\" id=\"e1\">", false);
     bool sawProvisional = false;
-    for (const auto& ev : events) {
-        if (ev.type == protocol::TokenEvent::ACTION_START && ev.action &&
-            ev.action->id == "e1" &&
+    for (const auto& ev : h.events) {
+        if (ev.type == TokenEvent::ACTION_START && ev.action && ev.action->id == "e1" &&
             ev.metadata.count("provisional") && ev.metadata.at("provisional") == "true")
             sawProvisional = true;
     }
-    CHECK(sawProvisional, "provisional ACTION_START on open tag before body closes");
-    size_t n = events.size();
+    CHECK(sawProvisional, "expected provisional ACTION_START before body close");
+
+    size_t n = h.events.size();
     parser.feed("{\"command\":\"true\"}</action>", true);
     bool sawFinal = false;
-    for (size_t i = n; i < events.size(); ++i) {
-        if (events[i].type == protocol::TokenEvent::ACTION_START && events[i].action &&
-            events[i].action->id == "e1")
+    for (size_t i = n; i < h.events.size(); ++i) {
+        if (h.events[i].type == TokenEvent::ACTION_START && h.events[i].action &&
+            h.events[i].action->id == "e1")
             sawFinal = true;
     }
-    CHECK(sawFinal, "final ACTION_START after body closes (same id)");
+    CHECK(sawFinal, "expected final ACTION_START after body close (same id)");
+    CHECK(!h.actions.empty(), "executor runs once on full close, not provisional");
+    PASS();
 }
 
 int main() {
