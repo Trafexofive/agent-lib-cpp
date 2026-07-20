@@ -184,14 +184,10 @@ inline int runInkcellShell(const InkcellAppConfig& cfg, Agent& agent) {
 
 inline int runInkcellSmoke(const InkcellAppConfig& cfg, Agent& agent) { return runInkcellShell(cfg, agent); }
 
+// --ephemeral + -p: run one turn and exit when finished.
+// sessionId / noSession control persistence; exit is unconditional here.
 inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const std::string& prompt,
-                             const std::string& sessionId, bool ephemeral) {
-    // -p / --prompt one-shot: run the prompt, render the turn, exit when the
-    // agent stops. Does NOT imply --ephemeral/--no-session (session still
-    // saved unless those flags are set). Does NOT stay interactive — for
-    // multi-turn after a seed prompt use --repl -p, or launch without -p.
-    // Note: second typed queries in this mode intentionally do nothing; the
-    // process is exiting. That is not a submit bug — use interactive mode.
+                             const std::string& sessionId, bool noSession) {
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
     model->setRootAgent(&agent);
@@ -203,7 +199,7 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     model->pushRow(std::move(userRow));
     agent.setAskToolHandler([&bridge](const Json::Value& params) { return bridge.requestAsk(params); });
     std::atomic<bool> done{false};
-    std::thread worker([&]() { runAgentTurn(bridge, agent, prompt, sessionId, ephemeral, done); });
+    std::thread worker([&]() { runAgentTurn(bridge, agent, prompt, sessionId, noSession, done); });
 
     auto app = makeInkcellApp(cfg, bridge, model, false);
     std::atomic<bool> quitPosted{false};
@@ -214,7 +210,6 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"app.quit"});
         }
-        // Close when the one-shot turn completes (after draining final events).
         if (done.load(std::memory_order_acquire) && !quitPosted.exchange(true)) {
             app.engine().post_action(inkcell::Action{"app.quit"});
         }
@@ -238,13 +233,17 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     return rc;
 }
 
-inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::string& /*sessionId*/, bool ephemeral) {
+// Interactive REPL. noSession → agent.prompt won't persist.
+// cfg.ephemeral → quit after a completed agent turn.
+// cfg.initialPrompt → auto-submit a seed prompt (-p without --ephemeral).
+inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::string& /*sessionId*/, bool noSession) {
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
     model->setRootAgent(&agent);
     initializeChatModel(model, cfg);
     agent.setAskToolHandler([&bridge](const Json::Value& params) { return bridge.requestAsk(params); });
     std::atomic<bool> workerBusy{false};
+    std::atomic<bool> quitPosted{false};
     std::thread worker;
 
     auto joinWorker = [&]() {
@@ -252,10 +251,22 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
         workerBusy.store(false, std::memory_order_release);
     };
 
-    bool startAtDashboard = cfg.manifestPath.empty();
+    // Seed -p into the same submit path as a typed Enter.
+    if (!cfg.initialPrompt.empty()) {
+        model->pendingSubmit = cfg.initialPrompt;
+        if (model->promptHistory.empty() || model->promptHistory.back() != cfg.initialPrompt)
+            model->promptHistory.push_back(cfg.initialPrompt);
+        model->promptHistoryIndex = static_cast<int>(model->promptHistory.size());
+        model->pushRow({TimelineKind::User, "you", cfg.initialPrompt, true});
+    }
+
+    // With a seed prompt go straight to agent; bare launch still opens dashboard.
+    bool startAtDashboard = cfg.manifestPath.empty() && cfg.initialPrompt.empty();
     auto app = makeInkcellApp(cfg, bridge, model, startAtDashboard);
     app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([]() {});
-    app.engine().on_tick([model, &bridge, &app, &workerBusy, &worker, &joinWorker, &agent, ephemeral](inkcell::Tick) {
+    const bool exitOnDone = cfg.ephemeral;
+    app.engine().on_tick([model, &bridge, &app, &workerBusy, &worker, &joinWorker, &agent, &quitPosted,
+                          noSession, exitOnDone](inkcell::Tick) {
         model->drain(bridge);
         if (model->pendingRoute == "agent") {
             model->pendingRoute.clear();
@@ -279,12 +290,17 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
             joinWorker();
             worker = std::thread([&, prompt]() {
                 std::atomic<bool> done{false};
-                runAgentTurn(bridge, agent, prompt, model->activeSessionId, ephemeral, done);
+                runAgentTurn(bridge, agent, prompt, model->activeSessionId, noSession, done);
                 while (!done.load(std::memory_order_acquire))
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 g_running = true;
                 workerBusy.store(false, std::memory_order_release);
             });
+        }
+        // --ephemeral: leave once a turn has finished and the worker is idle.
+        if (exitOnDone && model->done && !model->running &&
+            !workerBusy.load(std::memory_order_acquire) && !quitPosted.exchange(true)) {
+            app.engine().post_action(inkcell::Action{"app.quit"});
         }
     });
 

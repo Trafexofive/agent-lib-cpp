@@ -35,8 +35,14 @@ struct InkcellAppConfig {
     int feedCount = 0;
     int relicCount = 0;
     int subAgentCount = 0;
+    // Lifecycle flags (orthogonal):
+    //   noSession  → don't load/save session records
+    //   ephemeral  → exit the TUI when the agent turn finishes
+    bool noSession = false;
     bool ephemeral = false;
-    // Chat render modifiers (orthogonal to -p / session flags).
+    // Optional seed prompt for interactive REPL (-p without --ephemeral).
+    std::string initialPrompt;
+    // Chat render modifiers (orthogonal to -p / session / lifecycle).
     bool showThoughts = true;
     bool truncateBodies = true;
 };

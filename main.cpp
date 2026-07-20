@@ -88,8 +88,13 @@ struct CliConfig {
     std::string systemPromptPath;
     std::string harnessPromptPath;
     std::string personaPath;
+    // Session + lifecycle flags are ORTHOGONAL and stackable:
+    //   --no-session  → do not load/save a session record
+    //   --ephemeral   → exit when the current agent turn finishes
+    //   -p / --prompt → seed/run this prompt (does not imply either above)
+    bool noSession = false;
     bool ephemeral = false;
-    // Chat render modifiers (orthogonal to -p / ephemeral / session).
+    // Chat render modifiers (orthogonal to -p / session / lifecycle).
     bool showThoughts = true;     // --no-thoughts to hide Thought rows
     bool truncateBodies = true;   // --no-truncate for full bodies
     bool raw = false;
@@ -224,7 +229,8 @@ Global flags:
   --fork <id>          Copy an existing session and continue under a new id
   --show-history N     Render the last N records of the resumed session on startup
   --quiet-session      Suppress the resume banner (printed to stderr)
-  --no-session         Don't save session (ephemeral)
+  --no-session         Don't load/save a session record
+  --ephemeral          Exit when the agent turn finishes
   --tui <legacy|inkcell|experimental>
                        Select TUI backend. legacy/inkcell use ReplSession oracle;
                        experimental uses the inkcell-native chat port (env: MK3_TUI)
@@ -256,9 +262,9 @@ void printHelpRun() {
     std::cout << R"(Usage: cortex-mk3 run [flags]
 
 Flags:
-  -p, --prompt <text>    One-shot prompt (run, then exit when the turn ends;
-                         does NOT imply --no-session; stack freely with session flags.
-                         Multi-turn after a seed prompt: --repl -p "...")
+  -p, --prompt <text>    Seed/run this prompt (orthogonal to session/lifecycle flags).
+                         With experimental TUI: stays interactive unless --ephemeral.
+                         Headless/legacy path: runs once and returns.
   -f, --file <path>      Read prompt from file
   -m, --manifest [name|path]  Agent name (catalog) or path; bare -m opens manager
   --agent [name|path]    Alias for --manifest
@@ -267,8 +273,8 @@ Flags:
   --session <id>         Use specific session id
   -c, --continue         Continue previous session
   -r, --resume           Select a session to resume
-  --no-session           Don't save session
-  --ephemeral            Alias for --no-session (orthogonal to -p)
+  --no-session           Don't load/save a session record
+  --ephemeral            Exit when the agent turn finishes (NOT the same as --no-session)
   --thoughts / --no-thoughts   Show/hide Thought rows (default: show)
   --truncate / --no-truncate   Cap long bodies pi-style (default: on)
   --no-tool-ansi         Strip ANSI/color escapes from tool result rendering
@@ -420,7 +426,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"show-history", required_argument, 0, 1012},
                                        {"quiet-session", no_argument, 0, 1013},
                                        {"no-session", no_argument, 0, 'e'},
-                                       {"ephemeral", no_argument, 0, 'e'},
+                                       {"ephemeral", no_argument, 0, 1035},
                                        {"repl", no_argument, 0, 'E'},
                                        {"thoughts", no_argument, 0, 1030},
                                        {"no-thoughts", no_argument, 0, 1031},
@@ -612,7 +618,10 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 cli.continueSession = true;
                 break;
             case 'e':
-                cli.ephemeral = true;
+                cli.noSession = true;
+                break;
+            case 1035:
+                cli.ephemeral = true;  // exit when turn finishes — NOT the same as --no-session
                 break;
             case 'E':
                 cli.replMode = true;
@@ -1936,7 +1945,7 @@ static int cmdRun(CliConfig& cli) {
 
     // --fork <id>: copy an existing session and continue under a fresh id.
     // Must run before the resume block so it sets cli.sessionId correctly.
-    if (!cli.forkFrom.empty() && !cli.ephemeral) {
+    if (!cli.forkFrom.empty() && !cli.noSession) {
         session::SessionManager sm;
         if (!sm.exists(cli.forkFrom)) {
             std::cerr << "Error: --fork target session not found: " << cli.forkFrom << "\n";
@@ -1959,7 +1968,7 @@ static int cmdRun(CliConfig& cli) {
         didResume = true;  // fork is a form of resume (copied history)
     }
 
-    if (!cli.ephemeral && (cli.resumePicker || cli.continueSession || !cli.sessionId.empty())) {
+    if (!cli.noSession && (cli.resumePicker || cli.continueSession || !cli.sessionId.empty())) {
         std::string resolved = resolveSessionId(cli, true);
         // If the user cancelled -r, the picker returns "". Exit cleanly
         // instead of dropping them into a fresh session.
@@ -2212,10 +2221,10 @@ static int cmdRun(CliConfig& cli) {
     // ── One-shot mode ──
     if (!cli.prompt.empty() && !cli.replMode) {
         std::string promptSessionId =
-            cli.ephemeral
+            cli.noSession
                 ? ""
                 : (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId);
-        if (!cli.ephemeral)
+        if (!cli.noSession)
             persistSessionMetadata(promptSessionId, cli, acfg);
 
         if (cli.tuiMode == "experimental") {
@@ -2232,10 +2241,18 @@ static int cmdRun(CliConfig& cli) {
             icfg.feedCount = static_cast<int>(agent.feedNames().size());
             icfg.relicCount = static_cast<int>(agent.relicNames().size());
             icfg.subAgentCount = static_cast<int>(agent.subAgentNames().size());
-            icfg.ephemeral = cli.ephemeral;
+            icfg.noSession = cli.noSession;
+            icfg.ephemeral = cli.ephemeral;  // exit-on-done only
             icfg.showThoughts = cli.showThoughts;
             icfg.truncateBodies = cli.truncateBodies;
-            return ui::runInkcellOneShot(icfg, agent, cli.prompt, promptSessionId, cli.ephemeral);
+            // -p + experimental:
+            //   --ephemeral → run turn, exit when done
+            //   otherwise  → seed prompt into interactive REPL (multi-turn)
+            if (cli.ephemeral) {
+                return ui::runInkcellOneShot(icfg, agent, cli.prompt, promptSessionId, cli.noSession);
+            }
+            icfg.initialPrompt = cli.prompt;
+            return ui::runInkcellRepl(icfg, agent, promptSessionId, cli.noSession);
         }
 
         Spinner spinner;
@@ -2244,7 +2261,7 @@ static int cmdRun(CliConfig& cli) {
             spinner.start("Thinking...");
         }
 
-        std::string result = agent.prompt(cli.prompt, promptSessionId, cli.ephemeral);
+        std::string result = agent.prompt(cli.prompt, promptSessionId, cli.noSession);
         spinner.stop();
 
         if (!cli.raw) {
@@ -2269,10 +2286,10 @@ static int cmdRun(CliConfig& cli) {
     if (cli.tuiMode == "experimental" ||
         (cli.prompt.empty() && cli.manifestPath.empty())) {
         std::string experimentalSessionId =
-            cli.ephemeral
+            cli.noSession
                 ? ""
                 : (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId);
-        if (!cli.ephemeral)
+        if (!cli.noSession)
             persistSessionMetadata(experimentalSessionId, cli, acfg);
         ui::InkcellAppConfig icfg;
         icfg.agentName = acfg.name;
@@ -2287,19 +2304,20 @@ static int cmdRun(CliConfig& cli) {
         icfg.feedCount = static_cast<int>(agent.feedNames().size());
         icfg.relicCount = static_cast<int>(agent.relicNames().size());
         icfg.subAgentCount = static_cast<int>(agent.subAgentNames().size());
+        icfg.noSession = cli.noSession;
         icfg.ephemeral = cli.ephemeral;
         icfg.showThoughts = cli.showThoughts;
         icfg.truncateBodies = cli.truncateBodies;
-        return ui::runInkcellRepl(icfg, agent, experimentalSessionId, cli.ephemeral);
+        return ui::runInkcellRepl(icfg, agent, experimentalSessionId, cli.noSession);
     }
 
     // ── Interactive REPL TUI / chat oracle ──
     // legacy and inkcell still route through ReplSession.
     std::string replSessionId =
-        cli.ephemeral
+        cli.noSession
             ? ""
             : (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId);
-    if (!cli.ephemeral)
+    if (!cli.noSession)
         persistSessionMetadata(replSessionId, cli, acfg);
 
     tui::ReplSessionConfig replCfg;
@@ -2310,7 +2328,7 @@ static int cmdRun(CliConfig& cli) {
     replCfg.tuiDebugDumpPath = cli.tuiDebugDumpPath;
     replCfg.workflowXml = workflowXml;
     replCfg.allSchemas = allSchemas;
-    replCfg.ephemeral = cli.ephemeral;
+    replCfg.ephemeral = cli.noSession;  // ReplSession: ephemeral == no session persist
     replCfg.toolAnsi = cli.toolAnsi;
     replCfg.resizedFlag = &g_resized;
     return tui::ReplSession(std::move(replCfg)).run(agent);
