@@ -478,15 +478,24 @@ static std::string buildResultTag(const std::string& id, const Json::Value& resu
 std::string Agent::runLoop(AgentContext& ctx) {
     std::string fullResponse;
     std::string rawOutput;
+    // Continuation = this Agent already has transcript from a prior prompt().
+    // Sub-agents are reused in-process; wiping protocolEvents_ here made every
+    // drilldown show only the latest call, and broke the illusion (and the
+    // contract) of a continuous non-ephemeral child conversation.
+    const bool continuation = !history_.empty();
     rawLlOutput_.clear();
     responseOutput_.clear();
     thoughtOutput_.clear();
     iterationPrompts_.clear();
     iterationOutputs_.clear();
     subAgentTraces_.clear();
-    protocolActions_.clear();
-    protocolResults_.clear();
-    protocolEvents_.clear();
+    if (!continuation) {
+        protocolActions_.clear();
+        protocolResults_.clear();
+        protocolEvents_.clear();
+    }
+    // else: keep protocolEvents_/actions/results so nested TUI + inspect see
+    // the full multi-prompt child timeline.
 
     // Push initiator input once at start (NOT per-iteration). Parent-agent
     // delegates are labeled so the child can distinguish them from the human.
@@ -619,6 +628,11 @@ std::string Agent::runLoop(AgentContext& ctx) {
             bool dumpContext = jsonBool(action.params, "dump_context", false);
             std::string childSessionId =
                 forceEphemeral ? "" : deriveSubAgentSessionId(ctx, config_, agentName);
+            // Ephemeral child calls must not leak prior in-memory history into
+            // this mission (non-ephemeral reuses the same Agent object).
+            if (forceEphemeral) {
+                it->second->clearHistory();
+            }
             // Stream the child's progress to the parent's UI so it stays alive
             // (byte counter + spinner) during the synchronous sub-agent call.
             // Without this, the child runs for seconds with zero UI updates —

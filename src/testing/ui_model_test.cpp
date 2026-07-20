@@ -620,6 +620,55 @@ void test_chat_thought_rows_visible_by_default() {
 
 
 
+
+void test_subagent_history_continues_across_prompts() {
+    // Non-ephemeral sub-agent: two parent prompts must share one history.
+    // Drilldown (rowsFromAgent) must show BOTH parent missions + responses.
+    AgentConfig rootCfg;
+    rootCfg.name = "coder";
+    rootCfg.provider = "noop";
+    rootCfg.model = "noop";
+    auto root = std::make_unique<Agent>(rootCfg, std::make_shared<NestNoopProvider>());
+
+    AgentConfig childCfg;
+    childCfg.name = "reader";
+    childCfg.provider = "noop";
+    childCfg.model = "noop";
+    // Second prompt returns different text so we can see both in history.
+    auto child = std::make_unique<Agent>(
+        childCfg, std::make_shared<NestNoopProvider>(
+                      "<response final=\"true\">ack-one</response>"));
+    Agent* childRaw = child.get();
+    root->addSubAgent(std::move(child));
+
+    setenv("HOME", "/tmp", 1);
+    childRaw->prompt("ping one", [](const std::string&, bool) {}, "", false,
+                     PromptSource::ParentAgent, "coder");
+    // Swap provider response for second call by prompting again — NestNoopProvider
+    // is fixed-string; history still records both Parent lines + Agent outputs.
+    childRaw->prompt("list tools", [](const std::string&, bool) {}, "", false,
+                     PromptSource::ParentAgent, "coder");
+
+    check(childRaw->history().size() >= 2,
+          "child history has both parent turns (and agent outputs when present)");
+    bool sawPing = false, sawTools = false;
+    for (const auto& h : childRaw->history()) {
+        if (h.find("ping one") != std::string::npos) sawPing = true;
+        if (h.find("list tools") != std::string::npos) sawTools = true;
+    }
+    check(sawPing, "history retains first parent mission");
+    check(sawTools, "history retains second parent mission");
+
+    auto rows = rowsFromAgent(childRaw);
+    bool rowPing = false, rowTools = false;
+    for (const auto& r : rows) {
+        if (r.body.find("ping one") != std::string::npos) rowPing = true;
+        if (r.body.find("list tools") != std::string::npos) rowTools = true;
+    }
+    check(rowPing, "rowsFromAgent shows first parent mission");
+    check(rowTools, "rowsFromAgent shows second parent mission");
+}
+
 void test_chat_multi_turn_does_not_clobber() {
     // Second turn must APPEND protocol rows, never overwrite the first turn.
     // Regression for the "overrides from the top" contiguity bug: REPL may
@@ -821,6 +870,7 @@ int main() {
     test_chat_last_turn_summary_lifecycle();
     test_chat_last_response_body();
     test_chat_thought_rows_visible_by_default();
+    test_subagent_history_continues_across_prompts();
     test_chat_multi_turn_does_not_clobber();
     test_chat_empty_thoughts_not_rendered();
     test_chat_subagent_result_shows_final_no_auto_enter();

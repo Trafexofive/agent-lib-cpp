@@ -334,6 +334,12 @@ void Agent::clearHistory() {
     executedActions_.clear();
     actionResults_.clear();
     contextFeeds_.clear();
+    protocolActions_.clear();
+    protocolResults_.clear();
+    protocolEvents_.clear();
+    responseOutput_.clear();
+    thoughtOutput_.clear();
+    rawLlOutput_.clear();
     bareTextReminded_ = false;
 }
 

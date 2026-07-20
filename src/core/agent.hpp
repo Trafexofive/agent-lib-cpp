@@ -106,6 +106,10 @@ class Agent {
     const std::vector<ProtocolResult>& protocolResults() const {
         return protocolResults_;
     }
+    // Full multi-prompt transcript for this agent instance (User/Parent/Agent/System).
+    // Survives across prompt() calls so sub-agent continuity is inspectable.
+    const std::vector<std::string>& history() const { return history_; }
+
     const std::vector<ProtocolEvent>& protocolEvents() const {
         return protocolEvents_;
     }
