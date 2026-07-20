@@ -534,27 +534,64 @@ inline void drawAskDialog(inkcell::Surface& surface, inkcell::Rect page, const D
     ++y;
     surface.text({x, y++}, inkcell::text::truncate(card->title.empty() ? card->id : card->title, inner), theme::bright());
     for (const auto& line : inkcell::text::wrap_words(card->message, inner)) {
-        if (y >= frame.bottom() - 5) break;
+        if (y >= frame.bottom() - 6) break;
         surface.text({x, y++}, line, theme::text());
     }
-    if (!card->help.empty() && y < frame.bottom() - 5)
+    if (!card->help.empty() && y < frame.bottom() - 6)
         surface.text({x, y++}, inkcell::text::truncate(card->help, inner), theme::dim());
 
     if (card->type == "choice" || card->type == "multi_choice" || card->type == "ranker") {
         ++y;
-        for (int i = 0; i < static_cast<int>(card->options.size()) && y < frame.bottom() - 3; ++i) {
+        for (int i = 0; i < static_cast<int>(card->options.size()) && y < frame.bottom() - 4; ++i) {
             const auto& option = card->options[static_cast<size_t>(i)];
             bool selected = i == state.selectedOption;
             bool checked = multiSelected.count(i) > 0;
             std::string marker = selected ? "> " : "  ";
             if (card->type == "multi_choice") marker += checked ? "[x] " : "[ ] ";
-            surface.text({x, y++}, inkcell::text::truncate(marker + option.label, inner),
+            else if (card->type == "ranker") marker += std::to_string(i + 1) + ". ";
+            std::string label = option.label;
+            if (!option.description.empty()) label += "  — " + option.description;
+            surface.text({x, y++}, inkcell::text::truncate(marker + label, inner),
                          option.disabled ? theme::dim() : selected ? theme::selected_style() : theme::text());
         }
+        if (y < frame.bottom() - 2) {
+            if (card->type == "multi_choice")
+                surface.text({x, y++}, "Space toggle · Enter submit", theme::dim());
+            else if (card->type == "choice")
+                surface.text({x, y++}, "↑↓ / j k select · Enter confirm", theme::dim());
+            else
+                surface.text({x, y++}, "Enter accepts current order (or type 1,3,2…)", theme::dim());
+        }
+    } else if (card->type == "confirm") {
+        ++y;
+        surface.text({x, y++}, "[Y] yes    [N] no", theme::bright());
+        surface.text({x, y++}, "single key — no Enter needed", theme::dim());
+    } else if (card->type == "type_confirm") {
+        ++y;
+        surface.text({x, y++},
+                     inkcell::text::truncate("type exactly: " + card->confirmWord, inner),
+                     theme::amber());
+        std::string shown = input;
+        surface.text({x, y++}, inkcell::text::truncate("> " + shown + "█", inner), theme::bright());
+    } else if (card->type == "note" || card->type == "info" || card->type == "section_header") {
+        ++y;
+        surface.text({x, y++}, "(auto) non-interactive card", theme::dim());
     } else {
         ++y;
+        if (!card->defaultValue.empty() && input.empty() && y < frame.bottom() - 3)
+            surface.text({x, y++},
+                         inkcell::text::truncate("default: " + card->defaultValue + "  (Enter accepts)",
+                                                 inner),
+                         theme::dim());
+        if (card->type == "number" && (card->hasNumberMin || card->hasNumberMax) &&
+            y < frame.bottom() - 3) {
+            std::string bounds = "range";
+            if (card->hasNumberMin) bounds += " ≥" + std::to_string(card->numberMin);
+            if (card->hasNumberMax) bounds += " ≤" + std::to_string(card->numberMax);
+            surface.text({x, y++}, bounds, theme::dim());
+        }
         std::string shown = card->type == "secret" ? std::string(input.size(), '*') : input;
-        surface.text({x, y}, inkcell::text::truncate("> " + shown + "█", inner), theme::bright());
+        surface.text({x, y++}, inkcell::text::truncate("> " + shown + "█", inner), theme::bright());
     }
 
     if (!state.error.empty())

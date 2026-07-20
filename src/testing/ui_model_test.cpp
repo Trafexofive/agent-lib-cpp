@@ -323,6 +323,31 @@ void test_chat_persistence() {
           "session replay maps record roles to chat rows");
 }
 
+
+void test_slash_tab_completion_lcp_and_stop_command() {
+    auto matches = chat::completeChatCommand("/st");
+    bool hasStop = false;
+    for (const auto& m : matches)
+        if (m == "/stop") hasStop = true;
+    check(hasStop, "tab candidates include /stop");
+    auto lcp = chat::commonPrefixOf(matches);
+    check(lcp.rfind("/st", 0) == 0, "common prefix keeps /st stem");
+
+    auto se = chat::completeChatCommand("/se");
+    bool hasSessions = false;
+    for (const auto& m : se)
+        if (m == "/sessions") hasSessions = true;
+    check(hasSessions, "tab candidates include /sessions for /se prefix");
+
+    auto only = chat::completeChatCommand("/truncate");
+    check(only.size() == 1 && only[0] == "/truncate", "/truncate is completable");
+
+    auto stop = chat::executeChatCommand("/stop");
+    check(stop.handled && stop.stopLoop, "/stop sets stopLoop");
+    auto cancel = chat::executeChatCommand("/cancel");
+    check(cancel.handled && cancel.stopLoop, "/cancel aliases stopLoop");
+}
+
 void test_chat_ask_dialog_channel() {
     Json::Value params;
     params["chainTitle"] = "Choose target";
@@ -880,6 +905,7 @@ int main() {
     test_dashboard_model();
     test_dashboard_session_controller();
     test_chat_persistence();
+    test_slash_tab_completion_lcp_and_stop_command();
     test_chat_ask_dialog_channel();
     test_chat_commands();
     test_chat_prompt_history();

@@ -101,18 +101,33 @@ inline std::string expandDynamicChatCommand(const DynamicChatCommand& command,
 
 inline std::vector<std::string> completeChatCommand(const std::string& prefix) {
     static const std::vector<std::string> builtins = {
-        "/help", "/commands", "/clear", "/thoughts", "/raw", "/theme", "/manifests",
-        "/sessions", "/prompts", "/dump-prompt", "/dp", "/cp-all", "/cp-raw",
-        "/quit", "/exit",
+        "/help", "/commands", "/clear", "/thoughts", "/truncate", "/raw", "/theme",
+        "/manifests", "/sessions", "/prompts", "/dump-prompt", "/dp", "/cp-all",
+        "/cp-raw", "/stop", "/cancel", "/quit", "/exit",
     };
+    std::string p = prefix;
+    if (p.empty()) p = "/";
     std::vector<std::string> out;
     for (const auto& name : builtins)
-        if (name.rfind(prefix, 0) == 0) out.push_back(name);
+        if (name.rfind(p, 0) == 0) out.push_back(name);
     for (const auto& command : discoverDynamicChatCommands())
-        if (command.name.rfind(prefix, 0) == 0) out.push_back(command.name);
+        if (command.name.rfind(p, 0) == 0) out.push_back(command.name);
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
+}
+
+// Longest common prefix of matches — bash/readline first-tab behavior.
+inline std::string commonPrefixOf(const std::vector<std::string>& items) {
+    if (items.empty()) return {};
+    std::string prefix = items.front();
+    for (size_t i = 1; i < items.size(); ++i) {
+        size_t n = 0;
+        while (n < prefix.size() && n < items[i].size() && prefix[n] == items[i][n]) ++n;
+        prefix.resize(n);
+        if (prefix.empty()) break;
+    }
+    return prefix;
 }
 
 }  // namespace cortex::mk3::ui::chat

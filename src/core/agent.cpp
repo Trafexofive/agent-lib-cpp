@@ -158,7 +158,8 @@ std::string Agent::prompt(const std::string& input, StreamCallback onToken,
     ctx.sourceName = sourceName;
     ctx.raw = raw_;
     ctx.verbose = verbose_;
-    ctx.debug = (env_.count("__DEBUG_MODE__") && env_["__DEBUG_MODE__"] == "true");
+    ctx.debug = (env_.count("__DEBUG_MODE__") && env_["__DEBUG_MODE__"] == "true") || devMode_;
+    lastSessionId_ = sessionId;
 
     if (!ephemeral && !sessionId.empty()) {
         loadSession(sessionId);
@@ -1392,6 +1393,10 @@ std::string Agent::runLoop(AgentContext& ctx) {
             os << iterationRuntimeOutput;
             iterationOutputs_.push_back(os.str());
         }
+        // DEV_MODE / verbose: rewrite dumps after every iteration so a crash
+        // mid-turn still leaves the last LLM-facing prompt on disk.
+        if (devMode_ || verbose_ || raw_ || ctx.debug)
+            dumpSessionArtifacts();
 
         bool forceResultFollowup = taskComplete && !results.empty() &&
                                    iterationRawOutput.find("<action") != std::string::npos;

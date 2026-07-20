@@ -2208,6 +2208,15 @@ static int cmdRun(CliConfig& cli) {
         agent.setRaw(true);
     if (cli.verbose)
         agent.setVerbose(true);
+    // Manifest runtime.dev_mode (or DEV_MODE) — auto full iteration dumps.
+    // Also honor env CORTEX_DEV_MODE=1 for lazy live tests without editing YAML.
+    if (acfg.devMode || (std::getenv("CORTEX_DEV_MODE") &&
+                         std::string(std::getenv("CORTEX_DEV_MODE")) != "0" &&
+                         std::string(std::getenv("CORTEX_DEV_MODE")) != "false")) {
+        agent.setDevMode(true);
+        if (!cli.raw)
+            std::cerr << "[dev_mode] iteration dumps → ~/.cortex/dev/<session>/ + CWD copies\n";
+    }
 
     // Sandbox
     if (cli.sandbox) {

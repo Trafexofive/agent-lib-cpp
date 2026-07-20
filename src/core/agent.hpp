@@ -80,6 +80,18 @@ class Agent {
     void setVerbose(bool v) {
         verbose_ = v;
     }
+    void setDevMode(bool v) {
+        devMode_ = v;
+        if (v) {
+            raw_ = true;
+            verbose_ = true;
+            env_["__DEBUG_MODE__"] = "true";
+            env_["__DEV_MODE__"] = "true";
+        }
+    }
+    bool devMode() const { return devMode_; }
+    // Last directory written by dumpSessionArtifacts (empty if none).
+    const std::string& lastDevDumpDir() const { return lastDevDumpDir_; }
 
     // ---- Output ────
     const std::string& rawLlOutput() const {
@@ -228,6 +240,8 @@ class Agent {
     Json::Value dispatchAskTool(const Json::Value& params);
     Json::Value executeScriptTool(const tools::Tool& tool, const Json::Value& params);
     void dumpSessionArtifacts() const;
+    // Session-scoped dev dump dir (~/.cortex/dev/<id>/). Creates parents.
+    std::string devDumpDirectory() const;
 
     // Output sanitization
     static std::string sanitize(const std::string& output);
@@ -262,6 +276,9 @@ class Agent {
     std::map<std::string, PeekEntry> peeking_;
     bool raw_ = false;
     bool verbose_ = false;
+    bool devMode_ = false;
+    mutable std::string lastSessionId_;
+    mutable std::string lastDevDumpDir_;
     bool bareTextReminded_ = false;  // one-time bare-text warning, persists across turns
     std::string rawLlOutput_;        // raw LLM stream (all tokens)
     std::string responseOutput_;     // sanitized response text

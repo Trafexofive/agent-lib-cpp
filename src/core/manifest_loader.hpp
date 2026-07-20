@@ -223,6 +223,12 @@ class ManifestLoader {
             std::string ep = ManifestYaml::get(*runtime, "ephemeral");
             if (truthy(ep))
                 cfg.defaultEphemeral = true;
+            // DEV_MODE: lazy live-test dumps (iterations as LLM saw them + raw + history)
+            std::string dm = ManifestYaml::get(*runtime, "dev_mode");
+            if (dm.empty())
+                dm = ManifestYaml::get(*runtime, "DEV_MODE");
+            if (truthy(dm))
+                cfg.devMode = true;
             auto* subagents = ManifestYaml::find(*runtime, "subagents");
             if (subagents) {
                 std::string persistence = ManifestYaml::get(*subagents, "persistence");

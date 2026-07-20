@@ -1,11 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // agent-lib-MK3 — Session lifecycle: save, load, dump, clear, undo
 // ─────────────────────────────────────────────────────────────────────────────
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <set>
+#include <unistd.h>
 
 #include "agent.hpp"
 
@@ -51,51 +53,127 @@ static std::set<std::string> stringSetFromJson(const Json::Value& root) {
     return values;
 }
 
+std::string Agent::devDumpDirectory() const {
+    // Prefer CORTEX_HOME, else ~/.cortex/dev/<session|ephemeral-pid>.
+    fs::path base;
+    if (const char* home = std::getenv("CORTEX_HOME")) {
+        if (home[0] != '\0') base = fs::path(home) / "dev";
+    }
+    if (base.empty()) {
+        const char* userHome = std::getenv("HOME");
+        base = fs::path(userHome ? userHome : ".") / ".cortex" / "dev";
+    }
+    std::string id = lastSessionId_;
+    if (id.empty())
+        id = "ephemeral-" + std::to_string(static_cast<long long>(::getpid()));
+    // Keep path safe for filesystem.
+    for (char& c : id) {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.'))
+            c = '_';
+    }
+    return (base / id).string();
+}
+
 void Agent::dumpSessionArtifacts() const {
-    // AC17 — explicit raw/debug/verbose runs write trace artifacts in CWD
-    // so live harness work can find `iterations.md` and `raw.md` next to the
-    // run. Skip entirely when the run is not opted into trace dumping.
+    // Trace dumps when any of: verbose, raw, __DEBUG_MODE__, runtime.dev_mode.
     bool debugEnabled = env_.count("__DEBUG_MODE__") && env_.at("__DEBUG_MODE__") == "true";
-    if (!verbose_ && !raw_ && !debugEnabled)
+    bool devEnabled =
+        devMode_ || (env_.count("__DEV_MODE__") && env_.at("__DEV_MODE__") == "true");
+    if (!verbose_ && !raw_ && !debugEnabled && !devEnabled)
         return;
 
-    fs::path cwd = fs::current_path();
     std::error_code ec;
-    fs::create_directories(cwd, ec);
-    if (ec)
-        return;
+    fs::path cwd = fs::current_path(ec);
+    if (ec) cwd = ".";
 
-    if (!iterationPrompts_.empty()) {
-        std::ofstream f(cwd / "iterations.md");
+    // Primary sink: per-session dev dir (survives CWD noise, easy to reopen).
+    fs::path dumpDir = devDumpDirectory();
+    fs::create_directories(dumpDir, ec);
+    if (ec) dumpDir = cwd;
+    lastDevDumpDir_ = dumpDir.string();
+
+    auto writeIterations = [&](const fs::path& path) {
+        std::ofstream f(path);
+        if (!f) return;
+        f << "# Cortex iterations dump\n";
+        f << "# agent=" << config_.name << " provider=" << config_.provider
+          << " model=" << config_.model << "\n";
+        f << "# session=" << (lastSessionId_.empty() ? "(none)" : lastSessionId_) << "\n";
+        f << "# This PROMPT block is exactly what was assembled for the LLM.\n\n";
         for (size_t i = 0; i < iterationPrompts_.size(); i++) {
             f << "## Iteration " << (i + 1) << "\n\n";
-            f << "### PROMPT\n\n";
-            std::istringstream ss(iterationPrompts_[i]);
-            std::string line;
-            while (std::getline(ss, line))
-                f << line << "\n";
-            f << "\n";
+            f << "### PROMPT (LLM-facing)\n\n```\n";
+            f << iterationPrompts_[i];
+            if (!iterationPrompts_[i].empty() && iterationPrompts_[i].back() != '\n') f << "\n";
+            f << "```\n\n";
             if (i < iterationOutputs_.size()) {
-                f << "\n--- model/runtime output after this prompt (not part of the prompt above) "
-                     "---\n\n";
-                f << iterationOutputs_[i] << "\n\n";
+                f << "### MODEL/RUNTIME OUTPUT (after prompt; not in prompt above)\n\n```\n";
+                f << iterationOutputs_[i];
+                if (!iterationOutputs_[i].empty() && iterationOutputs_[i].back() != '\n') f << "\n";
+                f << "```\n\n";
             }
         }
         if (!subAgentTraces_.empty()) {
             f << "# Delegated Agent Traces\n\n";
-            for (const auto& trace : subAgentTraces_) {
+            for (const auto& trace : subAgentTraces_)
                 f << trace << "\n";
-            }
         }
-    }
+    };
 
-    // Always create raw.md for explicit trace runs. If the provider produced no
-    // bytes, an empty file is still the correct signal that dumping ran.
-    std::ofstream raw(cwd / "raw.md");
-    raw << rawLlOutput_;
+    auto writeHistory = [&](const fs::path& path) {
+        std::ofstream f(path);
+        if (!f) return;
+        f << "# Rendered agent history_ (User/Parent/Agent/System lines)\n\n";
+        for (size_t i = 0; i < history_.size(); ++i)
+            f << (i + 1) << ". " << history_[i] << "\n\n";
+    };
 
-    // Keep stdout clean, but make trace location discoverable for harness work.
-    std::cerr << "[trace] wrote " << cwd << "\n";
+    auto writeRaw = [&](const fs::path& path) {
+        std::ofstream raw(path);
+        if (!raw) return;
+        raw << rawLlOutput_;
+    };
+
+    auto writeProtocol = [&](const fs::path& path) {
+        std::ofstream f(path);
+        if (!f) return;
+        f << "# Protocol events (ordered)\n\n";
+        for (size_t i = 0; i < protocolEvents_.size(); ++i) {
+            const auto& pe = protocolEvents_[i];
+            f << "## [" << i << "] ";
+            switch (pe.kind) {
+                case ProtocolEventKind::THOUGHT: f << "THOUGHT\n"; break;
+                case ProtocolEventKind::ACTION: f << "ACTION " << pe.action.type << " "
+                                                  << pe.action.name << " #" << pe.action.id << "\n";
+                    f << pe.action.body << "\n";
+                    break;
+                case ProtocolEventKind::RESULT:
+                    f << "RESULT #" << pe.result.id << (pe.result.ok ? " ok" : " err")
+                      << " tool=" << pe.result.toolName << "\n";
+                    f << pe.result.summary << "\n";
+                    break;
+                case ProtocolEventKind::RESPONSE: f << "RESPONSE\n"; break;
+                default: f << "OTHER\n"; break;
+            }
+            if (!pe.text.empty()) f << pe.text << "\n";
+            f << "\n";
+        }
+    };
+
+    writeIterations(dumpDir / "iterations.md");
+    writeRaw(dumpDir / "raw.md");
+    writeHistory(dumpDir / "history.md");
+    writeProtocol(dumpDir / "protocol.md");
+
+    // Lazy live-test convenience: also drop copies in CWD.
+    writeIterations(cwd / "iterations.md");
+    writeRaw(cwd / "raw.md");
+    writeHistory(cwd / "history.md");
+
+    std::cerr << "[trace] wrote " << dumpDir.string()
+              << " (iterations.md raw.md history.md protocol.md)"
+              << (devEnabled ? " [DEV_MODE]" : "") << "\n";
+    std::cerr << "[trace] cwd copies: " << cwd.string() << "/{iterations,raw,history}.md\n";
 }
 
 // ═══════════════════════════════════════════════════════════════════════

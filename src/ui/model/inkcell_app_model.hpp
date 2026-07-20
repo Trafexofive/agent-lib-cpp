@@ -296,6 +296,17 @@ struct ShellModel {
     chat::DialogState askDialog;
     inkcell::widgets::TextAreaState askInput;
     std::set<int> askMultiSelected;
+
+    // Readline-style slash completion (LCP then cycle).
+    std::vector<std::string> tabMatches;
+    int tabMatchIndex = -1;
+    std::string tabStem;  // prefix used to build tabMatches
+
+    void clearTabCompletion() {
+        tabMatches.clear();
+        tabMatchIndex = -1;
+        tabStem.clear();
+    }
     mutable inkcell::widgets::ScrollViewState transcriptView;
     mutable inkcell::widgets::ScrollViewState inspectorView;
 

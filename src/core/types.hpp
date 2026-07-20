@@ -167,6 +167,9 @@ struct AgentConfig {
     // ephemeral  → prefer exit-on-done / one-shot lifecycle at the app layer
     bool defaultNoSession = false;
     bool defaultEphemeral = false;
+    // dev_mode → auto-dump full LLM-facing iterations + raw stream + history
+    // per session under ~/.cortex/dev/<session>/ (and CWD copies for lazy open).
+    bool devMode = false;
     int maxTokens = 0;
     int iterationCap =
         50;  // agent turns before forced response (override via manifest max_iterations)

@@ -27,12 +27,17 @@ class AgentScene final : public BaseScene {
         }
 
         if (event.code == KeyCode::CtrlC) {
-            if (model_->running) {
-                model_->status = "cancelling";
-                g_running = false;
+            if (model_->running || model_->askActive) {
+                stopAgentLoop("ctrl-c");
             } else {
                 model_->pendingRoute = "quit";
             }
+            return true;
+        }
+        // Ctrl-X always means stop the loop (never quit) — explicit kill switch.
+        if (event.code == KeyCode::Character && event.ctrl() &&
+            (event.ch == 'x' || event.ch == 'X')) {
+            stopAgentLoop("ctrl-x");
             return true;
         }
 
@@ -123,18 +128,25 @@ class AgentScene final : public BaseScene {
             return true;
         }
         if (event.code == KeyCode::Tab) {
-            completeSlashCommand();
+            completeSlashCommand(/*reverse=*/false);
+            return true;
+        }
+        if (event.code == KeyCode::BackTab) {
+            completeSlashCommand(/*reverse=*/true);
             return true;
         }
         if (event.code == KeyCode::ArrowUp) {
+            model_->clearTabCompletion();
             model_->historyPrevious();
             return true;
         }
         if (event.code == KeyCode::ArrowDown) {
+            model_->clearTabCompletion();
             model_->historyNext();
             return true;
         }
         if (event.code == KeyCode::Enter) {
+            model_->clearTabCompletion();
             if (runSlashCommand()) return true;
             model_->submitComposer();
             return true;
@@ -157,6 +169,9 @@ class AgentScene final : public BaseScene {
             model_->transcriptView.scroll_to_end();
             return true;
         }
+        // Any normal edit invalidates the tab-cycle stem (readline behavior).
+        if (event.code != KeyCode::Tab && event.code != KeyCode::BackTab)
+            model_->clearTabCompletion();
         if (model_->composer.handle_key(event)) return true;
         return false;
     }
@@ -207,10 +222,14 @@ class AgentScene final : public BaseScene {
             vm.agentName = model_->agentName;
         }
         vm.scopeName = model_->atRoot() ? std::string() : model_->agentPath.back();
-        if (model_->running) vm.hint = "Ctrl-C cancel · Esc history · PgUp/Dn scroll · t thoughts · r raw";
-        else if (!model_->atRoot()) vm.hint = "↑↓ scroll · j/k select · Enter drill · Esc back · g refresh";
-        else if (vm.historyFocused) vm.hint = "↑↓ scroll · j/k select · Enter open · PgUp/Dn · i composer · ? help · q quit";
-        else vm.hint = "Enter send · ↑↓ history · PgUp/Dn scroll · Esc transcript · Tab commands";
+        if (model_->running)
+            vm.hint = "Ctrl-C/X stop · Esc history · PgUp/Dn scroll · t thoughts · r raw";
+        else if (!model_->atRoot())
+            vm.hint = "↑↓ scroll · j/k select · Enter drill · Esc back · g refresh";
+        else if (vm.historyFocused)
+            vm.hint = "↑↓ scroll · j/k select · Enter open · PgUp/Dn · i composer · ? help · q quit";
+        else
+            vm.hint = "Enter send · ↑↓ history · Tab complete · Ctrl-X stop · Esc transcript";
 
         chat::drawChatSurface(surface, p, vm);
         if (model_->askActive)
@@ -306,10 +325,29 @@ class AgentScene final : public BaseScene {
         // answers in the TUI (P0).
         if (model_->askDialog.done()) {
             model_->askActive = false;
-            if (model_->askDialog.cancelled)
+            if (model_->askDialog.cancelled) {
                 bridge_.cancelAsk();
-            else
+                model_->appendNotice("ask", {"cancelled"});
+            } else {
                 bridge_.completeAsk(model_->askDialog.results);
+                std::vector<std::string> lines;
+                const auto& members = model_->askDialog.results.getMemberNames();
+                for (const auto& key : members) {
+                    const auto& v = model_->askDialog.results[key];
+                    std::string val;
+                    if (v.isString()) val = v.asString();
+                    else if (v.isBool()) val = v.asBool() ? "true" : "false";
+                    else if (v.isNumeric()) val = v.asString();
+                    else {
+                        Json::StreamWriterBuilder wb;
+                        wb["indentation"] = "";
+                        val = Json::writeString(wb, v);
+                    }
+                    lines.push_back(key + " = " + val);
+                }
+                if (lines.empty()) lines.push_back("(no fields)");
+                model_->appendNotice("ask answered", lines);
+            }
             if (!model_->running && model_->status == "waiting human input")
                 model_->status = "ready";
         }
@@ -334,6 +372,7 @@ class AgentScene final : public BaseScene {
         model_->composer.value.clear();
         model_->composer.cursor = 0;
         if (result.quit) model_->pendingRoute = "quit";
+        if (result.stopLoop) stopAgentLoop("slash");
         if (result.clearTranscript) model_->clearTranscript();
         if (result.toggleThoughts) {
             model_->showThoughts = !model_->showThoughts;
@@ -392,19 +431,96 @@ class AgentScene final : public BaseScene {
         model_->appendNotice("prompts", lines);
     }
 
-    void completeSlashCommand() {
-        if (model_->composer.value.empty() || model_->composer.value[0] != '/') return;
-        size_t space = model_->composer.value.find(' ');
-        std::string prefix = space == std::string::npos
-                                 ? model_->composer.value
-                                 : model_->composer.value.substr(0, space);
-        auto matches = chat::completeChatCommand(prefix);
+    void stopAgentLoop(const char* reason) {
+        if (model_->askActive) {
+            model_->askDialog.cancelled = true;
+            model_->askActive = false;
+            bridge_.cancelAsk();
+        }
+        if (model_->running) {
+            model_->status = std::string("cancelling (") + reason + ")";
+            g_running = false;
+            model_->appendNotice("stop", {std::string("agent loop stop requested via ") + reason});
+        } else if (!model_->askActive) {
+            model_->appendNotice("stop", {"no active turn to stop"});
+        }
+    }
+
+    // GNU-readline-ish slash completion:
+    //  1) first Tab → extend to longest common prefix
+    //  2) if already at LCP (or single match) → cycle matches
+    //  3) Shift-Tab cycles backwards
+    //  4) unique match gets a trailing space
+    void completeSlashCommand(bool reverse) {
+        std::string value = model_->composer.value;
+        if (value.empty()) {
+            value = "/";
+            model_->composer.value = value;
+            model_->composer.cursor = 1;
+        }
+        if (value[0] != '/') return;
+
+        size_t space = value.find(' ');
+        // Only complete the command token (before first space).
+        if (space != std::string::npos &&
+            model_->composer.cursor > static_cast<int>(space))
+            return;
+
+        std::string prefix =
+            space == std::string::npos ? value : value.substr(0, space);
+
+        // Fresh match set when stem changed.
+        if (model_->tabMatches.empty() || model_->tabStem != prefix) {
+            model_->tabMatches = chat::completeChatCommand(prefix);
+            model_->tabStem = prefix;
+            model_->tabMatchIndex = -1;
+        }
+        auto& matches = model_->tabMatches;
+        if (matches.empty()) {
+            model_->appendNotice("completions", {"(no matches for " + prefix + ")"});
+            return;
+        }
+
         if (matches.size() == 1) {
             model_->composer.value = matches.front() + " ";
             model_->composer.cursor = static_cast<int>(model_->composer.value.size());
-        } else if (!matches.empty()) {
-            model_->appendNotice("completions", matches);
+            model_->clearTabCompletion();
+            return;
         }
+
+        std::string lcp = chat::commonPrefixOf(matches);
+        // First press (or after typing): jump to LCP if it extends the prefix.
+        if (model_->tabMatchIndex < 0 && lcp.size() > prefix.size()) {
+            model_->composer.value = lcp;
+            model_->composer.cursor = static_cast<int>(lcp.size());
+            model_->tabStem = lcp;
+            // Rebuild matches under the extended stem so cycle list stays tight.
+            model_->tabMatches = chat::completeChatCommand(lcp);
+            model_->appendNotice("completions", model_->tabMatches);
+            return;
+        }
+
+        // Cycle through full matches.
+        if (model_->tabMatchIndex < 0)
+            model_->tabMatchIndex = reverse ? static_cast<int>(matches.size()) - 1 : 0;
+        else if (reverse)
+            model_->tabMatchIndex =
+                (model_->tabMatchIndex - 1 + static_cast<int>(matches.size())) %
+                static_cast<int>(matches.size());
+        else
+            model_->tabMatchIndex =
+                (model_->tabMatchIndex + 1) % static_cast<int>(matches.size());
+
+        const std::string& pick = matches[static_cast<size_t>(model_->tabMatchIndex)];
+        model_->composer.value = pick;
+        model_->composer.cursor = static_cast<int>(pick.size());
+        model_->tabStem = pick;
+
+        std::vector<std::string> menu;
+        for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
+            menu.push_back((i == model_->tabMatchIndex ? "> " : "  ") + matches[static_cast<size_t>(i)]);
+        }
+        model_->appendNotice("completions", menu);
     }
 
     void handle(const inkcell::Action& action) override {

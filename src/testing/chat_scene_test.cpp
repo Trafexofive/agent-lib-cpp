@@ -180,7 +180,8 @@ void test_ctrl_c_state() {
     model->running = true;
     g_running = true;
     scene.on_key(key(inkcell::KeyCode::CtrlC));
-    check(!g_running && model->status == "cancelling", "Ctrl-C requests active turn cancellation");
+    check(!g_running && model->status.find("cancelling") == 0,
+          "Ctrl-C requests active turn cancellation");
     g_running = true;
 }
 void test_chat_scroll_keys() {

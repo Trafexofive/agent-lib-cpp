@@ -33,6 +33,7 @@ struct ChatCommandResult {
     bool dumpPrompts = false;
     bool copyAll = false;
     bool copyRaw = false;
+    bool stopLoop = false;
     std::string title;
     std::string themeName;
     std::vector<std::string> lines;
@@ -47,6 +48,12 @@ inline ChatCommandResult executeChatCommand(const std::string& command,
 
     if (command == "/quit" || command == "/exit") {
         out.quit = true;
+        return out;
+    }
+    if (command == "/stop" || command == "/cancel") {
+        out.stopLoop = true;
+        out.title = "stop";
+        out.lines = {"stopping agent loop (g_running=false)"};
         return out;
     }
     if (command == "/clear") {
@@ -114,8 +121,10 @@ inline ChatCommandResult executeChatCommand(const std::string& command,
             "/dump-prompt, /dp  write captured prompts to /tmp",
             "/cp-all            copy transcript (file fallback)",
             "/cp-raw            copy raw model output (file fallback)",
+            "/stop, /cancel     stop agent loop mid-turn (same as Ctrl-C)",
             "/quit, /exit       leave chat",
-            "Tab                complete command names",
+            "Tab / Shift-Tab    complete slash cmds (LCP then cycle)",
+            "Ctrl-C / Ctrl-X    stop running turn",
         };
         for (const auto& dynamic : discoverDynamicChatCommands())
             out.lines.push_back(dynamic.name + "  [" + dynamic.kind + "] " + dynamic.description);
