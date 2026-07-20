@@ -375,6 +375,24 @@ void test_chat_ask_dialog_channel() {
     auto confirmState = chat::parseDialogState(confirmParams);
     check(!chat::handleDialogLine(confirmState, "delete"), "type-confirm rejects wrong case/value");
     check(chat::handleDialogLine(confirmState, "DELETE"), "type-confirm accepts exact word");
+
+    // Notes-only dialog: drain/settleAsk must complete the bridge without keys.
+    Json::Value notesParams;
+    Json::Value noteCard;
+    noteCard["id"] = "n1";
+    noteCard["type"] = "note";
+    noteCard["title"] = "FYI";
+    notesParams["cards"].append(noteCard);
+    AgentBridge notesBridge;
+    auto notesFuture =
+        std::async(std::launch::async, [&] { return notesBridge.requestAsk(notesParams); });
+    for (int i = 0; i < 100 && !notesBridge.askPending(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ShellModel notesModel;
+    notesModel.drain(notesBridge);
+    Json::Value notesResult = notesFuture.get();
+    check(notesResult["success"].asBool() && !notesBridge.askPending(),
+          "model drain settleAsk completes notes-only ask_tool");
 }
 
 void test_chat_commands() {

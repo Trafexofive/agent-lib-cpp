@@ -894,14 +894,33 @@ struct ShellModel {
         }
     }
 
+    // If ask_tool opened a dialog that is already finished (all notes/info, or
+    // scene finished cards without the scene holding the bridge), unblock the
+    // worker waiting on requestAsk(). Safe no-op when no ask is pending.
+    void settleAsk(AgentBridge& bridge) {
+        if (!bridge.askPending()) return;
+        if (askDialog.cancelled) {
+            askActive = false;
+            bridge.cancelAsk();
+            return;
+        }
+        if (askDialog.done()) {
+            askActive = false;
+            bridge.completeAsk(askDialog.results);
+            if (!running && status == "waiting human input") status = "ready";
+        }
+    }
+
     void drain(AgentBridge& bridge) {
         auto batch = bridge.drain();
-        if (batch.empty()) return;
-        ++wakeCount;
-        batchingEvents = true;
-        for (const auto& e : batch) apply(e);
-        batchingEvents = false;
-        if (viewRebuildPending) rebuildViews();
+        if (!batch.empty()) {
+            ++wakeCount;
+            batchingEvents = true;
+            for (const auto& e : batch) apply(e);
+            batchingEvents = false;
+            if (viewRebuildPending) rebuildViews();
+        }
+        settleAsk(bridge);
     }
 
     void loadSessionRecords(const std::vector<SessionRecord>& records) {

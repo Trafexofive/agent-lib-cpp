@@ -62,14 +62,28 @@ input_schema:
               user's answer.
           type:
             type: string
-            enum: [text, confirm, choice, number]
+            enum:
+              - text
+              - textarea
+              - secret
+              - number
+              - confirm
+              - type_confirm
+              - choice
+              - multi_choice
+              - ranker
+              - key_value
+              - note
+              - info
+              - section_header
             default: text
             description: >
-              The type of input expected. "text" is free-form text input (most
-              common). "confirm" expects yes/no. "choice" presents options to
-              pick from. "number" validates as numeric. For most use cases,
-              "text" is sufficient — the user can type anything and you can
-              parse it from the response string.
+              Input kind. Prefer structured types when the answer space is
+              known: choice/multi_choice over free text; type_confirm for
+              destructive gates (exact word); confirm for y/n; number for
+              bounds-checked ints/floats; secret masks input in the TUI.
+              note/info/section_header are non-interactive (auto-advance).
+              Unsupported legacy: treat unknown types as text only if you must.
           title:
             type: string
             description: >
@@ -112,9 +126,8 @@ output_schema:
 
 examples:
   - description: >
-      Confirm a destructive action before proceeding. The user must type the
-      word DEPLOY to confirm. This is the primary use case for ask_tool —
-      safety gates before irreversible operations.
+      Confirm a destructive action before proceeding. Prefer type_confirm so
+      the runtime enforces the exact word (case-sensitive).
     params:
       title: "Confirm production deployment"
       message: >
@@ -124,9 +137,22 @@ examples:
         will run automatically. There is no automatic rollback.
       cards:
         - id: "confirm_deploy"
-          type: text
-          title: "Type 'DEPLOY' to proceed with production deployment"
-          message: "Any other input will cancel the deployment."
+          type: type_confirm
+          title: "Type DEPLOY to proceed"
+          confirmWord: "DEPLOY"
+          message: "Any other input is rejected until you type the exact word."
+
+  - description: >
+      Pick a specialist sub-agent before delegating. Use choice so the operator
+      cannot typo the name.
+    params:
+      title: "Pick specialist"
+      message: "Which sub-agent should handle this task?"
+      cards:
+        - id: "worker"
+          type: choice
+          title: "Worker"
+          options: [reader, tester, reviewer]
 
   - description: >
       Gather structured project configuration. The agent needs a project name

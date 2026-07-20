@@ -299,8 +299,20 @@ class AgentScene final : public BaseScene {
         model_->askInput.value.clear();
         model_->askInput.cursor = 0;
         model_->askMultiSelected.clear();
+        model_->askDialog.selectedOption = 0;
         chat::completeNonInteractiveCards(model_->askDialog);
-        if (model_->askDialog.done()) model_->askActive = false;
+        // Unblock the worker thread waiting on bridge.requestAsk(). Without
+        // completeAsk/cancelAsk here, ask_tool hangs forever after the operator
+        // answers in the TUI (P0).
+        if (model_->askDialog.done()) {
+            model_->askActive = false;
+            if (model_->askDialog.cancelled)
+                bridge_.cancelAsk();
+            else
+                bridge_.completeAsk(model_->askDialog.results);
+            if (!model_->running && model_->status == "waiting human input")
+                model_->status = "ready";
+        }
     }
 
     bool runSlashCommand() {

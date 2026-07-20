@@ -101,9 +101,38 @@ void test_ask_choice_roundtrip() {
     scene.on_key(key(inkcell::KeyCode::ArrowDown));
     scene.on_key(key(inkcell::KeyCode::Enter));
     scene.update({}, {});
+    // Must not hang — finishAskCard has to completeAsk the bridge.
     Json::Value result = future.get();
     check(result["success"].asBool() && result["results"]["worker"].asString() == "tester",
           "scene returns selected ask choice to worker");
+    check(!model->askActive && !bridge.askPending(),
+          "ask overlay clears and bridge ask is no longer pending");
+}
+
+void test_ask_notes_only_auto_completes() {
+    // Dialog with only note/info cards must not block the worker forever.
+    InkcellAppConfig cfg;
+    AgentBridge bridge;
+    auto model = std::make_shared<ShellModel>();
+    scenes::AgentScene scene(cfg, bridge, model);
+    scene.on_enter();
+
+    Json::Value params;
+    params["chainTitle"] = "Notice";
+    Json::Value note;
+    note["id"] = "n1";
+    note["type"] = "note";
+    note["title"] = "Heads up";
+    note["message"] = "No input required";
+    params["cards"].append(note);
+
+    auto future = std::async(std::launch::async, [&] { return bridge.requestAsk(params); });
+    for (int i = 0; i < 100 && !bridge.askPending(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    scene.update({}, {});  // drain + settleAsk
+    Json::Value result = future.get();
+    check(result["success"].asBool(), "notes-only ask auto-completes successfully");
+    check(!bridge.askPending(), "notes-only ask leaves bridge idle");
 }
 
 void test_slash_and_completion() {
@@ -217,6 +246,7 @@ int main() {
     std::cout << "Chat/dashboard scene integration tests\n";
     test_dashboard_scene();
     test_ask_choice_roundtrip();
+    test_ask_notes_only_auto_completes();
     test_slash_and_completion();
     test_ctrl_c_state();
     test_chat_scroll_keys();

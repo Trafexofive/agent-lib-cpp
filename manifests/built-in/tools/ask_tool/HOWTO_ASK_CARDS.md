@@ -1,77 +1,68 @@
-# How to Build ask_cards — A Proper TUI Dialog Widget
+# ask_tool / ask cards — operator + implementer notes
 
-`ask_tool` is a minimal blocking stdin/stdout tool. `ask_cards` (future) will be a proper TUI dialog engine modeled after pi-agent's dialog system.
+## Status (2026-03-27)
 
-## Target: Full TUI Dialog Widget
+Inkcell TUI path is **live**, not vapor:
 
-### Architecture
-```
-Model (agent XML) → ask_tool (stderr/stdin bridge) → TUI layer → User
-                                        ↓
-                              ask_cards widget (future)
-```
-
-### Features to implement
 | Feature | Status |
 |---------|--------|
-| Box-drawing borders around cards | TODO |
-| Card chain progress `[1/3] [2/3]` | TODO |
-| Default value display, Enter accepts | TODO |
-| Esc to cancel entire card chain | TODO |
-| Y/N confirm with single keypress (no Enter) | TODO |
-| Arrow-key choice selection | TODO |
-| Multi-select with Space to toggle | TODO |
-| Input validation (regex, min/max, numeric) | TODO |
-| Colored: title green bold, body dim, error red | TODO |
-| Error message display below input | TODO |
-| Markdown help text in cards | TODO |
+| Modal overlay (`drawAskDialog`) | **shipped** |
+| Card chain progress `card i/n · type` | **shipped** |
+| Esc / Ctrl-C cancel → `bridge.cancelAsk` | **shipped** |
+| Y/N confirm single key | **shipped** |
+| Arrow / j k choice selection | **shipped** |
+| Multi-select Space toggle | **shipped** |
+| Number min/max, type_confirm exact word | **shipped** |
+| Secret masked input | **shipped** |
+| Default value on empty Enter | **shipped** (text/number/secret/textarea) |
+| Worker unblock on answer (`completeAsk`) | **shipped** (P0 fix) |
+| Notes-only auto-complete via `settleAsk` | **shipped** |
+| Nested chains / branches / goto | **not yet** (pi ask_cards parity later) |
+| optionsResolver / condition / transform | **not yet** |
 
-### Implementation approach
-1. Wake `src/tui/` module — terminal raw mode, ANSI cursor control, box drawing
-2. Wake `src/tui/dialog.hpp` — card chain renderer using ansi.hpp primitives
-3. `toolAskTool` delegates to `ask_cards::renderChain(params)` when GUI available
-4. Use termios for raw mode (single-key Y/N, arrow keys)
-5. Pi-agent reference: `/usr/lib/node_modules/@earendil-works/pi-coding-agent/docs/tui.md`
+## Call path
 
-### Stack
-- `src/utils/ansi.hpp` — ANSI escape codes (cursor, color, clear)
-- `src/tui/terminal.hpp` — raw mode, screen buffer, key input
-- `src/tui/dialog.hpp` — card rendering, input handling
-- `src/tools/internal_tools.cpp` — `toolAskTool` entrypoint
-
-### Current ask_tool (minimal)
 ```
-stderr: [AGENT] What's your name?  ← no boxes, raw text
-        > user types              ← blocks on getline
-        [name] Your name           ← no progress indicator
-        > Esc kills process        ← no cancel
+LLM <action type="tool" name="ask_tool">JSON</action>
+  → Agent::dispatchAskTool
+      → askToolHandler_  (inkcell: bridge.requestAsk)
+          → UiEvent::AskDialog
+          → ShellModel parseDialogState + overlay
+          → operator keys → finishAskCard / settleAsk
+          → bridge.completeAsk(results)  // unblocks worker
+      → fallback: ToolRegistry native ask_tool (stdin) if no handler
 ```
 
-### Target ask_cards (full widget)
-```
-┌─ [1/3] What's your name? ──────┐
-│                                  │
-│  Please tell me your name so     │
-│  I can address you properly.     │
-│                                  │
-│  > ml______                      │
-│                                  │
-│  Esc to cancel                   │
-└──────────────────────────────────┘
-```
+## Supported card types (DialogState)
 
-## API Contract
+`text` · `textarea` · `secret` · `number` · `confirm` · `type_confirm` ·  
+`choice` · `multi_choice` · `ranker` · `key_value` ·  
+`note` · `info` · `section_header` (non-interactive, auto-advance)
 
-The full `ask_cards` widget takes the same JSON params as `ask_tool`:
+Schema authority for the model: `manifests/built-in/tools/ask_tool/tool.yml`.
+
+## Result shape
+
 ```json
 {
-  "title": "Dialog title",
-  "message": "Help text",
-  "cards": [
-    {"id": "name", "type": "text", "title": "Your name", "defaultValue": "user"},
-    {"id": "confirm", "type": "confirm", "title": "Proceed?", "message": "This is irreversible"}
-  ]
+  "success": true,
+  "cancelled": false,
+  "results": { "card_id": "value-or-array-or-bool" }
 }
 ```
 
-Returns: `{"success": true, "results": {"name": "user", "confirm": "yes"}}`
+`success=false` + `cancelled=true` when operator Escapes. Do not re-ask the same chain.
+
+## Tests
+
+- `src/testing/ask_tool_test.cpp` — registry + stdin fallback
+- `src/testing/ui_model_test.cpp` — bridge channel, number/type_confirm, settleAsk notes
+- `src/testing/chat_scene_test.cpp` — choice roundtrip + notes-only auto-complete
+
+## Next (parity backlog, not blockers)
+
+1. condition / branches / goto between cards
+2. optionsResolver (dynamic options)
+3. transform pipeline (trim/lower/int)
+4. minDelaySecs on destructive confirms
+5. command_approval card type
