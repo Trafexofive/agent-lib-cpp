@@ -341,90 +341,6 @@ struct ShellModel {
         rebuildViews();
     }
 
-    // Build the label string for a timeline row (the SAME switch used in
-    // rebuildViews, factored out so the nested sub-agent emitter can reuse
-    // it — the child's blocks get IDENTICAL labels to the parent's blocks
-    // so they render with the same ▎ / fg / bg via the normal kind path).
-    static std::string buildRowLabel(const TimelineRow& row, const std::string& agentName,
-                                     const std::string& agentModel, const std::string& agentProvider) {
-        std::string label;
-        switch (row.kind) {
-            case TimelineKind::User: label = "YOU"; break;
-            case TimelineKind::Thought: label = "THOUGHT"; break;
-            case TimelineKind::Action: {
-                std::string type = row.actionType.empty() ? "ACTION" : row.actionType;
-                std::transform(type.begin(), type.end(), type.begin(),
-                               [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-                if (type == "AGENT" && !row.actionName.empty()) {
-                    label = "AGENT  " + row.actionName;
-                    if (!row.actionId.empty()) label += "  #" + row.actionId;
-                    if (row.drillable) label += "  ↳";
-                } else {
-                    label = type;
-                    if (!row.actionName.empty()) label += "  " + row.actionName;
-                    if (!row.actionId.empty()) label += "  #" + row.actionId;
-                    if (row.drillable) label += "  ↳";
-                }
-                break;
-            }
-            case TimelineKind::Result:
-                label = row.ok ? "✓ RESULT" : "✗ RESULT";
-                if (!row.actionName.empty()) label += "  " + row.actionName;
-                if (!row.actionId.empty()) label += "  #" + row.actionId;
-                if (row.drillable) label += "  ↳";
-                break;
-            case TimelineKind::Response:
-            case TimelineKind::Final:
-                label = agentName.empty() ? std::string("CORTEX") : agentName;
-                if (!agentModel.empty() || !agentProvider.empty()) {
-                    label += "  ";
-                    std::string meta;
-                    if (!agentProvider.empty()) meta = agentProvider;
-                    if (!agentModel.empty()) {
-                        if (!meta.empty()) meta += "/";
-                        meta += agentModel;
-                    }
-                    label += meta;
-                }
-                break;
-            case TimelineKind::Error: label = "✗ ERROR"; break;
-            case TimelineKind::Status: label = "STATUS"; break;
-            case TimelineKind::Stream: label = "RAW"; break;
-            case TimelineKind::Log: label = row.title.empty() ? "NOTICE" : row.title; break;
-        }
-        return label;
-    }
-
-    // Append the child sub-agent's OWN timeline (the same blocks the main
-    // chat renders — Thought, Action, Result, Response) as indented body
-    // lines of the parent Result. The child's blocks go through the normal
-    // kind-based render path (buildBlockMetadata classifies header lines
-    // by their label text), so they look IDENTICAL to the parent's blocks
-    // (▎, fg, kind-bg) — just indented one level deeper inside the Result.
-    // The child's final Response is the last block, rendered at the end.
-    // '↳ enter' on the parent header still drills into the full nested
-    // scope (nestedRows / agentPath) for the complete context.
-    void appendSubagentBlocks(const std::string& name) {
-        if (!rootAgent) return;
-        Agent* sub = rootAgent->getSubAgent(name);
-        if (!sub) return;
-        auto childRows = rowsFromAgent(sub);
-        for (const auto& cr : childRows) {
-            if (cr.kind == TimelineKind::Thought && !showThoughts) continue;
-            if (cr.kind == TimelineKind::Stream && !showRaw) continue;
-            // Header line: 2-space prefix so buildBlockMetadata classifies
-            // it as a header (rfind("    ",0) != 0) → the render draws the
-            // ▎ marker and the kind's own fg / bg, same as the parent.
-            transcriptView.lines.push_back("  " + buildRowLabel(cr, agentName, agentModel, agentProvider));
-            // Body lines: 6-space prefix (2 deeper than the parent body's
-            // 4) — visually nested inside the parent Result block.
-            for (const auto& line : splitDisplayLines(cr.body)) {
-                if (line.empty() && cr.body.empty()) continue;
-                transcriptView.lines.push_back("      " + line);
-            }
-        }
-    }
-
     void rebuildViews() {
         if (batchingEvents) {
             viewRebuildPending = true;
@@ -440,6 +356,13 @@ struct ShellModel {
         if (rows.empty()) {
             if (atRoot()) timelineState = PageState::Empty;
         } else {
+            // In a nested sub-agent scope the Response/Final label is the
+            // child agent name (its chat), not the parent root agent.
+            std::string scopeName = agentName;
+            if (!atRoot()) {
+                if (Agent* cur = currentAgent()) scopeName = cur->name();
+                else if (!agentPath.empty()) scopeName = agentPath.back();
+            }
             int focusIdx = 0;
             for (int ri = 0; ri < static_cast<int>(rows.size()); ++ri) {
                 const auto& row = rows[static_cast<size_t>(ri)];
@@ -490,8 +413,10 @@ struct ShellModel {
                     // (e.g. standalone unit tests that don't call initializeChatModel).
                     case TimelineKind::Response:
                     case TimelineKind::Final:
-                        label = agentName.empty() ? "CORTEX" : agentName;
-                        if (!agentModel.empty() || !agentProvider.empty()) {
+                        // Nested scope uses the child agent name (drop-into-its-chat).
+                        // Root keeps parent identity + model/provider metadata.
+                        label = scopeName.empty() ? "CORTEX" : scopeName;
+                        if (atRoot() && (!agentModel.empty() || !agentProvider.empty())) {
                             label += "  ";
                             std::string meta;
                             if (!agentProvider.empty()) meta = agentProvider;
@@ -516,18 +441,14 @@ struct ShellModel {
                         break;
                 }
                 transcriptView.lines.push_back(std::string(selected ? "› " : "  ") + label);
-                // Body emission. For a drillable AGENT Result, the sub-agent's
-                // OWN blocks (Thought/Action/Result/Response — the same blocks
-                // the main chat renders) are nested inside the parent Result as
-                // indented body lines, with the child's final Response rendered
-                // at the end. The Result's own summary body is suppressed (it
-                // would duplicate the nested content). For everything else, emit
-                // the row's body as normal. The parent block's full-width bg is
-                // the padding around the indented nested blocks (contiguity).
-                bool drillableAgent = (row.kind == TimelineKind::Result && row.drillable && row.actionType == "agent");
-                if (drillableAgent) {
-                    appendSubagentBlocks(row.actionName);
-                } else {
+                // Sub-agent Results in the PARENT transcript are header-only.
+                // The operator drops into the child's own chat (agentPath scope)
+                // instead of nesting child blocks inside the Result — the
+                // inline nest looked wrong and duplicated the child's stream.
+                // ↳ Enter (or auto-enter on AGENT action) opens the child chat.
+                bool suppressBody = (atRoot() && row.kind == TimelineKind::Result &&
+                                     row.drillable && row.actionType == "agent");
+                if (!suppressBody) {
                     for (const auto& line : splitDisplayLines(row.body)) {
                         if (line.empty() && row.body.empty()) continue;
                         transcriptView.lines.push_back("    " + line);
@@ -608,27 +529,44 @@ struct ShellModel {
         return &rows[static_cast<size_t>(ri)];
     }
 
-    bool enterSelected() {
-        const TimelineRow* row = selectedRow();
-        if (!row || !row->drillable) return false;
-        std::string name = row->actionName;
+    // Drop into a sub-agent's own chat (nestedRows = that agent's timeline).
+    // Used by ↳ Enter and by auto-enter when an AGENT action is dispatched.
+    // While inside, Token events refreshNested() so the child stream is live.
+    bool enterSubAgent(const std::string& name) {
         if (name.empty()) return false;
-
         Agent* parent = currentAgent();
         if (!parent) parent = rootAgent;
+        // Sibling switch from a root-level sub-agent: reset path first.
+        if (!atRoot() && rootAgent && rootAgent->hasSubAgent(name) &&
+            (agentPath.size() == 1 || !parent->hasSubAgent(name))) {
+            agentPath.clear();
+            parent = rootAgent;
+        }
+        if (!parent) parent = rootAgent;
         if (!parent || !parent->hasSubAgent(name)) {
-            // Soft fail: mark status, don't crash.
             status = "no sub-agent: " + name;
             rebuildViews();
             return false;
         }
+        if (!agentPath.empty() && agentPath.back() == name) {
+            refreshNested();
+            return true;
+        }
         agentPath.push_back(name);
         nestedRows = rowsFromAgent(parent->getSubAgent(name));
         selectedBlock = 0;
-        timelineFocus = true;
+        // Follow the stream like a normal chat (not block-selection mode).
+        timelineFocus = false;
         composer.focused = false;
+        transcriptView.stick_bottom = true;
         rebuildViews();
         return true;
+    }
+
+    bool enterSelected() {
+        const TimelineRow* row = selectedRow();
+        if (!row || !row->drillable) return false;
+        return enterSubAgent(row->actionName);
     }
 
     bool goBack() {
@@ -731,10 +669,15 @@ struct ShellModel {
                     for (auto& line : splitDisplayLines(e.text))
                         pushRow({TimelineKind::Stream, "raw", line, true});
                 }
+                // Child tokens are forwarded for liveness; while dropped into a
+                // sub-agent chat, refresh its timeline from the live Agent.
+                if (!atRoot()) refreshNested();
                 break;
             case UiEventKind::Protocol: {
                 const auto& pe = e.protocol;
                 TimelineRow row = rowFromProtocol(pe);
+                std::string enterName;
+                std::string leaveName;
                 if (pe.kind == ProtocolEventKind::ACTION) {
                     if (pendingActionIds.insert(pe.action.id).second) {
                         ++actionCount;
@@ -744,6 +687,9 @@ struct ShellModel {
                     if (row.actionType == "agent" && rootAgent && rootAgent->hasSubAgent(row.actionName)) {
                         row.drillable = true;
                         if (row.title.find("↳") == std::string::npos) row.title += "  ↳ enter";
+                        // Drop into the sub-agent's chat immediately — do not
+                        // nest its stream inside the parent Result.
+                        enterName = row.actionName;
                     } else if (row.actionType != "agent") {
                         row.drillable = false;
                     }
@@ -764,6 +710,9 @@ struct ShellModel {
                         row.drillable = true;
                         row.actionType = "agent";
                         if (row.title.find("↳") == std::string::npos) row.title += "  ↳ enter";
+                        // Child finished — leave its chat so the parent can
+                        // continue streaming. Re-enter via ↳ on the RESULT header.
+                        leaveName = row.actionName;
                     } else {
                         row.drillable = false;
                     }
@@ -773,7 +722,17 @@ struct ShellModel {
                     else if (pe.kind == ProtocolEventKind::RESPONSE) eventLog.push_back("response");
                     upsertProtocolRow(e.protocolIndex, std::move(row));
                 }
-                if (atRoot()) rebuildViews();
+                if (!enterName.empty()) {
+                    enterSubAgent(enterName);
+                } else if (!leaveName.empty() && !atRoot() && !agentPath.empty() &&
+                           agentPath.back() == leaveName) {
+                    refreshNested();  // final child snapshot before leaving
+                    goBack();
+                } else if (atRoot()) {
+                    rebuildViews();
+                } else {
+                    refreshNested();
+                }
                 break;
             }
             case UiEventKind::TurnDone: {

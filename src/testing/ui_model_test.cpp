@@ -618,14 +618,12 @@ void test_chat_thought_rows_visible_by_default() {
           "thought protocol event produces a Thought timeline row visible by default");
 }
 
-void test_chat_drillable_agent_result_nests_child_blocks() {
-    // A drillable AGENT Result nests the sub-agent's OWN timeline (the
-    // same blocks the main chat renders) as indented body lines inside
-    // the parent Result, with the child's final Response at the end.
-    // The child must have actually run (prompt()) so its protocolEvents
-    // populate; an empty child produces no nested blocks.
+void test_chat_subagent_drops_into_child_chat() {
+    // Sub-agent UX: do NOT nest child blocks inside the parent RESULT.
+    // Drop into the child's own chat (enterSubAgent) instead. Parent RESULT
+    // is header-only; the child's response lives in the nested scope.
     AgentConfig rootCfg;
-    rootCfg.name = "root";
+    rootCfg.name = "coder";
     rootCfg.provider = "noop";
     rootCfg.model = "noop";
     auto rootAgent = std::make_unique<Agent>(rootCfg, std::make_shared<NestNoopProvider>());
@@ -639,20 +637,18 @@ void test_chat_drillable_agent_result_nests_child_blocks() {
     Agent* childRaw = childAgent.get();
     rootAgent->addSubAgent(std::move(childAgent));
 
-    // Run the child so its protocolEvents populate (a RESPONSE with the text).
-    // A non-null onToken keeps ctx.streaming=true (the loop always calls
-    // generateStream, but some early-exit paths check streaming).
     setenv("HOME", "/tmp", 1);
-    std::string childResult = childRaw->prompt("scan the repo",
-        [](const std::string&, bool) {}, "", true);
+    childRaw->prompt("scan the repo", [](const std::string&, bool) {}, "", true);
 
     ShellModel model;
+    model.agentName = "coder";
     model.setRootAgent(rootAgent.get());
 
+    // Parent RESULT is header-only — no body, no nested child blocks.
     TimelineRow resultRow;
     resultRow.kind = TimelineKind::Result;
     resultRow.title = "#r1 reader";
-    resultRow.body = "";
+    resultRow.body = "should not appear in parent transcript";
     resultRow.ok = true;
     resultRow.actionType = "agent";
     resultRow.actionName = "reader";
@@ -661,26 +657,34 @@ void test_chat_drillable_agent_result_nests_child_blocks() {
     model.rootRows.push_back(std::move(resultRow));
     model.rebuildViews();
 
-    // The parent Result header must be present.
     bool headerFound = false;
+    bool bodyLeaked = false;
+    bool nestedLeaked = false;
     for (const auto& l : model.transcriptView.lines) {
-        if (l.find("✓ RESULT") != std::string::npos && l.find("reader") != std::string::npos) {
+        if (l.find("✓ RESULT") != std::string::npos && l.find("reader") != std::string::npos)
             headerFound = true;
-            break;
-        }
+        if (l.find("should not appear in parent transcript") != std::string::npos)
+            bodyLeaked = true;
+        if (l.find("The repo has src, build, and config dirs.") != std::string::npos)
+            nestedLeaked = true;
     }
-    check(headerFound, "drillable AGENT Result header is present");
+    check(headerFound, "drillable AGENT Result header is present in parent");
+    check(!bodyLeaked, "parent AGENT Result body is suppressed");
+    check(!nestedLeaked, "child blocks are NOT nested inside parent Result");
 
-    // The child's final response text must be nested inside the Result
-    // (rendered as one of the nested body lines).
-    bool nestedResponse = false;
+    // Drop into the child's chat — its response lives there.
+    check(model.enterSubAgent("reader"), "enterSubAgent(reader) succeeds");
+    check(!model.atRoot(), "after enterSubAgent we are not at root");
+    bool childChat = false;
     for (const auto& l : model.transcriptView.lines) {
-        if (l.find("The repo has src, build, and config dirs.") != std::string::npos) {
-            nestedResponse = true;
-            break;
-        }
+        if (l.find("The repo has src, build, and config dirs.") != std::string::npos)
+            childChat = true;
     }
-    check(nestedResponse, "child's final response is nested inside the parent Result");
+    check(childChat, "child's final response is visible in the child chat scope");
+
+    // Esc / goBack returns to parent header-only view.
+    check(model.goBack(), "goBack returns to parent");
+    check(model.atRoot(), "after goBack we are at root");
 }
 }  // namespace
 
@@ -706,7 +710,7 @@ int main() {
     test_chat_last_turn_summary_lifecycle();
     test_chat_last_response_body();
     test_chat_thought_rows_visible_by_default();
-    test_chat_drillable_agent_result_nests_child_blocks();
+    test_chat_subagent_drops_into_child_chat();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }
