@@ -441,18 +441,12 @@ struct ShellModel {
                         break;
                 }
                 transcriptView.lines.push_back(std::string(selected ? "› " : "  ") + label);
-                // Sub-agent Results in the PARENT transcript are header-only.
-                // The operator drops into the child's own chat (agentPath scope)
-                // instead of nesting child blocks inside the Result — the
-                // inline nest looked wrong and duplicated the child's stream.
-                // ↳ Enter (or auto-enter on AGENT action) opens the child chat.
-                bool suppressBody = (atRoot() && row.kind == TimelineKind::Result &&
-                                     row.drillable && row.actionType == "agent");
-                if (!suppressBody) {
-                    for (const auto& line : splitDisplayLines(row.body)) {
-                        if (line.empty() && row.body.empty()) continue;
-                        transcriptView.lines.push_back("    " + line);
-                    }
+                // Always emit the row body. For sub-agent Results this is the
+                // child's final response text (summary/output) — not nested
+                // child blocks. Full child timeline is manual ↳ Enter only.
+                for (const auto& line : splitDisplayLines(row.body)) {
+                    if (line.empty() && row.body.empty()) continue;
+                    transcriptView.lines.push_back("    " + line);
                 }
                 transcriptView.lines.push_back("");
                 ++focusIdx;
@@ -529,14 +523,12 @@ struct ShellModel {
         return &rows[static_cast<size_t>(ri)];
     }
 
-    // Drop into a sub-agent's own chat (nestedRows = that agent's timeline).
-    // Used by ↳ Enter and by auto-enter when an AGENT action is dispatched.
-    // While inside, Token events refreshNested() so the child stream is live.
+    // Manual drill only (↳ Enter). Never auto-enter on AGENT action —
+    // the operator chooses when to open a sub-agent's full chat.
     bool enterSubAgent(const std::string& name) {
         if (name.empty()) return false;
         Agent* parent = currentAgent();
         if (!parent) parent = rootAgent;
-        // Sibling switch from a root-level sub-agent: reset path first.
         if (!atRoot() && rootAgent && rootAgent->hasSubAgent(name) &&
             (agentPath.size() == 1 || !parent->hasSubAgent(name))) {
             agentPath.clear();
@@ -555,10 +547,8 @@ struct ShellModel {
         agentPath.push_back(name);
         nestedRows = rowsFromAgent(parent->getSubAgent(name));
         selectedBlock = 0;
-        // Follow the stream like a normal chat (not block-selection mode).
-        timelineFocus = false;
+        timelineFocus = true;
         composer.focused = false;
-        transcriptView.stick_bottom = true;
         rebuildViews();
         return true;
     }
@@ -669,15 +659,13 @@ struct ShellModel {
                     for (auto& line : splitDisplayLines(e.text))
                         pushRow({TimelineKind::Stream, "raw", line, true});
                 }
-                // Child tokens are forwarded for liveness; while dropped into a
-                // sub-agent chat, refresh its timeline from the live Agent.
+                // If the operator manually drilled into a sub-agent, keep its
+                // timeline live while child tokens stream.
                 if (!atRoot()) refreshNested();
                 break;
             case UiEventKind::Protocol: {
                 const auto& pe = e.protocol;
                 TimelineRow row = rowFromProtocol(pe);
-                std::string enterName;
-                std::string leaveName;
                 if (pe.kind == ProtocolEventKind::ACTION) {
                     if (pendingActionIds.insert(pe.action.id).second) {
                         ++actionCount;
@@ -687,9 +675,6 @@ struct ShellModel {
                     if (row.actionType == "agent" && rootAgent && rootAgent->hasSubAgent(row.actionName)) {
                         row.drillable = true;
                         if (row.title.find("↳") == std::string::npos) row.title += "  ↳ enter";
-                        // Drop into the sub-agent's chat immediately — do not
-                        // nest its stream inside the parent Result.
-                        enterName = row.actionName;
                     } else if (row.actionType != "agent") {
                         row.drillable = false;
                     }
@@ -710,9 +695,24 @@ struct ShellModel {
                         row.drillable = true;
                         row.actionType = "agent";
                         if (row.title.find("↳") == std::string::npos) row.title += "  ↳ enter";
-                        // Child finished — leave its chat so the parent can
-                        // continue streaming. Re-enter via ↳ on the RESULT header.
-                        leaveName = row.actionName;
+                        // Prefer the child's final response text when the
+                        // protocol summary is empty/placeholder (e.g. bare name).
+                        // rowFromProtocol may append "\nNms" — strip that before
+                        // comparing against the placeholder summary.
+                        if (Agent* sub = rootAgent->getSubAgent(row.actionName)) {
+                            const std::string& finalOut = sub->responseOutput();
+                            std::string summaryOnly = pe.result.summary;
+                            bool placeholder = summaryOnly.empty() ||
+                                               summaryOnly == row.actionName ||
+                                               summaryOnly == pe.result.toolName;
+                            if (!finalOut.empty() && (row.body.empty() || placeholder)) {
+                                row.body = finalOut;
+                                if (pe.result.elapsedMs > 0)
+                                    row.body += "\n" +
+                                        std::to_string(static_cast<int>(pe.result.elapsedMs)) +
+                                        "ms";
+                            }
+                        }
                     } else {
                         row.drillable = false;
                     }
@@ -722,17 +722,8 @@ struct ShellModel {
                     else if (pe.kind == ProtocolEventKind::RESPONSE) eventLog.push_back("response");
                     upsertProtocolRow(e.protocolIndex, std::move(row));
                 }
-                if (!enterName.empty()) {
-                    enterSubAgent(enterName);
-                } else if (!leaveName.empty() && !atRoot() && !agentPath.empty() &&
-                           agentPath.back() == leaveName) {
-                    refreshNested();  // final child snapshot before leaving
-                    goBack();
-                } else if (atRoot()) {
-                    rebuildViews();
-                } else {
-                    refreshNested();
-                }
+                if (atRoot()) rebuildViews();
+                else refreshNested();
                 break;
             }
             case UiEventKind::TurnDone: {

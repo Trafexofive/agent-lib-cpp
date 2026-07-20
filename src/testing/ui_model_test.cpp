@@ -618,10 +618,10 @@ void test_chat_thought_rows_visible_by_default() {
           "thought protocol event produces a Thought timeline row visible by default");
 }
 
-void test_chat_subagent_drops_into_child_chat() {
-    // Sub-agent UX: do NOT nest child blocks inside the parent RESULT.
-    // Drop into the child's own chat (enterSubAgent) instead. Parent RESULT
-    // is header-only; the child's response lives in the nested scope.
+void test_chat_subagent_result_shows_final_no_auto_enter() {
+    // Sub-agent RESULT in the parent transcript shows the child's final
+    // response text as the body. No nested child blocks. No auto-enter —
+    // ↳ Enter is manual only.
     AgentConfig rootCfg;
     rootCfg.name = "coder";
     rootCfg.provider = "noop";
@@ -633,58 +633,51 @@ void test_chat_subagent_drops_into_child_chat() {
     childCfg.provider = "noop";
     childCfg.model = "noop";
     auto childAgent = std::make_unique<Agent>(childCfg,
-        std::make_shared<NestNoopProvider>("<response final=\"true\">The repo has src, build, and config dirs.</response>"));
+        std::make_shared<NestNoopProvider>("<response final=\"true\">reader-ok</response>"));
     Agent* childRaw = childAgent.get();
     rootAgent->addSubAgent(std::move(childAgent));
 
     setenv("HOME", "/tmp", 1);
-    childRaw->prompt("scan the repo", [](const std::string&, bool) {}, "", true);
+    childRaw->prompt("ping", [](const std::string&, bool) {}, "", true);
+    check(childRaw->responseOutput().find("reader-ok") != std::string::npos,
+          "child responseOutput holds final text");
 
     ShellModel model;
     model.agentName = "coder";
     model.setRootAgent(rootAgent.get());
+    check(model.atRoot(), "starts at root — no auto-enter");
 
-    // Parent RESULT is header-only — no body, no nested child blocks.
-    TimelineRow resultRow;
-    resultRow.kind = TimelineKind::Result;
-    resultRow.title = "#r1 reader";
-    resultRow.body = "should not appear in parent transcript";
-    resultRow.ok = true;
-    resultRow.actionType = "agent";
-    resultRow.actionName = "reader";
-    resultRow.actionId = "r1";
-    resultRow.drillable = true;
-    model.rootRows.push_back(std::move(resultRow));
-    model.rebuildViews();
+    // Simulate RESULT protocol event with empty/placeholder summary — the
+    // model should fill body from the child's responseOutput.
+    UiEvent ev;
+    ev.kind = UiEventKind::Protocol;
+    ev.protocolIndex = 0;
+    ev.protocol.kind = ProtocolEventKind::RESULT;
+    ev.protocol.result.id = "ping_reader";
+    ev.protocol.result.ok = true;
+    ev.protocol.result.summary = "reader";  // placeholder = action name
+    ev.protocol.result.toolName = "reader";
+    ev.protocol.result.elapsedMs = 12.0;
+    model.apply(ev);
+
+    check(model.atRoot(), "RESULT does not auto-enter child chat");
 
     bool headerFound = false;
-    bool bodyLeaked = false;
-    bool nestedLeaked = false;
+    bool finalShown = false;
     for (const auto& l : model.transcriptView.lines) {
         if (l.find("✓ RESULT") != std::string::npos && l.find("reader") != std::string::npos)
             headerFound = true;
-        if (l.find("should not appear in parent transcript") != std::string::npos)
-            bodyLeaked = true;
-        if (l.find("The repo has src, build, and config dirs.") != std::string::npos)
-            nestedLeaked = true;
+        if (l.find("reader-ok") != std::string::npos)
+            finalShown = true;
     }
-    check(headerFound, "drillable AGENT Result header is present in parent");
-    check(!bodyLeaked, "parent AGENT Result body is suppressed");
-    check(!nestedLeaked, "child blocks are NOT nested inside parent Result");
+    check(headerFound, "RESULT header present in parent");
+    check(finalShown, "RESULT body shows child's final response text");
 
-    // Drop into the child's chat — its response lives there.
-    check(model.enterSubAgent("reader"), "enterSubAgent(reader) succeeds");
-    check(!model.atRoot(), "after enterSubAgent we are not at root");
-    bool childChat = false;
-    for (const auto& l : model.transcriptView.lines) {
-        if (l.find("The repo has src, build, and config dirs.") != std::string::npos)
-            childChat = true;
-    }
-    check(childChat, "child's final response is visible in the child chat scope");
-
-    // Esc / goBack returns to parent header-only view.
+    // Manual drill still works.
+    check(model.enterSubAgent("reader"), "manual enterSubAgent works");
+    check(!model.atRoot(), "manual drill leaves root");
     check(model.goBack(), "goBack returns to parent");
-    check(model.atRoot(), "after goBack we are at root");
+    check(model.atRoot(), "back at root after goBack");
 }
 }  // namespace
 
@@ -710,7 +703,7 @@ int main() {
     test_chat_last_turn_summary_lifecycle();
     test_chat_last_response_body();
     test_chat_thought_rows_visible_by_default();
-    test_chat_subagent_drops_into_child_chat();
+    test_chat_subagent_result_shows_final_no_auto_enter();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }
