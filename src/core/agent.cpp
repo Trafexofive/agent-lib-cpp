@@ -1692,7 +1692,7 @@ std::string Agent::sanitize(const std::string& output) {
     return (start == std::string::npos) ? "" : out.substr(start, end - start + 1);
 }
 
-// ── Tool dispatch — see agent_tools.cpp
+// ── Tool dispatch — see agent_tool_dispatch.cpp
 // ── Session lifecycle — see agent_session.cpp
 
 }  // namespace cortex::mk3

@@ -1,5 +1,5 @@
 // src/tools/builtins/grep.cpp — grep native builtin
-#include "builtins.hpp"
+#include "grep.hpp"
 #include "common.hpp"
 
 #include <fnmatch.h>
@@ -37,20 +37,26 @@ static bool lineMatches(const std::string& line, const std::string& pattern, con
 }
 
 static void appendMatch(Json::Value& matchesJson, std::ostringstream& out, const fs::path& file,
-                        int lineNo, const std::string& line, bool contextLine) {
+                        int lineNo, const std::string& line, bool contextLine,
+                        const std::function<void(const std::string&, bool)>& stream) {
     Json::Value m;
     m["path"] = file.string();
     m["line"] = lineNo;
     m["text"] = line;
     m["context"] = contextLine;
     matchesJson.append(m);
-    out << file.string() << (contextLine ? "-" : ":") << lineNo << (contextLine ? "-" : ":")
-        << line << "\n";
+    std::ostringstream rendered;
+    rendered << file.string() << (contextLine ? "-" : ":") << lineNo << (contextLine ? "-" : ":")
+             << line << "\n";
+    out << rendered.str();
+    if (stream)
+        stream(rendered.str(), false);
 }
 
 static void grepFile(const fs::path& file, const std::string& pattern, const std::regex& re,
                      bool literal, bool ignoreCase, int context, int maxMatches,
-                     Json::Value& matchesJson, std::ostringstream& out) {
+                     Json::Value& matchesJson, std::ostringstream& out,
+                     const std::function<void(const std::string&, bool)>& stream) {
     if ((int)matchesJson.size() >= maxMatches)
         return;
     std::ifstream in(file);
@@ -65,14 +71,14 @@ static void grepFile(const fs::path& file, const std::string& pattern, const std
         bool hit = lineMatches(line, pattern, re, literal, ignoreCase);
         if (hit) {
             for (const auto& [n, ctxLine] : before)
-                appendMatch(matchesJson, out, file, n, ctxLine, true);
+                appendMatch(matchesJson, out, file, n, ctxLine, true, stream);
             before.clear();
-            appendMatch(matchesJson, out, file, lineNo, line, false);
+            appendMatch(matchesJson, out, file, lineNo, line, false, stream);
             after = context;
             continue;
         }
         if (after > 0) {
-            appendMatch(matchesJson, out, file, lineNo, line, true);
+            appendMatch(matchesJson, out, file, lineNo, line, true, stream);
             --after;
             continue;
         }
@@ -85,6 +91,11 @@ static void grepFile(const fs::path& file, const std::string& pattern, const std
 }
 
 std::string grep(const Json::Value& p) {
+    return grepStreaming(p, {});
+}
+
+std::string grepStreaming(const Json::Value& p,
+                          const std::function<void(const std::string&, bool)>& stream) {
     std::string pattern = p.get("pattern", "").asString();
     if (pattern.empty())
         return jsonErr("pattern is required");
@@ -116,12 +127,12 @@ std::string grep(const Json::Value& p) {
     std::ostringstream out;
     if (fs::is_regular_file(root, ec)) {
         if (globAllowed(root, glob))
-            grepFile(root, pattern, re, literal, ignoreCase, ctx, maxMatches, matchesJson, out);
+            grepFile(root, pattern, re, literal, ignoreCase, ctx, maxMatches, matchesJson, out, stream);
     } else if (fs::is_directory(root, ec)) {
         for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end;
              !ec && it != end && (int)matchesJson.size() < maxMatches; it.increment(ec)) {
             if (it->is_regular_file(ec) && globAllowed(it->path(), glob))
-                grepFile(it->path(), pattern, re, literal, ignoreCase, ctx, maxMatches, matchesJson, out);
+                grepFile(it->path(), pattern, re, literal, ignoreCase, ctx, maxMatches, matchesJson, out, stream);
         }
     } else {
         return jsonErr("unsupported path type: " + root.string());

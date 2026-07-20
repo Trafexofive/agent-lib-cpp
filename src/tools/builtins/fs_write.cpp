@@ -1,5 +1,5 @@
 // src/tools/builtins/fs_write.cpp — fs_write native builtin
-#include "builtins.hpp"
+#include "fs_write.hpp"
 #include "common.hpp"
 
 #include <algorithm>
@@ -100,9 +100,14 @@ static Json::Value writeResult(const fs::path& target, const std::string& before
 }
 
 static std::string replaceFileAtomically(const fs::path& target, const std::string& before,
-                                         const std::string& after, const std::string& op) {
-    if (before == after)
-        return jsonStr(writeResult(target, before, after, op));
+                                         const std::string& after, const std::string& op,
+                                         const std::function<void(const std::string&, bool)>& stream) {
+    if (before == after) {
+        Json::Value unchanged = writeResult(target, before, after, op);
+        if (stream)
+            stream(unchanged["output"].asString() + " (unchanged)\n", false);
+        return jsonStr(unchanged);
+    }
     std::string tmp = uniqueTempPath(target);
     {
         std::ofstream out(tmp, std::ios::out | std::ios::binary | std::ios::trunc);
@@ -123,13 +128,18 @@ static std::string replaceFileAtomically(const fs::path& target, const std::stri
         }
     }
     std::error_code ec;
+    if (stream)
+        stream(op + " " + std::to_string(after.size()) + " bytes to " + target.string() + "\n", false);
     fs::rename(tmp, target, ec);
     if (ec) {
         std::error_code ignored;
         fs::remove(tmp, ignored);
         return jsonErr("failed to atomically replace " + target.string() + " — " + ec.message());
     }
-    return jsonStr(writeResult(target, before, after, op));
+    Json::Value wr = writeResult(target, before, after, op);
+    if (stream)
+        stream(wr["diff"].asString(), false);
+    return jsonStr(wr);
 }
 
 static std::string contentParam(const Json::Value& p) {
@@ -153,6 +163,11 @@ static bool ensureLineRange(int start, int end, size_t lineCount, std::string& e
 }
 
 std::string fs_write(const Json::Value& p) {
+    return fsWriteStreaming(p, {});
+}
+
+std::string fsWriteStreaming(const Json::Value& p,
+                             const std::function<void(const std::string&, bool)>& stream) {
     if (!p.isMember("path") || !p["path"].isString())
         return jsonErr("path is required");
     if (p.isMember("content") && !p["content"].isString())
@@ -268,7 +283,7 @@ std::string fs_write(const Json::Value& p) {
         return jsonErr("unknown op: " + op + " (write|append|prepend|replace_text|replace_range|delete_range|insert_before|insert_after)");
     }
 
-    return replaceFileAtomically(target, before, after, op);
+    return replaceFileAtomically(target, before, after, op, stream);
 }
 
 }  // namespace cortex::mk3::tools::builtins

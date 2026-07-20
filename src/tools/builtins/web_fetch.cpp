@@ -1,5 +1,5 @@
 // src/tools/builtins/web_fetch.cpp — web_fetch native builtin
-#include "builtins.hpp"
+#include "web_fetch.hpp"
 #include "common.hpp"
 
 #include <curl/curl.h>
@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <memory>
+#include <sstream>
 
 namespace cortex::mk3::tools::builtins {
 
@@ -14,6 +15,7 @@ struct FetchBuffer {
     std::string data;
     size_t maxBytes = 1024 * 1024;
     bool truncated = false;
+    std::function<void(const std::string&, bool)> stream;
 };
 
 static size_t curlWrite(void* ptr, size_t sz, size_t nmemb, void* userdata) {
@@ -22,6 +24,8 @@ static size_t curlWrite(void* ptr, size_t sz, size_t nmemb, void* userdata) {
     size_t remaining = b->maxBytes > b->data.size() ? b->maxBytes - b->data.size() : 0;
     size_t take = std::min(bytes, remaining);
     b->data.append(static_cast<char*>(ptr), take);
+    if (take > 0 && b->stream)
+        b->stream(std::string(static_cast<char*>(ptr), take), false);
     if (take < bytes)
         b->truncated = true;
     return bytes;
@@ -42,6 +46,11 @@ static bool allowedMethod(const std::string& method) {
 }
 
 std::string web_fetch(const Json::Value& p) {
+    return webFetchStreaming(p, {});
+}
+
+std::string webFetchStreaming(const Json::Value& p,
+                              const std::function<void(const std::string&, bool)>& stream) {
     if (!p.isMember("url") || !p["url"].isString())
         return jsonErr("url is required");
     std::string url = p["url"].asString();
@@ -64,6 +73,9 @@ std::string web_fetch(const Json::Value& p) {
 
     FetchBuffer buffer;
     buffer.maxBytes = maxBytes;
+    buffer.stream = stream;
+    if (stream)
+        stream(method + " " + url + "\n", false);
     curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, (long)timeout);
     curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT, (long)connectTimeout);
@@ -120,6 +132,14 @@ std::string web_fetch(const Json::Value& p) {
         r["error"] = curl_easy_strerror(res);
     else if (httpCode < 200 || httpCode >= 400)
         r["error"] = "HTTP " + std::to_string(httpCode);
+    if (stream) {
+        std::ostringstream status;
+        status << "\nHTTP " << httpCode << " · " << buffer.data.size() << "B";
+        if (buffer.truncated)
+            status << " · truncated";
+        status << "\n";
+        stream(status.str(), false);
+    }
     return jsonStr(r);
 }
 

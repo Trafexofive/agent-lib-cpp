@@ -1,5 +1,5 @@
 // src/tools/builtins/exec.cpp — production-grade exec native builtin
-#include "builtins.hpp"
+#include "exec.hpp"
 #include "common.hpp"
 
 #include <algorithm>
@@ -55,6 +55,11 @@ static Json::Value processResultJson(const process::Result& cap) {
 }
 
 std::string exec(const Json::Value& p) {
+    return execStreaming(p, {});
+}
+
+std::string execStreaming(const Json::Value& p,
+                          const std::function<void(const std::string&, bool)>& stream) {
     process::Spec spec;
     spec.argv = parseArgv(p);
     bool hasArgv = !spec.argv.empty();
@@ -82,6 +87,12 @@ std::string exec(const Json::Value& p) {
         std::clamp(p.get("max_stdout", maxBytes).asInt(), 1, 10 * 1024 * 1024));
     spec.maxStderr = static_cast<size_t>(
         std::clamp(p.get("max_stderr", maxBytes).asInt(), 1, 10 * 1024 * 1024));
+    if (stream) {
+        spec.onOutput = [&](const char* data, size_t size, bool stderrStream) {
+            if (size > 0)
+                stream(std::string(data, size), stderrStream);
+        };
+    }
 
     return jsonStr(processResultJson(process::run(spec)));
 }

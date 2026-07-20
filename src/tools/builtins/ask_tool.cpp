@@ -1,5 +1,5 @@
 // src/tools/builtins/ask_tool.cpp — ask_tool native builtin fallback
-#include "builtins.hpp"
+#include "ask_tool.hpp"
 #include "common.hpp"
 
 #include <iostream>
@@ -27,11 +27,21 @@ static std::string readAnswer(const Json::Value& card) {
 }
 
 std::string ask_tool(const Json::Value& p) {
+    return askToolStreaming(p, {});
+}
+
+std::string askToolStreaming(const Json::Value& p,
+                             const std::function<void(const std::string&, bool)>& stream) {
     if (p.isMember("cards") && !p["cards"].isArray())
         return jsonErr("cards must be an array");
 
     std::string title = p.get("title", "Agent asks:").asString();
     std::string message = p.get("message", "").asString();
+    if (stream) {
+        stream("ask_tool: " + title + "\n", false);
+        if (!message.empty())
+            stream(message + "\n", false);
+    }
     std::cerr << "\n" << ansi::bold << ansi::green << "[AGENT] " << ansi::reset << title << "\n";
     if (!message.empty())
         std::cerr << ansi::dim << message << ansi::reset << "\n";
@@ -49,6 +59,11 @@ std::string ask_tool(const Json::Value& p) {
                 return jsonErr("card " + std::to_string(i) + " missing id");
             std::string ct = card.get("title", id).asString();
             std::string cm = card.get("message", "").asString();
+            if (stream) {
+                stream("[" + id + "] " + ct + "\n", false);
+                if (!cm.empty())
+                    stream(cm + "\n", false);
+            }
             std::cerr << "\n" << ansi::cyan << "[" << id << "]" << ansi::reset << " " << ct << "\n";
             if (!cm.empty())
                 std::cerr << ansi::dim << cm << ansi::reset << "\n";

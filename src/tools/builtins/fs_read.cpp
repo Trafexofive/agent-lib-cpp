@@ -1,5 +1,5 @@
 // src/tools/builtins/fs_read.cpp — fs_read native builtin
-#include "builtins.hpp"
+#include "fs_read.hpp"
 #include "common.hpp"
 
 #include <fnmatch.h>
@@ -54,7 +54,8 @@ static std::string formatLineBlock(const fs::path& path, const std::vector<std::
     return out.str();
 }
 
-static std::string readFileResult(const fs::path& path, int offset, int limit, bool lineNumbers) {
+static std::string readFileResult(const fs::path& path, int offset, int limit, bool lineNumbers,
+                                  const std::function<void(const std::string&, bool)>& stream) {
     std::string err;
     auto lines = readLines(path, err);
     if (!err.empty())
@@ -62,6 +63,8 @@ static std::string readFileResult(const fs::path& path, int offset, int limit, b
     int emitted = 0;
     bool truncated = false;
     std::string content = formatLineBlock(path, lines, offset, limit, lineNumbers, emitted, truncated);
+    if (stream && !content.empty())
+        stream(content, false);
     Json::Value r;
     r["success"] = true;
     r["kind"] = "file";
@@ -75,24 +78,30 @@ static std::string readFileResult(const fs::path& path, int offset, int limit, b
     return jsonStr(r);
 }
 
-static void appendTreeEntry(std::ostringstream& out, const fs::directory_entry& e, const fs::path& root) {
+static void appendTreeEntry(std::ostringstream& out, const fs::directory_entry& e, const fs::path& root,
+                            const std::function<void(const std::string&, bool)>& stream = {}) {
     std::error_code ec;
     auto rel = fs::relative(e.path(), root, ec);
     std::string shown = ec ? e.path().string() : rel.string();
+    std::ostringstream line;
     if (e.is_directory(ec)) {
-        out << "dir  " << shown << "/\n";
+        line << "dir  " << shown << "/\n";
     } else if (e.is_regular_file(ec)) {
         auto size = e.file_size(ec);
-        out << "file " << shown;
+        line << "file " << shown;
         if (!ec)
-            out << "  " << size << "B";
-        out << "\n";
+            line << "  " << size << "B";
+        line << "\n";
     } else {
-        out << "other " << shown << "\n";
+        line << "other " << shown << "\n";
     }
+    out << line.str();
+    if (stream)
+        stream(line.str(), false);
 }
 
-static std::string readDirectoryResult(const fs::path& root, const Json::Value& p) {
+static std::string readDirectoryResult(const fs::path& root, const Json::Value& p,
+                                       const std::function<void(const std::string&, bool)>& stream) {
     bool recursive = p.get("recursive", false).asBool();
     bool includeContent = p.get("include_content", false).asBool();
     bool lineNumbers = p.get("line_numbers", true).asBool();
@@ -113,7 +122,7 @@ static std::string readDirectoryResult(const fs::path& root, const Json::Value& 
             truncated = true;
             return;
         }
-        appendTreeEntry(tree, e, root);
+        appendTreeEntry(tree, e, root, stream);
         ++entries;
         if (!includeContent || filesRead >= maxFiles || !e.is_regular_file(ec) ||
             !globAllowed(e.path(), glob))
@@ -133,6 +142,11 @@ static std::string readDirectoryResult(const fs::path& root, const Json::Value& 
         item["truncated"] = fileTruncated;
         item["content"] = block;
         files.append(item);
+        if (stream && !block.empty()) {
+            std::ostringstream rendered;
+            rendered << "\n--- " << e.path().string() << " ---\n" << block;
+            stream(rendered.str(), false);
+        }
         ++filesRead;
     };
 
@@ -176,6 +190,11 @@ static std::string readDirectoryResult(const fs::path& root, const Json::Value& 
 }
 
 std::string fs_read(const Json::Value& p) {
+    return fsReadStreaming(p, {});
+}
+
+std::string fsReadStreaming(const Json::Value& p,
+                            const std::function<void(const std::string&, bool)>& stream) {
     if (!p.isMember("path") || !p["path"].isString())
         return jsonErr("path is required");
     fs::path path(p["path"].asString());
@@ -189,9 +208,9 @@ std::string fs_read(const Json::Value& p) {
     if (!fs::exists(path, ec))
         return jsonErr("path not found: " + path.string());
     if (fs::is_directory(path, ec))
-        return readDirectoryResult(path, p);
+        return readDirectoryResult(path, p, stream);
     if (fs::is_regular_file(path, ec))
-        return readFileResult(path, offset, limit, lineNumbers);
+        return readFileResult(path, offset, limit, lineNumbers, stream);
     return jsonErr("unsupported path type: " + path.string());
 }
 

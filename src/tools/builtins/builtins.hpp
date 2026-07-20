@@ -1,20 +1,16 @@
-// src/tools/builtins/builtins.hpp — native builtin tool entry points
+// src/tools/builtins/builtins.hpp — aggregate of all native builtin entry points
+// Prefer including the per-builtin header from implementation files.
+// This aggregate exists for registration sites that need the full surface.
 #pragma once
 
-#include <json/json.h>
-#include <string>
+#include "exec.hpp"
+#include "list.hpp"
+#include "grep.hpp"
+#include "fs_read.hpp"
+#include "fs_write.hpp"
+#include "json.hpp"
+#include "web_fetch.hpp"
+#include "ask_tool.hpp"
+#include "sleep.hpp"
+#include "artifact.hpp"
 
-namespace cortex::mk3::tools::builtins {
-
-std::string exec(const Json::Value& params);
-std::string list(const Json::Value& params);
-std::string grep(const Json::Value& params);
-std::string fs_read(const Json::Value& params);
-std::string fs_write(const Json::Value& params);
-std::string json(const Json::Value& params);
-std::string web_fetch(const Json::Value& params);
-std::string ask_tool(const Json::Value& params);
-std::string sleep(const Json::Value& params);
-std::string artifact(const Json::Value& params);
-
-}  // namespace cortex::mk3::tools::builtins

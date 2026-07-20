@@ -1,5 +1,5 @@
 // src/tools/builtins/sleep.cpp — bounded native sleep builtin
-#include "builtins.hpp"
+#include "sleep.hpp"
 #include "common.hpp"
 
 #include <algorithm>
@@ -38,6 +38,11 @@ static int durationMs(const Json::Value& p) {
 }
 
 std::string sleep(const Json::Value& p) {
+    return sleepStreaming(p, {});
+}
+
+std::string sleepStreaming(const Json::Value& p,
+                           const std::function<void(const std::string&, bool)>& stream) {
     int ms = durationMs(p);
     int maxMs = p.get("max_ms", 30000).asInt();
     maxMs = std::clamp(maxMs, 1, 300000);
@@ -47,7 +52,17 @@ std::string sleep(const Json::Value& p) {
         return jsonErr("duration " + std::to_string(ms) + "ms exceeds max_ms " + std::to_string(maxMs));
 
     auto start = std::chrono::steady_clock::now();
-    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    if (stream)
+        stream("sleeping " + std::to_string(ms) + "ms\n", false);
+    int slept = 0;
+    int step = ms >= 5000 ? 1000 : (ms >= 1000 ? 500 : ms);
+    while (slept < ms) {
+        int chunk = std::min(step, ms - slept);
+        std::this_thread::sleep_for(std::chrono::milliseconds(chunk));
+        slept += chunk;
+        if (stream && slept < ms && step > 0)
+            stream("slept " + std::to_string(slept) + "/" + std::to_string(ms) + "ms\n", false);
+    }
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - start)
                        .count();

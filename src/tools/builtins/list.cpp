@@ -1,5 +1,5 @@
 // src/tools/builtins/list.cpp — list native builtin
-#include "builtins.hpp"
+#include "list.hpp"
 #include "common.hpp"
 
 #include <fnmatch.h>
@@ -69,6 +69,11 @@ static void appendTextEntry(std::ostringstream& out, const Json::Value& item) {
 }
 
 std::string list(const Json::Value& p) {
+    return listStreaming(p, {});
+}
+
+std::string listStreaming(const Json::Value& p,
+                          const std::function<void(const std::string&, bool)>& stream) {
     if (p.isMember("path") && !p["path"].isString())
         return jsonErr("path must be a string");
     std::string path = p.get("path", ".").asString();
@@ -94,7 +99,12 @@ std::string list(const Json::Value& p) {
         if (!typeAllowed(e, type) || !nameAllowed(e.path(), pattern))
             return;
         Json::Value item = entryJson(e, root, relative);
-        appendTextEntry(out, item);
+        std::ostringstream line;
+        appendTextEntry(line, item);
+        std::string rendered = line.str();
+        out << rendered;
+        if (stream)
+            stream(rendered, false);
         entries.append(item);
     };
 

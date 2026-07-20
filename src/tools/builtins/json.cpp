@@ -1,5 +1,5 @@
 // src/tools/builtins/json.cpp — json native builtin
-#include "builtins.hpp"
+#include "json.hpp"
 #include "common.hpp"
 
 #include <cstdlib>
@@ -112,7 +112,32 @@ static std::string valueType(const Json::Value& v) {
     return "unknown";
 }
 
+static std::string emitJsonResult(Json::Value out,
+                                  const std::function<void(const std::string&, bool)>& stream) {
+    Json::StreamWriterBuilder w;
+    w["indentation"] = "  ";
+    std::string rendered;
+    if (out.isMember("formatted") && out["formatted"].isString())
+        rendered = out["formatted"].asString();
+    else if (out.isMember("value"))
+        rendered = Json::writeString(w, out["value"]);
+    else if (out.isMember("keys"))
+        rendered = Json::writeString(w, out["keys"]);
+    else
+        rendered = Json::writeString(w, out);
+    if (!out.isMember("output"))
+        out["output"] = rendered;
+    if (stream && !rendered.empty())
+        stream(rendered + (rendered.back() == '\n' ? "" : "\n"), false);
+    return jsonStr(out);
+}
+
 std::string json(const Json::Value& p) {
+    return jsonStreaming(p, {});
+}
+
+std::string jsonStreaming(const Json::Value& p,
+                          const std::function<void(const std::string&, bool)>& stream) {
     std::string op = p.get("op", p.get("action", "").asString()).asString();
     if (op.empty())
         return jsonErr("op is required (parse|query|validate|pretty|minify|keys|length|type)");
@@ -126,7 +151,7 @@ std::string json(const Json::Value& p) {
         out["valid"] = ok;
         if (!ok)
             out["errors"] = err;
-        return jsonStr(out);
+        return emitJsonResult(out, stream);
     }
 
     Json::Value root;
@@ -139,7 +164,7 @@ std::string json(const Json::Value& p) {
         out["success"] = true;
         out["value"] = root;
         out["type"] = valueType(root);
-        return jsonStr(out);
+        return emitJsonResult(out, stream);
     }
 
     if (op == "pretty" || op == "minify") {
@@ -148,7 +173,7 @@ std::string json(const Json::Value& p) {
         Json::Value out;
         out["success"] = true;
         out["formatted"] = Json::writeString(w, root);
-        return jsonStr(out);
+        return emitJsonResult(out, stream);
     }
 
     std::string path = p.get("path", p.get("query", "").asString()).asString();
@@ -161,18 +186,18 @@ std::string json(const Json::Value& p) {
     if (op == "query") {
         out["value"] = selected;
         out["type"] = valueType(selected);
-        return jsonStr(out);
+        return emitJsonResult(out, stream);
     }
     if (op == "type") {
         out["type"] = valueType(selected);
-        return jsonStr(out);
+        return emitJsonResult(out, stream);
     }
     if (op == "length") {
         if (selected.isArray() || selected.isObject() || selected.isString())
             out["length"] = static_cast<Json::UInt64>(selected.size());
         else
             out["length"] = 0;
-        return jsonStr(out);
+        return emitJsonResult(out, stream);
     }
     if (op == "keys") {
         Json::Value keys(Json::arrayValue);
@@ -181,7 +206,7 @@ std::string json(const Json::Value& p) {
         for (const auto& name : selected.getMemberNames())
             keys.append(name);
         out["keys"] = keys;
-        return jsonStr(out);
+        return emitJsonResult(out, stream);
     }
 
     return jsonErr("Unknown json op: " + op);

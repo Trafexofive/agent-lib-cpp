@@ -1,5 +1,5 @@
 // src/tools/builtins/artifact.cpp — project-local artifact store builtin
-#include "builtins.hpp"
+#include "artifact.hpp"
 #include "common.hpp"
 
 #include <algorithm>
@@ -349,7 +349,7 @@ static std::string opStats(const Json::Value& p) {
     return jsonStr(r);
 }
 
-std::string artifact(const Json::Value& p) {
+static std::string artifactRaw(const Json::Value& p) {
     std::string op = p.get("op", p.get("action", "put").asString()).asString();
     if (op == "put" || op == "create" || op == "store")
         return opPut(p);
@@ -364,6 +364,32 @@ std::string artifact(const Json::Value& p) {
     if (op == "stats")
         return opStats(p);
     return jsonErr("unknown artifact op: " + op);
+}
+
+std::string artifact(const Json::Value& p) {
+    return artifactStreaming(p, {});
+}
+
+std::string artifactStreaming(const Json::Value& p,
+                              const std::function<void(const std::string&, bool)>& stream) {
+    std::string raw = artifactRaw(p);
+    if (stream) {
+        Json::Value parsed;
+        Json::CharReaderBuilder r;
+        std::string errs;
+        std::istringstream ss(raw);
+        if (Json::parseFromStream(r, ss, &parsed, &errs)) {
+            if (parsed.isMember("output") && parsed["output"].isString())
+                stream(parsed["output"].asString() + "\n", false);
+            else if (parsed.isMember("content") && parsed["content"].isString())
+                stream(parsed["content"].asString(), false);
+            else
+                stream(jsonStr(parsed) + "\n", false);
+        } else {
+            stream(raw + "\n", false);
+        }
+    }
+    return raw;
 }
 
 }  // namespace cortex::mk3::tools::builtins
