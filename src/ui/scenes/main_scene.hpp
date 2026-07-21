@@ -20,6 +20,7 @@
 #include "src/ui/components/cmd_palette.hpp"
 #include "src/ui/components/pill_nav.hpp"
 #include "src/ui/gfx/blit.hpp"
+#include "src/ui/gfx/field_raster.hpp"
 #include "src/ui/gfx/shaders_dedsec.hpp"
 #include "src/ui/layout/density.hpp"
 #include "src/ui/model/dashboard_controller.hpp"
@@ -285,28 +286,25 @@ class MainScene final : public BaseScene {
         const inkcell::Rect page = layout::page(surface);
         const auto tier = layout::densityOf(page.w);
         const auto& dash = model_->dashboard;
+        const float tsec = gfx::nowSeconds();
+        const int tvar = gfx::themeVariantIndex();
 
-        // Sparse cached wallpaper under chrome (underlay = won't stomp content)
-        {
-            const auto& wall = gfx::bakeHubWallpaper(page.w, page.h, gfx::themeVariantIndex(),
-                                                    gfx::nowSeconds());
-            gfx::blit(surface, wall, page.x, page.y, gfx::BlitMode::Underlay, page);
-        }
+        // Full-page field raster FIRST (half-block plasma/ripple). Real f(x,y,t)
+        // samples — not decorative · sprinkle. App bar + stage paint over it.
+        gfx::drawFieldBg(surface, page, tvar, tsec);
 
         drawAppBar(surface, page, tier);
 
-        // Stage above textured 3-row pill (+ shadow).
-        // +2 under app bar (no rule line) — one row of shader bg breathes between.
+        // Stage: open-top panel (no ╭───╮ hairline). One pure field row under app bar.
         const int dockReserve = 4;
-        int stageTop = page.y + 3;
+        int stageTop = page.y + 3;  // page.y+2 stays field plasma only
         int stageH = std::max(6, page.bottom() - dockReserve - stageTop);
         inkcell::Rect stage{page.x, stageTop, page.w, stageH};
 
         auto stageBg = theme::panel_bg();
-        surface.fill(stage, " ", stageBg);
-        surface.box(stage, inkcell::BorderStyle::Rounded,
-                    stageBg.with_fg(theme::color(inkcell::Color::rgb(48, 48, 48),
-                                                 inkcell::Color::rgb(30, 42, 62))));
+        auto stageBd = stageBg.with_fg(theme::color(inkcell::Color::rgb(48, 48, 48),
+                                                    inkcell::Color::rgb(30, 42, 62)));
+        gfx::drawOpenTopPanel(surface, stage, stageBg, stageBd);
 
         inkcell::Rect content{stage.x + 2, stage.y + 1, std::max(1, stage.w - 4),
                               std::max(1, stage.h - 2)};
