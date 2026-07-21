@@ -205,6 +205,21 @@ $(SESS_TEST_BIN): $(OBJS) $(SESS_TEST_OBJ)
 test-session: $(SESS_TEST_BIN)
 	./$(SESS_TEST_BIN)
 
+# ── Completion policy (bare/non-final recover + promote) ──
+COMPLETION_POLICY_TEST_SRC := src/testing/completion_policy_test.cpp
+COMPLETION_POLICY_TEST_OBJ := $(BUILD_DIR)/testing/completion_policy_test.o
+COMPLETION_POLICY_TEST_BIN := completion-policy-test
+
+$(COMPLETION_POLICY_TEST_OBJ): $(COMPLETION_POLICY_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(COMPLETION_POLICY_TEST_BIN): $(OBJS) $(COMPLETION_POLICY_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(COMPLETION_POLICY_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-completion-policy: $(COMPLETION_POLICY_TEST_BIN)
+	./$(COMPLETION_POLICY_TEST_BIN)
+
 # ── Sandbox + context_* integration tests (SB02/SB07/BT04) ──
 SBOX_TEST_SRC := src/testing/sandbox_context_test.cpp
 SBOX_TEST_OBJ := $(BUILD_DIR)/testing/sandbox_context_test.o

@@ -170,6 +170,22 @@ struct AgentConfig {
     // dev_mode → auto-dump full LLM-facing iterations + raw stream + history
     // per session under ~/.cortex/dev/<session>/ (and CWD copies for lazy open).
     bool devMode = false;
+
+    // Runtime mode / completion policy — how the harness treats bare or
+    // non-final model output (small-model due diligence).
+    //
+    // mode:
+    //   normal      → recover with correction; promote salvage only if the
+    //                 iteration budget is exhausted with no final tag
+    //   autonomous  → same recovery, but auto-promote salvageable bare/
+    //                 non-final content after a few failed recoveries
+    //
+    // completion_policy (optional override of mode defaults):
+    //   recover | promote | strict
+    //   strict never auto-promotes; always surfaces the stop warning at cap
+    std::string runtimeMode = "normal";
+    std::string completionPolicy;  // empty → derive from runtimeMode
+    int bareRecoveryPromoteAfter = -1;  // -1 → derive (normal: never early; autonomous: 2)
     int maxTokens = 0;
     int iterationCap =
         50;  // agent turns before forced response (override via manifest max_iterations)

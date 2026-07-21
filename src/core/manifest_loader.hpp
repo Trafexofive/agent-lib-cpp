@@ -229,6 +229,29 @@ class ManifestLoader {
                 dm = ManifestYaml::get(*runtime, "DEV_MODE");
             if (truthy(dm))
                 cfg.devMode = true;
+            // normal | autonomous — bare/non-final completion handling
+            std::string mode = ManifestYaml::get(*runtime, "mode");
+            if (mode.empty())
+                mode = ManifestYaml::get(*runtime, "runtime_mode");
+            if (!mode.empty()) {
+                // normalize
+                for (char& c : mode) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (mode == "normal" || mode == "autonomous" || mode == "auto") {
+                    if (mode == "auto") mode = "autonomous";
+                    cfg.runtimeMode = mode;
+                }
+            }
+            std::string cp = ManifestYaml::get(*runtime, "completion_policy");
+            if (cp.empty())
+                cp = ManifestYaml::get(*runtime, "on_bare_output");
+            if (!cp.empty()) {
+                for (char& c : cp) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (cp == "recover" || cp == "promote" || cp == "strict")
+                    cfg.completionPolicy = cp;
+            }
+            std::string br = ManifestYaml::get(*runtime, "bare_promote_after");
+            if (!br.empty())
+                cfg.bareRecoveryPromoteAfter = std::stoi(br);
             auto* subagents = ManifestYaml::find(*runtime, "subagents");
             if (subagents) {
                 std::string persistence = ManifestYaml::get(*subagents, "persistence");

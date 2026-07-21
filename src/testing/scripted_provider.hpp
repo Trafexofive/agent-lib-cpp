@@ -60,8 +60,13 @@ class ScriptedProvider : public ILlmProvider {
         popOrThrow();
         std::string r = std::move(script_.front());
         script_.pop_front();
+        lastStats_ = StreamStats{};
+        lastStats_.anyContent = !r.empty();
+        lastStats_.finishReason = "stop";
         cb(r, true);
     }
+
+    StreamStats lastStreamStats() const override { return lastStats_; }
 
     // Configuration — pass-through; tests don't tune these.
     void setModel(const std::string& model) override { model_ = model; }
@@ -92,6 +97,7 @@ class ScriptedProvider : public ILlmProvider {
     double temperature_ = 0.7;
     int maxTokens_ = 4096;
     double topP_ = 0.95;
+    StreamStats lastStats_;
 };
 
 }  // namespace cortex::mk3::testing

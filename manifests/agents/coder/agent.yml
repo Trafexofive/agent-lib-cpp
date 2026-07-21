@@ -37,6 +37,11 @@ prompt_building:
 runtime:
   max_iterations: 16
   history_cap: 80
+  # normal | autonomous — bare/non-final completion handling
+  #   normal:     recover with salvage correction; promote only at iteration cap
+  #   autonomous: auto-promote salvage after repeated bare recoveries
+  # completion_policy: recover | promote | strict   # optional override
+  mode: normal
   # dev_mode: true   # dumps iterations.md/raw.md/history.md → ~/.cortex/dev/<session>/ + CWD
   # (or export CORTEX_DEV_MODE=1 for lazy live tests without editing this file)
   subagents:

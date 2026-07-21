@@ -30,31 +30,31 @@ namespace cortex::mk3 {
 std::atomic<bool> g_running{true};
 
 // ── XML attribute escaping ──────────────────────────────────────────────
-static std::string xmlAttr(const std::string& s) {
+static std::string xmlAttr(const std::string &s) {
     std::string out;
     out.reserve(s.size() + 16);
     for (char c : s) {
         switch (c) {
-            case '"':
-                out += "&quot;";
-                break;
-            case '&':
-                out += "&amp;";
-                break;
-            case '<':
-                out += "&lt;";
-                break;
-            case '>':
-                out += "&gt;";
-                break;
-            default:
-                out += c;
+        case '"':
+            out += "&quot;";
+            break;
+        case '&':
+            out += "&amp;";
+            break;
+        case '<':
+            out += "&lt;";
+            break;
+        case '>':
+            out += "&gt;";
+            break;
+        default:
+            out += c;
         }
     }
     return out;
 }
 
-static std::string indentText(const std::string& text, int spaces) {
+static std::string indentText(const std::string &text, int spaces) {
     std::ostringstream out;
     std::istringstream in(text);
     std::string line;
@@ -75,13 +75,14 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
     : config_(std::move(cfg)), provider_(std::move(provider)) {
     provider_->setModel(config_.model);
     provider_->setTemperature(config_.temperature);
-    provider_->setMaxTokens(config_.maxTokens > 0 ? config_.maxTokens : provider_->getMaxTokens());
+    provider_->setMaxTokens(config_.maxTokens > 0 ? config_.maxTokens
+                                                  : provider_->getMaxTokens());
     provider_->setTopP(config_.topP);
     provider_->setTopK(config_.topK);
     provider_->setPresencePenalty(config_.presencePenalty);
     provider_->setFrequencyPenalty(config_.frequencyPenalty);
 
-    for (auto& [k, v] : config_.environment)
+    for (auto &[k, v] : config_.environment)
         env_[k] = v;
 
     // Load system prompt
@@ -108,7 +109,8 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
                 oss << "    " << line << "\n";
             harnessText_ = oss.str();
         } else if (!config_.harnessPath.empty()) {
-            throw std::runtime_error("harness prompt not found: " + config_.harnessPath);
+            throw std::runtime_error("harness prompt not found: " +
+                                     config_.harnessPath);
         }
     }
 
@@ -140,14 +142,15 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
 // Execution Entry Points
 // ═══════════════════════════════════════════════════════════════════════
 
-std::string Agent::prompt(const std::string& input, const std::string& sessionId, bool ephemeral,
-                          PromptSource source, const std::string& sourceName) {
+std::string Agent::prompt(const std::string &input,
+                          const std::string &sessionId, bool ephemeral,
+                          PromptSource source, const std::string &sourceName) {
     return prompt(input, nullptr, sessionId, ephemeral, source, sourceName);
 }
 
-std::string Agent::prompt(const std::string& input, StreamCallback onToken,
-                          const std::string& sessionId, bool ephemeral,
-                          PromptSource source, const std::string& sourceName) {
+std::string Agent::prompt(const std::string &input, StreamCallback onToken,
+                          const std::string &sessionId, bool ephemeral,
+                          PromptSource source, const std::string &sourceName) {
     AgentContext ctx;
     ctx.userInput = input;
     ctx.sessionId = sessionId;
@@ -158,7 +161,9 @@ std::string Agent::prompt(const std::string& input, StreamCallback onToken,
     ctx.sourceName = sourceName;
     ctx.raw = raw_;
     ctx.verbose = verbose_;
-    ctx.debug = (env_.count("__DEBUG_MODE__") && env_["__DEBUG_MODE__"] == "true") || devMode_;
+    ctx.debug =
+        (env_.count("__DEBUG_MODE__") && env_["__DEBUG_MODE__"] == "true") ||
+        devMode_;
     lastSessionId_ = sessionId;
 
     if (!ephemeral && !sessionId.empty()) {
@@ -184,7 +189,7 @@ Json::Value Agent::inspectContext(int lastN) const {
     r["raw_bytes"] = static_cast<Json::UInt64>(rawLlOutput_.size());
     r["protocol_events"] = static_cast<int>(protocolEvents_.size());
     r["sub_agents"] = Json::Value(Json::arrayValue);
-    for (const auto& kv : subAgents_)
+    for (const auto &kv : subAgents_)
         r["sub_agents"].append(kv.first);
 
     Json::Value hist(Json::arrayValue);
@@ -192,7 +197,7 @@ Json::Value Agent::inspectContext(int lastN) const {
     if (lastN > 0 && static_cast<int>(history_.size()) > lastN)
         start = static_cast<int>(history_.size()) - lastN;
     for (int i = start; i < static_cast<int>(history_.size()); ++i) {
-        const std::string& h = history_[static_cast<size_t>(i)];
+        const std::string &h = history_[static_cast<size_t>(i)];
         Json::Value entry(Json::objectValue);
         if (h.rfind("User: ", 0) == 0) {
             entry["role"] = "user";
@@ -202,8 +207,9 @@ Json::Value Agent::inspectContext(int lastN) const {
             auto close = h.find(')');
             if (close != std::string::npos && close + 2 <= h.size()) {
                 entry["from"] = h.substr(7, close - 7);
-                entry["content"] = h.substr(close + 2);  // skip ") "
-                if (!entry["content"].asString().empty() && entry["content"].asString()[0] == ' ')
+                entry["content"] = h.substr(close + 2); // skip ") "
+                if (!entry["content"].asString().empty() &&
+                    entry["content"].asString()[0] == ' ')
                     entry["content"] = entry["content"].asString().substr(1);
             } else {
                 entry["content"] = h;
@@ -228,16 +234,19 @@ Json::Value Agent::inspectContext(int lastN) const {
 
 // ═══════════════════════════════════════════════════════════════════════
 // Core Loop
-static std::string stripModelOwnedRuntimeTags(const std::string& s) {
-    static const std::regex responseRe(R"(<response\b[^>]*>[\s\S]*?</response>)");
+static std::string stripModelOwnedRuntimeTags(const std::string &s) {
+    static const std::regex responseRe(
+        R"(<response\b[^>]*>[\s\S]*?</response>)");
     static const std::regex resultRe(R"(<result\b[^>]*>[\s\S]*?</result>)");
-    return std::regex_replace(std::regex_replace(s, responseRe, ""), resultRe, "");
+    return std::regex_replace(std::regex_replace(s, responseRe, ""), resultRe,
+                              "");
 }
 
-static std::string formatDelegatedTrace(const std::string& agentName,
-                                        const std::string& instruction,
-                                        const std::vector<std::string>& prompts,
-                                        const std::vector<std::string>& outputs) {
+static std::string
+formatDelegatedTrace(const std::string &agentName,
+                     const std::string &instruction,
+                     const std::vector<std::string> &prompts,
+                     const std::vector<std::string> &outputs) {
     std::ostringstream os;
     os << "## Delegated Agent: " << agentName << "\n\n";
     os << "### INSTRUCTION\n\n" << instruction << "\n\n";
@@ -252,10 +261,11 @@ static std::string formatDelegatedTrace(const std::string& agentName,
     return os.str();
 }
 
-static bool jsonBool(const Json::Value& params, const std::string& key, bool def = false) {
+static bool jsonBool(const Json::Value &params, const std::string &key,
+                     bool def = false) {
     if (!params.isObject() || !params.isMember(key))
         return def;
-    const Json::Value& v = params[key];
+    const Json::Value &v = params[key];
     if (v.isBool())
         return v.asBool();
     if (v.isString()) {
@@ -270,7 +280,8 @@ static bool jsonBool(const Json::Value& params, const std::string& key, bool def
     return def;
 }
 
-static Json::Value makeSubAgentResult(const std::string& output, const std::string& trace,
+static Json::Value makeSubAgentResult(const std::string &output,
+                                      const std::string &trace,
                                       bool dumpContext) {
     Json::Value r;
     r["success"] = true;
@@ -280,7 +291,7 @@ static Json::Value makeSubAgentResult(const std::string& output, const std::stri
     return r;
 }
 
-static std::vector<std::string> splitPath(const std::string& path) {
+static std::vector<std::string> splitPath(const std::string &path) {
     std::vector<std::string> parts;
     std::stringstream ss(path);
     std::string item;
@@ -291,17 +302,18 @@ static std::vector<std::string> splitPath(const std::string& path) {
     return parts;
 }
 
-static const Json::Value* lookupResultPath(const std::map<std::string, Json::Value>& results,
-                                           const std::string& id, const std::string& path) {
+static const Json::Value *
+lookupResultPath(const std::map<std::string, Json::Value> &results,
+                 const std::string &id, const std::string &path) {
     auto it = results.find(id);
     if (it == results.end())
         return nullptr;
-    const Json::Value* cur = &it->second;
-    for (const auto& part : splitPath(path)) {
+    const Json::Value *cur = &it->second;
+    for (const auto &part : splitPath(path)) {
         if (cur->isObject() && cur->isMember(part)) {
             cur = &((*cur)[part]);
         } else if (cur->isArray()) {
-            char* end = nullptr;
+            char *end = nullptr;
             long idx = std::strtol(part.c_str(), &end, 10);
             if (!end || *end != '\0' || idx < 0 || idx >= (long)cur->size())
                 return nullptr;
@@ -313,7 +325,7 @@ static const Json::Value* lookupResultPath(const std::map<std::string, Json::Val
     return cur;
 }
 
-static std::string jsonValueToInlineString(const Json::Value& v) {
+static std::string jsonValueToInlineString(const Json::Value &v) {
     if (v.isString())
         return v.asString();
     if (v.isBool())
@@ -335,30 +347,32 @@ static std::string jsonValueToInlineString(const Json::Value& v) {
 }
 
 static std::string safeSessionPart(std::string s) {
-    for (char& c : s) {
-        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                  c == '-' || c == '_' || c == '.';
+    for (char &c : s) {
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
         if (!ok)
             c = '_';
     }
     return s;
 }
 
-static bool subAgentSessionPersistenceEnabled(const std::string& value) {
-    return value == "session" || value == "sessions" || value == "persistent" || value == "disk" ||
-           value == "true";
+static bool subAgentSessionPersistenceEnabled(const std::string &value) {
+    return value == "session" || value == "sessions" || value == "persistent" ||
+           value == "disk" || value == "true";
 }
 
-static std::string deriveSubAgentSessionId(const AgentContext& ctx, const AgentConfig& cfg,
-                                           const std::string& agentName) {
+static std::string deriveSubAgentSessionId(const AgentContext &ctx,
+                                           const AgentConfig &cfg,
+                                           const std::string &agentName) {
     if (ctx.sessionId.empty())
         return "";
     if (!subAgentSessionPersistenceEnabled(cfg.subAgentPersistence))
         return "";
-    return safeSessionPart(ctx.sessionId) + "__subagent__" + safeSessionPart(agentName);
+    return safeSessionPart(ctx.sessionId) + "__subagent__" +
+           safeSessionPart(agentName);
 }
 
-static Json::Value expansionResultView(const Json::Value& result) {
+static Json::Value expansionResultView(const Json::Value &result) {
     Json::Value view = result;
     if (result.isMember("output") && result["output"].isString()) {
         Json::Value parsed;
@@ -368,7 +382,7 @@ static Json::Value expansionResultView(const Json::Value& result) {
         if (Json::parseFromStream(r, ss, &parsed, &errs)) {
             view["json"] = parsed;
             if (parsed.isObject()) {
-                for (const auto& key : parsed.getMemberNames()) {
+                for (const auto &key : parsed.getMemberNames()) {
                     if (!view.isMember(key))
                         view[key] = parsed[key];
                 }
@@ -378,13 +392,15 @@ static Json::Value expansionResultView(const Json::Value& result) {
     return view;
 }
 
-static Json::Value expandValueRefs(const Json::Value& value,
-                                   const std::map<std::string, Json::Value>& results) {
-    static const std::regex refRe(R"(\$\{([A-Za-z_][A-Za-z0-9_-]*)(?:\.([^}]+))?\})");
+static Json::Value
+expandValueRefs(const Json::Value &value,
+                const std::map<std::string, Json::Value> &results) {
+    static const std::regex refRe(
+        R"(\$\{([A-Za-z_][A-Za-z0-9_-]*)(?:\.([^}]+))?\})");
 
     if (value.isObject()) {
         Json::Value out(Json::objectValue);
-        for (const auto& key : value.getMemberNames()) {
+        for (const auto &key : value.getMemberNames()) {
             out[key] = expandValueRefs(value[key], results);
         }
         return out;
@@ -404,7 +420,7 @@ static Json::Value expandValueRefs(const Json::Value& value,
     if (std::regex_match(s, exact, refRe)) {
         std::string id = exact[1].str();
         std::string path = exact.size() > 2 ? exact[2].str() : "";
-        const Json::Value* resolved = lookupResultPath(results, id, path);
+        const Json::Value *resolved = lookupResultPath(results, id, path);
         if (resolved)
             return *resolved;
         return value;
@@ -417,7 +433,7 @@ static Json::Value expandValueRefs(const Json::Value& value,
         out += m.prefix().str();
         std::string id = m[1].str();
         std::string path = m.size() > 2 ? m[2].str() : "";
-        const Json::Value* resolved = lookupResultPath(results, id, path);
+        const Json::Value *resolved = lookupResultPath(results, id, path);
         out += resolved ? jsonValueToInlineString(*resolved) : m[0].str();
         start = m.suffix().first;
     }
@@ -425,14 +441,18 @@ static Json::Value expandValueRefs(const Json::Value& value,
     return out;
 }
 
-static std::string buildResultTag(const std::string& id, const Json::Value& result,
+static std::string buildResultTag(const std::string &id,
+                                  const Json::Value &result,
                                   bool compact = false) {
     std::ostringstream os;
     bool ok = result.isMember("success") && result["success"].asBool();
-    int exit = result.isMember("exit_code") ? result["exit_code"].asInt() : (ok ? 0 : -1);
-    double ms = result.isMember("_elapsed_ms") ? result["_elapsed_ms"].asDouble() : 0;
+    int exit = result.isMember("exit_code") ? result["exit_code"].asInt()
+                                            : (ok ? 0 : -1);
+    double ms =
+        result.isMember("_elapsed_ms") ? result["_elapsed_ms"].asDouble() : 0;
 
-    os << "<result id=\"" << id << "\" ok=\"" << (ok ? "true" : "false") << "\"";
+    os << "<result id=\"" << id << "\" ok=\"" << (ok ? "true" : "false")
+       << "\"";
     if (exit != 0)
         os << " exit=\"" << exit << "\"";
     if (ms > 0)
@@ -440,7 +460,8 @@ static std::string buildResultTag(const std::string& id, const Json::Value& resu
 
     // Extract primary output body
     std::string body;
-    for (const char* key : {"content", "output", "stdout", "result", "results", "data", "value"}) {
+    for (const char *key : {"content", "output", "stdout", "result", "results",
+                            "data", "value"}) {
         if (!result.isMember(key))
             continue;
         if (result[key].isString()) {
@@ -476,7 +497,7 @@ static std::string buildResultTag(const std::string& id, const Json::Value& resu
 
 // ═══════════════════════════════════════════════════════════════════════
 
-std::string Agent::runLoop(AgentContext& ctx) {
+std::string Agent::runLoop(AgentContext &ctx) {
     std::string fullResponse;
     std::string rawOutput;
     // Continuation = this Agent already has transcript from a prior prompt().
@@ -512,7 +533,68 @@ std::string Agent::runLoop(AgentContext& ctx) {
     // Parser lives across iterations — usedActionIds_ and finalResponseSeen_
     // persist so duplicate-ID and post-final enforcement works cross-turn.
     protocol::Parser parser;
-    for (ctx.iteration = 1; ctx.iteration <= config_.iterationCap; ctx.iteration++) {
+
+    // Completion policy: how bare / non-final model output is handled.
+    // Derived from runtime.mode + optional runtime.completion_policy.
+    enum class CompPolicy { Recover, Promote, Strict };
+    auto resolveCompPolicy = [&]() -> CompPolicy {
+        if (config_.completionPolicy == "strict") return CompPolicy::Strict;
+        if (config_.completionPolicy == "promote") return CompPolicy::Promote;
+        if (config_.completionPolicy == "recover") return CompPolicy::Recover;
+        if (config_.runtimeMode == "autonomous") return CompPolicy::Promote;
+        return CompPolicy::Recover;  // normal default
+    };
+    const CompPolicy compPolicy = resolveCompPolicy();
+    const int promoteAfter =
+        config_.bareRecoveryPromoteAfter >= 0
+            ? config_.bareRecoveryPromoteAfter
+            : (compPolicy == CompPolicy::Promote ? 2 : 1000000);
+    int bareRecoveryCount = 0;
+    std::string lastSalvage;  // best non-final content this turn (for promote)
+
+    auto trimCopy = [](std::string s) {
+        size_t a = s.find_first_not_of(" \t\n\r");
+        if (a == std::string::npos) return std::string();
+        size_t b = s.find_last_not_of(" \t\n\r");
+        return s.substr(a, b - a + 1);
+    };
+    auto pickSalvage = [&](const std::string& raw, const std::string& responseBody) {
+        // Prefer structured response body (non-final <response>) over raw stream.
+        std::string r = trimCopy(responseBody);
+        if (!r.empty()) return r;
+        return trimCopy(raw);
+    };
+    auto buildRecoveryCorrection = [&](const std::string& salvage,
+                                       bool nonFinalResponse) -> std::string {
+        std::ostringstream os;
+        os << "[PROTOCOL RECOVERY] Previous model output had no valid "
+              "<response final=\"true\"> and no executable <action>.\n";
+        if (nonFinalResponse)
+            os << "A <response> body was seen without final=\"true\". "
+                  "Re-emit it wrapped correctly.\n";
+        else
+            os << "Bare / non-protocol text is invisible to the operator as a "
+                  "final answer.\n";
+        os << "\nSalvaged content — put this inside <response final=\"true\"> "
+              "(edit if needed) OR continue with an <action>:\n"
+              "----- BEGIN SALVAGE -----\n";
+        // Cap injection so a huge bare dump cannot blow the next prompt.
+        const size_t kMax = 12000;
+        if (salvage.size() > kMax) {
+            os << salvage.substr(0, kMax)
+               << "\n…[truncated " << (salvage.size() - kMax) << " bytes]";
+        } else {
+            os << salvage;
+        }
+        os << "\n----- END SALVAGE -----\n\n"
+              "Emit EXACTLY one of:\n"
+              "  <response final=\"true\">…</response>\n"
+              "  <action type=\"tool\" name=\"…\" id=\"…\">…</action>\n";
+        return os.str();
+    };
+
+    for (ctx.iteration = 1; ctx.iteration <= config_.iterationCap;
+         ctx.iteration++) {
         if (!g_running) {
             fullResponse = "[cancelled]";
             break;
@@ -523,29 +605,36 @@ std::string Agent::runLoop(AgentContext& ctx) {
         {
             std::ostringstream pd;
             for (size_t i = 0; i < msgs.size(); i++) {
-                const char* role = ChatMessage::roleName(msgs[i].role);
+                const char *role = ChatMessage::roleName(msgs[i].role);
                 if (msgs[i].role == ChatRole::SYSTEM) {
                     if (i == 0) {
                         pd << msgs[i].content;
-                        if (!msgs[i].content.empty() && msgs[i].content.back() != '\n')
+                        if (!msgs[i].content.empty() &&
+                            msgs[i].content.back() != '\n')
                             pd << '\n';
                     } else {
-                        pd << "<dynamic_context role=\"system\">\n" << msgs[i].content;
-                        if (!msgs[i].content.empty() && msgs[i].content.back() != '\n')
+                        pd << "<dynamic_context role=\"system\">\n"
+                           << msgs[i].content;
+                        if (!msgs[i].content.empty() &&
+                            msgs[i].content.back() != '\n')
                             pd << '\n';
                         pd << "</dynamic_context>\n";
                     }
                 } else if (msgs[i].role == ChatRole::USER) {
-                    pd << "<user current=\"true\" iteration=\"" << ctx.iteration << "\"";
+                    pd << "<user current=\"true\" iteration=\"" << ctx.iteration
+                       << "\"";
                     if (!ctx.sessionId.empty())
                         pd << " session=\"" << xmlAttr(ctx.sessionId) << "\"";
                     pd << ">\n" << msgs[i].content;
-                    if (!msgs[i].content.empty() && msgs[i].content.back() != '\n')
+                    if (!msgs[i].content.empty() &&
+                        msgs[i].content.back() != '\n')
                         pd << '\n';
                     pd << "</user>\n";
                 } else {
-                    pd << "<message role=\"" << role << "\">\n" << msgs[i].content;
-                    if (!msgs[i].content.empty() && msgs[i].content.back() != '\n')
+                    pd << "<message role=\"" << role << "\">\n"
+                       << msgs[i].content;
+                    if (!msgs[i].content.empty() &&
+                        msgs[i].content.back() != '\n')
                         pd << '\n';
                     pd << "</message>\n";
                 }
@@ -561,14 +650,15 @@ std::string Agent::runLoop(AgentContext& ctx) {
         }
 
         if (ctx.debug || ctx.verbose) {
-            std::cerr << "[MK3:DEBUG] iter " << ctx.iteration << " — " << msgs.size() << " msgs";
+            std::cerr << "[MK3:DEBUG] iter " << ctx.iteration << " — "
+                      << msgs.size() << " msgs";
         }
 
         // Verbose: dump prompt
         if (ctx.verbose) {
             std::cerr << "\n─── PROMPT iter " << ctx.iteration << " ───\n";
             for (size_t i = 0; i < msgs.size(); i++) {
-                const char* role = ChatMessage::roleName(msgs[i].role);
+                const char *role = ChatMessage::roleName(msgs[i].role);
                 std::string content = msgs[i].content;
                 std::cerr << "[" << role << "] " << content << "\n";
             }
@@ -577,9 +667,10 @@ std::string Agent::runLoop(AgentContext& ctx) {
 
         dispatch::ActionDispatcher d;
         // Wire agent delegation to sub-agent prompt
-        d.agentDelegate = [this, &ctx](const protocol::ParsedAction& action,
-                                       const std::string& instruction) -> Json::Value {
-            const std::string& agentName = action.name;
+        d.agentDelegate =
+            [this, &ctx](const protocol::ParsedAction &action,
+                         const std::string &instruction) -> Json::Value {
+            const std::string &agentName = action.name;
             auto it = subAgents_.find(agentName);
             if (it == subAgents_.end()) {
                 Json::Value err;
@@ -593,20 +684,23 @@ std::string Agent::runLoop(AgentContext& ctx) {
             //   <action type="agent" name="reader" op="inspect" last_n="10"/>
             //   <action type="agent" name="reader" inspect="true"/>
             std::string op = "prompt";
-            if (action.params.isMember("op") && action.params["op"].isString() &&
+            if (action.params.isMember("op") &&
+                action.params["op"].isString() &&
                 !action.params["op"].asString().empty())
                 op = action.params["op"].asString();
             else if (action.params.isMember("inspect")) {
-                const auto& iv = action.params["inspect"];
+                const auto &iv = action.params["inspect"];
                 if ((iv.isBool() && iv.asBool()) ||
-                    (iv.isString() && (iv.asString() == "true" || iv.asString() == "1")) ||
+                    (iv.isString() &&
+                     (iv.asString() == "true" || iv.asString() == "1")) ||
                     (iv.isInt() && iv.asInt() != 0))
                     op = "inspect";
             }
 
             if (op == "inspect" || op == "context" || op == "history") {
                 int lastN = action.params.get("last_n", 20).asInt();
-                if (lastN <= 0) lastN = 20;
+                if (lastN <= 0)
+                    lastN = 20;
                 Json::Value snap = it->second->inspectContext(lastN);
                 snap["op"] = op;
                 snap["agent"] = agentName;
@@ -617,7 +711,8 @@ std::string Agent::runLoop(AgentContext& ctx) {
                     << " events=" << snap.get("protocol_events", 0).asInt();
                 if (!snap.get("response_output", "").asString().empty()) {
                     std::string ro = snap["response_output"].asString();
-                    if (ro.size() > 200) ro = ro.substr(0, 200) + "…";
+                    if (ro.size() > 200)
+                        ro = ro.substr(0, 200) + "…";
                     sum << "\nlast: " << ro;
                 }
                 snap["output"] = sum.str();
@@ -628,7 +723,9 @@ std::string Agent::runLoop(AgentContext& ctx) {
             bool forceEphemeral = jsonBool(action.params, "ephemeral", false);
             bool dumpContext = jsonBool(action.params, "dump_context", false);
             std::string childSessionId =
-                forceEphemeral ? "" : deriveSubAgentSessionId(ctx, config_, agentName);
+                forceEphemeral
+                    ? ""
+                    : deriveSubAgentSessionId(ctx, config_, agentName);
             // Ephemeral child calls must not leak prior in-memory history into
             // this mission (non-ephemeral reuses the same Agent object).
             if (forceEphemeral) {
@@ -642,11 +739,13 @@ std::string Agent::runLoop(AgentContext& ctx) {
             // the actual bytes land in the CHILD's rawLlOutput_, so we forward
             // the child's raw delta through the parent's onToken. The parent's
             // onToken publishes non-empty tokens directly (see runAgentTurn).
-            Agent* childPtr = it->second.get();
+            Agent *childPtr = it->second.get();
             std::shared_ptr<size_t> childSeen = std::make_shared<size_t>(0);
-            StreamCallback childProgress = [childPtr, childSeen, &ctx](const std::string&, bool) {
-                if (!ctx.onToken) return;
-                const std::string& r = childPtr->rawLlOutput();
+            StreamCallback childProgress = [childPtr, childSeen,
+                                            &ctx](const std::string &, bool) {
+                if (!ctx.onToken)
+                    return;
+                const std::string &r = childPtr->rawLlOutput();
                 if (r.size() > *childSeen) {
                     ctx.onToken(r.substr(*childSeen), false);
                     *childSeen = r.size();
@@ -656,27 +755,35 @@ std::string Agent::runLoop(AgentContext& ctx) {
             // Label source as ParentAgent so the child sees who asked.
             std::string result =
                 childSessionId.empty()
-                    ? it->second->prompt(instruction, childProgress, "", forceEphemeral,
-                                         PromptSource::ParentAgent, config_.name)
-                    : it->second->prompt(instruction, childProgress, childSessionId, false,
-                                         PromptSource::ParentAgent, config_.name);
+                    ? it->second->prompt(
+                          instruction, childProgress, "", forceEphemeral,
+                          PromptSource::ParentAgent, config_.name)
+                    : it->second->prompt(
+                          instruction, childProgress, childSessionId, false,
+                          PromptSource::ParentAgent, config_.name);
             std::string trace;
             if (dumpContext) {
-                trace = formatDelegatedTrace(agentName, instruction, it->second->iterationPrompts(),
+                trace = formatDelegatedTrace(agentName, instruction,
+                                             it->second->iterationPrompts(),
                                              it->second->iterationOutputs());
                 subAgentTraces_.push_back(trace);
             }
             return makeSubAgentResult(result, trace, dumpContext);
         };
 
-        // Wire workflow execution — creates a WorkflowRuntime with tool + agent callbacks
-        d.workflowDelegate = [this, &ctx](const std::string& workflowName,
-                                          const Json::Value& params) -> workflows::WorkflowResult {
-            auto wf = workflows::WorkflowEngine::instance().getCached(workflowName);
+        // Wire workflow execution — creates a WorkflowRuntime with tool + agent
+        // callbacks
+        d.workflowDelegate =
+            [this,
+             &ctx](const std::string &workflowName,
+                   const Json::Value &params) -> workflows::WorkflowResult {
+            auto wf =
+                workflows::WorkflowEngine::instance().getCached(workflowName);
             workflows::WorkflowRuntime rt;
 
             // Tool callback: dispatch a tool by name with params
-            rt.executeTool = [this](const std::string& name, const Json::Value& p) -> Json::Value {
+            rt.executeTool = [this](const std::string &name,
+                                    const Json::Value &p) -> Json::Value {
                 protocol::ParsedAction a;
                 a.name = name;
                 a.type = protocol::ActionType::TOOL;
@@ -688,7 +795,9 @@ std::string Agent::runLoop(AgentContext& ctx) {
             // ephemeral / dump_context modifiers from the workflow step so
             // workflow agent actions match the behavior of direct
             // <action type="agent" ...> actions.
-            rt.executeAgent = [this, &ctx](const workflows::WorkflowAgentInvocation& inv) -> Json::Value {
+            rt.executeAgent =
+                [this, &ctx](const workflows::WorkflowAgentInvocation &inv)
+                -> Json::Value {
                 auto it = subAgents_.find(inv.name);
                 if (it == subAgents_.end()) {
                     Json::Value err;
@@ -696,17 +805,20 @@ std::string Agent::runLoop(AgentContext& ctx) {
                     err["error"] = "Unknown sub-agent: " + inv.name;
                     return err;
                 }
-                std::string childSessionId = inv.ephemeral
-                                                 ? std::string()
-                                                 : deriveSubAgentSessionId(ctx, config_, inv.name);
-                std::string result = childSessionId.empty()
-                                         ? it->second->prompt(inv.instruction, "", inv.ephemeral)
-                                         : it->second->prompt(inv.instruction, childSessionId, false);
+                std::string childSessionId =
+                    inv.ephemeral
+                        ? std::string()
+                        : deriveSubAgentSessionId(ctx, config_, inv.name);
+                std::string result =
+                    childSessionId.empty()
+                        ? it->second->prompt(inv.instruction, "", inv.ephemeral)
+                        : it->second->prompt(inv.instruction, childSessionId,
+                                             false);
                 if (inv.dumpContext) {
-                    std::string trace = formatDelegatedTrace(
-                        inv.name, inv.instruction,
-                        it->second->iterationPrompts(),
-                        it->second->iterationOutputs());
+                    std::string trace =
+                        formatDelegatedTrace(inv.name, inv.instruction,
+                                             it->second->iterationPrompts(),
+                                             it->second->iterationOutputs());
                     subAgentTraces_.push_back(trace);
                     Json::Value r;
                     r["success"] = true;
@@ -721,16 +833,19 @@ std::string Agent::runLoop(AgentContext& ctx) {
             };
 
             // Slice 2: human callback — defaults to the step's default value.
-            rt.executeHuman = [](const std::string& id,
-                                  const Json::Value& prompt) -> Json::Value {
+            rt.executeHuman = [](const std::string &id,
+                                 const Json::Value &prompt) -> Json::Value {
                 (void)id;
-                return prompt.isMember("default") ? Json::Value(prompt["default"]) : Json::Value("");
+                return prompt.isMember("default")
+                           ? Json::Value(prompt["default"])
+                           : Json::Value("");
             };
 
             // Slice 2: relic callback — uses Reliquary singleton.
-            rt.executeRelic = [](const std::string& name, const std::string& action,
-                                  const Json::Value& params) -> Json::Value {
-                auto& rel = relics::Reliquary::instance();
+            rt.executeRelic = [](const std::string &name,
+                                 const std::string &action,
+                                 const Json::Value &params) -> Json::Value {
+                auto &rel = relics::Reliquary::instance();
                 if (!rel.has(name)) {
                     Json::Value err;
                     err["success"] = false;
@@ -750,12 +865,14 @@ std::string Agent::runLoop(AgentContext& ctx) {
             // Slice 2: feed callback — uses FeedEngine singleton.
             // If step.action is set, calls it as a feed tool.
             // Otherwise refreshes the feed and returns the latest value.
-            rt.executeFeed = [](const std::string& name, const Json::Value& query) -> Json::Value {
-                auto& eng = feeds::FeedEngine::instance();
-                std::string action = query.isMember("action") ? query["action"].asString() : "";
+            rt.executeFeed = [](const std::string &name,
+                                const Json::Value &query) -> Json::Value {
+                auto &eng = feeds::FeedEngine::instance();
+                std::string action =
+                    query.isMember("action") ? query["action"].asString() : "";
                 if (!action.empty())
                     return eng.callFeedTool(name, action, query);
-                auto* feed = const_cast<feeds::Feed*>(eng.getFeed(name));
+                auto *feed = const_cast<feeds::Feed *>(eng.getFeed(name));
                 if (!feed) {
                     Json::Value err;
                     err["success"] = false;
@@ -772,34 +889,38 @@ std::string Agent::runLoop(AgentContext& ctx) {
             };
 
             // Slice 2: emit — no-op by default
-            rt.executeEmit = [](const std::string& event, const Json::Value& payload) {
+            rt.executeEmit = [](const std::string &event,
+                                const Json::Value &payload) {
                 (void)event;
                 (void)payload;
             };
 
             // Slice 4: checkpoint — uses the agent's CheckpointHandler if set.
-            rt.executeCheckpoint = [this](const std::string& id, const Json::Value& state) {
+            rt.executeCheckpoint = [this](const std::string &id,
+                                          const Json::Value &state) {
                 if (checkpointHandler_)
                     checkpointHandler_(id, state);
             };
 
-            // Slice 6: parallel_race — fire all in parallel, first to succeed wins.
-            // Implementation: launch all steps on background threads, wait for the
-            // first success, then return that result. Losers continue running in
-            // the background but their results are discarded.
+            // Slice 6: parallel_race — fire all in parallel, first to succeed
+            // wins. Implementation: launch all steps on background threads,
+            // wait for the first success, then return that result. Losers
+            // continue running in the background but their results are
+            // discarded.
             rt.executeParallelRace =
-                [this, &rt](const std::vector<workflows::WorkflowStep>& steps,
-                             const std::map<std::string, Json::Value>& symbols) -> Json::Value {
+                [this, &rt](const std::vector<workflows::WorkflowStep> &steps,
+                            const std::map<std::string, Json::Value> &symbols)
+                -> Json::Value {
                 std::mutex mtx;
                 std::condition_variable cv;
                 Json::Value winner(Json::objectValue);
                 std::atomic<bool> hasWinner{false};
                 std::vector<std::thread> workers;
                 workers.reserve(steps.size());
-                for (const auto& s : steps) {
+                for (const auto &s : steps) {
                     workers.emplace_back([&, s]() {
                         Json::Value p;
-                        for (const auto& k : s.params.getMemberNames())
+                        for (const auto &k : s.params.getMemberNames())
                             p[k] = s.params[k];
                         Json::Value r;
                         if (s.type == "tool" && rt.executeTool)
@@ -814,7 +935,8 @@ std::string Agent::runLoop(AgentContext& ctx) {
                             r["note"] = "no runtime for type=" + s.type;
                         }
                         // Was the winner taken while we were running?
-                        if (!hasWinner.load() && r.isObject() && r.get("success", false).asBool()) {
+                        if (!hasWinner.load() && r.isObject() &&
+                            r.get("success", false).asBool()) {
                             std::lock_guard<std::mutex> lock(mtx);
                             if (!hasWinner.load()) {
                                 winner = r;
@@ -839,25 +961,34 @@ std::string Agent::runLoop(AgentContext& ctx) {
                     out["winner"] = Json::Value(Json::objectValue);
                     out["race_strategy"] = "timeout-no-winner";
                 }
-                // Detach workers — they finish in the background; results discarded
-                for (auto& w : workers) w.detach();
+                // Detach workers — they finish in the background; results
+                // discarded
+                for (auto &w : workers)
+                    w.detach();
                 return out;
             };
 
-            // Recursive workflow call — builds its own runtime, not a copy of rt
-            rt.executeWorkflow = [this, &ctx](const std::string& name,
-                                              const Json::Value& p) -> workflows::WorkflowResult {
-                auto subWf = workflows::WorkflowEngine::instance().getCached(name);
+            // Recursive workflow call — builds its own runtime, not a copy of
+            // rt
+            rt.executeWorkflow =
+                [this,
+                 &ctx](const std::string &name,
+                       const Json::Value &p) -> workflows::WorkflowResult {
+                auto subWf =
+                    workflows::WorkflowEngine::instance().getCached(name);
                 workflows::WorkflowRuntime subRt;
-                subRt.executeTool = [this](const std::string& tn,
-                                           const Json::Value& tp) -> Json::Value {
+                subRt.executeTool =
+                    [this](const std::string &tn,
+                           const Json::Value &tp) -> Json::Value {
                     protocol::ParsedAction a;
                     a.name = tn;
                     a.type = protocol::ActionType::TOOL;
                     a.params = tp;
                     return dispatchTool(a);
                 };
-                subRt.executeAgent = [this, &ctx](const workflows::WorkflowAgentInvocation& inv) -> Json::Value {
+                subRt.executeAgent =
+                    [this, &ctx](const workflows::WorkflowAgentInvocation &inv)
+                    -> Json::Value {
                     auto it = subAgents_.find(inv.name);
                     if (it == subAgents_.end()) {
                         Json::Value err;
@@ -865,12 +996,16 @@ std::string Agent::runLoop(AgentContext& ctx) {
                         err["error"] = "Unknown sub-agent: " + inv.name;
                         return err;
                     }
-                    std::string childSessionId = inv.ephemeral
-                                                     ? std::string()
-                                                     : deriveSubAgentSessionId(ctx, config_, inv.name);
-                    std::string result = childSessionId.empty()
-                                             ? it->second->prompt(inv.instruction, "", inv.ephemeral)
-                                             : it->second->prompt(inv.instruction, childSessionId, false);
+                    std::string childSessionId =
+                        inv.ephemeral
+                            ? std::string()
+                            : deriveSubAgentSessionId(ctx, config_, inv.name);
+                    std::string result =
+                        childSessionId.empty()
+                            ? it->second->prompt(inv.instruction, "",
+                                                 inv.ephemeral)
+                            : it->second->prompt(inv.instruction,
+                                                 childSessionId, false);
                     if (inv.dumpContext) {
                         std::string trace = formatDelegatedTrace(
                             inv.name, inv.instruction,
@@ -888,307 +1023,350 @@ std::string Agent::runLoop(AgentContext& ctx) {
                     r["output"] = result;
                     return r;
                 };
-                return workflows::WorkflowEngine::instance().execute(subWf, subRt, p);
+                return workflows::WorkflowEngine::instance().execute(subWf,
+                                                                     subRt, p);
             };
 
-            return workflows::WorkflowEngine::instance().execute(wf, rt, params);
+            return workflows::WorkflowEngine::instance().execute(wf, rt,
+                                                                 params);
         };
 
         std::string iterationRawOutput;
         std::string iterationRuntimeOutput;
 
-        parser.setExecutor([this, &d, &ctx, &iterationRuntimeOutput](
-                               const protocol::ParsedAction& action) -> Json::Value {
-            protocol::ParsedAction expandedAction = action;
-            expandedAction.params = expandValueRefs(action.params, actionResults_);
-            if (!action.content.empty()) {
-                Json::Value contentVal(action.content);
-                Json::Value expandedContent = expandValueRefs(contentVal, actionResults_);
-                if (expandedContent.isString())
-                    expandedAction.content = expandedContent.asString();
-            }
+        parser.setExecutor(
+            [this, &d, &ctx, &iterationRuntimeOutput](
+                const protocol::ParsedAction &action) -> Json::Value {
+                protocol::ParsedAction expandedAction = action;
+                expandedAction.params =
+                    expandValueRefs(action.params, actionResults_);
+                if (!action.content.empty()) {
+                    Json::Value contentVal(action.content);
+                    Json::Value expandedContent =
+                        expandValueRefs(contentVal, actionResults_);
+                    if (expandedContent.isString())
+                        expandedAction.content = expandedContent.asString();
+                }
 
-            // Dedup by (name + resolved params + resolved content). Mutating actions must not use
-            // or preserve cache: a successful write invalidates prior
-            // reads/tests.
-            bool mutatesState = (expandedAction.type == protocol::ActionType::TOOL &&
-                                 expandedAction.name == "fs_write");
-            std::string key = dispatch::dedupKey(expandedAction);
-            if (!mutatesState) {
-                auto it = executedActions_.find(key);
-                if (it != executedActions_.end()) {
-                    Json::Value cached;
-                    Json::CharReaderBuilder r;
-                    std::string errs;
-                    std::istringstream ss(it->second);
-                    if (Json::parseFromStream(r, ss, &cached, &errs)) {
-                        actionResults_[expandedAction.id] = expansionResultView(cached);
-                        return cached;
+                // Dedup by (name + resolved params + resolved content).
+                // Mutating actions must not use or preserve cache: a successful
+                // write invalidates prior reads/tests.
+                bool mutatesState =
+                    (expandedAction.type == protocol::ActionType::TOOL &&
+                     expandedAction.name == "fs_write");
+                std::string key = dispatch::dedupKey(expandedAction);
+                if (!mutatesState) {
+                    auto it = executedActions_.find(key);
+                    if (it != executedActions_.end()) {
+                        Json::Value cached;
+                        Json::CharReaderBuilder r;
+                        std::string errs;
+                        std::istringstream ss(it->second);
+                        if (Json::parseFromStream(r, ss, &cached, &errs)) {
+                            actionResults_[expandedAction.id] =
+                                expansionResultView(cached);
+                            return cached;
+                        }
                     }
                 }
-            }
 
-            Json::Value result;
-            auto t0 = std::chrono::steady_clock::now();
-            // Route TOOL actions through agent (supports script tools +
-            // sandbox) Other action types (agent/relic/feed) go through the
-            // dispatcher
-            if (expandedAction.type == protocol::ActionType::TOOL) {
-                result = this->dispatchTool(expandedAction);
-            } else {
-                result = d.dispatch(expandedAction);
-            }
-            auto t1 = std::chrono::steady_clock::now();
-            double elapsedMs =
-                std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0;
-            result["_elapsed_ms"] = elapsedMs;  // metadata for renderer
-            actionResults_[expandedAction.id] = expansionResultView(result);
-            if (mutatesState && result.get("success", false).asBool()) {
-                executedActions_.clear();
-            } else if (!mutatesState) {
-                executedActions_[key] = Json::writeString(Json::StreamWriterBuilder(), result);
-            }
-
-            // Inject runtime result into cumulative trace and this iteration's trace.
-            {
-                std::string resultTag = buildResultTag(action.id, result);
-                rawLlOutput_ += "\n" + resultTag + "\n";
-                iterationRuntimeOutput += resultTag + "\n";
-            }
-
-            // Store protocol result for TUI timeline. Debug mode must still show
-            // action/result cards; only raw mode suppresses structured UI.
-            if (!ctx.raw) {
-                bool ok = result.get("success", false).asBool();
-                std::string summary;
-                if (ok) {
-                    std::string out = result.get("stdout", "").asString();
-                    if (!out.empty())
-                        summary = out;
-                    // Check multiple common result field names
-                    else if (result.isMember("result"))
-                        summary = result["result"].asString();
-                    else if (result.isMember("results"))
-                        summary = result["results"].asString();
-                    else if (result.isMember("output"))
-                        summary = result["output"].asString();
-                    else if (result.isMember("data"))
-                        summary = result["data"].asString();
-                    if (summary.empty())
-                        summary = action.name;
+                Json::Value result;
+                auto t0 = std::chrono::steady_clock::now();
+                // Route TOOL actions through agent (supports script tools +
+                // sandbox) Other action types (agent/relic/feed) go through the
+                // dispatcher
+                if (expandedAction.type == protocol::ActionType::TOOL) {
+                    result = this->dispatchTool(expandedAction);
                 } else {
-                    summary = action.name + " — " + result.get("error", "?").asString();
+                    result = d.dispatch(expandedAction);
                 }
-                ProtocolResult protocolResult{action.id,
-                                              ok,
-                                              summary,
-                                              action.name,
-                                              result.get("exit_code", 0).asInt(),
-                                              result.get("_elapsed_ms", 0.0).asDouble(),
-                                              (size_t)summary.size()};
-                protocolResults_.push_back(protocolResult);
-                protocolEvents_.push_back({ProtocolEventKind::RESULT, "", {}, protocolResult});
-                // Notify callback so TUI can stream tool results immediately
-                if (ctx.onToken && ctx.streaming)
-                    ctx.onToken("", false);
-            }
+                auto t1 = std::chrono::steady_clock::now();
+                double elapsedMs =
+                    std::chrono::duration_cast<std::chrono::microseconds>(t1 -
+                                                                          t0)
+                        .count() /
+                    1000.0;
+                result["_elapsed_ms"] = elapsedMs; // metadata for renderer
+                actionResults_[expandedAction.id] = expansionResultView(result);
+                if (mutatesState && result.get("success", false).asBool()) {
+                    executedActions_.clear();
+                } else if (!mutatesState) {
+                    executedActions_[key] =
+                        Json::writeString(Json::StreamWriterBuilder(), result);
+                }
 
-            return result;
-        });
+                // Inject runtime result into cumulative trace and this
+                // iteration's trace.
+                {
+                    std::string resultTag = buildResultTag(action.id, result);
+                    rawLlOutput_ += "\n" + resultTag + "\n";
+                    iterationRuntimeOutput += resultTag + "\n";
+                }
+
+                // Store protocol result for TUI timeline. Debug mode must still
+                // show action/result cards; only raw mode suppresses structured
+                // UI.
+                if (!ctx.raw) {
+                    bool ok = result.get("success", false).asBool();
+                    std::string summary;
+                    if (ok) {
+                        std::string out = result.get("stdout", "").asString();
+                        if (!out.empty())
+                            summary = out;
+                        // Check multiple common result field names
+                        else if (result.isMember("result"))
+                            summary = result["result"].asString();
+                        else if (result.isMember("results"))
+                            summary = result["results"].asString();
+                        else if (result.isMember("output"))
+                            summary = result["output"].asString();
+                        else if (result.isMember("data"))
+                            summary = result["data"].asString();
+                        if (summary.empty())
+                            summary = action.name;
+                    } else {
+                        summary = action.name + " — " +
+                                  result.get("error", "?").asString();
+                    }
+                    ProtocolResult protocolResult{
+                        action.id,
+                        ok,
+                        summary,
+                        action.name,
+                        result.get("exit_code", 0).asInt(),
+                        result.get("_elapsed_ms", 0.0).asDouble(),
+                        (size_t)summary.size()};
+                    protocolResults_.push_back(protocolResult);
+                    protocolEvents_.push_back(
+                        {ProtocolEventKind::RESULT, "", {}, protocolResult});
+                    // Notify callback so TUI can stream tool results
+                    // immediately
+                    if (ctx.onToken && ctx.streaming)
+                        ctx.onToken("", false);
+                }
+
+                return result;
+            });
 
         // Tracking state
         std::string llmOutput;
-        std::string actionTranscriptOutput;  // model actions only, no premature responses
+        std::string actionTranscriptOutput; // model actions only, no premature
+                                            // responses
         bool taskComplete = false;
         bool nonFinalProtocolRetry = false;
 
-        parser.onEvent([&](const protocol::TokenEvent& ev) {
+        parser.onEvent([&](const protocol::TokenEvent &ev) {
             switch (ev.type) {
-                case protocol::TokenEvent::TEXT:
-                    // Bare text outside XML tags → ordered thought/protocol stream.
-                    thoughtOutput_ += ev.content;
-                    if (!ev.content.empty()) {
-                        if (!protocolEvents_.empty() &&
-                            protocolEvents_.back().kind == ProtocolEventKind::THOUGHT) {
-                            protocolEvents_.back().text += ev.content;
-                        } else {
-                            protocolEvents_.push_back({ProtocolEventKind::THOUGHT, ev.content, {}, {}});
-                        }
+            case protocol::TokenEvent::TEXT:
+                // Bare text outside XML tags → ordered thought/protocol stream.
+                thoughtOutput_ += ev.content;
+                if (!ev.content.empty()) {
+                    if (!protocolEvents_.empty() &&
+                        protocolEvents_.back().kind ==
+                            ProtocolEventKind::THOUGHT) {
+                        protocolEvents_.back().text += ev.content;
+                    } else {
+                        protocolEvents_.push_back(
+                            {ProtocolEventKind::THOUGHT, ev.content, {}, {}});
                     }
-                    break;
+                }
+                break;
 
-                case protocol::TokenEvent::RESPONSE:
-                    llmOutput += ev.content;
-                    responseOutput_ += ev.content;
-                    if (!ev.content.empty()) {
-                        if (!protocolEvents_.empty() &&
-                            protocolEvents_.back().kind == ProtocolEventKind::RESPONSE) {
-                            protocolEvents_.back().text += ev.content;
-                        } else {
-                            protocolEvents_.push_back({ProtocolEventKind::RESPONSE, ev.content, {}, {}});
+            case protocol::TokenEvent::RESPONSE:
+                llmOutput += ev.content;
+                responseOutput_ += ev.content;
+                if (!ev.content.empty()) {
+                    if (!protocolEvents_.empty() &&
+                        protocolEvents_.back().kind ==
+                            ProtocolEventKind::RESPONSE) {
+                        protocolEvents_.back().text += ev.content;
+                    } else {
+                        protocolEvents_.push_back(
+                            {ProtocolEventKind::RESPONSE, ev.content, {}, {}});
+                    }
+                }
+                if (ctx.onToken)
+                    ctx.onToken(ev.content, false);
+                if (ev.metadata.count("is_final") &&
+                    ev.metadata.at("is_final") == "true") {
+                    taskComplete = true;
+                }
+                break;
+
+            case protocol::TokenEvent::THOUGHT:
+                thoughtOutput_ += ev.content;
+                if (!ev.content.empty()) {
+                    if (!protocolEvents_.empty() &&
+                        protocolEvents_.back().kind ==
+                            ProtocolEventKind::THOUGHT) {
+                        protocolEvents_.back().text += ev.content;
+                    } else {
+                        protocolEvents_.push_back(
+                            {ProtocolEventKind::THOUGHT, ev.content, {}, {}});
+                    }
+                }
+                break;
+
+            case protocol::TokenEvent::ACTION_START:
+                if (ev.action) {
+                    // Store protocol action for TUI/timeline regardless of
+                    // raw/debug; debug mode must not hide the action/result UI.
+                    std::string typeStr;
+                    switch (ev.action->type) {
+                    case protocol::ActionType::AGENT:
+                        typeStr = "agent";
+                        break;
+                    case protocol::ActionType::RELIC:
+                        typeStr = "relic";
+                        break;
+                    case protocol::ActionType::FEED:
+                        typeStr = "feed";
+                        break;
+                    case protocol::ActionType::WORKFLOW:
+                        typeStr = "workflow";
+                        break;
+                    default:
+                        typeStr = "tool";
+                        break;
+                    }
+                    std::string body = ev.action->content;
+                    if (body.empty() && !ev.action->params.isNull()) {
+                        Json::StreamWriterBuilder wb;
+                        wb["indentation"] = "";
+                        body = Json::writeString(wb, ev.action->params);
+                    }
+                    std::string modeStr;
+                    switch (ev.action->mode) {
+                    case protocol::ExecutionMode::ASYNC:
+                        modeStr = "async";
+                        break;
+                    case protocol::ExecutionMode::FIRE_AND_FORGET:
+                        modeStr = "fire_and_forget";
+                        break;
+                    default:
+                        modeStr = "sync";
+                        break;
+                    }
+                    std::map<std::string, std::string> modifiers;
+                    if (ev.action->params.isObject()) {
+                        static const std::unordered_set<std::string> reserved =
+                            {"type", "name",       "id",
+                             "mode", "depends_on", "timeout"};
+                        for (const auto &key :
+                             ev.action->params.getMemberNames()) {
+                            if (reserved.count(key))
+                                continue;
+                            Json::StreamWriterBuilder aw;
+                            aw["indentation"] = "";
+                            modifiers[key] =
+                                Json::writeString(aw, ev.action->params[key]);
                         }
                     }
+                    ProtocolAction protocolAction{
+                        typeStr,           ev.action->name, ev.action->id, body,
+                        modeStr == "sync", modeStr,         modifiers};
+                    // Provisional open-tag then full close share one id —
+                    // update the existing ACTION event/card in place
+                    // (stream-as-fast-as-parse).
+                    bool merged = false;
+                    for (auto it = protocolEvents_.rbegin();
+                         it != protocolEvents_.rend(); ++it) {
+                        if (it->kind == ProtocolEventKind::ACTION &&
+                            it->action.id == protocolAction.id) {
+                            it->action = protocolAction;
+                            merged = true;
+                            break;
+                        }
+                    }
+                    if (!merged) {
+                        protocolActions_.push_back(protocolAction);
+                        protocolEvents_.push_back({ProtocolEventKind::ACTION,
+                                                   "",
+                                                   protocolAction,
+                                                   {}});
+                    } else {
+                        // Keep protocolActions_ tail in sync when present.
+                        for (auto it = protocolActions_.rbegin();
+                             it != protocolActions_.rend(); ++it) {
+                            if (it->id == protocolAction.id) {
+                                *it = protocolAction;
+                                break;
+                            }
+                        }
+                    }
+                    // Notify the TUI immediately on ACTION_START, before
+                    // sync dispatch blocks on tools/sub-agents. The action
+                    // card must render first; results arrive later.
                     if (ctx.onToken)
-                        ctx.onToken(ev.content, false);
-                    if (ev.metadata.count("is_final") && ev.metadata.at("is_final") == "true") {
-                        taskComplete = true;
-                    }
-                    break;
-
-                case protocol::TokenEvent::THOUGHT:
-                    thoughtOutput_ += ev.content;
-                    if (!ev.content.empty()) {
-                        if (!protocolEvents_.empty() &&
-                            protocolEvents_.back().kind == ProtocolEventKind::THOUGHT) {
-                            protocolEvents_.back().text += ev.content;
-                        } else {
-                            protocolEvents_.push_back({ProtocolEventKind::THOUGHT, ev.content, {}, {}});
-                        }
-                    }
-                    break;
-
-                case protocol::TokenEvent::ACTION_START:
-                    if (ev.action) {
-                        // Store protocol action for TUI/timeline regardless of raw/debug;
-                        // debug mode must not hide the action/result UI.
-                        std::string typeStr;
-                        switch (ev.action->type) {
-                            case protocol::ActionType::AGENT:
-                                typeStr = "agent";
-                                break;
-                            case protocol::ActionType::RELIC:
-                                typeStr = "relic";
-                                break;
-                            case protocol::ActionType::FEED:
-                                typeStr = "feed";
-                                break;
-                            case protocol::ActionType::WORKFLOW:
-                                typeStr = "workflow";
-                                break;
-                            default:
-                                typeStr = "tool";
-                                break;
-                        }
-                        std::string body = ev.action->content;
-                        if (body.empty() && !ev.action->params.isNull()) {
-                            Json::StreamWriterBuilder wb;
-                            wb["indentation"] = "";
-                            body = Json::writeString(wb, ev.action->params);
-                        }
-                        std::string modeStr;
-                        switch (ev.action->mode) {
-                            case protocol::ExecutionMode::ASYNC:
-                                modeStr = "async";
-                                break;
-                            case protocol::ExecutionMode::FIRE_AND_FORGET:
-                                modeStr = "fire_and_forget";
-                                break;
-                            default:
-                                modeStr = "sync";
-                                break;
-                        }
-                        std::map<std::string, std::string> modifiers;
-                        if (ev.action->params.isObject()) {
-                            static const std::unordered_set<std::string> reserved = {
-                                "type", "name", "id", "mode", "depends_on", "timeout"};
-                            for (const auto& key : ev.action->params.getMemberNames()) {
-                                if (reserved.count(key))
-                                    continue;
+                        ctx.onToken("", false);
+                    std::ostringstream ax;
+                    ax << "<action type=\""
+                       << (ev.action->type == protocol::ActionType::TOOL
+                               ? "tool"
+                           : ev.action->type == protocol::ActionType::AGENT
+                               ? "agent"
+                           : ev.action->type == protocol::ActionType::RELIC
+                               ? "relic"
+                           : ev.action->type == protocol::ActionType::WORKFLOW
+                               ? "workflow"
+                               : "feed")
+                       << "\" name=\"" << ev.action->name << "\" id=\""
+                       << ev.action->id << "\" mode=\""
+                       << (ev.action->mode == protocol::ExecutionMode::SYNC
+                               ? "sync"
+                               : "async")
+                       << "\"";
+                    if (!ev.action->content.empty() &&
+                        ev.action->params.isObject()) {
+                        for (const auto &key :
+                             ev.action->params.getMemberNames()) {
+                            const auto &v = ev.action->params[key];
+                            if (v.isObject() || v.isArray())
+                                continue;
+                            std::string val;
+                            if (v.isString())
+                                val = v.asString();
+                            else {
                                 Json::StreamWriterBuilder aw;
                                 aw["indentation"] = "";
-                                modifiers[key] = Json::writeString(aw, ev.action->params[key]);
+                                val = Json::writeString(aw, v);
                             }
+                            ax << " " << key << "=\"" << xmlAttr(val) << "\"";
                         }
-                        ProtocolAction protocolAction{typeStr, ev.action->name, ev.action->id, body,
-                                                      modeStr == "sync", modeStr, modifiers};
-                        // Provisional open-tag then full close share one id — update
-                        // the existing ACTION event/card in place (stream-as-fast-as-parse).
-                        bool merged = false;
-                        for (auto it = protocolEvents_.rbegin(); it != protocolEvents_.rend();
-                             ++it) {
-                            if (it->kind == ProtocolEventKind::ACTION &&
-                                it->action.id == protocolAction.id) {
-                                it->action = protocolAction;
-                                merged = true;
-                                break;
-                            }
-                        }
-                        if (!merged) {
-                            protocolActions_.push_back(protocolAction);
-                            protocolEvents_.push_back(
-                                {ProtocolEventKind::ACTION, "", protocolAction, {}});
-                        } else {
-                            // Keep protocolActions_ tail in sync when present.
-                            for (auto it = protocolActions_.rbegin(); it != protocolActions_.rend();
-                                 ++it) {
-                                if (it->id == protocolAction.id) {
-                                    *it = protocolAction;
-                                    break;
-                                }
-                            }
-                        }
-                        // Notify the TUI immediately on ACTION_START, before
-                        // sync dispatch blocks on tools/sub-agents. The action
-                        // card must render first; results arrive later.
-                        if (ctx.onToken)
-                            ctx.onToken("", false);
-                        std::ostringstream ax;
-                        ax << "<action type=\""
-                           << (ev.action->type == protocol::ActionType::TOOL       ? "tool"
-                               : ev.action->type == protocol::ActionType::AGENT    ? "agent"
-                               : ev.action->type == protocol::ActionType::RELIC    ? "relic"
-                               : ev.action->type == protocol::ActionType::WORKFLOW ? "workflow"
-                                                                                   : "feed")
-                           << "\" name=\"" << ev.action->name << "\" id=\"" << ev.action->id
-                           << "\" mode=\""
-                           << (ev.action->mode == protocol::ExecutionMode::SYNC ? "sync" : "async")
-                           << "\"";
-                        if (!ev.action->content.empty() && ev.action->params.isObject()) {
-                            for (const auto& key : ev.action->params.getMemberNames()) {
-                                const auto& v = ev.action->params[key];
-                                if (v.isObject() || v.isArray())
-                                    continue;
-                                std::string val;
-                                if (v.isString())
-                                    val = v.asString();
-                                else {
-                                    Json::StreamWriterBuilder aw;
-                                    aw["indentation"] = "";
-                                    val = Json::writeString(aw, v);
-                                }
-                                ax << " " << key << "=\"" << xmlAttr(val) << "\"";
-                            }
-                        }
-                        ax << ">";
-                        if (!ev.action->content.empty()) {
-                            ax << ev.action->content;
-                        } else if (!ev.action->params.isNull()) {
-                            Json::StreamWriterBuilder w;
-                            w["indentation"] = "";
-                            ax << Json::writeString(w, ev.action->params);
-                        }
-                        ax << "</action>";
-                        llmOutput += ax.str() + "\n";
-                        actionTranscriptOutput += ax.str() + "\n";
                     }
-                    break;
+                    ax << ">";
+                    if (!ev.action->content.empty()) {
+                        ax << ev.action->content;
+                    } else if (!ev.action->params.isNull()) {
+                        Json::StreamWriterBuilder w;
+                        w["indentation"] = "";
+                        ax << Json::writeString(w, ev.action->params);
+                    }
+                    ax << "</action>";
+                    llmOutput += ax.str() + "\n";
+                    actionTranscriptOutput += ax.str() + "\n";
+                }
+                break;
 
-                case protocol::TokenEvent::ACTION_RESULT:
-                    break;
+            case protocol::TokenEvent::ACTION_RESULT:
+                break;
 
-                case protocol::TokenEvent::ERROR:
-                    history_.push_back(
-                        "[ERROR] action=" + (ev.action ? ev.action->name : "?") + " id=" +
-                        (ev.metadata.count("id") ? ev.metadata.at("id") : "?") + " reason=" +
-                        (ev.metadata.count("reason") ? ev.metadata.at("reason") : "?") + ": " +
-                        ev.content);
-                    break;
+            case protocol::TokenEvent::ERROR:
+                history_.push_back(
+                    "[ERROR] action=" + (ev.action ? ev.action->name : "?") +
+                    " id=" +
+                    (ev.metadata.count("id") ? ev.metadata.at("id") : "?") +
+                    " reason=" +
+                    (ev.metadata.count("reason") ? ev.metadata.at("reason")
+                                                 : "?") +
+                    ": " + ev.content);
+                break;
 
-                case protocol::TokenEvent::CONTEXT_FEED:
-                    break;
+            case protocol::TokenEvent::CONTEXT_FEED:
+                break;
 
-                default:
-                    break;
+            default:
+                break;
             }
         });
 
@@ -1212,16 +1390,19 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 protocolEvents_.clear();
                 parser.reset();
 
-                int delay = std::min(backoffMs, config_.emptyResponseMaxBackoffMs);
+                int delay =
+                    std::min(backoffMs, config_.emptyResponseMaxBackoffMs);
                 if (ctx.debug) {
-                    std::cerr << "[MK3:RETRY] empty-response attempt=" << attempt
-                              << " delay_ms=" << delay << " finish_reason=\""
-                              << streamStats.finishReason << "\" any_content="
-                              << (streamStats.anyContent ? "true" : "false") << "\n";
+                    std::cerr
+                        << "[MK3:RETRY] empty-response attempt=" << attempt
+                        << " delay_ms=" << delay << " finish_reason=\""
+                        << streamStats.finishReason << "\" any_content="
+                        << (streamStats.anyContent ? "true" : "false") << "\n";
                 }
                 auto deadline = std::chrono::steady_clock::now() +
                                 std::chrono::milliseconds(delay);
-                while (g_running && std::chrono::steady_clock::now() < deadline) {
+                while (g_running &&
+                       std::chrono::steady_clock::now() < deadline) {
                     auto step = std::min(
                         std::chrono::duration_cast<std::chrono::milliseconds>(
                             deadline - std::chrono::steady_clock::now()),
@@ -1232,41 +1413,48 @@ std::string Agent::runLoop(AgentContext& ctx) {
                 if (!g_running)
                     break;
                 backoffMs = std::min(
-                    static_cast<int>(backoffMs * config_.emptyResponseBackoffMultiplier),
+                    static_cast<int>(backoffMs *
+                                     config_.emptyResponseBackoffMultiplier),
                     config_.emptyResponseMaxBackoffMs);
             }
 
             try {
-                provider_->generateStream(msgs, [&](const std::string& token, bool isFinal) {
-                    if (taskComplete)
-                        return;
-                    // Route thinking tokens (\x01 prefix) to thought stream —
-                    // live dimmed
-                    if (!token.empty() && token[0] == '\x01') {
-                        std::string thoughtChunk = token.substr(1);
-                        thoughtOutput_ += thoughtChunk;
-                        if (!thoughtChunk.empty()) {
-                            if (!protocolEvents_.empty() &&
-                                protocolEvents_.back().kind == ProtocolEventKind::THOUGHT) {
-                                protocolEvents_.back().text += thoughtChunk;
-                            } else {
-                                protocolEvents_.push_back(
-                                    {ProtocolEventKind::THOUGHT, thoughtChunk, {}, {}});
+                provider_->generateStream(
+                    msgs, [&](const std::string &token, bool isFinal) {
+                        if (taskComplete)
+                            return;
+                        // Route thinking tokens (\x01 prefix) to thought stream
+                        // — live dimmed
+                        if (!token.empty() && token[0] == '\x01') {
+                            std::string thoughtChunk = token.substr(1);
+                            thoughtOutput_ += thoughtChunk;
+                            if (!thoughtChunk.empty()) {
+                                if (!protocolEvents_.empty() &&
+                                    protocolEvents_.back().kind ==
+                                        ProtocolEventKind::THOUGHT) {
+                                    protocolEvents_.back().text += thoughtChunk;
+                                } else {
+                                    protocolEvents_.push_back(
+                                        {ProtocolEventKind::THOUGHT,
+                                         thoughtChunk,
+                                         {},
+                                         {}});
+                                }
                             }
+                            if (ctx.onToken)
+                                ctx.onToken("", false); // trigger render
+                            return;
                         }
+                        rawLlOutput_ += token; // cumulative model/runtime trace
+                        iterationRawOutput +=
+                            token; // exact model bytes this iteration
+                        if (ctx.raw)
+                            rawOutput += token;
+                        parser.feed(token, isFinal);
                         if (ctx.onToken)
-                            ctx.onToken("", false);  // trigger render
-                        return;
-                    }
-                    rawLlOutput_ += token;        // cumulative model/runtime trace
-                    iterationRawOutput += token;  // exact model bytes this iteration
-                    if (ctx.raw)
-                        rawOutput += token;
-                    parser.feed(token, isFinal);
-                    if (ctx.onToken)
-                        ctx.onToken("", isFinal);
-                });
-            } catch (const std::exception& e) {
+                            ctx.onToken("", isFinal);
+                    });
+            } catch (const std::exception &e) {
                 std::string err = std::string("Error: ") + e.what();
                 rawLlOutput_ += err;
                 iterationRawOutput += err;
@@ -1291,7 +1479,7 @@ std::string Agent::runLoop(AgentContext& ctx) {
                         (streamStats.finishReason == "content_filter" ||
                          streamStats.finishReason == "empty"))
                         retryForReason = true;
-                    for (const auto& r : config_.retryOnFinishReasons) {
+                    for (const auto &r : config_.retryOnFinishReasons) {
                         if (streamStats.finishReason == r) {
                             retryForReason = true;
                             break;
@@ -1307,23 +1495,26 @@ std::string Agent::runLoop(AgentContext& ctx) {
             ++attempt;
         }
 
-        if (!parser.waitForActions(std::chrono::seconds(config_.actionTimeoutSec))) {
-            history_.push_back("System: [TIMEOUT] actions did not complete within " +
-                               std::to_string(config_.actionTimeoutSec) + "s");
+        if (!parser.waitForActions(
+                std::chrono::seconds(config_.actionTimeoutSec))) {
+            history_.push_back(
+                "System: [TIMEOUT] actions did not complete within " +
+                std::to_string(config_.actionTimeoutSec) + "s");
             break;
         }
         parser.flush();
 
         // Collect context feeds
         auto feeds = parser.contextFeeds();
-        for (auto& feed : feeds)
+        for (auto &feed : feeds)
             contextFeeds_.push_back(feed);
 
         // Determine completion
         auto results = parser.allResults();
 
         if (ctx.debug || ctx.verbose) {
-            std::cerr << " | actions=" << results.size() << " complete=" << taskComplete
+            std::cerr << " | actions=" << results.size()
+                      << " complete=" << taskComplete
                       << " resp=" << responseOutput_.size() << "b"
                       << " text=" << llmOutput.size() << "b";
             if (ctx.verbose && !llmOutput.empty()) {
@@ -1335,60 +1526,82 @@ std::string Agent::runLoop(AgentContext& ctx) {
         if (results.empty() && !taskComplete) {
             // No parsed actions and no final response. This is NOT completion.
             // Either the upstream returned no content, or the model emitted
-            // bare/non-protocol text. In both cases continue the loop unless
-            // we're surfacing a hard runtime failure after retries are exhausted.
+            // bare/non-protocol text (or a non-final <response>). Recover
+            // per runtime.mode / completion_policy — never silently finish.
             if (!streamStats.anyContent) {
                 std::string detail;
                 if (!streamStats.finishReason.empty())
-                    detail += " (finish_reason=" + streamStats.finishReason + ")";
+                    detail +=
+                        " (finish_reason=" + streamStats.finishReason + ")";
                 if (!streamStats.lastError.empty())
                     detail += " — " + streamStats.lastError.substr(0, 200);
                 if (streamStats.httpStatus > 0)
-                    detail += " [http " + std::to_string(streamStats.httpStatus) + "]";
+                    detail += " [http " +
+                              std::to_string(streamStats.httpStatus) + "]";
                 std::string visibleError =
                     "⚠ Model returned an empty response" + detail +
-                    ". The agent loop is aborting this turn rather than silently finishing. "
+                    ". The agent loop is aborting this turn rather than "
+                    "silently finishing. "
                     "Retry with a different model if this persists.";
                 history_.push_back("System: [EMPTY RESPONSE] " + detail);
                 history_.push_back("Agent: " + visibleError);
                 responseOutput_ = visibleError;
-                taskComplete = true;  // runtime failure, not model final
+                taskComplete = true; // runtime failure, not model final
             } else {
-                // LLM produced bare/non-protocol text. Record it and force a
-                // follow-up. Do NOT complete the turn: only
-                // <response final=\"true\"> completes normally.
+                // Salvage whatever the model produced so the next turn can
+                // re-emit it inside a proper final response (small-model QoL).
+                std::string salvage =
+                    pickSalvage(iterationRawOutput, responseOutput_);
+                const bool hadNonFinalResponse = !trimCopy(responseOutput_).empty();
+                if (!salvage.empty())
+                    lastSalvage = salvage;
+
                 history_.push_back("Agent: " + iterationRawOutput);
-                if (!bareTextReminded_ && !iterationRawOutput.empty()) {
-                    std::string trimmed = iterationRawOutput;
-                    size_t first = trimmed.find_first_not_of(" \t\n\r");
-                    if (first != std::string::npos && trimmed[first] != '<') {
-                        bareTextReminded_ = true;
-                        std::string preview =
-                            trimmed.size() > 60 ? trimmed.substr(0, 60) + "..." : trimmed;
-                        history_.push_back(
-                            "System: \342\232\240 BARE TEXT STRIPPED: \"" + preview +
-                            "\" — "
-                            "This did NOT complete the turn. Emit exactly one of: "
-                            "<response final=\"true\">...</response> or "
-                            "<action type=\"tool\" ...>...</action>. Bare text is invisible.");
-                    }
+                ++bareRecoveryCount;
+                bareTextReminded_ = true;
+
+                // Autonomous / promote policy: after N failed recoveries,
+                // accept salvage as the turn result rather than burning the
+                // rest of the iteration budget on a stuck small model.
+                const bool earlyPromote =
+                    compPolicy == CompPolicy::Promote &&
+                    bareRecoveryCount >= promoteAfter && !lastSalvage.empty() &&
+                    ctx.iteration < config_.iterationCap;
+
+                if (earlyPromote) {
+                    history_.push_back(
+                        "System: [AUTO-PROMOTED] runtime.mode=" +
+                        config_.runtimeMode +
+                        " promoted salvaged non-final output after " +
+                        std::to_string(bareRecoveryCount) +
+                        " recovery attempt(s). Original lacked "
+                        "<response final=\"true\">.");
+                    responseOutput_ = lastSalvage;
+                    fullResponse = lastSalvage;
+                    taskComplete = true;
+                    // Surface as a protocol RESPONSE so nested chat / TUI
+                    // paint the promoted answer instead of only a stop banner.
+                    protocolEvents_.push_back(
+                        {ProtocolEventKind::RESPONSE, lastSalvage, {}, {}});
                 } else {
                     history_.push_back(
-                        "System: [PROTOCOL RETRY] Previous model output had no action and no "
-                        "<response final=\"true\">. Continue now with a valid protocol tag.");
+                        "System: " +
+                        buildRecoveryCorrection(salvage, hadNonFinalResponse));
+                    nonFinalProtocolRetry = true;
+                    taskComplete = false;
+                    responseOutput_.clear();
                 }
-                nonFinalProtocolRetry = true;
-                taskComplete = false;
-                responseOutput_.clear();
             }
         }
 
-        // Capture exact model output plus runtime-injected results for debugging.
-        // Do not add nested markdown headings here; iterations.md already marks sections.
+        // Capture exact model output plus runtime-injected results for
+        // debugging. Do not add nested markdown headings here; iterations.md
+        // already marks sections.
         {
             std::ostringstream os;
             os << iterationRawOutput;
-            if (!iterationRawOutput.empty() && iterationRawOutput.back() != '\n')
+            if (!iterationRawOutput.empty() &&
+                iterationRawOutput.back() != '\n')
                 os << "\n";
             os << iterationRuntimeOutput;
             iterationOutputs_.push_back(os.str());
@@ -1398,19 +1611,22 @@ std::string Agent::runLoop(AgentContext& ctx) {
         if (devMode_ || verbose_ || raw_ || ctx.debug)
             dumpSessionArtifacts();
 
-        bool forceResultFollowup = taskComplete && !results.empty() &&
-                                   iterationRawOutput.find("<action") != std::string::npos;
-        // If the model emits action(s) and a final response in the same generation,
-        // it cannot have seen the real runtime results yet. Keep only the action
-        // transcript for the follow-up prompt; discard premature response text and
-        // any model-owned result/prose.
-        std::string historyOutput = forceResultFollowup ? actionTranscriptOutput : llmOutput;
+        bool forceResultFollowup =
+            taskComplete && !results.empty() &&
+            iterationRawOutput.find("<action") != std::string::npos;
+        // If the model emits action(s) and a final response in the same
+        // generation, it cannot have seen the real runtime results yet. Keep
+        // only the action transcript for the follow-up prompt; discard
+        // premature response text and any model-owned result/prose.
+        std::string historyOutput =
+            forceResultFollowup ? actionTranscriptOutput : llmOutput;
         if (forceResultFollowup) {
             // The model cannot consume a sync action result in the same
             // generation that emitted the action. Force one follow-up turn with
-            // the real <result> in context instead of accepting a premature final.
-            // Also drop the premature response from history so the next turn
-            // sees only the action it actually took plus the runtime result.
+            // the real <result> in context instead of accepting a premature
+            // final. Also drop the premature response from history so the next
+            // turn sees only the action it actually took plus the runtime
+            // result.
             taskComplete = false;
             responseOutput_.clear();
         }
@@ -1418,8 +1634,9 @@ std::string Agent::runLoop(AgentContext& ctx) {
         if (taskComplete) {
             Json::Value expandedResponse =
                 expandValueRefs(Json::Value(responseOutput_), actionResults_);
-            fullResponse =
-                expandedResponse.isString() ? expandedResponse.asString() : responseOutput_;
+            fullResponse = expandedResponse.isString()
+                               ? expandedResponse.asString()
+                               : responseOutput_;
             break;
         }
 
@@ -1429,20 +1646,42 @@ std::string Agent::runLoop(AgentContext& ctx) {
         if (!nonFinalProtocolRetry)
             history_.push_back("Agent: " + historyOutput);
         if (!results.empty()) {
-            for (auto& [id, result] : results) {
+            for (auto &[id, result] : results) {
                 std::ostringstream sysMsg;
                 sysMsg << buildResultTag(id, result, true);
                 history_.push_back("System: " + sysMsg.str());
             }
         }
-        parser.clearResults();  // prevent result leakage to next iteration
-        tickContextCycles();    // decrement peek cycles; auto-evict at 0
+        parser.clearResults(); // prevent result leakage to next iteration
+        tickContextCycles();   // decrement peek cycles; auto-evict at 0
     }
 
     if (fullResponse.empty()) {
-        fullResponse =
-            "⚠ Agent stopped without emitting <response final=\"true\">. "
-            "The runtime refused to treat non-final/bare output as completion.";
+        // Iteration budget exhausted (or cancelled path cleared response).
+        // Per policy: promote salvage when allowed so small-model turns still
+        // leave a usable answer + an honest recovery note in history.
+        if (compPolicy != CompPolicy::Strict && !lastSalvage.empty()) {
+            history_.push_back(
+                "System: [AUTO-PROMOTED @ CAP] No <response final=\"true\"> "
+                "before iteration cap. Promoted salvaged content under "
+                "runtime.mode=" +
+                config_.runtimeMode + " / policy=" +
+                (config_.completionPolicy.empty() ? std::string("(derived)")
+                                                  : config_.completionPolicy) +
+                ".");
+            fullResponse = lastSalvage;
+            responseOutput_ = lastSalvage;
+            protocolEvents_.push_back(
+                {ProtocolEventKind::RESPONSE, lastSalvage, {}, {}});
+        } else {
+            fullResponse =
+                "⚠ Agent stopped without emitting <response final=\"true\">. "
+                "The runtime refused to treat non-final/bare output as "
+                "completion" +
+                (lastSalvage.empty()
+                     ? std::string(".")
+                     : " (salvage was available but completion_policy=strict).");
+        }
     }
 
     if (!ctx.ephemeral && !ctx.sessionId.empty()) {
@@ -1460,7 +1699,7 @@ std::string Agent::runLoop(AgentContext& ctx) {
 // Prompt Building
 // ═══════════════════════════════════════════════════════════════════════
 
-ChatMessages Agent::buildChatPrompt(const AgentContext& ctx) const {
+ChatMessages Agent::buildChatPrompt(const AgentContext &ctx) const {
     ChatMessages msgs;
     msgs.push_back(ChatMessage::system(buildSystemPrompt(ctx)));
     // First iteration: current user request is a real user message, not
@@ -1471,9 +1710,10 @@ ChatMessages Agent::buildChatPrompt(const AgentContext& ctx) const {
     if (ctx.iteration <= 1) {
         msgs.push_back(ChatMessage::user(buildUserPrompt(ctx)));
     } else {
-        msgs.push_back(ChatMessage::user(
-            "Continue from the inline transcript above. Use runtime results only; "
-            "if enough information is available, emit <response final=\"true\">."));
+        msgs.push_back(ChatMessage::user("Continue from the inline transcript "
+                                         "above. Use runtime results only; "
+                                         "if enough information is available, "
+                                         "emit <response final=\"true\">."));
     }
     std::string dynamicTail = buildDynamicContextPrompt();
     if (!dynamicTail.empty()) {
@@ -1484,7 +1724,7 @@ ChatMessages Agent::buildChatPrompt(const AgentContext& ctx) const {
     return msgs;
 }
 
-std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
+std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     std::ostringstream ss;
 
     // ═══ <harness> — protocol spec (pre-indented in constructor) ═══
@@ -1512,8 +1752,8 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
         ss << "    Stop after giving your final answer.\n";
     }
     ss << "  </protocol>\n";
-    ss << "  <info name=\"" << xmlAttr(config_.name) << "\" version=\"" << xmlAttr(config_.version)
-       << "\"/>\n";
+    ss << "  <info name=\"" << xmlAttr(config_.name) << "\" version=\""
+       << xmlAttr(config_.version) << "\"/>\n";
     ss << "</harness>\n\n";
 
     // ═══ <system> — persona, system, tools, relics, context ═══
@@ -1526,7 +1766,8 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
         ss << "  </persona>\n";
     }
 
-    // System prompt block — capabilities/tools/behavior (loaded from systemPromptPath)
+    // System prompt block — capabilities/tools/behavior (loaded from
+    // systemPromptPath)
     if (!systemPrompt_.empty()) {
         ss << "  <system_prompt>\n";
         ss << indentText(systemPrompt_, 4) << "\n";
@@ -1534,20 +1775,24 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
     }
 
     ss << "  <action_available>\n";
-    ss << "    <description>Callable runtime surfaces. Use these with <action type=\"...\"> only "
+    ss << "    <description>Callable runtime surfaces. Use these with <action "
+          "type=\"...\"> only "
           "when needed.</description>\n";
 
-    ss << "    <tools>\n        <description>Functions callable with <action type=\"tool\">. "
-          "Prefer declared JSON params; if a tool declares text input, small scalar attrs plus a "
+    ss << "    <tools>\n        <description>Functions callable with <action "
+          "type=\"tool\">. "
+          "Prefer declared JSON params; if a tool declares text input, small "
+          "scalar attrs plus a "
           "text body are allowed.</description>\n";
     auto schemaIt = env_.find("__TOOL_SCHEMAS__");
     bool hasSchemas = (schemaIt != env_.end() && !schemaIt->second.empty());
     if (hasSchemas) {
         ss << schemaIt->second << "\n";
     }
-    for (const auto& [name, tool] : tools_) {
+    for (const auto &[name, tool] : tools_) {
         // Only emit tools NOT already covered by manifest-loaded schemas.
-        if (hasSchemas && schemaIt->second.find("name=\"" + name + "\"") != std::string::npos)
+        if (hasSchemas &&
+            schemaIt->second.find("name=\"" + name + "\"") != std::string::npos)
             continue;
 
         // Session-restored script tools keep scriptPath but historically lost
@@ -1558,15 +1803,17 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
             std::vector<std::filesystem::path> candidates = {
                 scriptPath.parent_path() / "tool.yml",
                 scriptPath.parent_path().parent_path() / "tool.yml"};
-            for (const auto& candidate : candidates) {
+            for (const auto &candidate : candidates) {
                 if (!std::filesystem::exists(candidate))
                     continue;
-                auto recovered = ManifestLoader::loadToolManifest(candidate.string());
+                auto recovered =
+                    ManifestLoader::loadToolManifest(candidate.string());
                 if (recovered.name.empty() || recovered.name != name)
                     continue;
-                const auto& rc = config_.promptBuilding.runtimeCapabilities;
-                ss << ManifestLoader::toolSchemasToXml({recovered}, 8, rc.inputSchemas,
-                                                       rc.returnSchemas, rc.usageExamples);
+                const auto &rc = config_.promptBuilding.runtimeCapabilities;
+                ss << ManifestLoader::toolSchemasToXml(
+                    {recovered}, 8, rc.inputSchemas, rc.returnSchemas,
+                    rc.usageExamples);
                 emittedRecoveredSchema = true;
                 break;
             }
@@ -1575,43 +1822,53 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
             continue;
 
         ss << "        <tool name=\"" << xmlAttr(name) << "\"";
-        if (!tool.description().empty() && tool.description() != "See input_schema for parameters")
+        if (!tool.description().empty() &&
+            tool.description() != "See input_schema for parameters")
             ss << " desc=\"" << xmlAttr(tool.description()) << "\"";
         ss << ">\n";
-        ss << "\n            <params unavailable=\"true\">schema not loaded; do not guess required "
+        ss << "\n            <params unavailable=\"true\">schema not loaded; "
+              "do not guess required "
               "JSON keys</params>\n";
         ss << "        </tool>\n";
     }
     ss << "    </tools>\n";
 
     if (!relics_.empty()) {
-        ss << "    <relics>\n        <description>Persistent stores callable with <action "
+        ss << "    <relics>\n        <description>Persistent stores callable "
+              "with <action "
               "type=\"relic\">.</description>\n";
-        for (auto& name : relics_) {
+        for (auto &name : relics_) {
             ss << "        <relic name=\"" << xmlAttr(name) << "\"/>\n";
         }
         ss << "    </relics>\n";
     }
 
     if (!feedNames().empty()) {
-        ss << "    <feeds>\n        <description>Ambient context feeds. Callable with <action "
+        ss << "    <feeds>\n        <description>Ambient context feeds. "
+              "Callable with <action "
               "type=\"feed\"> when fresh params are needed.</description>\n";
-        for (const auto& name : feedNames()) {
-            ss << "        <feed name=\"" << xmlAttr(name) << "\" action=\"feed\"/>\n";
+        for (const auto &name : feedNames()) {
+            ss << "        <feed name=\"" << xmlAttr(name)
+               << "\" action=\"feed\"/>\n";
         }
         ss << "    </feeds>\n";
     }
 
     if (!subAgents_.empty()) {
         ss << "    <sub_agents>\n"
-              "        <description>Delegatable agents callable with <action type=\"agent\" "
-              "name=\"AGENT_NAME\" id=\"a1\" mode=\"sync\" ephemeral=\"true|false\" "
+              "        <description>Delegatable agents callable with <action "
+              "type=\"agent\" "
+              "name=\"AGENT_NAME\" id=\"a1\" mode=\"sync\" "
+              "ephemeral=\"true|false\" "
               "dump_context=\"true|false\">plain text instruction</action>. "
-              "Inputs and outputs are plain text unless the sub-agent says otherwise. "
-              "Default result contains only the sub-agent final response. Set dump_context=\"true\" "
-              "only when you explicitly need its prompts/runtime trace.</description>\n";
-        for (const auto& [name, agent] : subAgents_) {
-            const auto& cfg = agent->config();
+              "Inputs and outputs are plain text unless the sub-agent says "
+              "otherwise. "
+              "Default result contains only the sub-agent final response. Set "
+              "dump_context=\"true\" "
+              "only when you explicitly need its prompts/runtime "
+              "trace.</description>\n";
+        for (const auto &[name, agent] : subAgents_) {
+            const auto &cfg = agent->config();
             ss << "        <sub_agent name=\"" << xmlAttr(name) << "\"";
             if (!cfg.version.empty())
                 ss << " version=\"" << xmlAttr(cfg.version) << "\"";
@@ -1628,12 +1885,15 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
             auto names = agent->toolNames();
             if (!names.empty()) {
                 ss << "            <tools>\n";
-                for (const auto& toolName : names) {
-                    const auto* tool = agent->findTool(toolName);
-                    ss << "                <tool name=\"" << xmlAttr(toolName) << "\"";
+                for (const auto &toolName : names) {
+                    const auto *tool = agent->findTool(toolName);
+                    ss << "                <tool name=\"" << xmlAttr(toolName)
+                       << "\"";
                     if (tool && !tool->description().empty() &&
-                        tool->description() != "See input_schema for parameters")
-                        ss << " desc=\"" << xmlAttr(tool->description()) << "\"";
+                        tool->description() !=
+                            "See input_schema for parameters")
+                        ss << " desc=\"" << xmlAttr(tool->description())
+                           << "\"";
                     ss << "/>\n";
                 }
                 ss << "            </tools>\n";
@@ -1671,13 +1931,14 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
     if (!history_.empty()) {
         // Apply history cap — only include the most recent N entries
         size_t histStart = 0;
-        if (config_.historyCap > 0 && history_.size() > (size_t)config_.historyCap) {
+        if (config_.historyCap > 0 &&
+            history_.size() > (size_t)config_.historyCap) {
             histStart = history_.size() - config_.historyCap;
         }
 
         size_t userTurn = 0;
         for (size_t hi = histStart; hi < history_.size(); hi++) {
-            const auto& h = history_[hi];
+            const auto &h = history_[hi];
             std::string emitted;
             if (h.rfind("Agent: ", 0) == 0) {
                 emitted = h.substr(7);
@@ -1687,9 +1948,11 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
                 userTurn++;
                 // On iteration 1 the current request is sent as a real user
                 // message, not replayed inside the system prompt transcript.
-                if (ctx.iteration <= 1 && hi + 1 == history_.size() && h.substr(6) == ctx.userInput)
+                if (ctx.iteration <= 1 && hi + 1 == history_.size() &&
+                    h.substr(6) == ctx.userInput)
                     continue;
-                emitted = "<user turn=\"" + std::to_string(userTurn) + "\" source=\"human\"";
+                emitted = "<user turn=\"" + std::to_string(userTurn) +
+                          "\" source=\"human\"";
                 if (!ctx.sessionId.empty())
                     emitted += " session=\"" + xmlAttr(ctx.sessionId) + "\"";
                 emitted += ">" + h.substr(6) + "</user>";
@@ -1703,12 +1966,15 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
                     body = (close + 1 < h.size() && h[close + 1] == ':')
                                ? h.substr(close + 2)
                                : h.substr(close + 1);
-                    if (!body.empty() && body[0] == ' ') body = body.substr(1);
+                    if (!body.empty() && body[0] == ' ')
+                        body = body.substr(1);
                 }
-                if (ctx.iteration <= 1 && hi + 1 == history_.size() && body == ctx.userInput)
+                if (ctx.iteration <= 1 && hi + 1 == history_.size() &&
+                    body == ctx.userInput)
                     continue;
-                emitted = "<user turn=\"parent\" source=\"parent_agent\" from=\"" +
-                          xmlAttr(from) + "\">" + body + "</user>";
+                emitted =
+                    "<user turn=\"parent\" source=\"parent_agent\" from=\"" +
+                    xmlAttr(from) + "\">" + body + "</user>";
             } else {
                 emitted = h;
             }
@@ -1721,13 +1987,14 @@ std::string Agent::buildSystemPrompt(const AgentContext& ctx) const {
     return ss.str();
 }
 
-std::string Agent::buildUserPrompt(const AgentContext& ctx) const {
+std::string Agent::buildUserPrompt(const AgentContext &ctx) const {
     // Surface initiator identity in the live user message so the model can
     // tell a human operator apart from a parent-agent delegate without
     // relying solely on history replay.
     if (ctx.source == PromptSource::ParentAgent) {
         std::string from = ctx.sourceName.empty() ? "parent" : ctx.sourceName;
-        return std::string("[FROM parent agent \"") + from + "\"]\n" + ctx.userInput;
+        return std::string("[FROM parent agent \"") + from + "\"]\n" +
+               ctx.userInput;
     }
     return ctx.userInput;
 }
@@ -1739,9 +2006,9 @@ std::string Agent::buildDynamicContextPrompt() const {
         ss << "<pinned_context>\n"
               "  <description>Files the agent pinned via context_pin. "
               "Persist until context_unpin.</description>\n";
-        for (auto& [key, e] : pinned_) {
-            ss << "  <file path=\"" << xmlAttr(e.displayPath) << "\" bytes=\"" << e.bytes
-               << "\">\n";
+        for (auto &[key, e] : pinned_) {
+            ss << "  <file path=\"" << xmlAttr(e.displayPath) << "\" bytes=\""
+               << e.bytes << "\">\n";
             ss << e.content;
             if (!e.content.empty() && e.content.back() != '\n')
                 ss << '\n';
@@ -1756,9 +2023,10 @@ std::string Agent::buildDynamicContextPrompt() const {
         ss << "<ephemeral_context>\n"
               "  <description>Files peeked via context_peek. Auto-evicted "
               "after their cycle count expires.</description>\n";
-        for (auto& [key, e] : peeking_) {
-            ss << "  <file path=\"" << xmlAttr(e.displayPath) << "\" bytes=\"" << e.bytes
-               << "\" cycles_remaining=\"" << e.cyclesRemaining << "\">\n";
+        for (auto &[key, e] : peeking_) {
+            ss << "  <file path=\"" << xmlAttr(e.displayPath) << "\" bytes=\""
+               << e.bytes << "\" cycles_remaining=\"" << e.cyclesRemaining
+               << "\">\n";
             ss << e.content;
             if (!e.content.empty() && e.content.back() != '\n')
                 ss << '\n';
@@ -1771,16 +2039,18 @@ std::string Agent::buildDynamicContextPrompt() const {
         auto feedResults = feeds::FeedEngine::instance().pollAll();
         auto toolSpecs = feeds::FeedEngine::instance().feedToolSpecs();
         bool any = false;
-        for (auto& fr : feedResults) {
+        for (auto &fr : feedResults) {
             if (!feeds_.count(fr.name))
                 continue;
             if (!any) {
                 if (ss.tellp() > 0)
                     ss << "\n";
-                ss << "<feeds>\n  <description>Dynamic system context refreshed each turn. "
+                ss << "<feeds>\n  <description>Dynamic system context "
+                      "refreshed each turn. "
                       "Bottom-loaded for prompt-cache stability. "
                       "Each feed may also expose tools — invoke via "
-                      "<action type=\"feed\" name=\"<feed>.<tool>\" .../>.</description>\n";
+                      "<action type=\"feed\" name=\"<feed>.<tool>\" "
+                      ".../>.</description>\n";
                 any = true;
             }
             ss << "  <" << fr.name << ">\n";
@@ -1788,9 +2058,9 @@ std::string Agent::buildDynamicContextPrompt() const {
             auto specIt = toolSpecs.find(fr.name);
             if (specIt != toolSpecs.end() && !specIt->second.empty()) {
                 ss << "    <tools>\n";
-                for (const auto& spec : specIt->second) {
-                    ss << "      <tool name=\"" << spec.name << "\" description=\""
-                       << spec.description << "\"/>\n";
+                for (const auto &spec : specIt->second) {
+                    ss << "      <tool name=\"" << spec.name
+                       << "\" description=\"" << spec.description << "\"/>\n";
                 }
                 ss << "    </tools>\n";
             }
@@ -1803,9 +2073,10 @@ std::string Agent::buildDynamicContextPrompt() const {
     if (!contextFeeds_.empty()) {
         if (ss.tellp() > 0)
             ss << "\n";
-        ss << "<context_feeds>\n  <description>LLM-requested dynamic context from prior "
+        ss << "<context_feeds>\n  <description>LLM-requested dynamic context "
+              "from prior "
               "turns.</description>\n";
-        for (auto& feed : contextFeeds_) {
+        for (auto &feed : contextFeeds_) {
             ss << "  " << feed << "\n";
         }
         ss << "</context_feeds>\n";
@@ -1818,11 +2089,11 @@ std::string Agent::buildDynamicContextPrompt() const {
 // Sanitize output — strip protocol XML tags
 // ═══════════════════════════════════════════════════════════════════════
 
-std::string Agent::sanitize(const std::string& output) {
+std::string Agent::sanitize(const std::string &output) {
     // Linear state-machine tag stripper — 10-20x faster than regex on large
     // outputs
-    static const std::vector<std::string> tags = {"action", "result", "thought", "context_feed",
-                                                  "response"};
+    static const std::vector<std::string> tags = {"action", "result", "thought",
+                                                  "context_feed", "response"};
     std::string out;
     out.reserve(output.size());
     size_t i = 0, n = output.size();
@@ -1832,12 +2103,13 @@ std::string Agent::sanitize(const std::string& output) {
             continue;
         }
         bool matched = false;
-        for (auto& tag : tags) {
+        for (auto &tag : tags) {
             size_t tagLen = tag.size();
             // <tag> or </tag>
             bool isClose = (i + 1 < n && output[i + 1] == '/');
             size_t nameStart = isClose ? i + 2 : i + 1;
-            if (n - nameStart >= tagLen && output.compare(nameStart, tagLen, tag) == 0) {
+            if (n - nameStart >= tagLen &&
+                output.compare(nameStart, tagLen, tag) == 0) {
                 size_t close = output.find('>', nameStart + tagLen);
                 if (close == std::string::npos)
                     break;
@@ -1861,10 +2133,11 @@ std::string Agent::sanitize(const std::string& output) {
     }
     size_t start = out.find_first_not_of(" \t\n\r");
     size_t end = out.find_last_not_of(" \t\n\r");
-    return (start == std::string::npos) ? "" : out.substr(start, end - start + 1);
+    return (start == std::string::npos) ? ""
+                                        : out.substr(start, end - start + 1);
 }
 
 // ── Tool dispatch — see agent_tool_dispatch.cpp
 // ── Session lifecycle — see agent_session.cpp
 
-}  // namespace cortex::mk3
+} // namespace cortex::mk3
