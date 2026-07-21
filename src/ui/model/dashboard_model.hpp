@@ -41,7 +41,7 @@ struct DashboardState {
     // Pill cycle animation
     int navPrevIndex = 0;
     int64_t navAnimStartMs = 0;
-    static constexpr int navAnimDurationMs = 220;
+    static constexpr int navAnimDurationMs = 280;
     static constexpr int sectionCount = 6;
 
     static int64_t nowMs() {
