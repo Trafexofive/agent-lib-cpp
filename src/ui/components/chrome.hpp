@@ -55,7 +55,7 @@ inline void sectionHead(inkcell::Surface& s, inkcell::Rect r, const std::string&
                         const std::string& subtitle = {}) {
     s.text({r.x, r.y}, inkcell::text::truncate(title, r.w), theme::bright());
     if (!subtitle.empty() && r.h > 1)
-        s.text({r.x, r.y + 1}, inkcell::text::truncate(subtitle, r.w), theme::dim());
+        s.text({r.x, r.y + 1}, inkcell::text::truncate(subtitle, r.w), theme::italic_dim());
 }
 
 // Focusable list row with kind chip.
@@ -72,7 +72,9 @@ inline void listRow(inkcell::Surface& s, inkcell::Rect r, const std::string& tex
 
 inline void kindChip(inkcell::Surface& s, int x, int y, const std::string& kind, bool selected) {
     std::string tag = std::string("[") + assets::kindTag(kind) + "]";
-    auto st = selected ? theme::cyan() : theme::dim();
+    auto st = theme::kindAccent(kind, selected);
+    if (!selected) st.dim = false;  // keep kind hue even when idle
+    if (selected) st.bold = true;
     s.text({x, y}, tag, st);
 }
 
@@ -92,7 +94,8 @@ inline void fieldLine(inkcell::Surface& s, int x, int y, int w, const std::strin
                       const std::string& value) {
     std::string k = key;
     while (inkcell::text::display_width(k) < 12) k.push_back(' ');
-    s.text({x, y}, inkcell::text::truncate(k, 12), theme::dim());
+    // Keys italic+dim, values plain text — hierarchy without shouting
+    s.text({x, y}, inkcell::text::truncate(k, 12), theme::italic_dim());
     s.text({x + 13, y}, inkcell::text::truncate(value, std::max(1, w - 13)), theme::text());
 }
 

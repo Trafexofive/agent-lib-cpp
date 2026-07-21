@@ -257,8 +257,8 @@ class MainScene final : public BaseScene {
 
         drawAppBar(surface, page, tier);
 
-        // Stage above pill (2 rows dock reserve)
-        const int dockReserve = 3;
+        // Stage above textured 3-row pill (+ shadow)
+        const int dockReserve = 4;
         int stageTop = page.y + 3;
         int stageH = std::max(6, page.bottom() - dockReserve - stageTop);
         inkcell::Rect stage{page.x, stageTop, page.w, stageH};
@@ -308,11 +308,15 @@ class MainScene final : public BaseScene {
                       theme::dim().with_fg(theme::color(inkcell::Color::rgb(50, 50, 50),
                                                         inkcell::Color::rgb(28, 40, 58))));
 
-        // Keep "CORTEX MK3" contiguous for tests + scanability
-        surface.text({page.x, page.y}, "CORTEX MK3", theme::bright().with_bg(bar.bg));
-        surface.text({page.x + 11, page.y},
+        // Brand: CORTEX bold + MK3 cyan — contiguous "CORTEX MK3" for scan/tests
+        auto brand = theme::bright().with_bg(bar.bg);
+        auto mk = theme::cyan().with_bg(bar.bg);
+        surface.text({page.x, page.y}, "CORTEX ", brand);
+        surface.text({page.x + 7, page.y}, "MK3", mk);
+        auto sec = theme::italic_accent().with_bg(bar.bg);
+        surface.text({page.x + 10, page.y},
                      "  ·  " + std::string(model::dashboardSectionName(model_->dashboard.section)),
-                     theme::text().with_bg(bar.bg));
+                     sec);
 
         std::string right = activeName() + "  ·  " + nonempty(cfg_.provider, model_->agentProvider) +
                             "/" + nonempty(cfg_.model, model_->agentModel) + "  ·  " +
@@ -399,8 +403,11 @@ class MainScene final : public BaseScene {
         if (!subtitle.empty())
             surface.text({frame.x, frame.y + 1}, inkcell::text::truncate(subtitle, frame.w),
                          theme::dim());
-        int tw = std::min(frame.w, inkcell::text::display_width(title) + 4);
-        surface.hline({frame.x, frame.y + 2}, tw, "─", theme::cyan());
+        int tw = std::min(frame.w, inkcell::text::display_width(title) + 6);
+        // Accent rule: cyan body + violet tip — small texture break
+        int mid = std::max(2, tw - 2);
+        surface.hline({frame.x, frame.y + 2}, mid, "─", theme::cyan_soft());
+        surface.hline({frame.x + mid, frame.y + 2}, tw - mid, "─", theme::violet_soft());
     }
 
     void metricTile(inkcell::Surface& surface, inkcell::Rect r, const std::string& label,
@@ -432,7 +439,7 @@ class MainScene final : public BaseScene {
             y += tileH + 2;
         }
 
-        surface.text({frame.x, y++}, "RUNTIME", theme::dim());
+        surface.text({frame.x, y++}, "RUNTIME", theme::cyan_soft());
         components::fieldLine(surface, frame.x, y++, frame.w, "engine",
                               nonempty(model_->agentProvider, nonempty(cfg_.provider, "?")) + "/" +
                                   nonempty(model_->agentModel, nonempty(cfg_.model, "?")));
@@ -444,7 +451,7 @@ class MainScene final : public BaseScene {
                               model_->running ? "running" : "idle");
         y += 1;
 
-        surface.text({frame.x, y++}, "HARNESS", theme::dim());
+        surface.text({frame.x, y++}, "HARNESS", theme::amber_soft());
         components::fieldLine(surface, frame.x, y++, frame.w, "harness", basename(cfg_.harnessPath));
         components::fieldLine(surface, frame.x, y++, frame.w, "system",
                               basename(cfg_.systemPromptPath));
@@ -584,7 +591,8 @@ class MainScene final : public BaseScene {
         for (int ri = start; ri < static_cast<int>(rows.size()) && y < frame.bottom(); ++ri) {
             const auto& row = rows[static_cast<size_t>(ri)];
             if (row.header) {
-                surface.text({frame.x, y++}, inkcell::text::truncate(row.text, listW), theme::amber());
+                surface.text({frame.x, y++}, inkcell::text::truncate(row.text, listW),
+                             theme::amber_soft());
                 continue;
             }
             const auto& m = dash.manifests[static_cast<size_t>(row.idx)];
@@ -656,8 +664,8 @@ class MainScene final : public BaseScene {
             bool isLive = (!am.empty() && sel->path == am) || (!an.empty() && sel->name == an);
             surface.text({ix, dy++}, isLive ? "LIVE · enter opens chat" : "ENTER LAUNCHES",
                          theme::green());
-            surface.text({ix, dy},
-                         inkcell::text::truncate(sel->path, iw), theme::dim());
+            auto pathSt = theme::italic_dim();
+            surface.text({ix, dy}, inkcell::text::truncate(sel->path, iw), pathSt);
         }
     }
 
@@ -686,8 +694,12 @@ class MainScene final : public BaseScene {
             if (y >= frame.bottom()) break;
             bool head = line[0] && line[0] != ' ' &&
                         std::isupper(static_cast<unsigned char>(line[0]));
-            surface.text({frame.x, y++}, line,
-                         !line[0] ? theme::dim() : head ? theme::cyan() : theme::text());
+            bool indent = line[0] == ' ';
+            inkcell::Style st = theme::text();
+            if (!line[0]) st = theme::dim();
+            else if (head) st = theme::violet();
+            else if (indent) st = theme::muted();
+            surface.text({frame.x, y++}, line, st);
         }
     }
 

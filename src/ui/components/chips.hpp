@@ -37,11 +37,13 @@ inline int drawChipStrip(inkcell::Surface& s, inkcell::Rect frame, const std::ve
             if (y >= frame.bottom()) break;
         }
         if (y >= frame.bottom()) break;
-        auto st = c.active ? theme::selected_style() : theme::dim();
+        auto st = theme::muted();
         if (c.active) {
             s.fill({x, y, w, 1}, " ", theme::panel_3());
             st = theme::cyan();
             st.bold = true;
+        } else {
+            st.italic = true;  // idle chips whisper
         }
         s.text({x, y}, cell, st);
         x += w + 1;
@@ -62,7 +64,9 @@ inline void drawTagChips(inkcell::Surface& s, int x, int y, int maxW,
         std::string cell = "#" + t;
         int w = inkcell::text::display_width(cell);
         if (cx + w > x + maxW) break;
-        s.text({cx, y}, cell, theme::dim());
+        auto ts = theme::violet_soft();
+        ts.italic = true;
+        s.text({cx, y}, cell, ts);
         cx += w + 1;
         ++n;
     }
