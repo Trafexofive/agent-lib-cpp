@@ -257,14 +257,14 @@ void test_dashboard_model() {
     model::DashboardState dashboard;
     // 4 sections, wrapping: Home → Sessions → Manifests → Help → Home
     for (int i = 0; i < 3; ++i) dashboard.moveNavigation(1);
-    check(dashboard.section == model::DashboardSection::Help && dashboard.navigationIndex == 3,
-          "dashboard navigation reaches Help");
+    check(dashboard.section == model::DashboardSection::Settings && dashboard.navigationIndex == 3,
+          "dashboard navigation reaches Settings");
     dashboard.moveNavigation(1);
     check(dashboard.section == model::DashboardSection::Home && dashboard.navigationIndex == 0,
           "dashboard navigation wraps Home");
     dashboard.moveNavigation(-1);
-    check(dashboard.section == model::DashboardSection::Help && dashboard.navigationIndex == 3,
-          "dashboard navigation wraps backward to Help");
+    check(dashboard.section == model::DashboardSection::Settings && dashboard.navigationIndex == 3,
+          "dashboard navigation wraps backward to Settings");
 
     session::SessionManager::SessionInfo first;
     first.id = "first";
