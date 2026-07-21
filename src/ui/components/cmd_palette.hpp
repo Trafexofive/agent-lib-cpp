@@ -14,6 +14,8 @@
 #include "inkcell/surface.hpp"
 #include "inkcell/text.hpp"
 #include "src/ui/chat/chat_command_catalog.hpp"
+#include "src/ui/gfx/blit.hpp"
+#include "src/ui/gfx/shaders_dedsec.hpp"
 #include "src/ui/theme/cortex_theme.hpp"
 
 namespace cortex::mk3::ui::components {
@@ -242,29 +244,22 @@ inline std::vector<CmdItem> chatCommands() {
     return out;
 }
 
-// Faux-transparent scrim: dither mix of base and dark overlay.
+// DedSec scrim — baked cell-shader, cached by size/bucket/theme.
 inline void drawScrim(inkcell::Surface& s, inkcell::Rect page, float vis) {
     if (vis <= 0.01f) return;
-    // Strength of dimming via pattern density
-    int phase = static_cast<int>(vis * 4.f);  // 0..4
-    auto dark = inkcell::Style::normal()
-                    .with_bg(theme::color(inkcell::Color::rgb(8, 8, 10), inkcell::Color::rgb(2, 4, 8)))
-                    .with_fg(theme::color(inkcell::Color::rgb(8, 8, 10), inkcell::Color::rgb(2, 4, 8)));
-    auto mid = inkcell::Style::normal()
-                   .with_bg(theme::color(inkcell::Color::rgb(12, 12, 14), inkcell::Color::rgb(4, 6, 12)))
-                   .with_fg(theme::color(inkcell::Color::rgb(40, 40, 48), inkcell::Color::rgb(30, 40, 55)));
-    for (int y = page.y; y < page.bottom(); ++y) {
-        for (int x = page.x; x < page.right(); ++x) {
-            int v = (x + y) & 3;
-            if (phase >= 4 || (phase >= 3 && v != 0) || (phase >= 2 && v < 2) ||
-                (phase >= 1 && v == 0)) {
-                // ░ on mid cells for glass grit
-                if (((x * 3 + y * 5) & 7) == 0 && vis > 0.4f)
-                    s.text({x, y}, "░", mid);
-                else
-                    s.fill({x, y, 1, 1}, " ", dark);
-            }
-        }
+    const auto& frame = gfx::bakeDedSecScrim(page.w, page.h, gfx::themeVariantIndex(),
+                                            gfx::nowSeconds());
+    gfx::blit(s, frame, page.x, page.y, gfx::BlitMode::Opaque, page);
+    // Soften when still opening (cheap second pass — dim edges only via alpha gate)
+    if (vis < 0.85f) {
+        auto veil = inkcell::Style::normal()
+                        .with_bg(theme::color(inkcell::Color::rgb(0, 0, 0), inkcell::Color::rgb(0, 0, 0)))
+                        .with_fg(theme::color(inkcell::Color::rgb(0, 0, 0), inkcell::Color::rgb(0, 0, 0)));
+        // checker veil thins as vis rises
+        int skip = vis > 0.5f ? 3 : 1;
+        for (int y = page.y; y < page.bottom(); ++y)
+            for (int x = page.x; x < page.right(); ++x)
+                if (((x + y) % (skip + 1)) == 0) s.fill({x, y, 1, 1}, " ", veil);
     }
 }
 

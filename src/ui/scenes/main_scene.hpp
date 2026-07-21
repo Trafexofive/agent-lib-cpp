@@ -19,6 +19,8 @@
 #include "src/ui/components/chrome.hpp"
 #include "src/ui/components/cmd_palette.hpp"
 #include "src/ui/components/pill_nav.hpp"
+#include "src/ui/gfx/blit.hpp"
+#include "src/ui/gfx/shaders_dedsec.hpp"
 #include "src/ui/layout/density.hpp"
 #include "src/ui/model/dashboard_controller.hpp"
 
@@ -283,6 +285,13 @@ class MainScene final : public BaseScene {
         const inkcell::Rect page = layout::page(surface);
         const auto tier = layout::densityOf(page.w);
         const auto& dash = model_->dashboard;
+
+        // Sparse cached wallpaper under chrome (underlay = won't stomp content)
+        {
+            const auto& wall = gfx::bakeHubWallpaper(page.w, page.h, gfx::themeVariantIndex(),
+                                                    gfx::nowSeconds());
+            gfx::blit(surface, wall, page.x, page.y, gfx::BlitMode::Underlay, page);
+        }
 
         drawAppBar(surface, page, tier);
 
@@ -707,28 +716,54 @@ class MainScene final : public BaseScene {
             int ix = inner.x;
             int iw = inner.w;
             if (dy >= inner.bottom()) return;
-            s.text({ix, dy++}, inkcell::text::truncate(m.name, iw), titleSt);
+
+            // Title row: name + version chip
+            std::string title = m.name;
+            if (!m.version.empty()) title += "  v" + m.version;
+            s.text({ix, dy++}, inkcell::text::truncate(title, iw), titleSt);
             if (dy >= inner.bottom()) return;
-            s.text({ix, dy++},
-                   inkcell::text::truncate(std::string(assets::kindLabel(m.kind)) + " · " +
-                                               m.category,
-                                           iw),
-                   kindSt);
-            if (!m.summary.empty() && dy < inner.bottom() - 6) {
+
+            // Kind · category · flags
+            std::string meta = std::string(assets::kindLabel(m.kind)) + " · " + m.category;
+            if (m.nested) meta += " · nested";
+            if (m.builtin) meta += " · builtin";
+            if (m.launchable) meta += " · launchable";
+            s.text({ix, dy++}, inkcell::text::truncate(meta, iw), kindSt);
+
+            if (!m.summary.empty() && dy < inner.bottom() - 10) {
                 for (const auto& line : chat::wrapWordsLossless(m.summary, iw)) {
-                    if (dy >= inner.bottom() - 6) break;
+                    if (dy >= inner.bottom() - 10) break;
                     s.text({ix, dy++}, line, bodySt);
                 }
             }
             if (dy < inner.bottom()) ++dy;
+
             if (dy < inner.bottom())
                 components::fieldLine(s, ix, dy++, iw, "kind", m.kind);
+            if (dy < inner.bottom() && !m.version.empty())
+                components::fieldLine(s, ix, dy++, iw, "version", m.version);
             if (dy < inner.bottom())
-                components::fieldLine(s, ix, dy++, iw, "path",
-                                      m.relPath.empty() ? m.path : m.relPath);
+                components::fieldLine(s, ix, dy++, iw, "category", m.category);
             if (dy < inner.bottom() && (!m.provider.empty() || !m.model.empty()))
                 components::fieldLine(s, ix, dy++, iw, "engine",
                                       nonempty(m.provider, "?") + "/" + nonempty(m.model, "?"));
+            if (dy < inner.bottom())
+                components::fieldLine(s, ix, dy++, iw, "source", nonempty(m.source, "—"));
+            if (dy < inner.bottom())
+                components::fieldLine(s, ix, dy++, iw, "rel",
+                                      m.relPath.empty() ? "—" : m.relPath);
+            if (dy < inner.bottom())
+                components::fieldLine(s, ix, dy++, iw, "path",
+                                      m.path.empty() ? "—" : m.path);
+            if (dy < inner.bottom()) {
+                std::string flags;
+                if (m.launchable) flags += "launch ";
+                if (m.nested) flags += "nested ";
+                if (m.builtin) flags += "builtin ";
+                if (flags.empty()) flags = "—";
+                components::fieldLine(s, ix, dy++, iw, "flags", flags);
+            }
+
             if (dy < inner.bottom()) {
                 ++dy;
                 if (dy < inner.bottom()) {
