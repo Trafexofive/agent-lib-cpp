@@ -13,6 +13,8 @@
 #include <thread>
 
 #include "inkcell/app.hpp"
+#include "src/core/manifest_loader.hpp"
+#include "src/providers/factory.hpp"
 #include "src/session/manager.hpp"
 #include "src/ui/bridge/agent_bridge.hpp"
 #include "src/ui/chat/prompt_history.hpp"
@@ -68,6 +70,7 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
     model->agentName = cfg.agentName.empty() ? "cortex" : cfg.agentName;
     model->agentModel = cfg.model;
     model->agentProvider = cfg.provider;
+    model->activeManifestPath = cfg.manifestPath;
     model->showThoughts = cfg.showThoughts;
     model->truncateBodies = cfg.truncateBodies;
     model->dashboard.manifestDir =
@@ -252,13 +255,56 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     return rc;
 }
 
+// Live agent slot — starts as external ref from main(); hub launch may replace
+// with an owned Agent built from a selected manifest (hot-swap).
+struct LiveAgentSlot {
+    Agent* external = nullptr;
+    std::unique_ptr<Agent> owned;
+    Agent& get() { return owned ? *owned : *external; }
+    Agent* ptr() { return owned ? owned.get() : external; }
+};
+
+// Build a fully wired Agent from agent.yml. Returns nullptr + err on failure.
+inline std::unique_ptr<Agent> buildAgentFromManifest(const std::string& manifestPath,
+                                                     AgentBridge& bridge, std::string& err) {
+    try {
+        auto acfg = ManifestLoader::loadAgentConfig(manifestPath);
+        ManifestLoader::loadEnv(manifestPath, acfg);
+        if (acfg.name.empty()) {
+            err = "manifest has no name: " + manifestPath;
+            return nullptr;
+        }
+        auto provider = providers::createProvider(acfg.provider, acfg.model);
+        if (!provider) {
+            err = "provider unavailable: " + acfg.provider + "/" + acfg.model;
+            return nullptr;
+        }
+        auto agent = std::make_unique<Agent>(acfg, provider);
+        ManifestLoader::loadFeeds(manifestPath, *agent);
+        ManifestLoader::loadRelics(manifestPath, *agent);
+        ManifestLoader::loadTools(manifestPath, *agent);
+        ManifestLoader::loadSubAgents(manifestPath, *agent, acfg.provider);
+        ManifestLoader::loadWorkflows(manifestPath);
+        agent->setAskToolHandler([&bridge](const Json::Value& params) {
+            return bridge.requestAsk(params);
+        });
+        return agent;
+    } catch (const std::exception& e) {
+        err = e.what();
+        return nullptr;
+    }
+}
+
 // Interactive REPL. noSession → agent.prompt won't persist.
 // cfg.ephemeral → quit after a completed agent turn.
 // cfg.initialPrompt → auto-submit a seed prompt (-p without --ephemeral).
+// Hub Enter on a launchable agent sets model->pendingLaunchManifest → hot-swap.
 inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::string& /*sessionId*/, bool noSession) {
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
-    model->setRootAgent(&agent);
+    auto slot = std::make_shared<LiveAgentSlot>();
+    slot->external = &agent;
+    model->setRootAgent(slot->ptr());
     initializeChatModel(model, cfg);
     agent.setAskToolHandler([&bridge](const Json::Value& params) { return bridge.requestAsk(params); });
     std::atomic<bool> workerBusy{false};
@@ -268,6 +314,17 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     auto joinWorker = [&]() {
         if (worker.joinable()) worker.join();
         workerBusy.store(false, std::memory_order_release);
+    };
+
+    auto applyLiveIdentity = [&](const AgentConfig& acfg, const std::string& manifestPath) {
+        model->agentName = acfg.name.empty() ? "cortex" : acfg.name;
+        model->agentModel = acfg.model;
+        model->agentProvider = acfg.provider;
+        model->activeManifestPath = manifestPath;
+        model->setRootAgent(slot->ptr());
+        model->clearTranscript();
+        model->dashboard.notice = "launched " + model->agentName;
+        model->launchError.clear();
     };
 
     // Seed -p into the same submit path as a typed Enter.
@@ -284,9 +341,35 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     auto app = makeInkcellApp(cfg, bridge, model, startAtDashboard);
     app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([]() {});
     const bool exitOnDone = cfg.ephemeral;
-    app.engine().on_tick([model, &bridge, &app, &workerBusy, &worker, &joinWorker, &agent, &quitPosted,
-                          noSession, exitOnDone](inkcell::Tick) {
+    app.engine().on_tick([model, slot, &bridge, &app, &workerBusy, &worker, &joinWorker, &quitPosted,
+                          noSession, exitOnDone, applyLiveIdentity](inkcell::Tick) {
         model->drain(bridge);
+
+        // Hub launch: hot-swap agent from selected manifest, then open chat.
+        if (!model->pendingLaunchManifest.empty() &&
+            !workerBusy.load(std::memory_order_acquire)) {
+            std::string path = model->pendingLaunchManifest;
+            model->pendingLaunchManifest.clear();
+            // Same manifest already live → just open chat.
+            if (!model->activeManifestPath.empty() && path == model->activeManifestPath) {
+                model->dashboard.notice = "already live · " + model->agentName;
+                model->pendingRoute = "agent";
+            } else {
+                joinWorker();
+                std::string err;
+                auto next = buildAgentFromManifest(path, bridge, err);
+                if (!next) {
+                    model->launchError = err.empty() ? "launch failed" : err;
+                    model->dashboard.notice = "launch failed: " + model->launchError;
+                } else {
+                    AgentConfig loaded = next->config();
+                    slot->owned = std::move(next);
+                    applyLiveIdentity(loaded, path);
+                    model->pendingRoute = "agent";
+                }
+            }
+        }
+
         if (model->pendingRoute == "agent") {
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"scene.agent"});
@@ -307,9 +390,9 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
             model->failed = false;
             model->status = "running";
             joinWorker();
-            worker = std::thread([&, prompt]() {
+            worker = std::thread([slot, &bridge, model, prompt, noSession, &workerBusy]() {
                 std::atomic<bool> done{false};
-                runAgentTurn(bridge, agent, prompt, model->activeSessionId, noSession, done);
+                runAgentTurn(bridge, slot->get(), prompt, model->activeSessionId, noSession, done);
                 while (!done.load(std::memory_order_acquire))
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 g_running = true;

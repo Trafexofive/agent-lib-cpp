@@ -1,11 +1,10 @@
 #pragma once
-// Dashboard hub — frontend treatment.
-// Full-bleed elevated content stage + floating rounded pill dock.
-// Section cycle: Ctrl-J / Ctrl-K only (inkcell: LF=Ctrl-J, CR=Enter).
+// Dashboard hub — tight IA, operable facets, real agent launch.
+// Pill: Home · Sessions · Manifests · Help
+// ctrl-j = prev · ctrl-k = next (inverted). Enter on agent = hot-swap launch.
 
 #include <algorithm>
 #include <cctype>
-#include <chrono>
 #include <cstdio>
 #include <map>
 #include <string>
@@ -32,8 +31,8 @@ class MainScene final : public BaseScene {
         BaseScene::on_enter();
         if (!cfg_.manifestDir.empty())
             model_->dashboard.manifestDir = cfg_.manifestDir;
-        else if (!cfg_.manifestPath.empty())
-            model_->dashboard.manifestDir = cfg_.manifestPath;
+        else if (!activeManifest().empty())
+            model_->dashboard.manifestDir = activeManifest();
         else
             model_->dashboard.manifestDir.clear();
         model_->dashboard.refreshAll();
@@ -76,21 +75,46 @@ class MainScene final : public BaseScene {
             return true;
         }
 
-        // ── Ctrl-J / Ctrl-K : section cycle (inverted: j=prev, k=next) ──
+        // Tab toggles dock vs content focus
+        if (event.code == KeyCode::Tab) {
+            dash.toggleFocus();
+            return true;
+        }
+
+        // ── ctrl-j = prev · ctrl-k = next ────────────────────────────
         if (event.ctrl() && event.code == KeyCode::Character) {
             if (event.ch == 'j' || event.ch == 'J') {
-                dash.moveNavigation(-1);  // prev
+                dash.moveNavigation(-1);
                 bumpNotice();
                 return true;
             }
             if (event.ch == 'k' || event.ch == 'K') {
-                dash.moveNavigation(1);  // next
+                dash.moveNavigation(1);
+                bumpNotice();
+                return true;
+            }
+        }
+
+        // When dock focused, plain j/k also cycle (no chord needed)
+        if (dash.focus == model::DashboardFocus::Dock && !event.ctrl() &&
+            event.code == KeyCode::Character) {
+            if (event.ch == 'j' || event.ch == 'J') {
+                dash.moveNavigation(-1);
+                bumpNotice();
+                return true;
+            }
+            if (event.ch == 'k' || event.ch == 'K') {
+                dash.moveNavigation(1);
                 bumpNotice();
                 return true;
             }
         }
 
         if (event.code == KeyCode::Escape) {
+            if (dash.focus == model::DashboardFocus::Dock) {
+                dash.focus = model::DashboardFocus::Content;
+                return true;
+            }
             if (!dash.searchQuery.empty()) {
                 dash.searchQuery.clear();
                 dash.refreshManifests();
@@ -112,15 +136,15 @@ class MainScene final : public BaseScene {
             return true;
         }
 
-        // List nav — plain j/k only when NOT ctrl
-        if (!event.ctrl() &&
+        // Content list nav
+        if (dash.focus == model::DashboardFocus::Content && !event.ctrl() &&
             (event.code == KeyCode::ArrowUp ||
              (event.code == KeyCode::Character && (event.ch == 'k' || event.ch == 'K')))) {
             if (dash.section == model::DashboardSection::Sessions) dash.moveSession(-1);
             else if (dash.section == model::DashboardSection::Manifests) dash.moveManifest(-1);
             return true;
         }
-        if (!event.ctrl() &&
+        if (dash.focus == model::DashboardFocus::Content && !event.ctrl() &&
             (event.code == KeyCode::ArrowDown ||
              (event.code == KeyCode::Character && (event.ch == 'j' || event.ch == 'J')))) {
             if (dash.section == model::DashboardSection::Sessions) dash.moveSession(1);
@@ -134,10 +158,19 @@ class MainScene final : public BaseScene {
         }
 
         if (event.code == KeyCode::Character && !event.ctrl()) {
+            // Kind digits on Manifests — operable facets
+            if (dash.section == model::DashboardSection::Manifests && event.ch >= '0' &&
+                event.ch <= '9') {
+                if (dash.applyKindDigit(event.ch - '0')) {
+                    bumpNotice();
+                    return true;
+                }
+            }
             switch (event.ch) {
                 case '/':
                     if (dash.section == model::DashboardSection::Manifests) {
                         dash.searchMode = true;
+                        dash.focus = model::DashboardFocus::Content;
                         dash.notice = "search: ";
                         return true;
                     }
@@ -148,7 +181,9 @@ class MainScene final : public BaseScene {
                     return true;
                 case 'o':
                 case 'O':
-                    dash.select(model::DashboardSection::Overview);
+                case 'g':
+                case 'G':
+                    dash.select(model::DashboardSection::Home);
                     bumpNotice();
                     return true;
                 case 's':
@@ -177,15 +212,6 @@ class MainScene final : public BaseScene {
                         bumpNotice();
                     }
                     return true;
-                case 'h':
-                case 'H':
-                    dash.select(model::DashboardSection::Harness);
-                    bumpNotice();
-                    return true;
-                case 'r':
-                    dash.select(model::DashboardSection::Runtime);
-                    bumpNotice();
-                    return true;
                 case '?':
                     dash.select(model::DashboardSection::Help);
                     bumpNotice();
@@ -193,12 +219,18 @@ class MainScene final : public BaseScene {
                 case 'n':
                 case 'N':
                     if (dash.section == model::DashboardSection::Sessions ||
-                        dash.section == model::DashboardSection::Overview)
+                        dash.section == model::DashboardSection::Home)
                         createSession();
                     return true;
                 case 'd':
                 case 'D':
                     if (dash.section == model::DashboardSection::Sessions) deleteSelectedSession();
+                    return true;
+                case 'y':
+                case 'Y':
+                    if (!dash.yankBuffer.empty()) {
+                        dash.notice = "yank: " + dash.yankBuffer;
+                    }
                     return true;
                 case 'R':
                     dash.refreshAll();
@@ -223,12 +255,10 @@ class MainScene final : public BaseScene {
         const auto tier = layout::densityOf(page.w);
         const auto& dash = model_->dashboard;
 
-        // ── App bar ──────────────────────────────────────────────────
         drawAppBar(surface, page, tier);
 
-        // ── Stage (elevated rounded panel) ───────────────────────────
-        // Leave room for floating pill dock only (3 rows + 1 gap)
-        const int dockReserve = 4;
+        // Stage above pill (2 rows dock reserve)
+        const int dockReserve = 3;
         int stageTop = page.y + 3;
         int stageH = std::max(6, page.bottom() - dockReserve - stageTop);
         inkcell::Rect stage{page.x, stageTop, page.w, stageH};
@@ -239,68 +269,69 @@ class MainScene final : public BaseScene {
                     stageBg.with_fg(theme::color(inkcell::Color::rgb(48, 48, 48),
                                                  inkcell::Color::rgb(30, 42, 62))));
 
-        // Inner content inset — slide-up on every ctrl-j/k section change.
-        // Page enters from below (y offset → 0) while pill thumb slides.
         inkcell::Rect content{stage.x + 2, stage.y + 1, std::max(1, stage.w - 4),
                               std::max(1, stage.h - 2)};
-        const int maxSlide = std::max(5, std::min(16, content.h / 2));
-        // Always slide up (use abs of pageSlideRows).
+        const int maxSlide = std::max(4, std::min(12, content.h / 3));
         int yOff = dash.pageSlideRows(maxSlide);
-        if (yOff < 0) yOff = -yOff;
-        if (yOff > 0) {
+        if (yOff != 0) {
             inkcell::Rect slid = content;
             slid.y += yOff;
             slid.h = std::max(1, content.h - yOff);
             drawContent(surface, slid);
-            // Leading edge hairline (content rising into place)
-            if (slid.y - 1 >= content.y)
-                surface.hline({content.x, slid.y - 1}, content.w, "─",
-                              theme::dim().with_bg(stageBg.bg));
         } else {
             drawContent(surface, content);
         }
 
-        // ── Floating pill dock ───────────────────────────────────────
         static const std::vector<components::PillItem> pills = {
-            {"o", "Overview"}, {"s", "Sessions"}, {"a", "Manifests"},
-            {"h", "Harness"},  {"r", "Runtime"},  {"?", "Help"},
+            {"g", "Home"},
+            {"s", "Sessions"},
+            {"a", "Manifests"},
+            {"?", "Help"},
         };
         components::drawPillDock(surface, page.x, page.w, page.bottom() - 1, pills,
-                                 dash.navigationIndex, dash.navPrevIndex, dash.navAnimT());
+                                 dash.navigationIndex, dash.navPrevIndex, dash.navAnimT(),
+                                 dash.focus == model::DashboardFocus::Dock);
     }
 
    private:
+    std::string activeName() const {
+        return !model_->agentName.empty() ? model_->agentName : nonempty(cfg_.agentName, "builtin");
+    }
+    std::string activeManifest() const {
+        return !model_->activeManifestPath.empty() ? model_->activeManifestPath : cfg_.manifestPath;
+    }
+
     void drawAppBar(inkcell::Surface& surface, inkcell::Rect page, layout::DensityTier tier) const {
         auto bar = theme::panel_2();
         surface.fill({page.x, page.y, page.w, 2}, " ", bar);
-        // accent hairline under bar
         surface.hline({page.x, page.y + 2}, page.w, "─",
                       theme::dim().with_fg(theme::color(inkcell::Color::rgb(50, 50, 50),
                                                         inkcell::Color::rgb(28, 40, 58))));
 
-        std::string brand = "CORTEX";
-        std::string product = "MK3";
-        surface.text({page.x, page.y}, brand, theme::bright().with_bg(bar.bg));
-        surface.text({page.x + 7, page.y}, product,
-                     theme::cyan().with_bg(bar.bg));
+        // Keep "CORTEX MK3" contiguous for tests + scanability
+        surface.text({page.x, page.y}, "CORTEX MK3", theme::bright().with_bg(bar.bg));
         surface.text({page.x + 11, page.y},
                      "  ·  " + std::string(model::dashboardSectionName(model_->dashboard.section)),
                      theme::text().with_bg(bar.bg));
 
-        std::string right = nonempty(cfg_.agentName, "builtin") + "  ·  " +
-                            nonempty(cfg_.provider, "?") + "/" + nonempty(cfg_.model, "?") +
-                            "  ·  " + layout::densityName(tier);
+        std::string right = activeName() + "  ·  " + nonempty(cfg_.provider, model_->agentProvider) +
+                            "/" + nonempty(cfg_.model, model_->agentModel) + "  ·  " +
+                            layout::densityName(tier);
+        // Prefer live identity
+        right = activeName() + "  ·  " + nonempty(model_->agentProvider, nonempty(cfg_.provider, "?")) +
+                "/" + nonempty(model_->agentModel, nonempty(cfg_.model, "?")) + "  ·  " +
+                layout::densityName(tier);
         int rw = inkcell::text::display_width(right);
         surface.text({std::max(page.x, page.right() - rw), page.y}, right,
                      theme::dim().with_bg(bar.bg));
 
-        // secondary line: session + registry pulse (or live search compose)
         std::string sub;
-        if (model_->dashboard.searchMode || !model_->dashboard.searchQuery.empty()) {
+        if (!model_->launchError.empty()) {
+            sub = "error  " + model_->launchError;
+        } else if (model_->dashboard.searchMode || !model_->dashboard.searchQuery.empty()) {
             sub = "/" + model_->dashboard.searchQuery +
                   (model_->dashboard.searchMode ? "█" : "") + "   esc clears";
-        } else if (!model_->dashboard.notice.empty() &&
-                   model_->dashboard.notice.rfind("launch:", 0) == 0) {
+        } else if (!model_->dashboard.notice.empty()) {
             sub = model_->dashboard.notice;
         } else {
             sub = "session " + suffix(model_->activeSessionId) + "   registry " +
@@ -308,16 +339,17 @@ class MainScene final : public BaseScene {
                   (model_->running ? "● live" : "○ idle");
         }
         surface.text({page.x, page.y + 1}, inkcell::text::truncate(sub, page.w),
-                     theme::dim().with_bg(bar.bg));
+                     (!model_->launchError.empty() ? theme::red() : theme::dim()).with_bg(bar.bg));
     }
 
     void highlightActiveAgent() {
-        if (cfg_.agentName.empty() && cfg_.manifestPath.empty()) return;
+        const std::string am = activeManifest();
+        const std::string an = activeName();
+        if (am.empty() && an.empty()) return;
         for (int i = 0; i < static_cast<int>(model_->dashboard.manifests.size()); ++i) {
             const auto& m = model_->dashboard.manifests[static_cast<size_t>(i)];
             if (m.kind != "agent") continue;
-            if ((!cfg_.agentName.empty() && m.name == cfg_.agentName) ||
-                (!cfg_.manifestPath.empty() && m.path == cfg_.manifestPath)) {
+            if ((!an.empty() && m.name == an) || (!am.empty() && m.path == am)) {
                 model_->dashboard.manifestIndex = i;
                 break;
             }
@@ -338,7 +370,7 @@ class MainScene final : public BaseScene {
         } else if (dash.section == model::DashboardSection::Sessions) {
             dash.notice = std::to_string(dash.sessions.size()) + " sessions";
         } else {
-            dash.notice = model::dashboardSectionName(dash.section);
+            dash.notice.clear();  // Home/Help — app bar pulse is enough
         }
     }
 
@@ -354,11 +386,9 @@ class MainScene final : public BaseScene {
 
     void drawContent(inkcell::Surface& surface, inkcell::Rect frame) const {
         switch (model_->dashboard.section) {
-            case model::DashboardSection::Overview: drawOverview(surface, frame); break;
+            case model::DashboardSection::Home: drawHome(surface, frame); break;
             case model::DashboardSection::Sessions: drawSessions(surface, frame); break;
             case model::DashboardSection::Manifests: drawManifests(surface, frame); break;
-            case model::DashboardSection::Harness: drawHarness(surface, frame); break;
-            case model::DashboardSection::Runtime: drawRuntime(surface, frame); break;
             case model::DashboardSection::Help: drawHelp(surface, frame); break;
         }
     }
@@ -369,12 +399,10 @@ class MainScene final : public BaseScene {
         if (!subtitle.empty())
             surface.text({frame.x, frame.y + 1}, inkcell::text::truncate(subtitle, frame.w),
                          theme::dim());
-        // accent underline under title
         int tw = std::min(frame.w, inkcell::text::display_width(title) + 4);
         surface.hline({frame.x, frame.y + 2}, tw, "─", theme::cyan());
     }
 
-    // ── Metric tile ──────────────────────────────────────────────────
     void metricTile(inkcell::Surface& surface, inkcell::Rect r, const std::string& label,
                     const std::string& value, inkcell::Style valueSt) const {
         surface.fill(r, " ", theme::panel_2());
@@ -385,16 +413,15 @@ class MainScene final : public BaseScene {
         surface.text({r.x + 2, r.y + 2}, inkcell::text::truncate(value, r.w - 4), valueSt);
     }
 
-    void drawOverview(inkcell::Surface& surface, inkcell::Rect frame) const {
-        sectionHead(surface, frame, "Overview", "Operator hub · ctrl-j/k cycles the dock");
+    void drawHome(inkcell::Surface& surface, inkcell::Rect frame) const {
+        sectionHead(surface, frame, "Home",
+                    "live agent · harness · runtime  ·  ctrl-j/k dock  ·  a registry");
         int y = frame.y + 4;
 
-        // Metric tiles row
         int tileW = std::max(16, (frame.w - 6) / 4);
         int tileH = 4;
         if (y + tileH < frame.bottom() && frame.w >= 64) {
-            metricTile(surface, {frame.x, y, tileW, tileH}, "AGENT",
-                       nonempty(cfg_.agentName, "builtin"), theme::bright());
+            metricTile(surface, {frame.x, y, tileW, tileH}, "AGENT", activeName(), theme::bright());
             metricTile(surface, {frame.x + tileW + 2, y, tileW, tileH}, "STATUS",
                        model_->running ? "running" : "ready",
                        model_->running ? theme::green() : theme::text());
@@ -405,19 +432,45 @@ class MainScene final : public BaseScene {
             y += tileH + 2;
         }
 
+        surface.text({frame.x, y++}, "RUNTIME", theme::dim());
+        components::fieldLine(surface, frame.x, y++, frame.w, "engine",
+                              nonempty(model_->agentProvider, nonempty(cfg_.provider, "?")) + "/" +
+                                  nonempty(model_->agentModel, nonempty(cfg_.model, "?")));
+        components::fieldLine(surface, frame.x, y++, frame.w, "manifest",
+                              activeManifest().empty() ? "none" : activeManifest());
         components::fieldLine(surface, frame.x, y++, frame.w, "session",
                               suffix(model_->activeSessionId));
-        components::fieldLine(surface, frame.x, y++, frame.w, "manifest",
-                              cfg_.manifestPath.empty() ? "builtin" : basename(cfg_.manifestPath));
-        components::fieldLine(surface, frame.x, y++, frame.w, "agents",
-                              std::to_string(model_->dashboard.agents.size()) + " top-level");
+        components::fieldLine(surface, frame.x, y++, frame.w, "turn",
+                              model_->running ? "running" : "idle");
         y += 1;
-        surface.text({frame.x, y++}, "DOCK", theme::dim());
-        surface.text({frame.x, y++}, "  ctrl-j / ctrl-k     prev / next section (pill)",
-                     theme::green());
-        surface.text({frame.x, y++}, "  a · / · f · t       registry · search · kind · tag",
-                     theme::text());
-        surface.text({frame.x, y}, "  c                   open chat", theme::text());
+
+        surface.text({frame.x, y++}, "HARNESS", theme::dim());
+        components::fieldLine(surface, frame.x, y++, frame.w, "harness", basename(cfg_.harnessPath));
+        components::fieldLine(surface, frame.x, y++, frame.w, "system",
+                              basename(cfg_.systemPromptPath));
+        components::fieldLine(surface, frame.x, y++, frame.w, "persona", basename(cfg_.personaPath));
+        if (model_->rootAgent) {
+            y += 1;
+            auto oneLine = [&](const char* lab, const std::vector<std::string>& names) {
+                if (y >= frame.bottom()) return;
+                std::string joined;
+                for (const auto& n : names) {
+                    if (!joined.empty()) joined += " · ";
+                    joined += n;
+                }
+                components::fieldLine(surface, frame.x, y++, frame.w, lab,
+                                      joined.empty() ? "none" : joined);
+            };
+            oneLine("tools", model_->rootAgent->toolNames());
+            oneLine("agents", model_->rootAgent->subAgentNames());
+            oneLine("feeds", model_->rootAgent->feedNames());
+        }
+        if (!model_->launchError.empty() && y < frame.bottom()) {
+            y += 1;
+            surface.text({frame.x, y},
+                         inkcell::text::truncate("launch error: " + model_->launchError, frame.w),
+                         theme::red());
+        }
     }
 
     void drawSessions(inkcell::Surface& surface, inkcell::Rect frame) const {
@@ -426,7 +479,7 @@ class MainScene final : public BaseScene {
         int y = frame.y + 4;
         if (dash.sessions.empty()) {
             surface.text({frame.x, y++}, "No sessions yet.", theme::dim());
-            surface.text({frame.x, y}, "n → create and jump to chat.", theme::text());
+            surface.text({frame.x, y}, "n → create and open chat.", theme::text());
             return;
         }
         int visible = std::max(1, frame.bottom() - y);
@@ -449,31 +502,37 @@ class MainScene final : public BaseScene {
         auto L = layout::manifestLayoutFor(frame.w);
 
         sectionHead(surface, frame, "Manifests",
-                    std::string(layout::densityName(layout::densityOf(frame.w))) + " · " +
-                        std::to_string(dash.manifests.size()) + " shown · f kind · t tag · / search");
+                    "enter launches agent · 1-9 kind · f cycle · t tag · / search");
 
         int y = frame.y + 4;
 
-        // Kind chips
+        // Operable kind chips with indices: [1 agent 12] ...
         std::map<std::string, int> kindCounts;
-        for (const auto& m : dash.manifests) kindCounts[m.kind]++;
-        static const char* kinds[] = {"agent", "tool", "feed", "workflow", "harness", "prompt", "skill"};
+        // Count from unfiltered would need cache; approximate from current view + labels
+        auto allForCount = catalog::discoverManifests(dash.manifestDir);
+        for (const auto& m : allForCount) kindCounts[m.kind]++;
+
         std::vector<components::Chip> kindChips;
-        kindChips.push_back({"", "all", -1, dash.manifestFilter.empty()});
-        for (const char* k : kinds)
-            kindChips.push_back({k, k, kindCounts.count(k) ? kindCounts[k] : 0,
+        kindChips.push_back({"0", "0:all", static_cast<int>(allForCount.size()),
+                             dash.manifestFilter.empty()});
+        const auto& facets = model::DashboardState::kindFacets();
+        for (size_t i = 1; i < facets.size() && i <= 9; ++i) {
+            const std::string& k = facets[i];
+            int c = kindCounts.count(k) ? kindCounts[k] : 0;
+            kindChips.push_back({std::to_string(i), std::to_string(i) + ":" + k, c,
                                  dash.manifestFilter == k});
+        }
         int after = y;
         components::drawChipStrip(surface, {frame.x, y, frame.w, 2}, kindChips, &after);
         y = after;
 
-        // Category chips
+        // Category strip (secondary) — only when useful
         std::map<std::string, int> catCounts;
         for (const auto& m : dash.manifests) catCounts[m.category]++;
-        std::vector<components::Chip> catChips;
-        for (const auto& kv : catCounts)
-            catChips.push_back({kv.first, kv.first, kv.second, dash.tagFilter == kv.first});
-        if (!catChips.empty()) {
+        if (catCounts.size() > 1) {
+            std::vector<components::Chip> catChips;
+            for (const auto& kv : catCounts)
+                catChips.push_back({kv.first, kv.first, kv.second, dash.tagFilter == kv.first});
             components::drawChipStrip(surface, {frame.x, y, frame.w, 2}, catChips, &after);
             y = after + 1;
         } else {
@@ -486,18 +545,10 @@ class MainScene final : public BaseScene {
             surface.text({frame.x, y++},
                          filtered ? "No matches — Esc clears filters." : assets::MANIFESTS_EMPTY,
                          theme::amber());
-            if (!filtered) {
-                for (const auto& r : catalog::manifestsSearchRoots(dash.manifestDir)) {
-                    if (y >= frame.bottom()) break;
-                    surface.text({frame.x, y++},
-                                 inkcell::text::truncate("  [" + r.second + "] " + r.first, frame.w),
-                                 theme::dim());
-                }
-            }
             return;
         }
 
-        // Grouped rows
+        // Grouped list
         struct Row {
             bool header = false;
             std::string text;
@@ -527,6 +578,8 @@ class MainScene final : public BaseScene {
         int visible = std::max(1, frame.bottom() - y);
         int start = std::max(0, std::min(selRow - visible / 3,
                                          std::max(0, static_cast<int>(rows.size()) - visible)));
+        const std::string am = activeManifest();
+        const std::string an = activeName();
 
         for (int ri = start; ri < static_cast<int>(rows.size()) && y < frame.bottom(); ++ri) {
             const auto& row = rows[static_cast<size_t>(ri)];
@@ -536,20 +589,20 @@ class MainScene final : public BaseScene {
             }
             const auto& m = dash.manifests[static_cast<size_t>(row.idx)];
             bool selected = row.idx == dash.manifestIndex;
-            bool active = m.kind == "agent" &&
-                          ((!cfg_.agentName.empty() && m.name == cfg_.agentName) ||
-                           (!cfg_.manifestPath.empty() && m.path == cfg_.manifestPath));
+            bool active =
+                m.kind == "agent" && ((!an.empty() && m.name == an) || (!am.empty() && m.path == am));
 
             components::drawCardRow(surface, {frame.x, y, listW, 1}, selected, active);
             components::kindChip(surface, frame.x + 2, y, m.kind, selected);
 
             std::string name = std::string(active ? "● " : "  ") + m.name;
-            if (!m.version.empty()) name += "  v" + m.version;
+            if (m.launchable && m.kind == "agent") name += selected ? "  ↵ launch" : "";
             int nameCol = frame.x + 8;
             int nameBudget = listW - 10;
             if (L.showTagColumn && L.tagColMax > 0) {
                 nameBudget = std::max(10, listW - 10 - L.tagColMax);
-                components::drawTagChips(surface, nameCol + nameBudget + 1, y, L.tagColMax, m.tags, 5);
+                components::drawTagChips(surface, nameCol + nameBudget + 1, y, L.tagColMax, m.tags,
+                                         4);
             }
             surface.text({nameCol, y}, inkcell::text::truncate(name, nameBudget),
                          selected ? theme::bright() : theme::text());
@@ -576,20 +629,17 @@ class MainScene final : public BaseScene {
                      theme::cyan());
         if (!sel->summary.empty()) {
             for (const auto& line : chat::wrapWordsLossless(sel->summary, iw)) {
-                if (dy >= det.bottom() - 9) break;
+                if (dy >= det.bottom() - 8) break;
                 surface.text({ix, dy++}, line, theme::text());
             }
         }
         ++dy;
         components::fieldLine(surface, ix, dy++, iw, "kind", sel->kind);
-        components::fieldLine(surface, ix, dy++, iw, "category", sel->category);
-        if (!sel->version.empty())
-            components::fieldLine(surface, ix, dy++, iw, "version", sel->version);
+        components::fieldLine(surface, ix, dy++, iw, "path",
+                              sel->relPath.empty() ? sel->path : sel->relPath);
         if (!sel->provider.empty() || !sel->model.empty())
             components::fieldLine(surface, ix, dy++, iw, "engine",
                                   nonempty(sel->provider, "?") + "/" + nonempty(sel->model, "?"));
-        components::fieldLine(surface, ix, dy++, iw, "path",
-                              sel->relPath.empty() ? sel->path : sel->relPath);
         ++dy;
         surface.text({ix, dy++}, "TAGS", theme::dim());
         std::string all;
@@ -603,92 +653,34 @@ class MainScene final : public BaseScene {
         }
         ++dy;
         if (sel->launchable && sel->kind == "agent") {
-            surface.text({ix, dy++}, "LAUNCH", theme::green());
-            std::string cmd = sel->nested ? ("cortex-mk3 -m " + sel->path)
-                                          : ("cortex-mk3 -m " + sel->name);
-            cmd += " --tui experimental";
-            surface.text({ix, dy}, inkcell::text::truncate(cmd, iw), theme::green());
+            bool isLive = (!am.empty() && sel->path == am) || (!an.empty() && sel->name == an);
+            surface.text({ix, dy++}, isLive ? "LIVE · enter opens chat" : "ENTER LAUNCHES",
+                         theme::green());
+            surface.text({ix, dy},
+                         inkcell::text::truncate(sel->path, iw), theme::dim());
         }
-    }
-
-    void drawHarness(inkcell::Surface& surface, inkcell::Rect frame) const {
-        sectionHead(surface, frame, "Harness", "prompt stack + live surface");
-        int y = frame.y + 4;
-        components::fieldLine(surface, frame.x, y++, frame.w, "manifest",
-                              cfg_.manifestPath.empty() ? "none" : cfg_.manifestPath);
-        components::fieldLine(surface, frame.x, y++, frame.w, "harness", basename(cfg_.harnessPath));
-        components::fieldLine(surface, frame.x, y++, frame.w, "system",
-                              basename(cfg_.systemPromptPath));
-        components::fieldLine(surface, frame.x, y++, frame.w, "persona",
-                              basename(cfg_.personaPath));
-        y += 1;
-        if (!model_->rootAgent) {
-            surface.text({frame.x, y}, "No agent runtime bound.", theme::dim());
-            return;
-        }
-        auto block = [&](const char* label, const std::vector<std::string>& names) {
-            if (y >= frame.bottom()) return;
-            surface.text({frame.x, y++},
-                         std::string(label) + "  (" + std::to_string(names.size()) + ")",
-                         theme::dim());
-            std::string joined;
-            for (const auto& n : names) {
-                if (!joined.empty()) joined += " · ";
-                joined += n;
-            }
-            for (const auto& line :
-                 chat::wrapWordsLossless(joined.empty() ? "none" : joined, frame.w - 2)) {
-                if (y >= frame.bottom()) break;
-                surface.text({frame.x + 2, y++}, line,
-                             names.empty() ? theme::dim() : theme::text());
-            }
-            ++y;
-        };
-        block("TOOLS", model_->rootAgent->toolNames());
-        block("SUB-AGENTS", model_->rootAgent->subAgentNames());
-        block("FEEDS", model_->rootAgent->feedNames());
-        block("RELICS", model_->rootAgent->relicNames());
-    }
-
-    void drawRuntime(inkcell::Surface& surface, inkcell::Rect frame) const {
-        sectionHead(surface, frame, "Runtime", "process + provider");
-        int y = frame.y + 4;
-        components::fieldLine(surface, frame.x, y++, frame.w, "provider",
-                              nonempty(cfg_.provider, "unset"));
-        components::fieldLine(surface, frame.x, y++, frame.w, "model",
-                              nonempty(cfg_.model, "default"));
-        components::fieldLine(surface, frame.x, y++, frame.w, "theme", theme::name());
-        components::fieldLine(surface, frame.x, y++, frame.w, "lifecycle",
-                              cfg_.noSession ? "no-session"
-                              : cfg_.ephemeral ? "ephemeral"
-                                               : "persistent");
-        components::fieldLine(surface, frame.x, y++, frame.w, "turn",
-                              model_->running ? "running" : "idle");
-        components::fieldLine(surface, frame.x, y++, frame.w, "actions",
-                              std::to_string(model_->actionCount));
-        components::fieldLine(surface, frame.x, y++, frame.w, "results",
-                              std::to_string(model_->resultCount));
     }
 
     void drawHelp(inkcell::Surface& surface, inkcell::Rect frame) const {
-        sectionHead(surface, frame, "Help", "dock · registry · global");
+        sectionHead(surface, frame, "Help", "dock · registry · launch");
         int y = frame.y + 4;
         const char* lines[] = {
             "DOCK",
-            "  ctrl-j / ctrl-k    prev / next section · sliding thumb + glow",
-            "  o s a h r ?        jump",
+            "  ctrl-j / ctrl-k     prev / next section",
+            "  tab                 focus dock ↔ content",
+            "  g s a ?             jump Home/Sessions/Manifests/Help",
             "",
-            "REGISTRY",
-            "  j/k                move",
-            "  f / t              kind chips / tag chips",
-            "  /                  search  ·  Esc clears layers",
-            "  enter              launch hint (agents)",
+            "MANIFESTS",
+            "  j/k                 move",
+            "  1-9 / 0             kind facet (operable chips)",
+            "  f / t / /           cycle kind · tag · search",
+            "  enter               LAUNCH agent (hot-swap) or inspect",
+            "",
+            "SESSIONS",
+            "  enter resume · n new · d delete",
             "",
             "GLOBAL",
-            "  c chat · n/d session · R refresh · T theme · q quit",
-            "",
-            "Density  narrow<100  standard  wide≥160 (list|detail)",
-            "Note: Enter is CR; Ctrl-J is LF — decoded separately in inkcell.",
+            "  c chat · R refresh · T theme · q quit",
         };
         for (const char* line : lines) {
             if (y >= frame.bottom()) break;
@@ -705,19 +697,27 @@ class MainScene final : public BaseScene {
             resumeSelectedSession();
             return;
         }
-        if (dash.section == model::DashboardSection::Manifests) {
-            if (const auto* m = dash.selectedManifest()) {
-                if (m->launchable && m->kind == "agent") {
-                    dash.notice = m->nested ? ("launch: cortex-mk3 -m " + m->path)
-                                            : ("launch: cortex-mk3 -m " + m->name);
-                    dash.notice += " --tui experimental";
-                } else {
-                    dash.notice = m->kind + " · #" + (m->tags.empty() ? m->category : m->tags.front());
-                }
-            }
+        if (dash.section == model::DashboardSection::Home) {
+            model_->pendingRoute = "agent";
             return;
         }
-        if (dash.section == model::DashboardSection::Overview) model_->pendingRoute = "agent";
+        if (dash.section == model::DashboardSection::Manifests) {
+            const auto* m = dash.selectedManifest();
+            if (!m) {
+                dash.notice = "no selection";
+                return;
+            }
+            if (m->kind == "agent" && m->launchable) {
+                // Real launch — REPL tick hot-swaps Agent then opens chat.
+                dash.yankBuffer = "cortex-mk3 -m " + m->path + " --tui experimental";
+                model_->pendingLaunchManifest = m->path;
+                dash.notice = "launching " + m->name + "…";
+                model_->launchError.clear();
+                return;
+            }
+            dash.notice = m->kind + " · " + m->category + " · inspect only";
+            return;
+        }
     }
 
     void resumeSelectedSession() {
@@ -742,7 +742,9 @@ class MainScene final : public BaseScene {
         }
         session::SessionManager sessions;
         auto result = model::createDashboardSession(
-            model_->dashboard, sessions, model_->rootAgent->name(), cfg_.model, cfg_.provider,
+            model_->dashboard, sessions, model_->rootAgent->name(),
+            nonempty(model_->agentModel, cfg_.model),
+            nonempty(model_->agentProvider, cfg_.provider),
             [&] { model_->rootAgent->clearHistory(); });
         if (!result.ok) return;
         model_->clearTranscript();
@@ -773,7 +775,6 @@ class MainScene final : public BaseScene {
     }
 
     void handle(const inkcell::Action& action) override {
-        // Match inverted ctrl-j/k: up=prev, down=next stays natural for scroll.
         if (action.is("scroll.up")) model_->dashboard.moveNavigation(-1);
         else if (action.is("scroll.down")) model_->dashboard.moveNavigation(1);
     }

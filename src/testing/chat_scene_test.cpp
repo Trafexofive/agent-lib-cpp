@@ -57,18 +57,40 @@ void test_dashboard_scene() {
         std::string rendered = surfaceText(surface);
         check(rendered.find("CORTEX MK3") != std::string::npos,
               "dashboard renders header at " + std::to_string(size.w) + "x" + std::to_string(size.h));
-        check(rendered.find("Overview") != std::string::npos &&
+        check(rendered.find("Home") != std::string::npos &&
                   rendered.find("Sessions") != std::string::npos &&
                   rendered.find("Manifests") != std::string::npos &&
-                  rendered.find("Harness") != std::string::npos &&
-                  rendered.find("Runtime") != std::string::npos,
-              "dashboard renders sections at " + std::to_string(size.w) + "x" + std::to_string(size.h));
+                  rendered.find("Help") != std::string::npos,
+              "dashboard renders pill sections at " + std::to_string(size.w) + "x" +
+                  std::to_string(size.h));
+        // Home absorbs former Harness/Runtime peers
+        check(rendered.find("HARNESS") != std::string::npos ||
+                  rendered.find("RUNTIME") != std::string::npos,
+              "home surfaces harness/runtime at " + std::to_string(size.w) + "x" +
+                  std::to_string(size.h));
     }
 
     scene.on_key(key(inkcell::KeyCode::Character, 's'));
     check(model->dashboard.section == model::DashboardSection::Sessions &&
               model->dashboard.focus == model::DashboardFocus::Content,
           "dashboard sessions shortcut focuses session inventory");
+
+    // Enter on launchable agent queues hot-swap launch (not a dead notice).
+    model->dashboard.select(model::DashboardSection::Manifests);
+    model->dashboard.refreshManifests();
+    bool queued = false;
+    for (int i = 0; i < static_cast<int>(model->dashboard.manifests.size()); ++i) {
+        model->dashboard.manifestIndex = i;
+        const auto* m = model->dashboard.selectedManifest();
+        if (!m || m->kind != "agent" || !m->launchable) continue;
+        scene.on_key(key(inkcell::KeyCode::Enter));
+        queued = !model->pendingLaunchManifest.empty() &&
+                 model->pendingLaunchManifest == m->path;
+        check(queued, "enter on agent queues pendingLaunchManifest");
+        model->pendingLaunchManifest.clear();
+        break;
+    }
+    check(!model->dashboard.manifests.empty(), "manifests available for launch test");
     scene.on_key(key(inkcell::KeyCode::Character, 'c'));
     check(model->pendingRoute == "agent", "dashboard chat shortcut requests chat route");
     model->pendingRoute.clear();

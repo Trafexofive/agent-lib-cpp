@@ -286,6 +286,10 @@ struct ShellModel {
     std::string activePage = "Agent";
     std::string pendingSubmit;
     std::string pendingRoute;  // "agent" | "main" | "quit"
+    // Hub Enter on a launchable agent sets this path; REPL tick hot-swaps the
+    // live Agent then routes to the chat scene. Cleared after attempt.
+    std::string pendingLaunchManifest;
+    std::string launchError;  // last hot-swap failure (surfaced on Home/app bar)
     std::string activeSessionId;
     // Agent display identity for the chat transcript labels. The assistant's own
     // turns (Response/Final) are labeled with agentName + agentModel/agentProvider
@@ -295,6 +299,7 @@ struct ShellModel {
     std::string agentName;
     std::string agentModel;
     std::string agentProvider;
+    std::string activeManifestPath;  // live agent.yml — updated on hub launch
     model::DashboardState dashboard;
     inkcell::widgets::TextAreaState composer;
     std::vector<std::string> promptHistory;

@@ -1,7 +1,7 @@
 #pragma once
-// Dashboard navigation + inventory. Pure model; no rendering.
-// Manifests hub is the primary registry surface (recursive manifests/).
-// Section nav is a bottom pill — Ctrl-J/K cycles with short ease animation.
+// Dashboard model — tight IA, operable facets, dock focus.
+// Sections (pill): Home · Sessions · Manifests · Help
+// Harness/Runtime live on Home (not peer tabs).
 
 #include <algorithm>
 #include <cctype>
@@ -15,35 +15,52 @@
 
 namespace cortex::mk3::ui::model {
 
-enum class DashboardSection { Overview, Sessions, Manifests, Harness, Runtime, Help };
+enum class DashboardSection { Home = 0, Sessions = 1, Manifests = 2, Help = 3 };
 
-// Back-compat alias.
+// Back-compat names used by older call sites / tests.
+constexpr DashboardSection Overview = DashboardSection::Home;
 constexpr DashboardSection Agents = DashboardSection::Manifests;
+constexpr DashboardSection Harness = DashboardSection::Home;
+constexpr DashboardSection Runtime = DashboardSection::Home;
 
-enum class DashboardFocus { Navigation, Content };
+enum class DashboardFocus { Dock, Content };
 
 struct DashboardState {
-    DashboardSection section = DashboardSection::Overview;
-    DashboardFocus focus = DashboardFocus::Content;  // default into content; pill is always visible
+    DashboardSection section = DashboardSection::Home;
+    DashboardFocus focus = DashboardFocus::Content;
     int navigationIndex = 0;
     int sessionIndex = 0;
     int manifestIndex = 0;
-    std::string manifestFilter;  // empty | agent | tool | feed | workflow | ...
-    std::string tagFilter;       // empty or exact tag/category match
-    std::string searchQuery;     // substring over name/summary/tags/relPath
-    bool searchMode = false;     // / composing
+
+    // Facets — kind is primary; tag secondary; search tertiary.
+    std::string manifestFilter;  // empty = all kinds
+    std::string tagFilter;
+    std::string searchQuery;
+    bool searchMode = false;
+
+    // Last actionable yank (launch cmd) — `y` re-emits to notice.
+    std::string yankBuffer;
+
     std::vector<session::SessionManager::SessionInfo> sessions;
     std::vector<catalog::ManifestEntry> manifests;
     std::vector<catalog::AgentEntry> agents;
     std::string notice;
     std::string manifestDir;
 
-    // Pill + page cycle animation
+    // Anim
     int navPrevIndex = 0;
-    int navAnimDir = 1;  // +1 next (ctrl-j), -1 prev (ctrl-k)
+    int navAnimDir = 1;
     int64_t navAnimStartMs = 0;
-    static constexpr int navAnimDurationMs = 320;
-    static constexpr int sectionCount = 6;
+    static constexpr int navAnimDurationMs = 280;
+    static constexpr int sectionCount = 4;
+
+    // Kind facet order for 1-9 binding (0/all is unnumbered / `f` or `0`)
+    static const std::vector<std::string>& kindFacets() {
+        static const std::vector<std::string> k = {
+            "", "agent", "tool", "feed", "workflow", "harness", "prompt", "skill", "relic",
+        };
+        return k;
+    }
 
     static int64_t nowMs() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -68,16 +85,13 @@ struct DashboardState {
         navAnimStartMs = nowMs();
     }
 
-    // Vertical page offset in rows: enters from below (slide up) for next,
-    // from above (slide down-in) for prev. 0 when settled.
+    // Always slide-up magnitude (caller may abs).
     int pageSlideRows(int maxRows) const {
         float t = navAnimT();
         if (t >= 1.f || maxRows <= 0) return 0;
         float u = 1.f - t;
-        // ease-out cubic on remaining distance
         float e = u * u * u;
-        int rows = static_cast<int>(e * static_cast<float>(maxRows));
-        return navAnimDir >= 0 ? rows : -rows;
+        return static_cast<int>(e * static_cast<float>(maxRows));
     }
 
     void syncSection() { section = static_cast<DashboardSection>(navigationIndex); }
@@ -85,27 +99,27 @@ struct DashboardState {
     void moveNavigation(int delta) {
         int from = navigationIndex;
         int next = navigationIndex + delta;
-        // wrap
         if (next < 0) next = sectionCount - 1;
         if (next >= sectionCount) next = 0;
         if (next == navigationIndex) return;
         beginNavAnim(from, delta >= 0 ? 1 : -1);
         navigationIndex = next;
         syncSection();
-        focus = DashboardFocus::Content;
     }
 
     void select(DashboardSection next) {
         int from = navigationIndex;
         int idx = static_cast<int>(next);
-        if (idx != navigationIndex) {
-            int dir = idx > from ? 1 : -1;
-            // wrap-aware direction for edge jumps is less important for letter jumps
-            beginNavAnim(from, dir);
-        }
+        if (idx < 0 || idx >= sectionCount) return;
+        if (idx != navigationIndex) beginNavAnim(from, idx > from ? 1 : -1);
         section = next;
         navigationIndex = idx;
         focus = DashboardFocus::Content;
+    }
+
+    void toggleFocus() {
+        focus = (focus == DashboardFocus::Dock) ? DashboardFocus::Content
+                                                : DashboardFocus::Dock;
     }
 
     void moveSession(int delta) {
@@ -140,8 +154,7 @@ struct DashboardState {
     static bool containsFold(const std::string& hay, const std::string& needle) {
         if (needle.empty()) return true;
         auto lower = [](std::string s) {
-            for (char& c : s)
-                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             return s;
         };
         return lower(hay).find(lower(needle)) != std::string::npos;
@@ -182,8 +195,7 @@ struct DashboardState {
     }
 
     void refreshManifests() {
-        auto all = catalog::discoverManifests(manifestDir);
-        applyManifestFilters(std::move(all));
+        applyManifestFilters(catalog::discoverManifests(manifestDir));
         agents = catalog::discoverAgents(manifestDir);
     }
 
@@ -194,21 +206,36 @@ struct DashboardState {
         refreshManifests();
     }
 
-    void cycleManifestFilter() {
-        static const char* kCycle[] = {"",         "agent",  "tool",   "feed",
-                                       "workflow", "harness", "prompt", "skill"};
-        int idx = 0;
-        for (int i = 0; i < 8; ++i)
-            if (manifestFilter == kCycle[i]) {
-                idx = i;
-                break;
-            }
-        manifestFilter = kCycle[(idx + 1) % 8];
-        tagFilter.clear();
+    void setKindFilter(const std::string& kind) {
+        manifestFilter = kind;
         refreshManifests();
     }
 
-    // Cycle through popular tags present in the current unfiltered set.
+    // Cycle kind facet forward.
+    void cycleManifestFilter() {
+        const auto& facets = kindFacets();
+        int idx = 0;
+        for (int i = 0; i < static_cast<int>(facets.size()); ++i)
+            if (facets[static_cast<size_t>(i)] == manifestFilter) {
+                idx = i;
+                break;
+            }
+        setKindFilter(facets[static_cast<size_t>((idx + 1) % facets.size())]);
+    }
+
+    // Digit 1..9 → kind facet (1=agent). 0 clears.
+    bool applyKindDigit(int digit) {
+        if (digit == 0) {
+            setKindFilter("");
+            return true;
+        }
+        const auto& facets = kindFacets();
+        // facets[0] is "", so digit 1 → facets[1]
+        if (digit < 1 || digit >= static_cast<int>(facets.size())) return false;
+        setKindFilter(facets[static_cast<size_t>(digit)]);
+        return true;
+    }
+
     void cycleTagFilter() {
         auto all = catalog::discoverManifests(manifestDir);
         std::vector<std::string> tags;
@@ -216,16 +243,15 @@ struct DashboardState {
             if (t.empty()) return;
             if (std::find(tags.begin(), tags.end(), t) == tags.end()) tags.push_back(t);
         };
-        add("");  // all
+        add("");
         for (const auto& m : all) {
             add(m.category);
             for (const auto& t : m.tags) {
-                if (t == m.kind) continue;  // kind already has f-filter
+                if (t == m.kind || t == "launchable" || t == "prod") continue;
                 add(t);
             }
         }
-        // keep list short for QoL
-        if (tags.size() > 24) tags.resize(24);
+        if (tags.size() > 20) tags.resize(20);
         int idx = 0;
         for (int i = 0; i < static_cast<int>(tags.size()); ++i)
             if (tags[static_cast<size_t>(i)] == tagFilter) {
@@ -249,7 +275,7 @@ struct DashboardState {
 
     const catalog::AgentEntry* selectedAgent() const {
         if (const auto* m = selectedManifest()) {
-            if (m->kind == "agent" && m->launchable) {
+            if (m->kind == "agent") {
                 for (const auto& a : agents)
                     if (a.manifestPath == m->path) return &a;
             }
@@ -260,14 +286,12 @@ struct DashboardState {
 
 inline const char* dashboardSectionName(DashboardSection section) {
     switch (section) {
-        case DashboardSection::Overview: return "Overview";
+        case DashboardSection::Home: return "Home";
         case DashboardSection::Sessions: return "Sessions";
         case DashboardSection::Manifests: return "Manifests";
-        case DashboardSection::Harness: return "Harness";
-        case DashboardSection::Runtime: return "Runtime";
         case DashboardSection::Help: return "Help";
     }
-    return "Overview";
+    return "Home";
 }
 
 }  // namespace cortex::mk3::ui::model
