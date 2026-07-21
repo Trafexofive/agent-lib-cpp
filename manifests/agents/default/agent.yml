@@ -1,18 +1,18 @@
 kind: Agent
 name: default
 version: "2.0"
-summary: Primary agent — opencode-go primary, openrouter fallback
+summary: Primary general agent — deepseek primary, curated built-in tools
 
 cognitive_engine:
   primary:
-    provider: opencode-go
-    model: deepseek-v4-flash
+    provider: deepseek
+    model: deepseek-v4-pro
     parameters:
       temperature: 0.7
       max_tokens: 65536
-  fallback:
-    provider: openrouter
-    model: nex-2
+  # fallback:
+  #   provider: openrouter
+  #   model: nex-2
 
 context:
   harness: ../../harness/default.md
@@ -21,8 +21,14 @@ context:
 
 prompt_building:
   runtime_capabilities:
-    return_schemas: false  # controls <returns>
-    usage_examples: false  # controls <examples>
+    return_schemas: false # controls <returns>
+    usage_examples: false # controls <examples>
+
+runtime:
+  max_iterations: 24
+  history_cap: 100
+  mode: normal
+  # dev_mode: true
 
 import:
   tools:
@@ -30,15 +36,15 @@ import:
     - grep
     - list
     - fs_read
-    - fs_write
+    # - fs_write
     - json
     - web_fetch
     - sleep
-    - artifact
-    - context_pin
-    - context_peek
-    - context_unpin
-    - ask_tool
+    # - artifact
+    # - context_pin
+    # - context_peek
+    # - context_unpin
+    # - ask_tool
   # Built-in relics: none. Runtime checkpointing belongs in the core runtime,
   # not as stdlib relic manifests.
   feeds: []

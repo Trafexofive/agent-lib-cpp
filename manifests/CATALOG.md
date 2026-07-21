@@ -1,105 +1,34 @@
-# Standard Manifest Catalog
+# Standard Manifest Catalog (PROD)
 
-**Cortex-Prime MK3 Standard Library v3.1**
+Last updated: 2026-07-21
 
-Last updated: 2026-06-17 — sovereign C++ classes, prompt/skill consolidation, workflow fix, opencode-go provider
+## Scope
 
-## Architecture
+| Tree | Role |
+|------|------|
+| `manifests/` | PROD / std — hub recursive scan |
+| `config/` | DEV / MVP — not auto-hubbed |
 
-```
-manifests/                    ← Global scope — auto-loaded, name-resolvable
-  built-in/tools/             7 tools (exec, list, grep, context_pin/peek/unpin, ask_tool)
-  built-in/feeds/             3 feeds (system_clock, system_stats, working_directory)
-  built-in/relics/            reserved for future runtime relics; stdlib has no built-in relics yet
-  agents/                     1 agent (default)
-  workflows/                  2 workflows (code-review, workflow_spec)
-  prompts/                    14 reusable prompt modules
-  skills/                     2 MK3-native skills (mk3-manifest, harness-tuner)
-  README.md                   Manifest system overview
-  CATALOG.md                  This file
+## Agents (5)
 
-poc/                          ← POC/archive, not auto-loaded
-  tools/                      fs_read, fs_write, simple_fs_write, json, web_fetch
-  relics/                     artifact_store, secret_store, event_bus, process_manager, file_watcher
-```
+| Name | Path | Notes |
+|------|------|-------|
+| default | `agents/default/` | General agent |
+| coder | `agents/coder/` | Coding coordinator |
+| reader | `agents/coder/agents/reader/` | Nested specialist |
+| tester | `agents/coder/agents/tester/` | Nested specialist |
+| reviewer | `agents/coder/agents/reviewer/` | Nested specialist |
 
-## Built-in Tools (7)
+Archived from PROD (broken / empty): `config/agents/_archive/{brainstormer,std-orchestrator}`
 
-| Name | Description |
-|------|-------------|
-| exec | Execute shell commands |
-| list | List files and directories |
-| grep | Search files with regex |
-| context_pin | Pin file to persistent agent context |
-| context_peek | Peek at file for N cycles, then auto-evict |
-| context_unpin | Remove pinned file from context |
-| ask_tool | Ask the user structured clarification/confirmation questions |
+## Built-in tools / feeds
 
-## Built-in Feeds (3)
-
-| Name | Description |
-|------|-------------|
-| system_clock | Current time: ISO8601, human, unix, date, time |
-| system_stats | Hostname, platform, arch, kernel, CPU, memory |
-| working_directory | CWD path, git root/branch/dirty |
-
-## Built-in Relics (0)
-
-No built-in relics are promoted to stdlib yet. Runtime persistence/checkpointing
-belongs in the core runtime, not as fake relic services.
-
-
-## Agent Modules (1)
-
-| Agent | Model | Provider | Tools | Special |
-|-------|-------|----------|-------|---------|
-| default | deepseek-v4-flash | opencode-go | 7 | Primary agent; openrouter/nex-2 fallback; persona + system + harness via context: block |
-
-> More agents available in `staged-manifests/` — promoted here after battle-testing.
+See `built-in/tools/*`, `built-in/feeds/*`. Hub lists them as TOL/FED.
 
 ## Workflows
 
-| Name | Description |
-|------|-------------|
-| code-review | Multi-step review: count lines, grep TODOs, read source, write summary |
-| workflow_spec | Manifest format specification (reference, not instantiable) |
+`workflows/*.yml` — inspectable in hub; full runtime renderer next.
 
-## Prompts (14)
+## Hub
 
-| Prompt | Role |
-|--------|------|
-| `builder.md` | Implement features from spec |
-| `tester.md` | Contract-driven testing (merged batch-test, write-test) |
-| `debugger.md` | Hypothesis-driven debugging |
-| `researcher.md` | Codebase + web research (merged research.md) |
-| `refactorer.md` | Smell-first structural refactoring |
-| `reviewer.md` | Correctness-first review (merged review.md) |
-| `planner.md` | Planning and decomposition |
-| `audit.md` | Structured audit/inspection |
-| `git-sweep.md` | Git hygiene |
-| `health-scan.md` | Quick health check |
-| `verify-chain.md` | Verification discipline |
-| `fix-lint.md` | Lint fix automation |
-| `error-fallback.md` | Error recovery patterns |
-
-## Skills (2)
-
-| Skill | Purpose |
-|-------|---------|
-| `mk3-manifest` | Cortex-Prime MK3 module/manifest conventions |
-| `harness-tuner` | Harness prompt compliance, protocol enforcement |
-
-## C++ Sovereign Classes
-
-| Module | Class | File | Responsibility |
-|--------|-------|------|---------------|
-| Tool | `Tool` | `src/tools/tool.hpp` | Owns def + callback/script execution |
-| Feed | `Feed` | `src/feeds/feed.hpp` | Owns poll fn + caching + formatting |
-| Relic | `Relic` (abstract) | `src/relics/relic.hpp` | Base class for all relic types |
-| Workflow | `Workflow` | `src/workflows/workflow.hpp` | Owns manifest + serialization |
-| Tools | `ToolRegistry` | `src/tools/registry.hpp` | Stores `Tool` objects, backward compat |
-| Feeds | `FeedEngine` | `src/feeds/feed_engine.hpp` | Orchestrates `Feed` objects |
-| Relics | none yet | n/a | Built-in relic abstractions were removed from stdlib; runtime persistence belongs in the core runtime |
-| Workflows | `WorkflowEngine` | `src/workflows/workflow_engine.hpp` | Loads/executes `Workflow` objects |
-
-
+Dashboard → **Manifests** (`a`): recursive registry, `f` kind filter, Enter = launch hint (agents) or inspect notice (other kinds).

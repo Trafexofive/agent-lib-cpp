@@ -1,5 +1,6 @@
 #pragma once
-// Dashboard navigation/session/agent inventory. Pure model; no rendering.
+// Dashboard navigation + inventory. Pure model; no rendering.
+// Manifests hub is the primary registry surface (recursive manifests/).
 
 #include <algorithm>
 #include <string>
@@ -10,7 +11,10 @@
 
 namespace cortex::mk3::ui::model {
 
-enum class DashboardSection { Overview, Sessions, Agents, Harness, Runtime, Help };
+enum class DashboardSection { Overview, Sessions, Manifests, Harness, Runtime, Help };
+
+// Back-compat alias — older call sites used Agents.
+constexpr DashboardSection Agents = DashboardSection::Manifests;
 
 enum class DashboardFocus { Navigation, Content };
 
@@ -19,9 +23,11 @@ struct DashboardState {
     DashboardFocus focus = DashboardFocus::Navigation;
     int navigationIndex = 0;
     int sessionIndex = 0;
-    int agentIndex = 0;
+    int manifestIndex = 0;
+    std::string manifestFilter;  // empty | agent | tool | feed | workflow | ...
     std::vector<session::SessionManager::SessionInfo> sessions;
-    std::vector<catalog::AgentEntry> agents;
+    std::vector<catalog::ManifestEntry> manifests;
+    std::vector<catalog::AgentEntry> agents;  // launchable agents only (top-level)
     std::string notice;
     std::string manifestDir;  // optional override for catalog discovery
 
@@ -39,16 +45,21 @@ struct DashboardState {
             sessionIndex = 0;
             return;
         }
-        sessionIndex = std::max(0, std::min(static_cast<int>(sessions.size()) - 1, sessionIndex + delta));
+        sessionIndex =
+            std::max(0, std::min(static_cast<int>(sessions.size()) - 1, sessionIndex + delta));
     }
 
-    void moveAgent(int delta) {
-        if (agents.empty()) {
-            agentIndex = 0;
+    void moveManifest(int delta) {
+        if (manifests.empty()) {
+            manifestIndex = 0;
             return;
         }
-        agentIndex = std::max(0, std::min(static_cast<int>(agents.size()) - 1, agentIndex + delta));
+        manifestIndex =
+            std::max(0, std::min(static_cast<int>(manifests.size()) - 1, manifestIndex + delta));
     }
+
+    // Legacy name used by main_scene during transition.
+    void moveAgent(int delta) { moveManifest(delta); }
 
     void select(DashboardSection next) {
         section = next;
@@ -57,19 +68,52 @@ struct DashboardState {
 
     void refreshSessions(const session::SessionManager& manager = session::SessionManager()) {
         sessions = manager.list();
-        if (sessions.empty()) sessionIndex = 0;
-        else sessionIndex = std::max(0, std::min(static_cast<int>(sessions.size()) - 1, sessionIndex));
+        if (sessions.empty())
+            sessionIndex = 0;
+        else
+            sessionIndex =
+                std::max(0, std::min(static_cast<int>(sessions.size()) - 1, sessionIndex));
     }
 
-    void refreshAgents() {
+    void refreshManifests() {
+        auto all = catalog::discoverManifests(manifestDir);
+        if (!manifestFilter.empty()) {
+            std::vector<catalog::ManifestEntry> filtered;
+            for (auto& m : all)
+                if (m.kind == manifestFilter) filtered.push_back(std::move(m));
+            manifests = std::move(filtered);
+        } else {
+            manifests = std::move(all);
+        }
+        if (manifests.empty())
+            manifestIndex = 0;
+        else
+            manifestIndex =
+                std::max(0, std::min(static_cast<int>(manifests.size()) - 1, manifestIndex));
+
+        // Launchable agents (top-level name resolution still uses discoverAgents).
         agents = catalog::discoverAgents(manifestDir);
-        if (agents.empty()) agentIndex = 0;
-        else agentIndex = std::max(0, std::min(static_cast<int>(agents.size()) - 1, agentIndex));
     }
+
+    void refreshAgents() { refreshManifests(); }
 
     void refreshAll() {
         refreshSessions();
-        refreshAgents();
+        refreshManifests();
+    }
+
+    void cycleManifestFilter() {
+        // empty → agent → tool → feed → workflow → harness → prompt → empty
+        static const char* kCycle[] = {"",     "agent",  "tool",   "feed",
+                                       "workflow", "harness", "prompt", "skill"};
+        int idx = 0;
+        for (int i = 0; i < 8; ++i)
+            if (manifestFilter == kCycle[i]) {
+                idx = i;
+                break;
+            }
+        manifestFilter = kCycle[(idx + 1) % 8];
+        refreshManifests();
     }
 
     const session::SessionManager::SessionInfo* selectedSession() const {
@@ -77,9 +121,22 @@ struct DashboardState {
         return &sessions[static_cast<size_t>(sessionIndex)];
     }
 
+    const catalog::ManifestEntry* selectedManifest() const {
+        if (manifestIndex < 0 || manifestIndex >= static_cast<int>(manifests.size()))
+            return nullptr;
+        return &manifests[static_cast<size_t>(manifestIndex)];
+    }
+
     const catalog::AgentEntry* selectedAgent() const {
-        if (agentIndex < 0 || agentIndex >= static_cast<int>(agents.size())) return nullptr;
-        return &agents[static_cast<size_t>(agentIndex)];
+        // Prefer selected launchable manifest as agent view.
+        if (const auto* m = selectedManifest()) {
+            if (m->kind == "agent" && m->launchable) {
+                // Find matching AgentEntry by path if present.
+                for (const auto& a : agents)
+                    if (a.manifestPath == m->path) return &a;
+            }
+        }
+        return nullptr;
     }
 };
 
@@ -87,7 +144,7 @@ inline const char* dashboardSectionName(DashboardSection section) {
     switch (section) {
         case DashboardSection::Overview: return "Overview";
         case DashboardSection::Sessions: return "Sessions";
-        case DashboardSection::Agents: return "Agents";
+        case DashboardSection::Manifests: return "Manifests";
         case DashboardSection::Harness: return "Harness";
         case DashboardSection::Runtime: return "Runtime";
         case DashboardSection::Help: return "Help";

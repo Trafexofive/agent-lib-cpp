@@ -5,6 +5,7 @@
 // =============================================================================
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -668,6 +669,261 @@ inline void fixDefaultPromptPaths(AgentConfig& cfg, const std::string& manifestD
 //   small|medium|big|default  → manifests/harness/<name>.md via catalog roots
 //   path / existing file      → absolute path
 // Empty string left empty (caller keeps manifest default).
+// ── Full manifests tree discovery (hub / dashboard) ───────────────────
+// Recursive under manifests/: agents, tools, feeds, relics, workflows,
+// skills, harness, prompts. config/ is intentionally NOT scanned here
+// (DEV/MVP only — pass as override if needed).
+struct ManifestEntry {
+    std::string kind;          // agent|tool|feed|relic|workflow|skill|harness|prompt|other
+    std::string name;
+    std::string version;
+    std::string summary;
+    std::string path;          // absolute path to primary file
+    std::string relPath;       // path relative to manifests root
+    std::string source;        // cwd|project|env|...
+    std::string manifestsRoot;
+    std::string provider;      // agent only
+    std::string model;         // agent only
+    bool launchable = false;   // currently: agents only
+};
+
+inline bool shouldSkipManifestDir(const fs::path& p) {
+    std::string name = p.filename().string();
+    if (name.empty() || name[0] == '.') return true;
+    if (name == "archive" || name == "versions" || name == "_session" ||
+        name == "node_modules" || name == "build")
+        return true;
+    return false;
+}
+
+inline std::string relToRoot(const fs::path& file, const fs::path& root) {
+    std::string f = absPath(file);
+    std::string r = absPath(root);
+    if (f.rfind(r, 0) == 0) {
+        std::string rel = f.substr(r.size());
+        if (!rel.empty() && rel[0] == '/') rel = rel.substr(1);
+        return rel.empty() ? f : rel;
+    }
+    return f;
+}
+
+inline void pushUnique(std::map<std::string, ManifestEntry>& byKey, ManifestEntry e) {
+    if (e.name.empty() && e.path.empty()) return;
+    std::string key = e.kind + ":" + (e.relPath.empty() ? e.path : e.relPath);
+    if (!byKey.count(key))
+        byKey[key] = std::move(e);
+}
+
+inline ManifestEntry readYamlManifestMeta(const fs::path& path, const std::string& kindHint,
+                                          const std::string& source,
+                                          const fs::path& manifestsRoot) {
+    ManifestEntry e;
+    e.path = absPath(path);
+    e.source = source;
+    e.manifestsRoot = absPath(manifestsRoot);
+    e.relPath = relToRoot(path, manifestsRoot);
+    e.kind = kindHint;
+    e.name = path.parent_path().filename().string();
+    if (e.name.empty() || e.name == "." || e.name == "/")
+        e.name = path.stem().string();
+
+    std::ifstream in(path);
+    if (!in) return e;
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    auto root = ManifestYaml::parse(ss.str());
+
+    std::string kindField = ManifestYaml::get(root, "kind");
+    if (!kindField.empty()) {
+        // Normalize Kind: Agent|Tool|Feed|Relic|Workflow
+        std::string k = kindField;
+        for (char& c : k) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (k == "agent" || k == "tool" || k == "feed" || k == "relic" || k == "workflow")
+            e.kind = k;
+    }
+    std::string n = ManifestYaml::get(root, "name");
+    if (!n.empty()) e.name = n;
+    e.version = ManifestYaml::get(root, "version", "");
+    e.summary = ManifestYaml::get(root, "summary");
+    if (e.summary.empty()) e.summary = ManifestYaml::get(root, "description");
+
+    if (e.kind == "agent") {
+        e.launchable = true;
+        auto* engine = ManifestYaml::find(root, "cognitive_engine");
+        if (engine) {
+            auto* primary = ManifestYaml::find(*engine, "primary");
+            if (primary) {
+                e.provider = ManifestYaml::get(*primary, "provider");
+                e.model = ManifestYaml::get(*primary, "model");
+            }
+        }
+    }
+    return e;
+}
+
+inline void scanManifestsTree(const fs::path& root, const std::string& source,
+                              std::map<std::string, ManifestEntry>& byKey) {
+    std::error_code ec;
+    if (!fs::is_directory(root, ec)) return;
+
+    // Recursive walk — skip archive/versions noise.
+    fs::recursive_directory_iterator it(
+        root, fs::directory_options::skip_permission_denied, ec);
+    fs::recursive_directory_iterator end;
+    for (; !ec && it != end; it.increment(ec)) {
+        const fs::path& p = it->path();
+        if (it->is_directory(ec)) {
+            if (shouldSkipManifestDir(p))
+                it.disable_recursion_pending();
+            continue;
+        }
+        if (!it->is_regular_file(ec)) continue;
+
+        std::string fname = p.filename().string();
+        std::string ext = p.extension().string();
+        // Skip backups / old drafts
+        if (fname.find(".old") != std::string::npos) continue;
+        if (fname.find(".worktree") != std::string::npos) continue;
+
+        if (fname == "agent.yml" || fname == "agent.yaml") {
+            pushUnique(byKey, readYamlManifestMeta(p, "agent", source, root));
+            continue;
+        }
+        if (fname == "tool.yml" || fname == "tool.yaml") {
+            pushUnique(byKey, readYamlManifestMeta(p, "tool", source, root));
+            continue;
+        }
+        if (fname == "feed.yml" || fname == "feed.yaml") {
+            pushUnique(byKey, readYamlManifestMeta(p, "feed", source, root));
+            continue;
+        }
+        if (fname == "relic.yml" || fname == "relic.yaml") {
+            pushUnique(byKey, readYamlManifestMeta(p, "relic", source, root));
+            continue;
+        }
+        if (fname == "workflow.yml" || fname == "workflow.yaml") {
+            pushUnique(byKey, readYamlManifestMeta(p, "workflow", source, root));
+            continue;
+        }
+        // Loose workflow yml under workflows/
+        if ((ext == ".yml" || ext == ".yaml") &&
+            p.parent_path().filename() == "workflows") {
+            // skip pure specs that aren't runnable if name is workflow_spec — still list
+            pushUnique(byKey, readYamlManifestMeta(p, "workflow", source, root));
+            continue;
+        }
+        if (fname == "SKILL.md") {
+            ManifestEntry e;
+            e.kind = "skill";
+            e.name = p.parent_path().filename().string();
+            e.path = absPath(p);
+            e.source = source;
+            e.manifestsRoot = absPath(root);
+            e.relPath = relToRoot(p, root);
+            e.summary = "skill module";
+            pushUnique(byKey, std::move(e));
+            continue;
+        }
+        // harness + prompts as first-class registry entries (md modules)
+        if (ext == ".md" && p.parent_path().filename() == "harness" &&
+            fname.find("README") == std::string::npos) {
+            ManifestEntry e;
+            e.kind = "harness";
+            e.name = p.stem().string();
+            e.path = absPath(p);
+            e.source = source;
+            e.manifestsRoot = absPath(root);
+            e.relPath = relToRoot(p, root);
+            e.summary = "harness profile";
+            pushUnique(byKey, std::move(e));
+            continue;
+        }
+        if (ext == ".md" && p.parent_path().filename() == "prompts" &&
+            fname.find("README") == std::string::npos) {
+            ManifestEntry e;
+            e.kind = "prompt";
+            e.name = p.stem().string();
+            e.path = absPath(p);
+            e.source = source;
+            e.manifestsRoot = absPath(root);
+            e.relPath = relToRoot(p, root);
+            e.summary = "prompt module";
+            pushUnique(byKey, std::move(e));
+            continue;
+        }
+    }
+}
+
+inline std::vector<ManifestEntry> discoverManifests(const std::string& manifestDirOverride = "") {
+    std::map<std::string, ManifestEntry> byKey;
+    for (const auto& [mroot, source] : manifestsSearchRoots(manifestDirOverride))
+        scanManifestsTree(mroot, source, byKey);
+
+    std::vector<ManifestEntry> out;
+    out.reserve(byKey.size());
+    for (auto& kv : byKey)
+        out.push_back(std::move(kv.second));
+
+    // Kind order then name — hub scannability.
+    auto kindRank = [](const std::string& k) -> int {
+        if (k == "agent") return 0;
+        if (k == "workflow") return 1;
+        if (k == "tool") return 2;
+        if (k == "feed") return 3;
+        if (k == "relic") return 4;
+        if (k == "harness") return 5;
+        if (k == "skill") return 6;
+        if (k == "prompt") return 7;
+        return 9;
+    };
+    std::sort(out.begin(), out.end(), [&](const ManifestEntry& a, const ManifestEntry& b) {
+        int ra = kindRank(a.kind), rb = kindRank(b.kind);
+        if (ra != rb) return ra < rb;
+        if (a.name != b.name) return a.name < b.name;
+        return a.relPath < b.relPath;
+    });
+    return out;
+}
+
+// Keep agent discovery, but recursive (nested sub-agents under agents/**).
+inline std::vector<AgentEntry> discoverAgentsRecursive(const std::string& manifestDirOverride = "") {
+    std::map<std::string, AgentEntry> byName;
+    for (const auto& [mroot, source] : manifestsSearchRoots(manifestDirOverride)) {
+        fs::path agentsRoot = fs::path(mroot) / "agents";
+        std::error_code ec;
+        if (!fs::is_directory(agentsRoot, ec)) continue;
+        fs::recursive_directory_iterator it(
+            agentsRoot, fs::directory_options::skip_permission_denied, ec);
+        fs::recursive_directory_iterator end;
+        for (; !ec && it != end; it.increment(ec)) {
+            if (it->is_directory(ec) && shouldSkipManifestDir(it->path())) {
+                it.disable_recursion_pending();
+                continue;
+            }
+            if (!it->is_regular_file(ec)) continue;
+            auto fname = it->path().filename().string();
+            if (fname != "agent.yml" && fname != "agent.yaml") continue;
+            auto e = readAgentMeta(it->path(), source, agentsRoot.string());
+            if (e.name.empty()) continue;
+            // Nested agents: prefer unique key by rel path if name collides.
+            std::string key = e.name;
+            if (byName.count(key)) {
+                // Disambiguate nested (e.g. reader under coder)
+                key = e.name + "@" + relToRoot(it->path().parent_path(), agentsRoot);
+                e.name = key;  // show path-qualified name in flat agent lists
+            }
+            if (!byName.count(key))
+                byName[key] = std::move(e);
+        }
+    }
+    std::vector<AgentEntry> out;
+    out.reserve(byName.size());
+    for (auto& kv : byName) out.push_back(std::move(kv.second));
+    std::sort(out.begin(), out.end(),
+              [](const AgentEntry& a, const AgentEntry& b) { return a.name < b.name; });
+    return out;
+}
+
 inline std::string resolveHarnessPath(const std::string& nameOrPath,
                                       const std::string& manifestDirOverride = "",
                                       std::string* err = nullptr) {

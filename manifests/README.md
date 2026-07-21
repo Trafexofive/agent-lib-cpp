@@ -1,44 +1,61 @@
-# Standard Manifest Library
+# Standard Manifest Library (PROD)
 
-Production-grade manifests for Cortex-Prime MK3.
+**Rule of thumb**
 
-## Module Standard
-Every module follows the same pattern:
-```
-<module>/
-├── README.md      ← Purpose, usage, dependencies, edge cases
-├── <manifest>.yml ← Schema, endpoints, input/output definitions
-└── <script>       ← Script file (if runtime != builtin)
-```
+| Tree | Role |
+|------|------|
+| `manifests/` | **PROD / std global registry** — auto-discovered by the hub, name-resolvable |
+| `config/` | **DEV / MVP / experiments** — not auto-hubbed; promote into `manifests/` when battle-tested |
+
+Inkcell is a separate terminal primitive kit. Cortex UI chrome lives in `src/ui/{assets,components}/`.
 
 ## Layout
-| Path | Content | Status |
-|------|---------|--------|
-| `built-in/tools/` | C++ compiled tools (exec, list, grep, context_pin/peek/unpin, ask_tool) | ✅ stable |
-| `built-in/feeds/` | C++ compiled feeds (system_clock, stats, working_dir) | ✅ stable |
-| `built-in/relics/` | Reserved for future runtime relics; stdlib has no built-in relics yet | ⚪ empty |
-| `agents/` | Agent manifests (default) | ✅ stable |
-| `workflows/` | Workflow definitions (code-review, workflow_spec) | 🟡 growing |
-| `prompts/` | Reusable task/persona prompts for bespoke agents | 🟡 seeded |
-| `skills/` | Reusable agent operating policies/skills | 🟡 seeded |
-| `_session/` | Persisted dynamic tools (auto-created, survives restarts) | ✅ stable |
-| Runtime | Used by | Manifest field |
-|---------|---------|----------------|
-| `builtin` | C++ tools, feeds, relics | Compiles into binary |
-| `python3` | POC script tools only (`poc/tools/*`); not stdlib | `runtime: python3` |
-| `docker` | POC Docker relics only (`poc/relics/*`); not stdlib | `runtime: docker` |
 
-## Rules
-- **Only production-ready manifests** live here. Staging → `config/staging/`
-- **`built-in/`** = compiled into binary, resolved by name. No source code.
-- `prompts/` and `skills/` are stdlib building blocks for bespoke agents, not auto-loaded runtime manifests.
-- Each module is self-contained — imports reference sibling modules by relative path.
-- **CATALOG.md** is maintained manually.
+```
+manifests/
+  agents/           PROD agents (default, coder + specialists, …)
+  built-in/tools/   compiled tool manifests
+  built-in/feeds/   compiled feed manifests
+  workflows/        workflow definitions (renderer landing soon)
+  harness/          harness size profiles
+  prompts/          reusable prompt modules
+  skills/           operating skills
+  persona/ system/  shared context defaults
+```
 
-> Script tools (`fs_read`, `fs_write`, `json`, etc.) and Docker relics moved to `poc/` — graduate when battle-tested.
+## Agent standard (MVP → PROD)
 
-## Import Mechanics
-- Agents load tools/relics/feeds via `import:` in their manifest
-- Built-in modules resolved by name at runtime (no path needed)
-- Script modules referenced by relative path from the manifest
-- Docker relics referenced by module name; dispatcher handles container lifecycle
+Every PROD agent directory:
+
+```
+agents/<name>/
+  agent.yml          kind/name/version/summary + cognitive_engine + runtime + import
+  system.md          (or context.system path)
+  persona.md         optional
+  README.md          purpose, tools, sub-agents, launch line
+  agents/<child>/    nested specialists (optional)
+```
+
+**Required `runtime:` keys (MVP):**
+
+```yaml
+runtime:
+  max_iterations: N
+  history_cap: N
+  mode: normal            # normal | autonomous
+  # dev_mode: true        # live dumps → ~/.cortex/dev/<session>/
+  subagents:
+    persistence: session  # when children exist
+```
+
+## Dashboard hub
+
+`a` / Manifests section recursively lists **all** PROD manifests (agents, tools, feeds, workflows, harness, prompts, skills).  
+`f` cycles kind filter. Enter on a launchable agent shows the CLI relaunch hint.
+
+## Promotion path
+
+1. Prototype under `config/agents/…` (or `config/…`)
+2. Stabilize contracts + README
+3. Move into `manifests/` and register in `CATALOG.md`
+4. Never leave broken duplicates in PROD (name collisions kill trust)

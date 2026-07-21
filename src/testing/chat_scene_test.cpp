@@ -55,11 +55,11 @@ void test_dashboard_scene() {
         inkcell::Surface surface(size);
         scene.draw(surface);
         std::string rendered = surfaceText(surface);
-        check(rendered.find("CORTEX MK3  /  DASHBOARD") != std::string::npos,
+        check(rendered.find("CORTEX MK3") != std::string::npos,
               "dashboard renders header at " + std::to_string(size.w) + "x" + std::to_string(size.h));
         check(rendered.find("Overview") != std::string::npos &&
                   rendered.find("Sessions") != std::string::npos &&
-                  rendered.find("Agents") != std::string::npos &&
+                  rendered.find("Manifests") != std::string::npos &&
                   rendered.find("Harness") != std::string::npos &&
                   rendered.find("Runtime") != std::string::npos,
               "dashboard renders sections at " + std::to_string(size.w) + "x" + std::to_string(size.h));
