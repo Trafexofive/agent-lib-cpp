@@ -94,6 +94,37 @@ void test_strict_never_promotes_at_cap() {
           "strict policy keeps stop banner at cap");
 }
 
+void test_max_iter_runs_finalization_turn() {
+    // workCap=2 bare turns → finalization turn #3 must be offered and may close.
+    auto sp = std::make_shared<ScriptedProvider>(std::deque<std::string>{
+        "still working bare 1",
+        "still working bare 2",
+        "<response final=\"true\">closed on finalization</response>",
+    });
+    AgentConfig cfg = baseCfg("normal", "recover");
+    cfg.iterationCap = 2;
+    Agent agent(cfg, sp);
+    std::string out = agent.prompt("go", "", true);
+    CHECK(out.find("closed on finalization") != std::string::npos,
+          "max_iterations triggers finalization turn that can close cleanly");
+    bool sawLimit = false, sawFinalize = false;
+    for (const auto& h : agent.history()) {
+        if (h.find("[LIMIT]") != std::string::npos) sawLimit = true;
+        if (h.find("[FINALIZE]") != std::string::npos ||
+            h.find("[FINALIZATION TURN]") != std::string::npos)
+            sawFinalize = true;
+    }
+    // Also check protocol STATUS events.
+    for (const auto& pe : agent.protocolEvents()) {
+        if (pe.kind == ProtocolEventKind::STATUS) {
+            if (pe.text.find("[LIMIT]") != std::string::npos) sawLimit = true;
+            if (pe.text.find("[FINALIZE]") != std::string::npos) sawFinalize = true;
+        }
+    }
+    CHECK(sawLimit, "LIMIT status is recorded when work budget exhausts");
+    CHECK(sawFinalize, "FINALIZE status/prompt is recorded for the extra turn");
+}
+
 void test_nonfinal_response_body_salvaged() {
     // <response> without final=true still yields body the recovery can re-home.
     auto sp = std::make_shared<ScriptedProvider>(std::deque<std::string>{
@@ -111,6 +142,7 @@ int main() {
     test_bare_text_recovers_then_final();
     test_autonomous_promotes_after_repeated_bare();
     test_strict_never_promotes_at_cap();
+    test_max_iter_runs_finalization_turn();
     test_nonfinal_response_body_salvaged();
     std::cout << passed << " passed, " << failed << " failed\n";
     return failed ? 1 : 0;

@@ -44,7 +44,7 @@ struct ProtocolResult {
     size_t outputBytes = 0;
 };
 
-enum class ProtocolEventKind { THOUGHT, ACTION, RESULT, RESPONSE };
+enum class ProtocolEventKind { THOUGHT, ACTION, RESULT, RESPONSE, STATUS };
 
 struct ProtocolEvent {
     ProtocolEventKind kind = ProtocolEventKind::THOUGHT;

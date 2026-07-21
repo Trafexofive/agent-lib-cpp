@@ -140,6 +140,21 @@ inline std::vector<TimelineBlock> protocolEventsToTimeline(
             case ProtocolEventKind::RESPONSE:
                 if (opts.includeResponse) blocks.push_back(responseBlock(ev, opts, i));
                 break;
+            case ProtocolEventKind::STATUS: {
+                TimelineBlock b;
+                b.stableId = stablePrefix(opts.path) + ":status:" + std::to_string(i);
+                b.kind = BlockKind::Status;
+                b.status = BlockStatus::Idle;
+                b.title = ev.text.rfind("[LIMIT]", 0) == 0 ? "LIMIT"
+                          : ev.text.rfind("[FINALIZE]", 0) == 0 ? "FINALIZE"
+                                                                : "STATUS";
+                b.summary = ev.text;
+                b.hasDetail = !ev.text.empty();
+                b.rawBody = ev.text;
+                b.tags.push_back("status");
+                blocks.push_back(std::move(b));
+                break;
+            }
         }
     }
     return blocks;

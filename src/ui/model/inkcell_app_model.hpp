@@ -112,6 +112,15 @@ inline TimelineRow rowFromProtocol(const ProtocolEvent& pe) {
         row.kind = TimelineKind::Thought;
         row.title = "thought";
         row.body = pe.text;
+    } else if (pe.kind == ProtocolEventKind::STATUS) {
+        // Runtime notices: max_iterations, finalization, cancel, promote, etc.
+        row.kind = TimelineKind::Status;
+        row.title = pe.text.rfind("[LIMIT]", 0) == 0 ? "limit"
+                    : pe.text.rfind("[FINALIZE]", 0) == 0 ? "finalize"
+                    : "status";
+        row.body = pe.text;
+        row.ok = pe.text.find("⚠") == std::string::npos &&
+                 pe.text.find("error") == std::string::npos;
     } else if (pe.kind == ProtocolEventKind::ACTION) {
         row.kind = TimelineKind::Action;
         row.actionType = pe.action.type;
@@ -530,7 +539,9 @@ struct ShellModel {
                         label = "✗ ERROR";
                         break;
                     case TimelineKind::Status:
-                        label = "STATUS";
+                        if (row.title == "limit") label = "⚠ LIMIT";
+                        else if (row.title == "finalize") label = "▣ FINALIZE";
+                        else label = "STATUS";
                         break;
                     case TimelineKind::Stream:
                         label = "RAW";

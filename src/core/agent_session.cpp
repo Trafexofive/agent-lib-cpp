@@ -153,6 +153,7 @@ void Agent::dumpSessionArtifacts() const {
                     f << pe.result.summary << "\n";
                     break;
                 case ProtocolEventKind::RESPONSE: f << "RESPONSE\n"; break;
+                case ProtocolEventKind::STATUS: f << "STATUS\n"; break;
                 default: f << "OTHER\n"; break;
             }
             if (!pe.text.empty()) f << pe.text << "\n";

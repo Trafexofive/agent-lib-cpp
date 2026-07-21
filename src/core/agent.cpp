@@ -475,6 +475,22 @@ static std::string buildResultTag(const std::string &id,
     }
     if (body.empty() && result.isMember("error") && result["error"].isString())
         body = "error: " + result["error"].asString();
+    // Structured context_* results: serialize compact JSON so the LLM still
+    // sees path/bytes/cycles in <result> tags (not an empty body).
+    if (body.empty() && result.isObject()) {
+        Json::Value slim;
+        for (const char* k : {"success", "path", "mode", "bytes",
+                              "cycles_remaining", "pinned_count", "peek_count",
+                              "note", "error", "keys"}) {
+            if (result.isMember(k))
+                slim[k] = result[k];
+        }
+        if (!slim.empty()) {
+            Json::StreamWriterBuilder w;
+            w["indentation"] = "";
+            body = Json::writeString(w, slim);
+        }
+    }
 
     if (!body.empty()) {
         size_t bytes = body.size();
@@ -593,12 +609,47 @@ std::string Agent::runLoop(AgentContext &ctx) {
         return os.str();
     };
 
-    for (ctx.iteration = 1; ctx.iteration <= config_.iterationCap;
-         ctx.iteration++) {
+    const int workCap = std::max(1, config_.iterationCap);
+    bool finalizationTurn = false;
+    bool finalizationDone = false;
+    std::string limitReason;  // set when we enter finalization due to a cap
+
+    auto emitStatus = [&](const std::string& text) {
+        history_.push_back("System: " + text);
+        protocolEvents_.push_back({ProtocolEventKind::STATUS, text, {}, {}});
+        // Heartbeat so TUI drains the STATUS event mid-turn.
+        if (ctx.onToken)
+            ctx.onToken("", false);
+    };
+
+    // Work turns 1..workCap, then at most one FINALIZATION turn (tools disabled)
+    // so the model always gets an honest last chance to emit final=true.
+    for (ctx.iteration = 1;; ctx.iteration++) {
         if (!g_running) {
             fullResponse = "[cancelled]";
+            emitStatus("[LIMIT] cancelled by operator (Ctrl-C / stop).");
             break;
         }
+
+        if (!finalizationTurn && ctx.iteration > workCap) {
+            // Exhausted work budget without a final response → dedicated
+            // finalization turn (does not consume another "work" slot).
+            finalizationTurn = true;
+            ctx.iteration = workCap + 1;
+            limitReason = "max_iterations=" + std::to_string(workCap);
+            emitStatus(
+                "[LIMIT] " + limitReason +
+                " reached without <response final=\"true\">. "
+                "Entering FINALIZATION turn — tools disabled; emit final reply now.");
+            emitStatus(
+                "[FINALIZE] This is your last turn. Output ONLY:\n"
+                "  <response final=\"true\">…your answer…</response>\n"
+                "Do not call tools. Do not emit bare text.");
+        }
+
+        if (finalizationTurn && finalizationDone)
+            break;
+
         ChatMessages msgs = buildChatPrompt(ctx);
         // Save full prompt for /prompts toggle
         lastPrompt_ = msgs.size() > 0 ? msgs[0].content : "";
@@ -642,11 +693,35 @@ std::string Agent::runLoop(AgentContext &ctx) {
             iterationPrompts_.push_back(pd.str());
         }
 
-        // Last iteration — force response
-        if (ctx.iteration == config_.iterationCap) {
-            msgs.push_back(
-                ChatMessage::user("Respond NOW with <response final=\"true\">. "
-                                  "Do not call any more tools."));
+        // Soft warning on last WORK turn (tools still allowed).
+        if (!finalizationTurn && ctx.iteration == workCap) {
+            msgs.push_back(ChatMessage::user(
+                "[LIMIT WARNING] This is work iteration " +
+                std::to_string(workCap) + "/" + std::to_string(workCap) +
+                ". After this turn the runtime will force a FINALIZATION turn "
+                "with tools disabled. Prefer <response final=\"true\"> now if "
+                "you have enough evidence; otherwise finish critical tools quickly."));
+        }
+        // Hard finalization prompt — no tools, must close.
+        if (finalizationTurn) {
+            std::ostringstream fin;
+            fin << "[FINALIZATION TURN] " << limitReason
+                << " exhausted. Tools are DISABLED this turn.\n"
+                << "Emit exactly:\n"
+                << "<response final=\"true\">\n"
+                << "…concise answer from evidence already gathered…\n"
+                << "</response>\n";
+            if (!lastSalvage.empty()) {
+                fin << "\nIf useful, you may reuse this salvaged draft:\n"
+                    << "----- BEGIN SALVAGE -----\n";
+                const size_t kMax = 8000;
+                if (lastSalvage.size() > kMax)
+                    fin << lastSalvage.substr(0, kMax) << "\n…[truncated]";
+                else
+                    fin << lastSalvage;
+                fin << "\n----- END SALVAGE -----\n";
+            }
+            msgs.push_back(ChatMessage::user(fin.str()));
         }
 
         if (ctx.debug || ctx.verbose) {
@@ -1035,8 +1110,20 @@ std::string Agent::runLoop(AgentContext &ctx) {
         std::string iterationRuntimeOutput;
 
         parser.setExecutor(
-            [this, &d, &ctx, &iterationRuntimeOutput](
+            [this, &d, &ctx, &iterationRuntimeOutput, finalizationTurn](
                 const protocol::ParsedAction &action) -> Json::Value {
+                // Finalization turn: refuse all side-effecting actions so the
+                // model must close with <response final="true">.
+                if (finalizationTurn) {
+                    Json::Value denied;
+                    denied["success"] = false;
+                    denied["error"] =
+                        "finalization turn: actions disabled — emit "
+                        "<response final=\"true\"> only";
+                    denied["output"] = denied["error"];
+                    return denied;
+                }
+
                 protocol::ParsedAction expandedAction = action;
                 expandedAction.params =
                     expandValueRefs(action.params, actionResults_);
@@ -1114,14 +1201,42 @@ std::string Agent::runLoop(AgentContext &ctx) {
                         if (!out.empty())
                             summary = out;
                         // Check multiple common result field names
-                        else if (result.isMember("result"))
+                        else if (result.isMember("result") && result["result"].isString())
                             summary = result["result"].asString();
-                        else if (result.isMember("results"))
+                        else if (result.isMember("results") && result["results"].isString())
                             summary = result["results"].asString();
-                        else if (result.isMember("output"))
+                        else if (result.isMember("output") && result["output"].isString())
                             summary = result["output"].asString();
-                        else if (result.isMember("data"))
+                        else if (result.isMember("data") && result["data"].isString())
                             summary = result["data"].asString();
+                        // context_peek / pin / unpin return structured JSON without
+                        // an "output" string — synthesize a scannable summary so
+                        // RESULT cards are not empty tool-name stubs.
+                        if (summary.empty() &&
+                            (expandedAction.name == "context_peek" ||
+                             expandedAction.name == "context_pin" ||
+                             expandedAction.name == "context_unpin" ||
+                             expandedAction.name == "context_manage")) {
+                            std::ostringstream ss;
+                            if (result.isMember("path"))
+                                ss << result["path"].asString();
+                            if (result.isMember("mode"))
+                                ss << (ss.str().empty() ? "" : " · ")
+                                   << result["mode"].asString();
+                            if (result.isMember("bytes"))
+                                ss << (ss.str().empty() ? "" : " · ")
+                                   << result["bytes"].asUInt64() << "B";
+                            if (result.isMember("cycles_remaining"))
+                                ss << (ss.str().empty() ? "" : " · ")
+                                   << "cycles=" << result["cycles_remaining"].asInt();
+                            if (result.isMember("note") && result["note"].isString())
+                                ss << (ss.str().empty() ? "" : "\n")
+                                   << result["note"].asString();
+                            if (result.isMember("error") && result["error"].isString())
+                                ss << (ss.str().empty() ? "" : "\n")
+                                   << "error: " << result["error"].asString();
+                            summary = ss.str();
+                        }
                         if (summary.empty())
                             summary = action.name;
                     } else {
@@ -1566,7 +1681,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 const bool earlyPromote =
                     compPolicy == CompPolicy::Promote &&
                     bareRecoveryCount >= promoteAfter && !lastSalvage.empty() &&
-                    ctx.iteration < config_.iterationCap;
+                    !finalizationTurn && ctx.iteration < workCap;
 
                 if (earlyPromote) {
                     history_.push_back(
@@ -1611,8 +1726,9 @@ std::string Agent::runLoop(AgentContext &ctx) {
         if (devMode_ || verbose_ || raw_ || ctx.debug)
             dumpSessionArtifacts();
 
+        // Never force a follow-up after finalization — that turn is one-shot.
         bool forceResultFollowup =
-            taskComplete && !results.empty() &&
+            !finalizationTurn && taskComplete && !results.empty() &&
             iterationRawOutput.find("<action") != std::string::npos;
         // If the model emits action(s) and a final response in the same
         // generation, it cannot have seen the real runtime results yet. Keep
@@ -1654,6 +1770,12 @@ std::string Agent::runLoop(AgentContext &ctx) {
         }
         parser.clearResults(); // prevent result leakage to next iteration
         tickContextCycles();   // decrement peek cycles; auto-evict at 0
+
+        // Finalization is exactly one shot — never loop forever after cap.
+        if (finalizationTurn) {
+            finalizationDone = true;
+            break;
+        }
     }
 
     if (fullResponse.empty()) {

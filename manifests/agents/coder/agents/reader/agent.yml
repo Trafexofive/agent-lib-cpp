@@ -1,0 +1,41 @@
+kind: Agent
+name: reader
+version: "1.0"
+summary: Read-only codebase scout — maps structure and returns file evidence.
+
+cognitive_engine:
+  primary:
+    # provider: xai
+    # model: grok-4.20-0309-non-reasoning
+    provider: opencode
+    model: deepseek-v4-flash-free
+    parameters:
+      temperature: 0.5
+      max_tokens: 32768
+
+context:
+  system: ./system.md
+  persona: ./persona.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  max_iterations: 6
+  history_cap: 40
+  mode: normal
+  # After work budget: forced FINALIZATION turn (tools off) + LIMIT status block.
+  # dev_mode dumps iterations/raw/history under ~/.cortex/dev/<session>/ + CWD.
+  # Or: CORTEX_DEV_MODE=1 ./cortex-mk3 ...
+  dev_mode: true
+
+import:
+  tools:
+    - list
+    - grep
+    - fs_read
+    - context_peek
+  feeds: []
+  env: []
