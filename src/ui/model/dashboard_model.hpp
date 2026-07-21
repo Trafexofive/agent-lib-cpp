@@ -1,6 +1,6 @@
 #pragma once
 // Dashboard model — tight IA, operable facets, dock focus.
-// Sections (pill): Home · Sessions · Manifests · Help
+// Sections (pill): Home · Sessions · Manifests · Settings
 // Harness/Runtime live on Home (not peer tabs).
 
 #include <algorithm>
@@ -15,7 +15,9 @@
 
 namespace cortex::mk3::ui::model {
 
-enum class DashboardSection { Home = 0, Sessions = 1, Manifests = 2, Help = 3 };
+enum class DashboardSection { Home = 0, Sessions = 1, Manifests = 2, Settings = 3 };
+// Alias — older call sites / muscle memory
+constexpr DashboardSection Help = DashboardSection::Settings;
 
 // Back-compat names used by older call sites / tests.
 constexpr DashboardSection Overview = DashboardSection::Home;
@@ -315,7 +317,7 @@ inline const char* dashboardSectionName(DashboardSection section) {
         case DashboardSection::Home: return "Home";
         case DashboardSection::Sessions: return "Sessions";
         case DashboardSection::Manifests: return "Manifests";
-        case DashboardSection::Help: return "Help";
+        case DashboardSection::Settings: return "Settings";
     }
     return "Home";
 }

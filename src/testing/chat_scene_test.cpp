@@ -60,7 +60,7 @@ void test_dashboard_scene() {
         check(rendered.find("Home") != std::string::npos &&
                   rendered.find("Sessions") != std::string::npos &&
                   rendered.find("Manifests") != std::string::npos &&
-                  rendered.find("Help") != std::string::npos,
+                  rendered.find("Settings") != std::string::npos,
               "dashboard renders pill sections at " + std::to_string(size.w) + "x" +
                   std::to_string(size.h));
         // Home absorbs former Harness/Runtime peers

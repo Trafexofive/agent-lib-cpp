@@ -1,6 +1,6 @@
 #pragma once
 // Dashboard hub — tight IA, operable facets, real agent launch.
-// Pill: Home · Sessions · Manifests · Help
+// Pill: Home · Sessions · Manifests · Settings
 // ctrl-j = prev · ctrl-k = next (inverted). Enter on agent = hot-swap launch.
 
 #include <algorithm>
@@ -190,6 +190,20 @@ class MainScene final : public BaseScene {
             }
             model_->cmdPalette.clearLeader();
 
+            // Settings: 0 = shader off, 1-7 = pick field shader
+            if (dash.section == model::DashboardSection::Settings && event.ch >= '0' &&
+                event.ch <= '9') {
+                int d = event.ch - '0';
+                if (d == 0) {
+                    gfx::setFieldEnabled(false);
+                    dash.notice = "shader · off";
+                } else if (d >= 1 && d <= gfx::fieldCount()) {
+                    gfx::setFieldEnabled(true);
+                    gfx::setFieldIndex(d - 1);
+                    dash.notice = std::string("shader · ") + gfx::activeFieldName();
+                }
+                return true;
+            }
             // Kind digits on Manifests — operable facets
             if (dash.section == model::DashboardSection::Manifests && event.ch >= '0' &&
                 event.ch <= '9') {
@@ -220,6 +234,13 @@ class MainScene final : public BaseScene {
                     return true;
                 case 's':
                 case 'S':
+                    // On Settings: S cycles shader. Elsewhere: Sessions jump.
+                    if (dash.section == model::DashboardSection::Settings) {
+                        if (!gfx::fieldEnabled()) gfx::setFieldEnabled(true);
+                        else gfx::cycleField(1);
+                        dash.notice = std::string("shader · ") + gfx::activeFieldName();
+                        return true;
+                    }
                     dash.select(model::DashboardSection::Sessions);
                     bumpNotice();
                     return true;
@@ -245,8 +266,15 @@ class MainScene final : public BaseScene {
                     }
                     return true;
                 case '?':
-                    dash.select(model::DashboardSection::Help);
+                    dash.select(model::DashboardSection::Settings);
                     bumpNotice();
+                    return true;
+                case 'b':
+                case 'B':  // toggle field shader on/off (global)
+                    gfx::toggleFieldEnabled();
+                    dash.notice = gfx::fieldEnabled()
+                                      ? std::string("shader · ") + gfx::activeFieldName()
+                                      : std::string("shader · off");
                     return true;
                 case 'n':
                 case 'N':
@@ -270,6 +298,7 @@ class MainScene final : public BaseScene {
                     return true;
                 case 'T':
                     theme::toggle();
+                    dash.notice = std::string("theme · ") + theme::name();
                     return true;
                 case 'q':
                 case 'Q':
@@ -289,22 +318,16 @@ class MainScene final : public BaseScene {
         const float tsec = gfx::nowSeconds();
         const int tvar = gfx::themeVariantIndex();
 
-        // Full-page field raster FIRST (half-block plasma/ripple). Real f(x,y,t)
-        // samples — not decorative · sprinkle. App bar + stage paint over it.
+        // Field bg (or solid theme base when disabled). No stage ─ chrome.
         gfx::drawFieldBg(surface, page, tvar, tsec);
 
         drawAppBar(surface, page, tier);
 
-        // Stage: open-top panel (no ╭───╮ hairline). One pure field row under app bar.
         const int dockReserve = 4;
-        int stageTop = page.y + 3;  // page.y+2 stays field plasma only
+        int stageTop = page.y + 3;  // page.y+2 = pure field/theme strip
         int stageH = std::max(6, page.bottom() - dockReserve - stageTop);
         inkcell::Rect stage{page.x, stageTop, page.w, stageH};
-
-        auto stageBg = theme::panel_bg();
-        auto stageBd = stageBg.with_fg(theme::color(inkcell::Color::rgb(48, 48, 48),
-                                                    inkcell::Color::rgb(30, 42, 62)));
-        gfx::drawOpenTopPanel(surface, stage, stageBg, stageBd);
+        gfx::drawBorderlessPanel(surface, stage, theme::panel_bg());
 
         inkcell::Rect content{stage.x + 2, stage.y + 1, std::max(1, stage.w - 4),
                               std::max(1, stage.h - 2)};
@@ -323,7 +346,7 @@ class MainScene final : public BaseScene {
             {"g", "Home"},
             {"s", "Sessions"},
             {"a", "Manifests"},
-            {"?", "Help"},
+            {"?", "Settings"},
         };
         components::drawPillDock(surface, page.x, page.w, page.bottom() - 1, pills,
                                  dash.navigationIndex, dash.navPrevIndex, dash.navAnimT(),
@@ -341,12 +364,16 @@ class MainScene final : public BaseScene {
         else if (id == "nav.manifests") {
             dash.select(model::DashboardSection::Manifests);
             dash.refreshManifests();
-        } else if (id == "nav.help") dash.select(model::DashboardSection::Help);
+        } else if (id == "nav.help" || id == "nav.settings")
+            dash.select(model::DashboardSection::Settings);
         else if (id == "nav.chat") model_->pendingRoute = "agent";
         else if (id == "act.refresh") {
             dash.refreshAll();
             dash.notice = "refreshed";
         } else if (id == "act.theme") theme::toggle();
+        else if (id == "act.shader") gfx::cycleField(1);
+        else if (id == "act.shader_off") gfx::setFieldEnabled(false);
+        else if (id == "act.shader_on") gfx::setFieldEnabled(true);
         else if (id == "act.launch") activate();
         else if (id == "sys.quit") model_->pendingRoute = "quit";
         bumpNotice();
@@ -448,29 +475,23 @@ class MainScene final : public BaseScene {
             case model::DashboardSection::Home: drawHome(surface, frame); break;
             case model::DashboardSection::Sessions: drawSessions(surface, frame); break;
             case model::DashboardSection::Manifests: drawManifests(surface, frame); break;
-            case model::DashboardSection::Help: drawHelp(surface, frame); break;
+            case model::DashboardSection::Settings: drawSettings(surface, frame); break;
         }
     }
 
     void sectionHead(inkcell::Surface& surface, inkcell::Rect frame, const std::string& title,
                      const std::string& subtitle) const {
+        // No ─ rules — title + italic subtitle only; field/theme is the chrome.
         surface.text({frame.x, frame.y}, title, theme::bright());
         if (!subtitle.empty())
             surface.text({frame.x, frame.y + 1}, inkcell::text::truncate(subtitle, frame.w),
-                         theme::dim());
-        int tw = std::min(frame.w, inkcell::text::display_width(title) + 6);
-        // Accent rule: cyan body + violet tip — small texture break
-        int mid = std::max(2, tw - 2);
-        surface.hline({frame.x, frame.y + 2}, mid, "─", theme::cyan_soft());
-        surface.hline({frame.x + mid, frame.y + 2}, tw - mid, "─", theme::violet_soft());
+                         theme::italic_dim());
     }
 
     void metricTile(inkcell::Surface& surface, inkcell::Rect r, const std::string& label,
                     const std::string& value, inkcell::Style valueSt) const {
+        // Borderless tile — no ─ box chrome
         surface.fill(r, " ", theme::panel_2());
-        surface.box(r, inkcell::BorderStyle::Rounded,
-                    theme::panel_2().with_fg(theme::color(inkcell::Color::rgb(55, 55, 55),
-                                                          inkcell::Color::rgb(32, 44, 64))));
         surface.text({r.x + 2, r.y + 1}, inkcell::text::truncate(label, r.w - 4), theme::dim());
         surface.text({r.x + 2, r.y + 2}, inkcell::text::truncate(value, r.w - 4), valueSt);
     }
@@ -696,12 +717,8 @@ class MainScene final : public BaseScene {
             return;
         }
 
-        // Stage well (clip) — muted track behind the flying cards
+        // Card well — fill only, no ─ box (field/theme is the frame)
         surface.fill(det, " ", theme::panel_bg());
-        // soft well border
-        surface.box(det, inkcell::BorderStyle::Rounded,
-                    theme::panel_bg().with_fg(theme::color(inkcell::Color::rgb(42, 42, 48),
-                                                           inkcell::Color::rgb(28, 38, 56))));
 
         auto paintManifestBody = [&](inkcell::Surface& s, inkcell::Rect inner, float alpha,
                                      const catalog::ManifestEntry& m) {
@@ -824,40 +841,67 @@ class MainScene final : public BaseScene {
         }
     }
 
-    void drawHelp(inkcell::Surface& surface, inkcell::Rect frame) const {
-        sectionHead(surface, frame, "Help", "dock · registry · launch");
-        int y = frame.y + 4;
-        const char* lines[] = {
-            "DOCK",
-            "  ctrl-j / ctrl-k     prev / next section",
-            "  tab                 focus dock ↔ content",
-            "  g s a ?             jump Home/Sessions/Manifests/Help",
-            "",
-            "MANIFESTS",
-            "  j/k                 move",
-            "  1-9 / 0             kind facet (operable chips)",
-            "  f / t / /           cycle kind · tag · search",
-            "  enter               LAUNCH agent (hot-swap) or inspect",
-            "",
-            "SESSIONS",
-            "  enter resume · n new · d delete",
-            "",
-            "PALETTE",
-            "  ctrl-p · space space   command palette",
-            "",
-            "GLOBAL",
-            "  c chat · R refresh · T theme · q quit",
+    void drawSettings(inkcell::Surface& surface, inkcell::Rect frame) const {
+        sectionHead(surface, frame, "Settings", "theme · field shader · keys");
+        int y = frame.y + 3;
+
+        // ── Appearance ──────────────────────────────────────────────
+        surface.text({frame.x, y++}, "APPEARANCE", theme::violet());
+
+        auto row = [&](const char* key, const std::string& val, const char* bind) {
+            if (y >= frame.bottom()) return;
+            components::fieldLine(surface, frame.x, y, frame.w - 18, key, val);
+            surface.text({frame.x + std::max(20, frame.w - 16), y},
+                         bind, theme::italic_accent());
+            ++y;
         };
-        for (const char* line : lines) {
+
+        row("theme", theme::name(), "T");
+
+        std::string shLabel =
+            gfx::fieldEnabled() ? std::string(gfx::activeFieldName()) : std::string("off (solid bg)");
+        row("shader", shLabel, "S / B");
+
+        if (y < frame.bottom()) {
+            surface.text({frame.x, y++}, "",
+                         theme::dim());  // spacer via empty
+        }
+        // Shader catalog list
+        if (y < frame.bottom())
+            surface.text({frame.x, y++}, "SHADERS", theme::cyan_soft());
+        const auto& all = gfx::fieldShaders();
+        for (int i = 0; i < static_cast<int>(all.size()) && y < frame.bottom(); ++i) {
+            bool on = gfx::fieldEnabled() && i == gfx::activeFieldIndex();
+            std::string line = std::string(on ? "▸ " : "  ") + std::to_string(i + 1) + "  " +
+                               all[static_cast<size_t>(i)].name;
+            surface.text({frame.x, y++}, inkcell::text::truncate(line, frame.w),
+                         on ? theme::bright() : theme::muted());
+        }
+        if (y < frame.bottom()) {
+            bool off = !gfx::fieldEnabled();
+            surface.text({frame.x, y++},
+                         inkcell::text::truncate(std::string(off ? "▸ " : "  ") + "0  off (theme bg)",
+                                                 frame.w),
+                         off ? theme::amber() : theme::muted());
+        }
+
+        y += 1;
+        if (y < frame.bottom())
+            surface.text({frame.x, y++}, "KEYS", theme::violet());
+        const char* keys[] = {
+            "  T                 cycle theme (graphite/neon)",
+            "  S                 next shader (here in Settings)",
+            "  B                 toggle shader on/off (global)",
+            "  0                 shader off · 1-7 pick shader",
+            "  ctrl-j / ctrl-k   prev / next section",
+            "  ctrl-p / spc spc  command palette",
+            "  g s a ?           Home / Sessions / Manifests / Settings",
+            "  enter             launch selected agent",
+            "  c chat · q quit",
+        };
+        for (const char* line : keys) {
             if (y >= frame.bottom()) break;
-            bool head = line[0] && line[0] != ' ' &&
-                        std::isupper(static_cast<unsigned char>(line[0]));
-            bool indent = line[0] == ' ';
-            inkcell::Style st = theme::text();
-            if (!line[0]) st = theme::dim();
-            else if (head) st = theme::violet();
-            else if (indent) st = theme::muted();
-            surface.text({frame.x, y++}, line, st);
+            surface.text({frame.x, y++}, line, theme::muted());
         }
     }
 

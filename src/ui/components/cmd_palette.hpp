@@ -198,7 +198,9 @@ inline std::vector<CmdItem> hubCommands() {
         {"nav.home", "Home", "operator overview", "NAV", "g"},
         {"nav.sessions", "Sessions", "resume · create · delete", "NAV", "s"},
         {"nav.manifests", "Manifests", "registry · launch agents", "NAV", "a"},
-        {"nav.help", "Help", "keybindings", "NAV", "?"},
+        {"nav.settings", "Settings", "theme · shaders · keys", "NAV", "?"},
+        {"act.shader", "Next shader", "cycle field background", "ACTION", "S"},
+        {"act.shader_off", "Shader off", "solid theme background", "ACTION", "B"},
         {"nav.chat", "Open chat", "switch to agent scene", "NAV", "c"},
         {"act.refresh", "Refresh hub", "reload sessions + manifests", "ACTION", "R"},
         {"act.theme", "Toggle theme", "graphite ↔ neon", "ACTION", "T"},
@@ -249,10 +251,12 @@ inline std::vector<CmdItem> chatCommands() {
 inline void drawScrim(inkcell::Surface& s, inkcell::Rect page, float vis) {
     if (vis <= 0.01f) return;
     gfx::drawFieldBg(s, page, gfx::themeVariantIndex(), gfx::nowSeconds());
-    // DedSec grit overlay (sparse, cached) on top of field
-    const auto& grit = gfx::bakeDedSecScrim(page.w, page.h, gfx::themeVariantIndex(),
-                                           gfx::nowSeconds());
-    gfx::blit(s, grit, page.x, page.y, gfx::BlitMode::Transparent, page);
+    // DedSec grit only when field is on (otherwise solid theme already drawn)
+    if (gfx::fieldEnabled()) {
+        const auto& grit = gfx::bakeDedSecScrim(page.w, page.h, gfx::themeVariantIndex(),
+                                               gfx::nowSeconds());
+        gfx::blit(s, grit, page.x, page.y, gfx::BlitMode::Transparent, page);
+    }
     if (vis < 0.9f) {
         auto veil = inkcell::Style::normal()
                         .with_bg(theme::color(inkcell::Color::rgb(0, 0, 0), inkcell::Color::rgb(0, 0, 0)))
