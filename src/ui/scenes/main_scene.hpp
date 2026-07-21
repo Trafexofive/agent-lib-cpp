@@ -227,8 +227,8 @@ class MainScene final : public BaseScene {
         drawAppBar(surface, page, tier);
 
         // ── Stage (elevated rounded panel) ───────────────────────────
-        // Leave room: 1 status + 1 gap + 3 pill dock = 5 above bottom
-        const int dockReserve = 5;
+        // Leave room for floating pill dock only (3 rows + 1 gap)
+        const int dockReserve = 4;
         int stageTop = page.y + 3;
         int stageH = std::max(6, page.bottom() - dockReserve - stageTop);
         inkcell::Rect stage{page.x, stageTop, page.w, stageH};
@@ -239,17 +239,26 @@ class MainScene final : public BaseScene {
                     stageBg.with_fg(theme::color(inkcell::Color::rgb(48, 48, 48),
                                                  inkcell::Color::rgb(30, 42, 62))));
 
-        // Inner content inset
+        // Inner content inset — slide-up on every ctrl-j/k section change.
+        // Page enters from below (y offset → 0) while pill thumb slides.
         inkcell::Rect content{stage.x + 2, stage.y + 1, std::max(1, stage.w - 4),
                               std::max(1, stage.h - 2)};
-        drawContent(surface, content);
-
-        // ── Status rail (above pill) ─────────────────────────────────
-        int railY = page.bottom() - 4;
-        std::string left = dash.searchMode ? ("/" + dash.searchQuery + "█")
-                           : dash.notice.empty() ? std::string(model::dashboardSectionName(dash.section))
-                                                 : dash.notice;
-        components::drawStatusRail(surface, page.x, page.w, railY, left, "ctrl-j/k cycle · j/k list");
+        const int maxSlide = std::max(5, std::min(16, content.h / 2));
+        // Always slide up (use abs of pageSlideRows).
+        int yOff = dash.pageSlideRows(maxSlide);
+        if (yOff < 0) yOff = -yOff;
+        if (yOff > 0) {
+            inkcell::Rect slid = content;
+            slid.y += yOff;
+            slid.h = std::max(1, content.h - yOff);
+            drawContent(surface, slid);
+            // Leading edge hairline (content rising into place)
+            if (slid.y - 1 >= content.y)
+                surface.hline({content.x, slid.y - 1}, content.w, "─",
+                              theme::dim().with_bg(stageBg.bg));
+        } else {
+            drawContent(surface, content);
+        }
 
         // ── Floating pill dock ───────────────────────────────────────
         static const std::vector<components::PillItem> pills = {
@@ -285,10 +294,19 @@ class MainScene final : public BaseScene {
         surface.text({std::max(page.x, page.right() - rw), page.y}, right,
                      theme::dim().with_bg(bar.bg));
 
-        // secondary line: session + registry pulse
-        std::string sub = "session " + suffix(model_->activeSessionId) + "   registry " +
-                          std::to_string(model_->dashboard.manifests.size()) + "   " +
-                          (model_->running ? "● live" : "○ idle");
+        // secondary line: session + registry pulse (or live search compose)
+        std::string sub;
+        if (model_->dashboard.searchMode || !model_->dashboard.searchQuery.empty()) {
+            sub = "/" + model_->dashboard.searchQuery +
+                  (model_->dashboard.searchMode ? "█" : "") + "   esc clears";
+        } else if (!model_->dashboard.notice.empty() &&
+                   model_->dashboard.notice.rfind("launch:", 0) == 0) {
+            sub = model_->dashboard.notice;
+        } else {
+            sub = "session " + suffix(model_->activeSessionId) + "   registry " +
+                  std::to_string(model_->dashboard.manifests.size()) + "   " +
+                  (model_->running ? "● live" : "○ idle");
+        }
         surface.text({page.x, page.y + 1}, inkcell::text::truncate(sub, page.w),
                      theme::dim().with_bg(bar.bg));
     }

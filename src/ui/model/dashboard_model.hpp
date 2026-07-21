@@ -38,10 +38,11 @@ struct DashboardState {
     std::string notice;
     std::string manifestDir;
 
-    // Pill cycle animation
+    // Pill + page cycle animation
     int navPrevIndex = 0;
+    int navAnimDir = 1;  // +1 next (ctrl-j), -1 prev (ctrl-k)
     int64_t navAnimStartMs = 0;
-    static constexpr int navAnimDurationMs = 280;
+    static constexpr int navAnimDurationMs = 320;
     static constexpr int sectionCount = 6;
 
     static int64_t nowMs() {
@@ -61,9 +62,22 @@ struct DashboardState {
 
     bool navAnimating() const { return navAnimT() < 1.f; }
 
-    void beginNavAnim(int fromIdx) {
+    void beginNavAnim(int fromIdx, int dir) {
         navPrevIndex = fromIdx;
+        navAnimDir = dir >= 0 ? 1 : -1;
         navAnimStartMs = nowMs();
+    }
+
+    // Vertical page offset in rows: enters from below (slide up) for next,
+    // from above (slide down-in) for prev. 0 when settled.
+    int pageSlideRows(int maxRows) const {
+        float t = navAnimT();
+        if (t >= 1.f || maxRows <= 0) return 0;
+        float u = 1.f - t;
+        // ease-out cubic on remaining distance
+        float e = u * u * u;
+        int rows = static_cast<int>(e * static_cast<float>(maxRows));
+        return navAnimDir >= 0 ? rows : -rows;
     }
 
     void syncSection() { section = static_cast<DashboardSection>(navigationIndex); }
@@ -75,7 +89,7 @@ struct DashboardState {
         if (next < 0) next = sectionCount - 1;
         if (next >= sectionCount) next = 0;
         if (next == navigationIndex) return;
-        beginNavAnim(from);
+        beginNavAnim(from, delta >= 0 ? 1 : -1);
         navigationIndex = next;
         syncSection();
         focus = DashboardFocus::Content;
@@ -84,7 +98,11 @@ struct DashboardState {
     void select(DashboardSection next) {
         int from = navigationIndex;
         int idx = static_cast<int>(next);
-        if (idx != navigationIndex) beginNavAnim(from);
+        if (idx != navigationIndex) {
+            int dir = idx > from ? 1 : -1;
+            // wrap-aware direction for edge jumps is less important for letter jumps
+            beginNavAnim(from, dir);
+        }
         section = next;
         navigationIndex = idx;
         focus = DashboardFocus::Content;
