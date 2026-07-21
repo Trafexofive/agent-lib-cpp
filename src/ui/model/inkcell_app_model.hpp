@@ -17,6 +17,7 @@
 #include "src/core/agent.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
 #include "src/ui/chat/transcript_cache.hpp"
+#include "src/ui/components/cmd_palette.hpp"
 #include "src/ui/model/dashboard_model.hpp"
 #include "src/ui/bridge/agent_bridge.hpp"
 
@@ -307,6 +308,8 @@ struct ShellModel {
     std::string promptHistoryDraft;
 
     bool helpVisible = false;
+    components::CmdPalette cmdPalette;
+    std::string pendingPaletteAction;  // set on palette Enter; scenes execute
     bool askActive = false;
     chat::DialogState askDialog;
     inkcell::widgets::TextAreaState askInput;

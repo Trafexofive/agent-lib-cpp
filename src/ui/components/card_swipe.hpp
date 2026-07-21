@@ -1,7 +1,7 @@
 #pragma once
-// Curved card swipe transition for Manifest hub detail.
-// Two cards: outgoing arcs off along a sine path, incoming arcs on from the
-// opposite side. Terminal-grade "frontend" motion without real bezier fill.
+// Curved card swipe — soft, phased motion (not rigid lockstep).
+// X uses smooth ease-out, Y uses a delayed sine arc, alpha eases separately.
+// Incoming lags slightly so the stack reads as two cards, not a hard cut.
 
 #include <algorithm>
 #include <cmath>
@@ -14,111 +14,123 @@
 
 namespace cortex::mk3::ui::components {
 
-inline float easeOutCubic(float t) {
-    if (t <= 0.f) return 0.f;
-    if (t >= 1.f) return 1.f;
+// ── Easing ───────────────────────────────────────────────────────────
+inline float clamp01(float t) { return t < 0.f ? 0.f : (t > 1.f ? 1.f : t); }
+
+inline float smootherstep(float t) {
+    t = clamp01(t);
+    // Ken Perlin's smootherstep — flatter ends, silkier mid
+    return t * t * t * (t * (t * 6.f - 15.f) + 10.f);
+}
+
+inline float easeOutQuint(float t) {
+    t = clamp01(t);
     float u = 1.f - t;
-    return 1.f - u * u * u;
+    return 1.f - u * u * u * u * u;
 }
 
 inline float easeInOutCubic(float t) {
-    if (t <= 0.f) return 0.f;
-    if (t >= 1.f) return 1.f;
+    t = clamp01(t);
     return t < 0.5f ? 4.f * t * t * t : 1.f - std::pow(-2.f * t + 2.f, 3.f) / 2.f;
 }
 
-// Smoothstep for soft ends on the arc.
-inline float smoothstep(float t) {
-    t = std::max(0.f, std::min(1.f, t));
-    return t * t * (3.f - 2.f * t);
+// Map global t into a delayed local 0..1 window.
+inline float phase(float t, float delay, float span = 1.f) {
+    if (span <= 0.f) return 1.f;
+    return clamp01((t - delay) / span);
 }
 
 struct CardPose {
     int x = 0;
     int y = 0;
-    float alpha = 1.f;  // 0..1 — drives dim/bold, not real alpha
+    float alpha = 1.f;
 };
 
-// dir: +1 means navigating "next" (outgoing exits left? or right?)
-// Convention: next (j) → incoming from right, outgoing exits left (like page turn).
-// prev (k) → incoming from left, outgoing exits right.
-// t: 0 = start of swipe, 1 = settled on new card.
+// dir +1 = next (incoming from right); -1 = prev (incoming from left).
+// t 0..1 wall-clock normalized.
 inline CardPose outgoingPose(inkcell::Rect clip, int dir, float t) {
-    float e = easeInOutCubic(t);
-    float arc = std::sin(3.14159265f * smoothstep(t));  // 0→1→0 bump
-    int travel = std::max(6, clip.w + 2);
+    // Exit starts immediately, finishes a hair early so incoming owns the end.
+    float tx = smootherstep(phase(t, 0.f, 0.88f));
+    float ty = smootherstep(phase(t, 0.02f, 0.75f));
+    float ta = easeOutQuint(phase(t, 0.f, 0.70f));
+
+    int travel = std::max(8, clip.w + 4);
+    // Soft arc: peaks mid-flight, amplitude scales with card height
+    float arc = std::sin(3.14159265f * ty);
+    int arcAmp = std::max(1, std::min(4, clip.h / 5));
+
     CardPose p;
-    // Outgoing moves opposite to incoming arrival side
-    p.x = clip.x - dir * static_cast<int>(std::lround(e * travel));
-    p.y = clip.y - static_cast<int>(std::lround(arc * std::min(3.f, clip.h * 0.12f)));
-    p.alpha = 1.f - e;
+    p.x = clip.x - dir * static_cast<int>(std::lround(tx * travel));
+    // Slight overshoot on the arc (float then settle via ty window)
+    p.y = clip.y - static_cast<int>(std::lround(arc * arcAmp * (1.f - 0.15f * tx)));
+    p.alpha = 1.f - ta;
     return p;
 }
 
 inline CardPose incomingPose(inkcell::Rect clip, int dir, float t) {
-    float e = easeOutCubic(t);
-    float arc = std::sin(3.14159265f * smoothstep(1.f - t));  // starts high-ish, settles
-    // At t=0 incoming is off-screen on the dir side; at t=1 at rest
-    int travel = std::max(6, clip.w + 2);
-    float remain = 1.f - e;
+    // Incoming delayed — reads as follow-through, not rigid swap
+    float tx = smootherstep(phase(t, 0.10f, 0.90f));
+    float ty = smootherstep(phase(t, 0.14f, 0.82f));
+    float ta = easeOutQuint(phase(t, 0.08f, 0.85f));
+
+    int travel = std::max(8, clip.w + 4);
+    float remain = 1.f - tx;
+    // Arc settles: high on entry, damps as it lands
+    float arc = std::sin(3.14159265f * (1.f - ty) * 0.92f);
+    int arcAmp = std::max(1, std::min(4, clip.h / 5));
+
     CardPose p;
     p.x = clip.x + dir * static_cast<int>(std::lround(remain * travel));
-    p.y = clip.y - static_cast<int>(std::lround(arc * std::min(3.f, clip.h * 0.12f)));
-    p.alpha = 0.35f + 0.65f * e;
+    p.y = clip.y - static_cast<int>(std::lround(arc * arcAmp * remain));
+    p.alpha = 0.25f + 0.75f * ta;
     return p;
 }
 
-// Draw a rounded card shell at pose, clipped loosely to `clip` bounds.
-// body(s, innerRect, alpha) paints content inside the card chrome.
-inline void drawSwipedCard(inkcell::Surface& s, inkcell::Rect clip, CardPose pose, int cardW,
-                           int cardH, float accentHue /*0=cyan 1=violet*/,
-                           const std::function<void(inkcell::Surface&, inkcell::Rect, float)>& body) {
+inline void drawSwipedCard(
+    inkcell::Surface& s, inkcell::Rect clip, CardPose pose, int cardW, int cardH, float accentHue,
+    const std::function<void(inkcell::Surface&, inkcell::Rect, float)>& body) {
     cardW = std::min(cardW, clip.w);
     cardH = std::min(cardH, clip.h);
     if (cardW < 8 || cardH < 4) return;
 
     inkcell::Rect card{pose.x, pose.y, cardW, cardH};
-
-    // Skip if completely outside clip (rough)
     if (card.right() <= clip.x - 2 || card.x >= clip.right() + 2) return;
     if (card.bottom() <= clip.y - 2 || card.y >= clip.bottom() + 2) return;
 
-    // Intersect draw region with surface
     auto base = theme::panel_2();
-    // Fade via dim when alpha low
     bool ghost = pose.alpha < 0.55f;
+    bool soft = pose.alpha < 0.80f;
 
-    // Shadow under card (offset +1,+1) — only when mostly visible
-    if (pose.alpha > 0.4f) {
+    // Shadow only when card has presence — softens the “sticker” feel
+    if (pose.alpha > 0.35f) {
         auto sh = inkcell::Style::normal()
                       .with_bg(theme::color(inkcell::Color::rgb(6, 6, 8), inkcell::Color::rgb(2, 3, 6)))
                       .with_fg(theme::color(inkcell::Color::rgb(6, 6, 8), inkcell::Color::rgb(2, 3, 6)));
-        inkcell::Rect shadow{card.x + 1, card.y + 1, card.w, card.h};
-        // clip fill manually by only filling overlapping rows with clip
-        for (int y = std::max(shadow.y, clip.y); y < std::min(shadow.bottom(), clip.bottom()); ++y) {
-            int x0 = std::max(shadow.x, clip.x);
-            int x1 = std::min(shadow.right(), clip.right());
+        int shOff = pose.alpha > 0.7f ? 1 : 0;
+        for (int y = std::max(card.y + shOff, clip.y);
+             y < std::min(card.bottom() + shOff, clip.bottom()); ++y) {
+            int x0 = std::max(card.x + shOff, clip.x);
+            int x1 = std::min(card.right() + shOff, clip.right());
             if (x1 > x0) s.fill({x0, y, x1 - x0, 1}, " ", sh);
         }
     }
 
-    // Card body fill (clipped)
     for (int y = std::max(card.y, clip.y); y < std::min(card.bottom(), clip.bottom()); ++y) {
         int x0 = std::max(card.x, clip.x);
         int x1 = std::min(card.right(), clip.right());
         if (x1 > x0) s.fill({x0, y, x1 - x0, 1}, " ", base);
     }
 
-    // Border color by accent + ghost
     inkcell::Color bd =
         accentHue > 0.5f
             ? theme::color(inkcell::Color::rgb(120, 105, 155), inkcell::Color::rgb(140, 120, 210))
             : theme::color(inkcell::Color::rgb(70, 100, 110), inkcell::Color::rgb(50, 120, 150));
     if (ghost)
-        bd = theme::color(inkcell::Color::rgb(55, 55, 62), inkcell::Color::rgb(40, 50, 70));
+        bd = theme::color(inkcell::Color::rgb(50, 50, 58), inkcell::Color::rgb(36, 46, 64));
+    else if (soft)
+        bd = theme::color(inkcell::Color::rgb(58, 70, 78), inkcell::Color::rgb(45, 70, 95));
 
     auto border = base.with_fg(bd);
-    // Draw rounded corners only if those cells are inside clip
     auto putIf = [&](int x, int y, const char* g) {
         if (x >= clip.x && x < clip.right() && y >= clip.y && y < clip.bottom())
             s.text({x, y}, g, border);
@@ -136,10 +148,9 @@ inline void drawSwipedCard(inkcell::Surface& s, inkcell::Rect clip, CardPose pos
         putIf(card.right() - 1, y, "│");
     }
 
-    // Accent top hairline inside card
-    if (pose.alpha > 0.5f) {
-        auto ac = accentHue > 0.5f ? theme::violet_soft() : theme::cyan_soft();
-        ac = ac.with_bg(base.bg);
+    if (pose.alpha > 0.45f) {
+        auto ac = (accentHue > 0.5f ? theme::violet_soft() : theme::cyan_soft()).with_bg(base.bg);
+        if (soft) ac.dim = true;
         int y = card.y + 1;
         if (y >= clip.y && y < clip.bottom()) {
             for (int x = card.x + 2; x < card.right() - 2; ++x)
@@ -148,22 +159,19 @@ inline void drawSwipedCard(inkcell::Surface& s, inkcell::Rect clip, CardPose pos
     }
 
     inkcell::Rect inner{card.x + 2, card.y + 2, std::max(1, card.w - 4), std::max(1, card.h - 4)};
-    // Further clip inner to clip rect for body painter
     int iy0 = std::max(inner.y, clip.y);
     int iy1 = std::min(inner.bottom(), clip.bottom());
     int ix0 = std::max(inner.x, clip.x);
     int ix1 = std::min(inner.right(), clip.right());
-    if (iy1 > iy0 && ix1 > ix0) {
-        inkcell::Rect visible{ix0, iy0, ix1 - ix0, iy1 - iy0};
-        body(s, visible, pose.alpha);
-    }
+    if (iy1 > iy0 && ix1 > ix0)
+        body(s, {ix0, iy0, ix1 - ix0, iy1 - iy0}, pose.alpha);
 }
 
-// List-row nudge during swipe (selected row slides a few cells with arc).
-inline int listNudgeX(int dir, float t, int maxNudge = 3) {
-    float e = easeOutCubic(std::min(1.f, t * 1.4f));
-    // settle back: overshoot then rest — use sin for curve
-    float wave = std::sin(3.14159265f * e);
+// Soft list nudge — ease out then settle (no hard snap).
+inline int listNudgeX(int dir, float t, int maxNudge = 4) {
+    // Bell curve: rises quick, eases to 0 by end
+    float e = smootherstep(clamp01(t));
+    float wave = std::sin(3.14159265f * e) * (1.f - 0.35f * e);
     return dir * static_cast<int>(std::lround(wave * maxNudge));
 }
 

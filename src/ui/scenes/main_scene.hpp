@@ -17,6 +17,7 @@
 #include "src/ui/components/card_swipe.hpp"
 #include "src/ui/components/chips.hpp"
 #include "src/ui/components/chrome.hpp"
+#include "src/ui/components/cmd_palette.hpp"
 #include "src/ui/components/pill_nav.hpp"
 #include "src/ui/layout/density.hpp"
 #include "src/ui/model/dashboard_controller.hpp"
@@ -46,6 +47,22 @@ class MainScene final : public BaseScene {
     bool on_key(const inkcell::KeyEvent& event) override {
         using inkcell::KeyCode;
         auto& dash = model_->dashboard;
+
+        // Palette has priority when open / closing input sink
+        if (model_->cmdPalette.open && !model_->cmdPalette.closing) {
+            std::string action;
+            if (components::handleCmdPaletteKey(model_->cmdPalette, event, &action)) {
+                if (!action.empty()) runPaletteAction(action);
+                return true;
+            }
+        }
+
+        // Ctrl-P opens palette
+        if (event.code == KeyCode::Character && event.ctrl() &&
+            (event.ch == 'p' || event.ch == 'P')) {
+            model_->cmdPalette.toggle(components::hubCommands());
+            return true;
+        }
 
         // ── Search mode ──────────────────────────────────────────────
         if (dash.searchMode) {
@@ -159,6 +176,17 @@ class MainScene final : public BaseScene {
         }
 
         if (event.code == KeyCode::Character && !event.ctrl()) {
+            // Leader-leader: space space → palette (not in search)
+            if (event.ch == ' ') {
+                if (model_->cmdPalette.noteSpace()) {
+                    model_->cmdPalette.show(components::hubCommands());
+                    return true;
+                }
+                // single space swallowed on hub (no type-ahead surface)
+                return true;
+            }
+            model_->cmdPalette.clearLeader();
+
             // Kind digits on Manifests — operable facets
             if (dash.section == model::DashboardSection::Manifests && event.ch >= '0' &&
                 event.ch <= '9') {
@@ -292,9 +320,29 @@ class MainScene final : public BaseScene {
         components::drawPillDock(surface, page.x, page.w, page.bottom() - 1, pills,
                                  dash.navigationIndex, dash.navPrevIndex, dash.navAnimT(),
                                  dash.focus == model::DashboardFocus::Dock);
+
+        // Command palette above everything
+        components::drawCmdPalette(surface, page, model_->cmdPalette);
     }
 
    private:
+    void runPaletteAction(const std::string& id) {
+        auto& dash = model_->dashboard;
+        if (id == "nav.home") dash.select(model::DashboardSection::Home);
+        else if (id == "nav.sessions") dash.select(model::DashboardSection::Sessions);
+        else if (id == "nav.manifests") {
+            dash.select(model::DashboardSection::Manifests);
+            dash.refreshManifests();
+        } else if (id == "nav.help") dash.select(model::DashboardSection::Help);
+        else if (id == "nav.chat") model_->pendingRoute = "agent";
+        else if (id == "act.refresh") {
+            dash.refreshAll();
+            dash.notice = "refreshed";
+        } else if (id == "act.theme") theme::toggle();
+        else if (id == "act.launch") activate();
+        else if (id == "sys.quit") model_->pendingRoute = "quit";
+        bumpNotice();
+    }
     std::string activeName() const {
         return !model_->agentName.empty() ? model_->agentName : nonempty(cfg_.agentName, "builtin");
     }
@@ -761,6 +809,9 @@ class MainScene final : public BaseScene {
             "",
             "SESSIONS",
             "  enter resume · n new · d delete",
+            "",
+            "PALETTE",
+            "  ctrl-p · space space   command palette",
             "",
             "GLOBAL",
             "  c chat · R refresh · T theme · q quit",

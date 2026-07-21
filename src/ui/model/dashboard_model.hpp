@@ -58,7 +58,7 @@ struct DashboardState {
     int cardPrevIndex = -1;
     int cardAnimDir = 1;  // +1 next (j down list), -1 prev
     int64_t cardAnimStartMs = 0;
-    static constexpr int cardAnimDurationMs = 360;
+    static constexpr int cardAnimDurationMs = 480;  // longer = less rigid at 30fps
 
     // Kind facet order for 1-9 binding (0/all is unnumbered / `f` or `0`)
     static const std::vector<std::string>& kindFacets() {

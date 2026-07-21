@@ -9,6 +9,7 @@
 #include "src/ui/chat/chat_commands.hpp"
 #include "src/ui/chat/chat_io.hpp"
 #include "src/ui/chat/chat_view.hpp"
+#include "src/ui/components/cmd_palette.hpp"
 
 namespace cortex::mk3::ui::scenes {
 
@@ -21,6 +22,21 @@ class AgentScene final : public BaseScene {
         using inkcell::KeyCode;
 
         if (model_->askActive) return handleAskKey(event);
+
+        // Command palette (ctrl-p / space×2 when not typing)
+        if (model_->cmdPalette.open && !model_->cmdPalette.closing) {
+            std::string action;
+            if (components::handleCmdPaletteKey(model_->cmdPalette, event, &action)) {
+                if (!action.empty()) runPaletteAction(action);
+                return true;
+            }
+        }
+        if (event.code == KeyCode::Character && event.ctrl() &&
+            (event.ch == 'p' || event.ch == 'P')) {
+            model_->cmdPalette.toggle(components::chatCommands());
+            return true;
+        }
+
         if (model_->helpVisible) {
             if (event.code == KeyCode::Escape ||
                 (event.code == KeyCode::Character && event.ch == '?'))
@@ -63,6 +79,17 @@ class AgentScene final : public BaseScene {
         }
 
         if (model_->timelineFocus || !model_->atRoot() || !model_->composer.focused) {
+            // Leader-leader only when composer doesn't own space
+            if (event.code == KeyCode::Character && !event.ctrl() && event.ch == ' ') {
+                if (model_->cmdPalette.noteSpace()) {
+                    model_->cmdPalette.show(components::chatCommands());
+                    return true;
+                }
+                return true;
+            }
+            if (event.code == KeyCode::Character && !event.ctrl())
+                model_->cmdPalette.clearLeader();
+
             if (event.code == KeyCode::Character && (event.ch == 'm' || event.ch == 'M')) {
                 model_->pendingRoute = "main";
                 return true;
@@ -272,9 +299,55 @@ class AgentScene final : public BaseScene {
                                 model_->askMultiSelected);
         else if (model_->helpVisible)
             chat::drawHelpOverlay(surface, p);
+        // Palette above help/ask chrome
+        components::drawCmdPalette(surface, p, model_->cmdPalette);
     }
 
    private:
+    void runPaletteAction(const std::string& id) {
+        if (id == "nav.main") {
+            model_->pendingRoute = "main";
+            return;
+        }
+        if (id == "chat.thoughts") {
+            model_->showThoughts = !model_->showThoughts;
+            model_->rebuildViews();
+            return;
+        }
+        if (id == "chat.truncate") {
+            model_->truncateBodies = !model_->truncateBodies;
+            model_->rebuildViews();
+            return;
+        }
+        if (id == "chat.raw") {
+            model_->showRaw = !model_->showRaw;
+            model_->rebuildViews();
+            return;
+        }
+        if (id == "chat.clear") {
+            model_->clearTranscript();
+            return;
+        }
+        if (id == "chat.stop") {
+            stopAgentLoop("palette");
+            return;
+        }
+        if (id == "act.theme") {
+            theme::toggle();
+            return;
+        }
+        if (id == "sys.quit") {
+            model_->pendingRoute = "quit";
+            return;
+        }
+        if (id.rfind("slash:", 0) == 0) {
+            model_->composer.value = id.substr(6);
+            model_->composer.cursor = static_cast<int>(model_->composer.value.size());
+            model_->composer.focused = true;
+            runSlashCommand();
+        }
+    }
+
     bool handleAskKey(const inkcell::KeyEvent& event) {
         using inkcell::KeyCode;
         auto* card = model_->askDialog.index < model_->askDialog.cards.size()
