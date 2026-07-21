@@ -295,7 +295,8 @@ class MainScene final : public BaseScene {
 
         drawAppBar(surface, page, tier);
 
-        // Stage above textured 3-row pill (+ shadow)
+        // Stage above textured 3-row pill (+ shadow).
+        // +2 under app bar (no rule line) — one row of shader bg breathes between.
         const int dockReserve = 4;
         int stageTop = page.y + 3;
         int stageH = std::max(6, page.bottom() - dockReserve - stageTop);
@@ -361,10 +362,8 @@ class MainScene final : public BaseScene {
 
     void drawAppBar(inkcell::Surface& surface, inkcell::Rect page, layout::DensityTier tier) const {
         auto bar = theme::panel_2();
+        // Two rows only — no hairline under bar; wallpaper/ripple owns the gap.
         surface.fill({page.x, page.y, page.w, 2}, " ", bar);
-        surface.hline({page.x, page.y + 2}, page.w, "─",
-                      theme::dim().with_fg(theme::color(inkcell::Color::rgb(50, 50, 50),
-                                                        inkcell::Color::rgb(28, 40, 58))));
 
         // Brand: CORTEX bold + MK3 cyan — contiguous "CORTEX MK3" for scan/tests
         auto brand = theme::bright().with_bg(bar.bg);

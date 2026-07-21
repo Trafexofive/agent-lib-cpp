@@ -80,7 +80,7 @@ inline Shader shaderDedSecScrim() {
             px.alpha = 140;
         }
 
-        // Horizontal scan band (DedSec rain)
+        // Scan band + soft radial ripple from drifting center
         int scanY = static_cast<int>((phase * (env.h + 6))) % (env.h + 6) - 2;
         int dist = std::abs(y - scanY);
         if (dist <= 1) {
@@ -88,6 +88,17 @@ inline Shader shaderDedSecScrim() {
             px.style.fg = dedAccent(v);
             px.style.bold = dist == 0;
             px.alpha = dist == 0 ? 255 : 180;
+        }
+        {
+            float cx = env.w * (0.5f + 0.18f * std::sin(phase * 6.2831853f));
+            float cy = env.h * (0.45f + 0.15f * std::cos(phase * 5.1f));
+            float rr = std::sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy) * 2.2f);
+            float wave = std::sin(rr * 0.65f - phase * 12.f);
+            if (wave > 0.72f && px.alpha < 230) {
+                px.glyph = wave > 0.9f ? "∙" : "·";
+                px.style.fg = dedAccent2(v);
+                px.alpha = static_cast<uint8_t>(160 + wave * 70.f);
+            }
         }
 
         // Sparse hex / glitch glyphs
@@ -119,39 +130,78 @@ inline Shader shaderDedSecScrim() {
     return s;
 }
 
-// Subtle hub base wallpaper — low density, underlay-safe.
+// Hub wallpaper — drifting ripple rings + sparse nodes (underlay-safe).
 inline Shader shaderHubWallpaper() {
     Shader s;
-    s.id = "hub.wallpaper";
-    s.buckets = 8;
-    s.bucketMs = 120;
+    s.id = "hub.wallpaper.ripple";
+    s.buckets = 24;  // smoother loop
+    s.bucketMs = 70;
     s.shade = [](int x, int y, const ShaderEnv& env) -> CellPx {
         CellPx px;
         const int v = env.variant;
-        px.alpha = 0;  // default transparent — only paint sparse marks
+        px.alpha = 0;
         px.style.bg = theme::base_bg().bg;
         px.style.fg = dedGrid(v);
 
-        float n = hash01(x, y, 0xA11B0u + static_cast<uint32_t>(env.timeBucket));
-        // Very sparse nodes
-        if ((x % 16) == 0 && (y % 6) == 0) {
+        const float nx = (x + 0.5f) / std::max(1, env.w);
+        const float ny = (y + 0.5f) / std::max(1, env.h);
+        // Dual foci drift on slow Lissajous paths — loopy, not a single bullseye
+        const float tau = env.timeBucket / 24.f * 6.2831853f;
+        const float cx1 = 0.35f + 0.20f * std::sin(tau * 0.7f);
+        const float cy1 = 0.45f + 0.18f * std::cos(tau * 0.55f);
+        const float cx2 = 0.68f + 0.16f * std::cos(tau * 0.45f);
+        const float cy2 = 0.55f + 0.20f * std::sin(tau * 0.65f);
+
+        auto ring = [&](float cx, float cy, float speed, float tight) -> float {
+            float dx = (nx - cx) * env.w * 0.55f;  // aspect-ish
+            float dy = (ny - cy) * env.h;
+            float r = std::sqrt(dx * dx + dy * dy);
+            // traveling wave: crest every ~5 cells
+            float wave = std::sin(r * tight - tau * speed);
+            // soft envelope so only crest lights up
+            float crest = std::max(0.f, wave);
+            crest = crest * crest;
+            // fade with distance
+            float fall = 1.f / (1.f + r * 0.08f);
+            return crest * fall;
+        };
+
+        float e1 = ring(cx1, cy1, 1.6f, 0.55f);
+        float e2 = ring(cx2, cy2, 1.25f, 0.48f);
+        float e = std::max(e1, e2 * 0.85f);
+
+        if (e > 0.35f) {
+            // crest glyphs by intensity
+            if (e > 0.78f) {
+                px.glyph = (static_cast<int>(e * 20) & 1) ? "∙" : "○";
+                px.style.fg = dedAccent(v);
+                px.style.bold = e > 0.9f;
+                px.alpha = static_cast<uint8_t>(90 + e * 100.f);
+            } else if (e > 0.55f) {
+                px.glyph = "·";
+                px.style.fg = dedAccent(v);
+                px.style.dim = true;
+                px.alpha = static_cast<uint8_t>(60 + e * 80.f);
+            } else {
+                px.glyph = "·";
+                px.style.fg = dedGrid(v);
+                px.style.dim = true;
+                px.alpha = static_cast<uint8_t>(40 + e * 50.f);
+            }
+        }
+
+        // Sparse static grit so empty regions aren't dead
+        float n = hash01(x, y, 0xA11B0u);
+        if (px.alpha == 0 && (x % 18) == 0 && (y % 7) == 0) {
             px.glyph = "·";
             px.style.fg = dedGrid(v);
             px.style.dim = true;
-            px.alpha = 100;
-        }
-        if (n > 0.997f) {
-            px.glyph = (hash2(x, y) & 1) ? "┊" : "·";
-            px.style.fg = dedAccent(v);
-            px.style.dim = true;
-            px.alpha = 90;
-        }
-        // slow vertical breath line
-        int breath = static_cast<int>(env.timeBucket * 3 + x * 0.15f) % std::max(1, env.h);
-        if (y == breath && (x % 10) == 0) {
-            px.glyph = "·";
-            px.style.fg = dedAccent(v);
             px.alpha = 70;
+        } else if (px.alpha == 0 && n > 0.996f) {
+            px.glyph = "┊";
+            px.style.fg = dedViolet(v);
+            px.style.dim = true;
+            px.alpha = 55;
         }
         return px;
     };
