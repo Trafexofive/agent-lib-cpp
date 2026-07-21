@@ -76,15 +76,15 @@ class MainScene final : public BaseScene {
             return true;
         }
 
-        // ── Ctrl-J / Ctrl-K : section cycle (REQUIRED) ───────────────
+        // ── Ctrl-J / Ctrl-K : section cycle (inverted: j=prev, k=next) ──
         if (event.ctrl() && event.code == KeyCode::Character) {
             if (event.ch == 'j' || event.ch == 'J') {
-                dash.moveNavigation(1);
+                dash.moveNavigation(-1);  // prev
                 bumpNotice();
                 return true;
             }
             if (event.ch == 'k' || event.ch == 'K') {
-                dash.moveNavigation(-1);
+                dash.moveNavigation(1);  // next
                 bumpNotice();
                 return true;
             }
@@ -413,7 +413,7 @@ class MainScene final : public BaseScene {
                               std::to_string(model_->dashboard.agents.size()) + " top-level");
         y += 1;
         surface.text({frame.x, y++}, "DOCK", theme::dim());
-        surface.text({frame.x, y++}, "  ctrl-j / ctrl-k     cycle sections (animated pill)",
+        surface.text({frame.x, y++}, "  ctrl-j / ctrl-k     prev / next section (pill)",
                      theme::green());
         surface.text({frame.x, y++}, "  a · / · f · t       registry · search · kind · tag",
                      theme::text());
@@ -675,7 +675,7 @@ class MainScene final : public BaseScene {
         int y = frame.y + 4;
         const char* lines[] = {
             "DOCK",
-            "  ctrl-j / ctrl-k    cycle sections · sliding thumb + glow",
+            "  ctrl-j / ctrl-k    prev / next section · sliding thumb + glow",
             "  o s a h r ?        jump",
             "",
             "REGISTRY",
@@ -773,6 +773,7 @@ class MainScene final : public BaseScene {
     }
 
     void handle(const inkcell::Action& action) override {
+        // Match inverted ctrl-j/k: up=prev, down=next stays natural for scroll.
         if (action.is("scroll.up")) model_->dashboard.moveNavigation(-1);
         else if (action.is("scroll.down")) model_->dashboard.moveNavigation(1);
     }
