@@ -47,12 +47,18 @@ struct DashboardState {
     std::string notice;
     std::string manifestDir;
 
-    // Anim
+    // Section pill anim
     int navPrevIndex = 0;
     int navAnimDir = 1;
     int64_t navAnimStartMs = 0;
     static constexpr int navAnimDurationMs = 280;
     static constexpr int sectionCount = 4;
+
+    // Manifest card swipe (j/k) — curved dual-card transition
+    int cardPrevIndex = -1;
+    int cardAnimDir = 1;  // +1 next (j down list), -1 prev
+    int64_t cardAnimStartMs = 0;
+    static constexpr int cardAnimDurationMs = 360;
 
     // Kind facet order for 1-9 binding (0/all is unnumbered / `f` or `0`)
     static const std::vector<std::string>& kindFacets() {
@@ -131,13 +137,33 @@ struct DashboardState {
             std::max(0, std::min(static_cast<int>(sessions.size()) - 1, sessionIndex + delta));
     }
 
+    float cardAnimT() const {
+        if (cardAnimStartMs <= 0) return 1.f;
+        float t = static_cast<float>(nowMs() - cardAnimStartMs) /
+                  static_cast<float>(cardAnimDurationMs);
+        if (t < 0.f) return 0.f;
+        if (t > 1.f) return 1.f;
+        return t;
+    }
+
+    bool cardAnimating() const { return cardAnimT() < 1.f && cardPrevIndex >= 0; }
+
+    void beginCardAnim(int fromIdx, int dir) {
+        cardPrevIndex = fromIdx;
+        cardAnimDir = dir >= 0 ? 1 : -1;
+        cardAnimStartMs = nowMs();
+    }
+
     void moveManifest(int delta) {
         if (manifests.empty()) {
             manifestIndex = 0;
             return;
         }
-        manifestIndex =
+        int from = manifestIndex;
+        int next =
             std::max(0, std::min(static_cast<int>(manifests.size()) - 1, manifestIndex + delta));
+        if (next != from) beginCardAnim(from, delta >= 0 ? 1 : -1);
+        manifestIndex = next;
     }
 
     void moveAgent(int delta) { moveManifest(delta); }

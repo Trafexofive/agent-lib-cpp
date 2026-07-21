@@ -14,6 +14,7 @@
 #include "src/session/manager.hpp"
 #include "src/ui/assets/glyphs.hpp"
 #include "src/ui/chat/chat_view.hpp"
+#include "src/ui/components/card_swipe.hpp"
 #include "src/ui/components/chips.hpp"
 #include "src/ui/components/chrome.hpp"
 #include "src/ui/components/pill_nav.hpp"
@@ -582,13 +583,22 @@ class MainScene final : public BaseScene {
             }
 
         int listW = L.listW;
-        int visible = std::max(1, frame.bottom() - y);
+        int listBottom = frame.bottom();
+        // On narrow layouts reserve a floating swipe card strip at the bottom.
+        const bool floatingCard = !L.showDetail && frame.h >= 14;
+        if (floatingCard) listBottom = frame.bottom() - std::min(12, frame.h / 3);
+
+        int visible = std::max(1, listBottom - y);
         int start = std::max(0, std::min(selRow - visible / 3,
                                          std::max(0, static_cast<int>(rows.size()) - visible)));
         const std::string am = activeManifest();
         const std::string an = activeName();
 
-        for (int ri = start; ri < static_cast<int>(rows.size()) && y < frame.bottom(); ++ri) {
+        const float cardT = dash.cardAnimT();
+        const bool swiping = dash.cardAnimating();
+        const int nudge = swiping ? components::listNudgeX(dash.cardAnimDir, cardT) : 0;
+
+        for (int ri = start; ri < static_cast<int>(rows.size()) && y < listBottom; ++ri) {
             const auto& row = rows[static_cast<size_t>(ri)];
             if (row.header) {
                 surface.text({frame.x, y++}, inkcell::text::truncate(row.text, listW),
@@ -597,75 +607,140 @@ class MainScene final : public BaseScene {
             }
             const auto& m = dash.manifests[static_cast<size_t>(row.idx)];
             bool selected = row.idx == dash.manifestIndex;
+            bool wasPrev = swiping && row.idx == dash.cardPrevIndex;
             bool active =
                 m.kind == "agent" && ((!an.empty() && m.name == an) || (!am.empty() && m.path == am));
 
-            components::drawCardRow(surface, {frame.x, y, listW, 1}, selected, active);
-            components::kindChip(surface, frame.x + 2, y, m.kind, selected);
+            int rowX = frame.x + (selected ? nudge : (wasPrev ? -nudge / 2 : 0));
+            int rowW = std::max(8, listW - (rowX - frame.x));
+            components::drawCardRow(surface, {rowX, y, rowW, 1}, selected, active);
+            components::kindChip(surface, rowX + 2, y, m.kind, selected);
 
             std::string name = std::string(active ? "● " : "  ") + m.name;
             if (m.launchable && m.kind == "agent") name += selected ? "  ↵ launch" : "";
-            int nameCol = frame.x + 8;
-            int nameBudget = listW - 10;
+            int nameCol = rowX + 8;
+            int nameBudget = rowW - 10;
             if (L.showTagColumn && L.tagColMax > 0) {
-                nameBudget = std::max(10, listW - 10 - L.tagColMax);
+                nameBudget = std::max(10, rowW - 10 - L.tagColMax);
                 components::drawTagChips(surface, nameCol + nameBudget + 1, y, L.tagColMax, m.tags,
                                          4);
             }
-            surface.text({nameCol, y}, inkcell::text::truncate(name, nameBudget),
-                         selected ? theme::bright() : theme::text());
+            auto nameSt = selected ? theme::bright() : theme::text();
+            if (wasPrev) nameSt = theme::italic_dim();
+            surface.text({nameCol, y}, inkcell::text::truncate(name, nameBudget), nameSt);
             ++y;
         }
 
-        if (!L.showDetail) return;
+        // ── Detail / floating card with curved swipe ─────────────────
+        inkcell::Rect det;
+        if (L.showDetail) {
+            det = {frame.x + L.detailX, frame.y + 4, L.detailW, frame.h - 5};
+        } else if (floatingCard) {
+            int ch = frame.bottom() - listBottom;
+            det = {frame.x, listBottom, frame.w, ch};
+        } else {
+            return;
+        }
+
+        // Stage well (clip) — muted track behind the flying cards
+        surface.fill(det, " ", theme::panel_bg());
+        // soft well border
+        surface.box(det, inkcell::BorderStyle::Rounded,
+                    theme::panel_bg().with_fg(theme::color(inkcell::Color::rgb(42, 42, 48),
+                                                           inkcell::Color::rgb(28, 38, 56))));
+
+        auto paintManifestBody = [&](inkcell::Surface& s, inkcell::Rect inner, float alpha,
+                                     const catalog::ManifestEntry& m) {
+            bool ghost = alpha < 0.55f;
+            auto titleSt = ghost ? theme::muted() : theme::bright();
+            auto kindSt = ghost ? theme::dim() : theme::kindAccent(m.kind, true);
+            auto bodySt = ghost ? theme::italic_dim() : theme::text();
+            int dy = inner.y;
+            int ix = inner.x;
+            int iw = inner.w;
+            if (dy >= inner.bottom()) return;
+            s.text({ix, dy++}, inkcell::text::truncate(m.name, iw), titleSt);
+            if (dy >= inner.bottom()) return;
+            s.text({ix, dy++},
+                   inkcell::text::truncate(std::string(assets::kindLabel(m.kind)) + " · " +
+                                               m.category,
+                                           iw),
+                   kindSt);
+            if (!m.summary.empty() && dy < inner.bottom() - 6) {
+                for (const auto& line : chat::wrapWordsLossless(m.summary, iw)) {
+                    if (dy >= inner.bottom() - 6) break;
+                    s.text({ix, dy++}, line, bodySt);
+                }
+            }
+            if (dy < inner.bottom()) ++dy;
+            if (dy < inner.bottom())
+                components::fieldLine(s, ix, dy++, iw, "kind", m.kind);
+            if (dy < inner.bottom())
+                components::fieldLine(s, ix, dy++, iw, "path",
+                                      m.relPath.empty() ? m.path : m.relPath);
+            if (dy < inner.bottom() && (!m.provider.empty() || !m.model.empty()))
+                components::fieldLine(s, ix, dy++, iw, "engine",
+                                      nonempty(m.provider, "?") + "/" + nonempty(m.model, "?"));
+            if (dy < inner.bottom()) {
+                ++dy;
+                if (dy < inner.bottom()) {
+                    auto tagHead = ghost ? theme::dim() : theme::violet_soft();
+                    s.text({ix, dy++}, "TAGS", tagHead);
+                }
+                std::string all;
+                for (const auto& t : m.tags) {
+                    if (!all.empty()) all += "  ";
+                    all += "#" + t;
+                }
+                auto tagSt = ghost ? theme::italic_dim() : theme::italic();
+                tagSt.fg = theme::violet_soft().fg;
+                for (const auto& line : chat::wrapWordsLossless(all.empty() ? "—" : all, iw)) {
+                    if (dy >= inner.bottom() - 2) break;
+                    s.text({ix, dy++}, line, tagSt);
+                }
+            }
+            if (m.launchable && m.kind == "agent" && dy < inner.bottom()) {
+                bool isLive =
+                    (!am.empty() && m.path == am) || (!an.empty() && m.name == an);
+                if (dy < inner.bottom()) ++dy;
+                if (dy < inner.bottom())
+                    s.text({ix, dy++},
+                           isLive ? "LIVE · enter opens chat" : "ENTER LAUNCHES",
+                           ghost ? theme::green_soft() : theme::green());
+            }
+        };
+
         const auto* sel = dash.selectedManifest();
         if (!sel) return;
 
-        inkcell::Rect det{frame.x + L.detailX, frame.y + 4, L.detailW, frame.h - 5};
-        surface.fill(det, " ", theme::panel_2());
-        surface.box(det, inkcell::BorderStyle::Rounded,
-                    theme::panel_2().with_fg(theme::color(inkcell::Color::rgb(55, 55, 55),
-                                                          inkcell::Color::rgb(36, 50, 72))));
-        int dy = det.y + 1;
-        int ix = det.x + 2;
-        int iw = det.w - 4;
-        surface.text({ix, dy++}, inkcell::text::truncate(sel->name, iw), theme::bright());
-        surface.text({ix, dy++},
-                     inkcell::text::truncate(std::string(assets::kindLabel(sel->kind)) + " · " +
-                                                 sel->category,
-                                             iw),
-                     theme::cyan());
-        if (!sel->summary.empty()) {
-            for (const auto& line : chat::wrapWordsLossless(sel->summary, iw)) {
-                if (dy >= det.bottom() - 8) break;
-                surface.text({ix, dy++}, line, theme::text());
-            }
-        }
-        ++dy;
-        components::fieldLine(surface, ix, dy++, iw, "kind", sel->kind);
-        components::fieldLine(surface, ix, dy++, iw, "path",
-                              sel->relPath.empty() ? sel->path : sel->relPath);
-        if (!sel->provider.empty() || !sel->model.empty())
-            components::fieldLine(surface, ix, dy++, iw, "engine",
-                                  nonempty(sel->provider, "?") + "/" + nonempty(sel->model, "?"));
-        ++dy;
-        surface.text({ix, dy++}, "TAGS", theme::dim());
-        std::string all;
-        for (const auto& t : sel->tags) {
-            if (!all.empty()) all += "  ";
-            all += "#" + t;
-        }
-        for (const auto& line : chat::wrapWordsLossless(all.empty() ? "—" : all, iw)) {
-            if (dy >= det.bottom() - 3) break;
-            surface.text({ix, dy++}, line, theme::text());
-        }
-        ++dy;
-        if (sel->launchable && sel->kind == "agent") {
-            bool isLive = (!am.empty() && sel->path == am) || (!an.empty() && sel->name == an);
-            surface.text({ix, dy++}, isLive ? "LIVE · enter opens chat" : "ENTER LAUNCHES",
-                         theme::green());
-            auto pathSt = theme::italic_dim();
-            surface.text({ix, dy}, inkcell::text::truncate(sel->path, iw), pathSt);
+        const int cardW = det.w;
+        const int cardH = det.h;
+        // Rest pose fills the well
+        auto restPose = components::CardPose{det.x, det.y, 1.f};
+
+        if (swiping && dash.cardPrevIndex >= 0 &&
+            dash.cardPrevIndex < static_cast<int>(dash.manifests.size())) {
+            const auto& prev = dash.manifests[static_cast<size_t>(dash.cardPrevIndex)];
+            auto outP = components::outgoingPose(det, dash.cardAnimDir, cardT);
+            auto inP = components::incomingPose(det, dash.cardAnimDir, cardT);
+
+            // Outgoing first (under), then incoming on top
+            components::drawSwipedCard(
+                surface, det, outP, cardW, cardH, 0.8f,
+                [&](inkcell::Surface& s, inkcell::Rect inner, float a) {
+                    paintManifestBody(s, inner, a, prev);
+                });
+            components::drawSwipedCard(
+                surface, det, inP, cardW, cardH, 0.15f,
+                [&](inkcell::Surface& s, inkcell::Rect inner, float a) {
+                    paintManifestBody(s, inner, a, *sel);
+                });
+        } else {
+            components::drawSwipedCard(
+                surface, det, restPose, cardW, cardH, 0.15f,
+                [&](inkcell::Surface& s, inkcell::Rect inner, float a) {
+                    paintManifestBody(s, inner, a, *sel);
+                });
         }
     }
 
