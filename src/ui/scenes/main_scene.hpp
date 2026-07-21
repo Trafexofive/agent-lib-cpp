@@ -1,10 +1,13 @@
 #pragma once
-// Dashboard / control hub.
-// Cortex-local UI only (src/ui/components + assets). inkcell = primitives.
+// Dashboard hub — full-bleed content + floating bottom pill dock.
+// Frontend-grade density (narrow/standard/wide), category chips, tags, /.
+// Cortex-local chrome only.
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -12,7 +15,10 @@
 #include "src/session/manager.hpp"
 #include "src/ui/assets/glyphs.hpp"
 #include "src/ui/chat/chat_view.hpp"
+#include "src/ui/components/chips.hpp"
 #include "src/ui/components/chrome.hpp"
+#include "src/ui/components/pill_nav.hpp"
+#include "src/ui/layout/density.hpp"
 #include "src/ui/model/dashboard_controller.hpp"
 
 namespace cortex::mk3::ui::scenes {
@@ -24,89 +30,146 @@ class MainScene final : public BaseScene {
 
     void on_enter() override {
         BaseScene::on_enter();
-        // Discovery root: explicit --manifest-dir, else walk up from agent.yml,
-        // else empty (catalog falls back to cwd/binary/CORTEX_HOME).
         if (!cfg_.manifestDir.empty())
             model_->dashboard.manifestDir = cfg_.manifestDir;
         else if (!cfg_.manifestPath.empty())
-            model_->dashboard.manifestDir = cfg_.manifestPath;  // resolveManifestsRoot walks up
+            model_->dashboard.manifestDir = cfg_.manifestPath;
         else
             model_->dashboard.manifestDir.clear();
         model_->dashboard.refreshAll();
-        if (model_->dashboard.manifests.empty()) {
-            model_->dashboard.notice =
-                "no PROD manifests found — check manifests/ next to binary or CORTEX_HOME";
-        } else {
-            model_->dashboard.notice =
-                std::to_string(model_->dashboard.manifests.size()) + " manifests · " +
-                std::to_string(model_->dashboard.agents.size()) + " top-level agents";
-        }
-        // Highlight active agent among manifests when possible.
-        if (!cfg_.agentName.empty() || !cfg_.manifestPath.empty()) {
-            for (int i = 0; i < static_cast<int>(model_->dashboard.manifests.size()); ++i) {
-                const auto& m = model_->dashboard.manifests[static_cast<size_t>(i)];
-                if (m.kind != "agent") continue;
-                if ((!cfg_.agentName.empty() && m.name == cfg_.agentName) ||
-                    (!cfg_.manifestPath.empty() && m.path == cfg_.manifestPath)) {
-                    model_->dashboard.manifestIndex = i;
-                    break;
-                }
-            }
-        }
+        model_->dashboard.focus = model::DashboardFocus::Content;
+        model_->dashboard.searchMode = false;
+        bumpNotice();
+        highlightActiveAgent();
     }
 
     bool on_key(const inkcell::KeyEvent& event) override {
         using inkcell::KeyCode;
         auto& dash = model_->dashboard;
 
-        if (event.code == KeyCode::Escape) {
-            dash.focus = model::DashboardFocus::Navigation;
-            return true;
-        }
-        if (event.code == KeyCode::Tab || event.code == KeyCode::ArrowRight) {
-            if (dash.section == model::DashboardSection::Sessions ||
-                dash.section == model::DashboardSection::Manifests)
-                dash.focus = model::DashboardFocus::Content;
-            return true;
-        }
-        if (event.code == KeyCode::ArrowLeft) {
-            dash.focus = model::DashboardFocus::Navigation;
-            return true;
-        }
-        if (event.code == KeyCode::ArrowUp ||
-            (event.code == KeyCode::Character && (event.ch == 'k' || event.ch == 'K'))) {
-            if (dash.focus == model::DashboardFocus::Content) {
-                if (dash.section == model::DashboardSection::Sessions)
-                    dash.moveSession(-1);
-                else if (dash.section == model::DashboardSection::Manifests)
-                    dash.moveManifest(-1);
-                else
-                    dash.moveNavigation(-1);
-            } else {
-                dash.moveNavigation(-1);
+        // ── Search mode (/) ──────────────────────────────────────────
+        if (dash.searchMode) {
+            if (event.code == KeyCode::Escape) {
+                dash.searchMode = false;
+                dash.searchQuery.clear();
+                dash.refreshManifests();
+                bumpNotice();
+                return true;
             }
-            return true;
+            if (event.code == KeyCode::Enter) {
+                dash.searchMode = false;
+                bumpNotice();
+                return true;
+            }
+            if (event.code == KeyCode::Backspace) {
+                if (!dash.searchQuery.empty()) dash.searchQuery.pop_back();
+                dash.refreshManifests();
+                bumpNotice();
+                return true;
+            }
+            if (event.code == KeyCode::Character && !event.ctrl() && event.ch >= 32) {
+                dash.searchQuery.push_back(static_cast<char>(event.ch));
+                dash.refreshManifests();
+                bumpNotice();
+                return true;
+            }
+            return true;  // trap while searching
         }
-        if (event.code == KeyCode::ArrowDown ||
-            (event.code == KeyCode::Character && (event.ch == 'j' || event.ch == 'J'))) {
-            if (dash.focus == model::DashboardFocus::Content) {
-                if (dash.section == model::DashboardSection::Sessions)
-                    dash.moveSession(1);
-                else if (dash.section == model::DashboardSection::Manifests)
-                    dash.moveManifest(1);
-                else
-                    dash.moveNavigation(1);
-            } else {
+
+        // ── Section cycle ────────────────────────────────────────────
+        // Classic TTY: Ctrl-J == LF == Enter — cannot bind Ctrl-J reliably.
+        // Primary: Ctrl-N / Ctrl-P  (and Ctrl-K = prev). Also [ ] .
+        if (event.ctrl() && event.code == KeyCode::Character) {
+            if (event.ch == 'n' || event.ch == 'N' || event.ch == 'j' || event.ch == 'J') {
                 dash.moveNavigation(1);
+                bumpNotice();
+                return true;
+            }
+            if (event.ch == 'p' || event.ch == 'P' || event.ch == 'k' || event.ch == 'K') {
+                dash.moveNavigation(-1);
+                bumpNotice();
+                return true;
+            }
+        }
+        if (event.ctrl() && event.code == KeyCode::ArrowDown) {
+            dash.moveNavigation(1);
+            bumpNotice();
+            return true;
+        }
+        if (event.ctrl() && event.code == KeyCode::ArrowUp) {
+            dash.moveNavigation(-1);
+            bumpNotice();
+            return true;
+        }
+        if (!event.ctrl() && event.code == KeyCode::Character) {
+            if (event.ch == ']') {
+                dash.moveNavigation(1);
+                bumpNotice();
+                return true;
+            }
+            if (event.ch == '[') {
+                dash.moveNavigation(-1);
+                bumpNotice();
+                return true;
+            }
+        }
+
+        if (event.code == KeyCode::Escape) {
+            if (!dash.searchQuery.empty()) {
+                dash.searchQuery.clear();
+                dash.refreshManifests();
+                dash.notice = "search cleared";
+                return true;
+            }
+            if (!dash.tagFilter.empty()) {
+                dash.tagFilter.clear();
+                dash.refreshManifests();
+                dash.notice = "tag cleared";
+                return true;
+            }
+            if (!dash.manifestFilter.empty()) {
+                dash.manifestFilter.clear();
+                dash.refreshManifests();
+                dash.notice = "kind cleared";
+                return true;
             }
             return true;
         }
+
+        // Content list nav
+        if (!event.ctrl() &&
+            (event.code == KeyCode::ArrowUp ||
+             (event.code == KeyCode::Character && (event.ch == 'k' || event.ch == 'K')))) {
+            if (dash.section == model::DashboardSection::Sessions)
+                dash.moveSession(-1);
+            else if (dash.section == model::DashboardSection::Manifests)
+                dash.moveManifest(-1);
+            return true;
+        }
+        if (!event.ctrl() &&
+            (event.code == KeyCode::ArrowDown ||
+             (event.code == KeyCode::Character && (event.ch == 'j' || event.ch == 'J')))) {
+            if (dash.section == model::DashboardSection::Sessions)
+                dash.moveSession(1);
+            else if (dash.section == model::DashboardSection::Manifests)
+                dash.moveManifest(1);
+            return true;
+        }
+
         if (event.code == KeyCode::Enter) {
             activate();
             return true;
         }
-        if (event.code == KeyCode::Character) {
+
+        if (event.code == KeyCode::Character && !event.ctrl()) {
             switch (event.ch) {
+                case '/':
+                    if (dash.section == model::DashboardSection::Manifests) {
+                        dash.searchMode = true;
+                        dash.notice = "search: ";
+                        return true;
+                    }
+                    break;
                 case 'c':
                 case 'C':
                     model_->pendingRoute = "agent";
@@ -114,39 +177,46 @@ class MainScene final : public BaseScene {
                 case 'o':
                 case 'O':
                     dash.select(model::DashboardSection::Overview);
+                    bumpNotice();
                     return true;
                 case 's':
                 case 'S':
                     dash.select(model::DashboardSection::Sessions);
-                    dash.focus = model::DashboardFocus::Content;
+                    bumpNotice();
                     return true;
                 case 'a':
                 case 'A':
                 case 'm':
                 case 'M':
-                    // m was "return to dashboard from chat" via keymap; here m/a open manifests.
                     dash.select(model::DashboardSection::Manifests);
-                    dash.focus = model::DashboardFocus::Content;
                     dash.refreshManifests();
+                    bumpNotice();
                     return true;
                 case 'f':
                 case 'F':
                     if (dash.section == model::DashboardSection::Manifests) {
                         dash.cycleManifestFilter();
-                        dash.notice = dash.manifestFilter.empty()
-                                          ? "filter: all"
-                                          : "filter: " + dash.manifestFilter;
+                        bumpNotice();
+                    }
+                    return true;
+                case 't':
+                    if (dash.section == model::DashboardSection::Manifests) {
+                        dash.cycleTagFilter();
+                        bumpNotice();
                     }
                     return true;
                 case 'h':
                 case 'H':
                     dash.select(model::DashboardSection::Harness);
+                    bumpNotice();
                     return true;
                 case 'r':
                     dash.select(model::DashboardSection::Runtime);
+                    bumpNotice();
                     return true;
                 case '?':
                     dash.select(model::DashboardSection::Help);
+                    bumpNotice();
                     return true;
                 case 'n':
                 case 'N':
@@ -156,13 +226,12 @@ class MainScene final : public BaseScene {
                     return true;
                 case 'd':
                 case 'D':
-                    if (dash.section == model::DashboardSection::Sessions &&
-                        dash.focus == model::DashboardFocus::Content)
+                    if (dash.section == model::DashboardSection::Sessions)
                         deleteSelectedSession();
                     return true;
                 case 'R':
                     dash.refreshAll();
-                    dash.notice = "sessions + manifests refreshed";
+                    dash.notice = "refreshed";
                     return true;
                 case 'T':
                     theme::toggle();
@@ -177,90 +246,81 @@ class MainScene final : public BaseScene {
     }
 
     void draw(inkcell::Surface& surface) const override {
-        if (layout::render_min_size_notice(surface)) return;
+        if (layout::render_min_size_notice(surface, 80, 18)) return;
         surface.clear(theme::base_bg());
         inkcell::Rect page = layout::page(surface);
+        auto tier = layout::densityOf(page.w);
 
-        // Header
-        components::headerStrip(
-            surface, {page.x, page.y, page.w, 2},
-            std::string(assets::DASH_TITLE) + "  /  " + assets::DASH_SUB,
-            nonempty(cfg_.provider, "?") + "/" + nonempty(cfg_.model, "default") + "  ·  " +
-                theme::name());
+        // Top app bar
+        std::string left = std::string(assets::DASH_TITLE) + "  ·  " +
+                           model::dashboardSectionName(model_->dashboard.section);
+        std::string right = nonempty(cfg_.agentName, "builtin") + "  ·  " +
+                            nonempty(cfg_.provider, "?") + "/" + nonempty(cfg_.model, "?") +
+                            "  ·  " + layout::densityName(tier);
+        components::headerStrip(surface, {page.x, page.y, page.w, 2}, left, right);
 
+        // Dock stack: status rail + glow + pill = 3 rows
+        const int dockH = 3;
         int top = page.y + 3;
-        int footerY = page.bottom() - 1;
-        int navW = page.w >= 110 ? 28 : 22;
-        inkcell::Rect nav{page.x, top, navW, std::max(1, footerY - top - 1)};
-        inkcell::Rect content{nav.right() + 2, top, std::max(1, page.right() - nav.right() - 2),
-                              nav.h};
-
-        drawNavigation(surface, nav);
+        int contentH = std::max(1, page.bottom() - dockH - top);
+        inkcell::Rect content{page.x, top, page.w, contentH};
         drawContent(surface, content);
-        drawFooter(surface, {page.x, footerY, page.w, 1});
+
+        const auto& dash = model_->dashboard;
+        std::string mid = dash.searchMode ? ("/" + dash.searchQuery + "▌")
+                          : dash.notice.empty() ? std::string("hub")
+                                                : dash.notice;
+        components::drawStatusRail(surface, page.x, page.w, page.bottom() - 3, mid,
+                                   "^N/^P cycle  [ ] also", "j/k list · / search · q");
+
+        static const std::vector<components::PillItem> pills = {
+            {"o", "Overview"}, {"s", "Sessions"}, {"a", "Manifests"},
+            {"h", "Harness"},  {"r", "Runtime"},  {"?", "Help"},
+        };
+        components::drawPillDock(surface, page.x, page.w, page.bottom() - 1, pills,
+                                 dash.navigationIndex, dash.navPrevIndex, dash.navAnimT());
     }
 
    private:
-    struct NavItem {
-        model::DashboardSection section;
-        const char* key;
-        const char* label;
-        const char* blurb;
-    };
+    void highlightActiveAgent() {
+        if (cfg_.agentName.empty() && cfg_.manifestPath.empty()) return;
+        for (int i = 0; i < static_cast<int>(model_->dashboard.manifests.size()); ++i) {
+            const auto& m = model_->dashboard.manifests[static_cast<size_t>(i)];
+            if (m.kind != "agent") continue;
+            if ((!cfg_.agentName.empty() && m.name == cfg_.agentName) ||
+                (!cfg_.manifestPath.empty() && m.path == cfg_.manifestPath)) {
+                model_->dashboard.manifestIndex = i;
+                break;
+            }
+        }
+    }
 
-    static const std::vector<NavItem>& navItems() {
-        static const std::vector<NavItem> v = {
-            {model::DashboardSection::Overview, "o", "Overview", "workspace pulse"},
-            {model::DashboardSection::Sessions, "s", "Sessions", "resume · new · delete"},
-            {model::DashboardSection::Manifests, "a", "Manifests", "PROD registry hub"},
-            {model::DashboardSection::Harness, "h", "Harness", "live capability surface"},
-            {model::DashboardSection::Runtime, "r", "Runtime", "provider · process"},
-            {model::DashboardSection::Help, "?", "Help", "keys + hub flow"},
-        };
-        return v;
+    void bumpNotice() {
+        auto& dash = model_->dashboard;
+        if (dash.searchMode) {
+            dash.notice = "search: " + dash.searchQuery;
+            return;
+        }
+        if (dash.section == model::DashboardSection::Manifests) {
+            dash.notice = std::to_string(dash.manifests.size()) + " shown";
+            if (!dash.manifestFilter.empty()) dash.notice += " · kind=" + dash.manifestFilter;
+            if (!dash.tagFilter.empty()) dash.notice += " · tag=" + dash.tagFilter;
+            if (!dash.searchQuery.empty()) dash.notice += " · /" + dash.searchQuery;
+        } else if (dash.section == model::DashboardSection::Sessions) {
+            dash.notice = std::to_string(dash.sessions.size()) + " sessions";
+        } else {
+            dash.notice = model::dashboardSectionName(dash.section);
+        }
     }
 
     static std::string suffix(const std::string& value) {
         if (value.empty()) return "none";
         return value.size() > 14 ? value.substr(value.size() - 14) : value;
     }
-
     static std::string basename(const std::string& path) {
         if (path.empty()) return "none";
         size_t slash = path.find_last_of('/');
         return slash == std::string::npos ? path : path.substr(slash + 1);
-    }
-
-    void drawNavigation(inkcell::Surface& surface, inkcell::Rect frame) const {
-        components::fillRect(surface, frame, theme::panel_bg());
-        components::accentBar(surface, frame.x, frame.y, frame.h,
-                              model_->dashboard.focus == model::DashboardFocus::Navigation
-                                  ? theme::footer_accent_focus()
-                                  : theme::footer_accent_idle());
-
-        surface.text({frame.x + 2, frame.y}, "NAV", theme::dim());
-        int y = frame.y + 2;
-        const auto& items = navItems();
-        // Single-row nav entries so 80x24 still shows every section.
-        for (int i = 0; i < static_cast<int>(items.size()); ++i) {
-            const auto& it = items[static_cast<size_t>(i)];
-            bool sel = static_cast<int>(model_->dashboard.section) == i;
-            bool focus = sel && model_->dashboard.focus == model::DashboardFocus::Navigation;
-            inkcell::Rect row{frame.x + 1, y, frame.w - 2, 1};
-            components::fillRect(surface, row, focus ? theme::panel_3() : theme::panel_bg());
-            if (focus)
-                components::accentBar(surface, row.x, row.y, 1, theme::footer_accent_focus());
-            std::string label = std::string(it.key) + "  " + it.label;
-            surface.text({row.x + 2, row.y}, inkcell::text::truncate(label, row.w - 3),
-                         focus ? theme::bright() : (sel ? theme::text() : theme::dim()));
-            ++y;
-        }
-
-        if (frame.h >= 6) {
-            surface.text({frame.x + 2, frame.bottom() - 3}, "c  chat", theme::green());
-            surface.text({frame.x + 2, frame.bottom() - 2}, "T  theme", theme::dim());
-            surface.text({frame.x + 2, frame.bottom() - 1}, "q  quit", theme::dim());
-        }
     }
 
     void drawContent(inkcell::Surface& surface, inkcell::Rect frame) const {
@@ -282,79 +342,114 @@ class MainScene final : public BaseScene {
 
     void drawOverview(inkcell::Surface& surface, inkcell::Rect frame) const {
         sectionTitle(surface, frame, "Overview",
-                     "Hub pulse — chat, sessions, PROD manifests registry");
+                     "Control hub · floating pill dock · PROD manifests registry");
         int y = frame.y + 5;
-        components::fieldLine(surface, frame.x, y++, frame.w, "agent",
-                              nonempty(cfg_.agentName, "builtin"));
-        components::fieldLine(surface, frame.x, y++, frame.w, "status",
-                              model_->running ? "running" : "ready");
+        // Metric cards row
+        auto card = [&](int x, const char* label, const std::string& value, inkcell::Style st) {
+            surface.text({x, y}, label, theme::dim());
+            surface.text({x, y + 1}, inkcell::text::truncate(value, 18), st);
+        };
+        card(frame.x, "AGENT", nonempty(cfg_.agentName, "builtin"), theme::bright());
+        card(frame.x + 22, "STATUS", model_->running ? "running" : "ready",
+             model_->running ? theme::green() : theme::text());
+        card(frame.x + 44, "REGISTRY",
+             std::to_string(model_->dashboard.manifests.size()) + " entries", theme::cyan());
+        if (frame.w >= 90)
+            card(frame.x + 66, "SESSIONS", std::to_string(model_->dashboard.sessions.size()),
+                 theme::text());
+        y += 3;
+        components::hairline(surface, frame.x, y++, frame.w, theme::dim());
         components::fieldLine(surface, frame.x, y++, frame.w, "session",
                               suffix(model_->activeSessionId));
         components::fieldLine(surface, frame.x, y++, frame.w, "manifest",
                               cfg_.manifestPath.empty() ? "builtin" : basename(cfg_.manifestPath));
+        components::fieldLine(surface, frame.x, y++, frame.w, "top-level agents",
+                              std::to_string(model_->dashboard.agents.size()));
         y += 1;
-        surface.text({frame.x, y++}, "REGISTRY", theme::dim());
-        components::fieldLine(surface, frame.x, y++, frame.w, "manifests",
-                              std::to_string(model_->dashboard.manifests.size()) + " entries");
-        components::fieldLine(surface, frame.x, y++, frame.w, "agents",
-                              std::to_string(model_->dashboard.agents.size()) + " launchable");
-        components::fieldLine(surface, frame.x, y++, frame.w, "sessions",
-                              std::to_string(model_->dashboard.sessions.size()));
-        y += 1;
-        surface.text({frame.x, y++}, "QUICK", theme::dim());
-        surface.text({frame.x, y++}, "  c / Enter   open chat", theme::green());
-        surface.text({frame.x, y++}, "  a / m       manifests hub (PROD registry)", theme::text());
-        surface.text({frame.x, y++}, "  s           sessions", theme::text());
-        surface.text({frame.x, y++}, "  f           cycle kind filter (in Manifests)", theme::text());
-        surface.text({frame.x, y++}, "  n           new session → chat", theme::text());
-        y += 1;
-        surface.text({frame.x, y++}, "LAYOUT RULE", theme::dim());
-        surface.text({frame.x, y++}, "  manifests/  = PROD / std registry", theme::text());
-        surface.text({frame.x, y}, "  config/     = DEV / MVP / experiments", theme::dim());
+        surface.text({frame.x, y++}, "DOCK", theme::dim());
+        surface.text({frame.x, y++}, "  Ctrl-N / Ctrl-P   cycle pill (Ctrl-J = Enter on TTY)",
+                     theme::green());
+        surface.text({frame.x, y++}, "  [  ]              cycle pill too", theme::text());
+        surface.text({frame.x, y++}, "  a  /  f  t        manifests · kind · tag", theme::text());
+        surface.text({frame.x, y++}, "  /                search registry", theme::text());
+        surface.text({frame.x, y}, "  c                open chat", theme::text());
     }
 
     void drawSessions(inkcell::Surface& surface, inkcell::Rect frame) const {
-        sectionTitle(surface, frame, "Sessions",
-                     "Enter resume · n new · d delete · R refresh");
+        sectionTitle(surface, frame, "Sessions", "Enter resume · n new · d delete · R refresh");
         const auto& dash = model_->dashboard;
         int y = frame.y + 5;
         if (dash.sessions.empty()) {
             surface.text({frame.x, y++}, "No saved sessions.", theme::dim());
-            surface.text({frame.x, y}, "Press n for a clean session → chat.", theme::text());
+            surface.text({frame.x, y}, "Press n → clean session → chat.", theme::text());
             return;
         }
-        int visible = std::max(1, frame.bottom() - y - 2);
+        int visible = std::max(1, frame.bottom() - y);
         int start = std::max(0, std::min(dash.sessionIndex - visible / 2,
                                          static_cast<int>(dash.sessions.size()) - visible));
         for (int i = start; i < static_cast<int>(dash.sessions.size()) && y < frame.bottom(); ++i) {
             const auto& s = dash.sessions[static_cast<size_t>(i)];
-            bool selected =
-                i == dash.sessionIndex && dash.focus == model::DashboardFocus::Content;
-            std::string line = suffix(s.id) + "  " + nonempty(s.agentName, "?") + "  " +
+            bool selected = i == dash.sessionIndex;
+            components::drawCardRow(surface, {frame.x, y, frame.w, 1}, selected, false);
+            std::string line = "  " + suffix(s.id) + "  " + nonempty(s.agentName, "?") + "  " +
                                std::to_string(s.turnCount) + "r  " + s.updated;
-            components::listRow(surface, {frame.x, y, frame.w, 1}, line, selected);
+            surface.text({frame.x + 1, y}, inkcell::text::truncate(line, frame.w - 2),
+                         selected ? theme::bright() : theme::text());
             ++y;
         }
     }
 
     void drawManifests(inkcell::Surface& surface, inkcell::Rect frame) const {
         const auto& dash = model_->dashboard;
-        std::string filter = dash.manifestFilter.empty() ? "all" : dash.manifestFilter;
+        auto L = layout::manifestLayoutFor(frame.w);
+
+        std::string kind = dash.manifestFilter.empty() ? "all" : dash.manifestFilter;
+        std::string tag = dash.tagFilter.empty() ? "all" : dash.tagFilter;
         sectionTitle(surface, frame, "Manifests",
-                     std::string("PROD registry · filter=") + filter +
-                         " · f cycle · R refresh · " +
-                         std::to_string(dash.manifests.size()) + " entries");
+                     std::string("PROD registry · ") + layout::densityName(layout::densityOf(frame.w)) +
+                         " · kind=" + kind + " · tag=" + tag +
+                         (dash.searchQuery.empty() ? "" : " · /" + dash.searchQuery));
 
         int y = frame.y + 5;
+
+        // ── Kind chip strip ──
+        std::map<std::string, int> kindCounts;
+        // counts from unfiltered would be nicer; approximate from current+note
+        for (const auto& m : dash.manifests) kindCounts[m.kind]++;
+        // Always show full kind palette
+        static const char* kinds[] = {"agent", "tool", "feed", "workflow", "harness", "prompt", "skill"};
+        std::vector<components::Chip> kindChips;
+        kindChips.push_back({"", "all", -1, dash.manifestFilter.empty()});
+        for (const char* k : kinds) {
+            int c = kindCounts.count(k) ? kindCounts[k] : 0;
+            // show even zero when filter active elsewhere
+            kindChips.push_back({k, k, c, dash.manifestFilter == k});
+        }
+        int afterChips = y;
+        components::drawChipStrip(surface, {frame.x, y, frame.w, 2}, kindChips, &afterChips);
+        y = afterChips;
+
+        // ── Category chip strip ──
+        std::map<std::string, int> catCounts;
+        for (const auto& m : dash.manifests) catCounts[m.category]++;
+        std::vector<components::Chip> catChips;
+        catChips.push_back({"", "· categories", -1, dash.tagFilter.empty()});
+        for (const auto& kv : catCounts) {
+            catChips.push_back({kv.first, kv.first, kv.second, dash.tagFilter == kv.first});
+        }
+        components::drawChipStrip(surface, {frame.x, y, frame.w, 2}, catChips, &afterChips);
+        y = afterChips + 1;
+
         if (dash.manifests.empty()) {
-            surface.text({frame.x, y++}, assets::MANIFESTS_EMPTY, theme::amber());
-            surface.text({frame.x, y++}, assets::MANIFESTS_HINT, theme::text());
-            y += 1;
-            surface.text({frame.x, y++}, "Searched roots:", theme::dim());
-            auto roots = catalog::manifestsSearchRoots(dash.manifestDir);
-            if (roots.empty()) {
-                surface.text({frame.x, y++}, "  (none) — set CORTEX_HOME or run from repo root", theme::red());
-            } else {
+            bool filtered = !dash.manifestFilter.empty() || !dash.tagFilter.empty() ||
+                            !dash.searchQuery.empty();
+            surface.text({frame.x, y++},
+                         filtered ? "Empty filter — Esc clears search/tag/kind."
+                                  : assets::MANIFESTS_EMPTY,
+                         theme::amber());
+            if (!filtered) {
+                auto roots = catalog::manifestsSearchRoots(dash.manifestDir);
+                surface.text({frame.x, y++}, "Roots:", theme::dim());
                 for (const auto& r : roots) {
                     if (y >= frame.bottom()) break;
                     surface.text({frame.x, y++},
@@ -362,109 +457,140 @@ class MainScene final : public BaseScene {
                                  theme::dim());
                 }
             }
-            surface.text({frame.x, std::min(y + 1, frame.bottom() - 1)},
-                         "R refresh · override: --manifest-dir path/to/manifests", theme::green());
             return;
         }
 
-        // List + detail split when wide enough.
-        int listW = frame.w >= 90 ? frame.w * 45 / 100 : frame.w;
-        int detailX = frame.x + listW + 2;
-        int detailW = frame.w >= 90 ? frame.w - listW - 2 : 0;
-
-        int listBottom = frame.bottom() - (detailW > 0 ? 0 : 4);
-        int visible = std::max(1, listBottom - y);
-        int start = std::max(0, std::min(dash.manifestIndex - visible / 2,
-                                         static_cast<int>(dash.manifests.size()) - visible));
-
-        for (int i = start; i < static_cast<int>(dash.manifests.size()) && y < listBottom; ++i) {
+        // ── Grouped list (+ optional detail) ──
+        struct Row {
+            bool header = false;
+            std::string headerText;
+            int idx = -1;
+        };
+        std::vector<Row> rows;
+        std::string lastCat;
+        for (int i = 0; i < static_cast<int>(dash.manifests.size()); ++i) {
             const auto& m = dash.manifests[static_cast<size_t>(i)];
-            bool selected =
-                i == dash.manifestIndex && dash.focus == model::DashboardFocus::Content;
+            if (m.category != lastCat) {
+                lastCat = m.category;
+                rows.push_back(
+                    {true, "▸ " + m.category + "  (" + std::to_string(catCounts[m.category]) + ")",
+                     -1});
+            }
+            rows.push_back({false, "", i});
+        }
+
+        int selRow = 0;
+        for (int i = 0; i < static_cast<int>(rows.size()); ++i)
+            if (!rows[static_cast<size_t>(i)].header &&
+                rows[static_cast<size_t>(i)].idx == dash.manifestIndex) {
+                selRow = i;
+                break;
+            }
+
+        int listBottom = frame.bottom();
+        int visible = std::max(1, listBottom - y);
+        // 2-line cards on wide when detail shown eats height — keep 1-line for density
+        int start = std::max(0, std::min(selRow - visible / 3,
+                                         std::max(0, static_cast<int>(rows.size()) - visible)));
+
+        int listW = L.listW;
+        for (int ri = start; ri < static_cast<int>(rows.size()) && y < listBottom; ++ri) {
+            const auto& row = rows[static_cast<size_t>(ri)];
+            if (row.header) {
+                surface.text({frame.x, y++}, inkcell::text::truncate(row.headerText, listW),
+                             theme::amber());
+                continue;
+            }
+            const auto& m = dash.manifests[static_cast<size_t>(row.idx)];
+            bool selected = row.idx == dash.manifestIndex;
             bool active = m.kind == "agent" &&
                           ((!cfg_.agentName.empty() && m.name == cfg_.agentName) ||
                            (!cfg_.manifestPath.empty() && m.path == cfg_.manifestPath));
 
-            inkcell::Rect row{frame.x, y, listW, 1};
-            components::fillRect(surface, row, selected ? theme::panel_3() : theme::panel_bg());
-            if (selected)
-                components::accentBar(surface, row.x, row.y, 1, theme::footer_accent_focus());
+            components::drawCardRow(surface, {frame.x, y, listW, 1}, selected, active);
+            components::kindChip(surface, frame.x + 2, y, m.kind, selected);
 
-            components::kindChip(surface, row.x + (selected ? 2 : 1), row.y, m.kind, selected);
-            std::string name = (active ? std::string(assets::ACTIVE) + " " : std::string("  ")) +
-                               m.name;
+            std::string name = std::string(active ? "● " : "  ") + m.name;
             if (!m.version.empty()) name += "  v" + m.version;
-            surface.text({row.x + 7, row.y},
-                         inkcell::text::truncate(name, std::max(1, listW - 8)),
+
+            int nameCol = frame.x + 8;
+            int nameBudget = listW - 10;
+            if (L.showTagColumn && L.tagColMax > 0) {
+                nameBudget = std::max(10, listW - 10 - L.tagColMax);
+                components::drawTagChips(surface, nameCol + nameBudget + 1, y, L.tagColMax, m.tags,
+                                         5);
+            }
+            surface.text({nameCol, y}, inkcell::text::truncate(name, nameBudget),
                          selected ? theme::bright() : theme::text());
             ++y;
         }
 
-        const catalog::ManifestEntry* sel = dash.selectedManifest();
+        // Detail pane
+        if (!L.showDetail) return;
+        const auto* sel = dash.selectedManifest();
         if (!sel) return;
 
-        if (detailW > 0) {
-            // Side detail panel
-            inkcell::Rect det{detailX, frame.y + 5, detailW, frame.h - 6};
-            components::fillRect(surface, det, theme::panel_2());
-            components::accentBar(surface, det.x, det.y, det.h, theme::footer_accent_idle());
-            int dy = det.y + 1;
-            surface.text({det.x + 2, dy++},
-                         inkcell::text::truncate(std::string(assets::kindLabel(sel->kind)) +
-                                                     "  ·  " + sel->name,
-                                                 det.w - 3),
-                         theme::bright());
-            if (!sel->summary.empty())
-                surface.text({det.x + 2, dy++},
-                             inkcell::text::truncate(sel->summary, det.w - 3), theme::text());
-            dy += 1;
-            components::fieldLine(surface, det.x + 2, dy++, det.w - 3, "kind", sel->kind);
-            if (!sel->version.empty())
-                components::fieldLine(surface, det.x + 2, dy++, det.w - 3, "version",
-                                      sel->version);
-            if (!sel->provider.empty() || !sel->model.empty())
-                components::fieldLine(surface, det.x + 2, dy++, det.w - 3, "engine",
-                                      nonempty(sel->provider, "?") + "/" +
-                                          nonempty(sel->model, "?"));
-            components::fieldLine(surface, det.x + 2, dy++, det.w - 3, "source", sel->source);
-            components::fieldLine(surface, det.x + 2, dy++, det.w - 3, "rel",
-                                  sel->relPath.empty() ? sel->path : sel->relPath);
-            dy += 1;
-            if (sel->launchable) {
-                surface.text({det.x + 2, dy++}, "LAUNCHABLE", theme::green());
-                surface.text({det.x + 2, dy++},
-                             inkcell::text::truncate(
-                                 "cortex-mk3 -m " + sel->name + " --tui experimental", det.w - 3),
-                             theme::green());
-                surface.text({det.x + 2, dy}, "Enter copies launch hint to notice bar",
-                             theme::dim());
-            } else {
-                surface.text({det.x + 2, dy++}, "INSPECT ONLY", theme::amber());
-                surface.text({det.x + 2, dy},
-                             "Runtime renderers land per-kind (workflow next).", theme::dim());
+        inkcell::Rect det{frame.x + L.detailX, frame.y + 5, L.detailW, frame.h - 6};
+        components::fillRect(surface, det, theme::panel_2());
+        components::accentBar(surface, det.x, det.y, det.h, theme::footer_accent_idle());
+
+        int dy = det.y + 1;
+        surface.text({det.x + 2, dy++}, inkcell::text::truncate(sel->name, det.w - 3),
+                     theme::bright());
+        surface.text({det.x + 2, dy++},
+                     inkcell::text::truncate(std::string(assets::kindLabel(sel->kind)) + "  ·  " +
+                                                 sel->category +
+                                                 (sel->nested ? "  ·  nested" : "") +
+                                                 (sel->builtin ? "  ·  builtin" : ""),
+                                             det.w - 3),
+                     theme::cyan());
+        if (!sel->summary.empty()) {
+            for (const auto& line : chat::wrapWordsLossless(sel->summary, det.w - 4)) {
+                if (dy >= det.bottom() - 10) break;
+                surface.text({det.x + 2, dy++}, line, theme::text());
             }
+        }
+        dy += 1;
+        components::fieldLine(surface, det.x + 2, dy++, det.w - 3, "kind", sel->kind);
+        components::fieldLine(surface, det.x + 2, dy++, det.w - 3, "category", sel->category);
+        if (!sel->version.empty())
+            components::fieldLine(surface, det.x + 2, dy++, det.w - 3, "version", sel->version);
+        if (!sel->provider.empty() || !sel->model.empty())
+            components::fieldLine(surface, det.x + 2, dy++, det.w - 3, "engine",
+                                  nonempty(sel->provider, "?") + "/" + nonempty(sel->model, "?"));
+        components::fieldLine(surface, det.x + 2, dy++, det.w - 3, "source", sel->source);
+        components::fieldLine(surface, det.x + 2, dy++, det.w - 3, "path",
+                              sel->relPath.empty() ? sel->path : sel->relPath);
+        dy += 1;
+        surface.text({det.x + 2, dy++}, "TAGS", theme::dim());
+        {
+            std::string all;
+            for (const auto& t : sel->tags) {
+                if (!all.empty()) all += "  ";
+                all += "#" + t;
+            }
+            for (const auto& line : chat::wrapWordsLossless(all.empty() ? "—" : all, det.w - 4)) {
+                if (dy >= det.bottom() - 4) break;
+                surface.text({det.x + 2, dy++}, line, theme::text());
+            }
+        }
+        dy += 1;
+        if (sel->launchable && sel->kind == "agent") {
+            surface.text({det.x + 2, dy++}, "LAUNCH", theme::green());
+            std::string cmd =
+                sel->nested ? ("cortex-mk3 -m " + sel->path + " --tui experimental")
+                            : ("cortex-mk3 -m " + sel->name + " --tui experimental");
+            surface.text({det.x + 2, dy++}, inkcell::text::truncate(cmd, det.w - 3), theme::green());
+            surface.text({det.x + 2, dy}, "Enter → copy hint to status rail", theme::dim());
         } else {
-            // Narrow: detail under list
-            y = std::min(y + 1, frame.bottom() - 3);
-            surface.text({frame.x, y++},
-                         inkcell::text::truncate(std::string(assets::kindTag(sel->kind)) + "  " +
-                                                     sel->name + "  " + sel->summary,
-                                                 frame.w),
-                         theme::text());
-            if (sel->launchable)
-                surface.text({frame.x, frame.bottom() - 1},
-                             inkcell::text::truncate(
-                                 "cortex-mk3 -m " + sel->name + " --tui experimental", frame.w),
-                             theme::green());
-            else
-                surface.text({frame.x, frame.bottom() - 1},
-                             inkcell::text::truncate(sel->relPath, frame.w), theme::dim());
+            surface.text({det.x + 2, dy++}, "INSPECT", theme::amber());
+            surface.text({det.x + 2, dy}, "per-kind runtime renderer next (workflows)",
+                         theme::dim());
         }
     }
 
     void drawHarness(inkcell::Surface& surface, inkcell::Rect frame) const {
-        sectionTitle(surface, frame, "Harness",
-                     "Active prompt stack + imported capability surface");
+        sectionTitle(surface, frame, "Harness", "Prompt stack + live capability surface");
         int y = frame.y + 5;
         components::fieldLine(surface, frame.x, y++, frame.w, "manifest",
                               cfg_.manifestPath.empty() ? "none" : cfg_.manifestPath);
@@ -480,8 +606,8 @@ class MainScene final : public BaseScene {
         }
         auto renderNames = [&](const std::string& label, const std::vector<std::string>& names) {
             if (y >= frame.bottom()) return;
-            surface.text({frame.x, y++},
-                         label + "  (" + std::to_string(names.size()) + ")", theme::dim());
+            surface.text({frame.x, y++}, label + "  (" + std::to_string(names.size()) + ")",
+                         theme::dim());
             std::string joined;
             for (const auto& name : names) {
                 if (!joined.empty()) joined += " · ";
@@ -502,7 +628,7 @@ class MainScene final : public BaseScene {
     }
 
     void drawRuntime(inkcell::Surface& surface, inkcell::Rect frame) const {
-        sectionTitle(surface, frame, "Runtime", "Process + provider for this instance");
+        sectionTitle(surface, frame, "Runtime", "Process + provider");
         int y = frame.y + 5;
         components::fieldLine(surface, frame.x, y++, frame.w, "provider",
                               nonempty(cfg_.provider, "unset"));
@@ -515,94 +641,67 @@ class MainScene final : public BaseScene {
                                                : "persistent");
         components::fieldLine(surface, frame.x, y++, frame.w, "turn",
                               model_->running ? "running" : "idle");
-        components::fieldLine(surface, frame.x, y++, frame.w, "pending",
-                              std::to_string(model_->pendingOps));
         components::fieldLine(surface, frame.x, y++, frame.w, "actions",
                               std::to_string(model_->actionCount));
         components::fieldLine(surface, frame.x, y++, frame.w, "results",
                               std::to_string(model_->resultCount));
-        y += 1;
-        surface.text({frame.x, y++}, "Pick an agent via Manifests, then relaunch:", theme::dim());
-        surface.text({frame.x, y}, "  cortex-mk3 -m <name> --tui experimental", theme::green());
     }
 
     void drawHelp(inkcell::Surface& surface, inkcell::Rect frame) const {
-        sectionTitle(surface, frame, "Help", "Hub navigation");
+        sectionTitle(surface, frame, "Help", "Hub · dock · registry");
         int y = frame.y + 5;
         const char* lines[] = {
-            "j/k  arrows     move nav / list",
-            "Tab / Right     focus content (Sessions, Manifests)",
-            "Left / Esc      back to navigation",
-            "Enter           activate (chat / resume / launch hint)",
-            "c               open chat",
-            "a / m           Manifests hub (PROD registry)",
-            "f               cycle kind filter (agent/tool/feed/...)",
-            "s               Sessions",
-            "h r ?           Harness · Runtime · Help",
-            "n               new session → chat",
-            "d               delete session",
-            "R               refresh sessions + manifests",
-            "T               theme graphite ↔ neon",
-            "q               quit",
+            "SECTION DOCK (bottom center floating pill)",
+            "  Ctrl-N / Ctrl-P     next / prev section + highlight slide",
+            "  Ctrl-K              prev (Ctrl-J is Enter on classic TTY)",
+            "  [  ]                next / prev without modifiers",
+            "  o s a h r ?         jump",
             "",
-            "manifests/ = PROD std registry (recursive scan)",
-            "config/    = DEV / MVP experiments (not auto-hubbed)",
-            "UI chrome  = src/ui/{assets,components} — not inkcell",
+            "MANIFESTS REGISTRY",
+            "  j/k                 move selection",
+            "  f                   cycle kind filter (chip strip)",
+            "  t                   cycle tag/category filter",
+            "  /                   search name·summary·tags·path",
+            "  Esc                 clear search → tag → kind",
+            "  Enter               launch hint (agents) / inspect note",
+            "",
+            "GLOBAL",
+            "  c                   chat   ·  R refresh  ·  T theme  ·  q quit",
+            "",
+            "Density: narrow <100 · standard 100–159 · wide ≥160 (list|detail)",
+            "UI chrome lives in src/ui/{assets,components,layout} — not inkcell.",
         };
         for (const char* line : lines) {
             if (y >= frame.bottom()) break;
-            surface.text({frame.x, y++}, line, line[0] == '\0' ? theme::dim() : theme::text());
+            bool head = line[0] && line[0] != ' ' && std::isupper(static_cast<unsigned char>(line[0]));
+            surface.text({frame.x, y++}, line,
+                         line[0] == '\0' ? theme::dim() : head ? theme::cyan() : theme::text());
         }
-    }
-
-    void drawFooter(inkcell::Surface& surface, inkcell::Rect row) const {
-        std::string left = model_->dashboard.notice;
-        std::string right;
-        if (model_->dashboard.focus == model::DashboardFocus::Content) {
-            if (model_->dashboard.section == model::DashboardSection::Sessions)
-                right = "j/k · Enter resume · n new · d del";
-            else if (model_->dashboard.section == model::DashboardSection::Manifests)
-                right = "j/k · f filter · Enter · R refresh";
-            else
-                right = "j/k · Enter · Esc";
-        } else {
-            right = "j/k nav · c chat · a manifests · q quit";
-        }
-        if (left.empty()) left = "hub";
-        components::footerBar(surface, row, left, right);
     }
 
     void activate() {
         auto& dash = model_->dashboard;
-        if (dash.focus == model::DashboardFocus::Content &&
-            dash.section == model::DashboardSection::Sessions) {
+        if (dash.section == model::DashboardSection::Sessions) {
             resumeSelectedSession();
             return;
         }
-        if (dash.focus == model::DashboardFocus::Content &&
-            dash.section == model::DashboardSection::Manifests) {
+        if (dash.section == model::DashboardSection::Manifests) {
             if (const auto* m = dash.selectedManifest()) {
-                if (m->launchable) {
-                    dash.notice = "launch: cortex-mk3 -m " + m->name + " --tui experimental";
+                if (m->launchable && m->kind == "agent") {
+                    dash.notice =
+                        m->nested
+                            ? ("launch: cortex-mk3 -m " + m->path + " --tui experimental")
+                            : ("launch: cortex-mk3 -m " + m->name + " --tui experimental");
                 } else {
-                    dash.notice = m->kind + ": " + m->relPath + " (inspect — renderer TBD)";
+                    dash.notice = m->kind + " · " + m->category + " · " +
+                                  (m->tags.empty() ? m->name : ("#" + m->tags.front()));
                 }
             } else {
-                dash.notice = "no manifest selected";
+                dash.notice = "no selection";
             }
             return;
         }
-        switch (dash.section) {
-            case model::DashboardSection::Overview:
-                model_->pendingRoute = "agent";
-                break;
-            case model::DashboardSection::Sessions:
-            case model::DashboardSection::Manifests:
-                dash.focus = model::DashboardFocus::Content;
-                break;
-            default:
-                break;
-        }
+        if (dash.section == model::DashboardSection::Overview) model_->pendingRoute = "agent";
     }
 
     void resumeSelectedSession() {
@@ -658,10 +757,8 @@ class MainScene final : public BaseScene {
     }
 
     void handle(const inkcell::Action& action) override {
-        if (action.is("scroll.up"))
-            model_->dashboard.moveNavigation(-1);
-        else if (action.is("scroll.down"))
-            model_->dashboard.moveNavigation(1);
+        if (action.is("scroll.up")) model_->dashboard.moveNavigation(-1);
+        else if (action.is("scroll.down")) model_->dashboard.moveNavigation(1);
     }
 };
 

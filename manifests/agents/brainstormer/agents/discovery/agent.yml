@@ -2,6 +2,8 @@ kind: Agent
 name: discovery
 version: "1.0"
 summary: Read-only landscape scout — prior art, constraints, repo/web evidence for ideation.
+category: specialist
+tags: [agent, nested, discovery, research, parent:brainstormer]
 
 cognitive_engine:
   primary:

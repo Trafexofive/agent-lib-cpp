@@ -2,6 +2,8 @@ kind: Agent
 name: brainstormer
 version: "1.0"
 summary: Ideation coordinator — expands options, grounds them, kills weak ones, ships a ranked proposal.
+category: agent
+tags: [agent, ideation, creative, coordinator, launchable, prod]
 
 cognitive_engine:
   primary:

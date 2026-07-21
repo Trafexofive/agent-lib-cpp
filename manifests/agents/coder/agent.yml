@@ -2,6 +2,8 @@ kind: Agent
 name: coder
 version: "1.1"
 summary: Specialized coding coordinator — gpt-5.5 brain, flash specialists, smallest correct diff.
+category: agent
+tags: [agent, launchable, prod]
 
 cognitive_engine:
   primary:

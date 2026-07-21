@@ -2,6 +2,8 @@ kind: Agent
 name: std-orchestrator
 version: "1.0"
 summary: Standard control-plane orchestrator — plans, routes, synthesizes. Specialists do the work.
+category: agent
+tags: [agent, launchable, prod]
 
 cognitive_engine:
   primary:

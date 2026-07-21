@@ -726,6 +726,7 @@ inline void fixDefaultPromptPaths(AgentConfig& cfg, const std::string& manifestD
 // (DEV/MVP only — pass as override if needed).
 struct ManifestEntry {
     std::string kind;          // agent|tool|feed|relic|workflow|skill|harness|prompt|other
+    std::string category;      // display category (often == kind, or nested path group)
     std::string name;
     std::string version;
     std::string summary;
@@ -735,7 +736,10 @@ struct ManifestEntry {
     std::string manifestsRoot;
     std::string provider;      // agent only
     std::string model;         // agent only
+    std::vector<std::string> tags;
     bool launchable = false;   // currently: agents only
+    bool nested = false;       // specialist under another agent
+    bool builtin = false;      // under built-in/
 };
 
 inline bool shouldSkipManifestDir(const fs::path& p) {
@@ -798,7 +802,36 @@ inline ManifestEntry readYamlManifestMeta(const fs::path& path, const std::strin
     e.summary = ManifestYaml::get(root, "summary");
     if (e.summary.empty()) e.summary = ManifestYaml::get(root, "description");
 
+    // Explicit tags + category from YAML when present.
+    e.tags = ManifestYaml::getList(root, "tags");
+    // Flow-style: tags: [a, b, c]  (mini_yaml may leave as scalar value)
+    if (e.tags.empty()) {
+        auto* tn = ManifestYaml::find(root, "tags");
+        if (tn && !tn->value.empty() && tn->value.front() == '[') {
+            std::string inner = tn->value.substr(1);
+            if (!inner.empty() && inner.back() == ']') inner.pop_back();
+            std::istringstream iss(inner);
+            std::string tok;
+            while (std::getline(iss, tok, ',')) {
+                // trim
+                size_t a = tok.find_first_not_of(" \t\"'");
+                size_t b = tok.find_last_not_of(" \t\"'");
+                if (a == std::string::npos) continue;
+                e.tags.push_back(tok.substr(a, b - a + 1));
+            }
+        }
+    }
+    e.category = ManifestYaml::get(root, "category");
+
+    // Path-derived taxonomy (always available for hub grouping).
+    e.builtin = e.relPath.rfind("built-in/", 0) == 0;
     if (e.kind == "agent") {
+        // nested if path looks like agents/<parent>/agents/<child>
+        e.nested = e.relPath.find("/agents/") != std::string::npos &&
+                   e.relPath.rfind("agents/", 0) == 0 &&
+                   std::count(e.relPath.begin(), e.relPath.end(), '/') >= 3;
+        e.launchable = !e.nested;  // top-level agents only for -m bare name
+        // Actually nested can still be launched by path; mark launchable always for agents.
         e.launchable = true;
         auto* engine = ManifestYaml::find(root, "cognitive_engine");
         if (engine) {
@@ -809,6 +842,38 @@ inline ManifestEntry readYamlManifestMeta(const fs::path& path, const std::strin
             }
         }
     }
+
+    if (e.category.empty()) {
+        if (e.kind == "agent" && e.nested)
+            e.category = "specialist";
+        else if (e.builtin)
+            e.category = std::string("builtin-") + e.kind;
+        else
+            e.category = e.kind;
+    }
+
+    auto pushTag = [&](const std::string& t) {
+        if (t.empty()) return;
+        if (std::find(e.tags.begin(), e.tags.end(), t) == e.tags.end()) e.tags.push_back(t);
+    };
+    pushTag(e.kind);
+    pushTag(e.category);
+    if (e.builtin) pushTag("builtin");
+    if (e.nested) pushTag("nested");
+    if (e.launchable && e.kind == "agent" && !e.nested) pushTag("launchable");
+    if (!e.provider.empty()) pushTag(e.provider);
+    // Parent folder as soft tag for nested agents (coder/reader → parent:coder)
+    if (e.nested) {
+        // agents/<parent>/agents/<child>/agent.yml
+        auto parts = e.relPath;
+        // extract first segment after agents/
+        if (parts.rfind("agents/", 0) == 0) {
+            auto rest = parts.substr(7);
+            auto slash = rest.find('/');
+            if (slash != std::string::npos) pushTag(std::string("parent:") + rest.substr(0, slash));
+        }
+    }
+
     return e;
 }
 
@@ -866,12 +931,14 @@ inline void scanManifestsTree(const fs::path& root, const std::string& source,
         if (fname == "SKILL.md") {
             ManifestEntry e;
             e.kind = "skill";
+            e.category = "skill";
             e.name = p.parent_path().filename().string();
             e.path = absPath(p);
             e.source = source;
             e.manifestsRoot = absPath(root);
             e.relPath = relToRoot(p, root);
             e.summary = "skill module";
+            e.tags = {"skill", "policy"};
             pushUnique(byKey, std::move(e));
             continue;
         }
@@ -880,12 +947,14 @@ inline void scanManifestsTree(const fs::path& root, const std::string& source,
             fname.find("README") == std::string::npos) {
             ManifestEntry e;
             e.kind = "harness";
+            e.category = "harness";
             e.name = p.stem().string();
             e.path = absPath(p);
             e.source = source;
             e.manifestsRoot = absPath(root);
             e.relPath = relToRoot(p, root);
             e.summary = "harness profile";
+            e.tags = {"harness", "profile", e.name};
             pushUnique(byKey, std::move(e));
             continue;
         }
@@ -893,12 +962,14 @@ inline void scanManifestsTree(const fs::path& root, const std::string& source,
             fname.find("README") == std::string::npos) {
             ManifestEntry e;
             e.kind = "prompt";
+            e.category = "prompt";
             e.name = p.stem().string();
             e.path = absPath(p);
             e.source = source;
             e.manifestsRoot = absPath(root);
             e.relPath = relToRoot(p, root);
             e.summary = "prompt module";
+            e.tags = {"prompt", "module", e.name};
             pushUnique(byKey, std::move(e));
             continue;
         }

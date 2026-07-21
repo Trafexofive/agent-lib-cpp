@@ -2,6 +2,8 @@ kind: Agent
 name: critic
 version: "1.0"
 summary: Adversarial idea filter — kill criteria, failure modes, cheap falsifiers.
+category: specialist
+tags: [agent, nested, critic, adversarial, parent:brainstormer]
 
 cognitive_engine:
   primary:

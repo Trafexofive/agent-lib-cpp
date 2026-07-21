@@ -2,6 +2,8 @@ kind: Agent
 name: default
 version: "2.0"
 summary: Primary general agent — deepseek primary, curated built-in tools
+category: agent
+tags: [agent, launchable, prod]
 
 cognitive_engine:
   primary:
