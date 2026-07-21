@@ -9,26 +9,22 @@ Last updated: 2026-07-21
 | `manifests/` | PROD / std — hub recursive scan |
 | `config/` | DEV / MVP — not auto-hubbed |
 
-## Agents (5)
+## Top-level agents
 
-| Name | Path | Notes |
-|------|------|-------|
+| Name | Path | Role |
+|------|------|------|
 | default | `agents/default/` | General agent |
-| coder | `agents/coder/` | Coding coordinator |
-| reader | `agents/coder/agents/reader/` | Nested specialist |
-| tester | `agents/coder/agents/tester/` | Nested specialist |
-| reviewer | `agents/coder/agents/reviewer/` | Nested specialist |
+| coder | `agents/coder/` | Coding coordinator (+ reader/tester/reviewer) |
+| brainstormer | `agents/brainstormer/` | Ideation (+ discovery/critic) |
+| std-orchestrator | `agents/std-orchestrator/` | Control plane (+ planner/researcher/skeptic → coder) |
 
-Archived from PROD (broken / empty): `config/agents/_archive/{brainstormer,std-orchestrator}`
+## Nested specialists (also listed in hub)
 
-## Built-in tools / feeds
-
-See `built-in/tools/*`, `built-in/feeds/*`. Hub lists them as TOL/FED.
-
-## Workflows
-
-`workflows/*.yml` — inspectable in hub; full runtime renderer next.
+- coder → reader, tester, reviewer  
+- brainstormer → discovery, critic  
+- std-orchestrator → planner, researcher, skeptic  
 
 ## Hub
 
-Dashboard → **Manifests** (`a`): recursive registry, `f` kind filter, Enter = launch hint (agents) or inspect notice (other kinds).
+Dashboard → **Manifests** (`a`): recursive registry.  
+Empty state prints searched roots. Discovery walks up from `agent.yml` and the binary path; skips empty placeholder `manifests/` dirs.

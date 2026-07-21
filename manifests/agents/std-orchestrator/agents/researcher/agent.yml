@@ -1,0 +1,43 @@
+kind: Agent
+name: researcher
+version: "1.0"
+summary: Read-only recon — files, symbols, facts. No edits.
+
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: deepseek-v4-flash-free
+    parameters:
+      temperature: 0.3
+      max_tokens: 24576
+  fallback:
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.25
+      max_tokens: 24576
+
+context:
+  harness: ../../../../harness/small.md
+  system: ./system.md
+  persona: ./persona.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  max_iterations: 8
+  history_cap: 40
+  mode: normal
+
+import:
+  tools:
+    - list
+    - grep
+    - fs_read
+    - context_peek
+  feeds:
+    - working_directory
+  env: []

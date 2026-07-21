@@ -24,8 +24,23 @@ class MainScene final : public BaseScene {
 
     void on_enter() override {
         BaseScene::on_enter();
-        model_->dashboard.manifestDir = cfg_.manifestPath;
+        // Discovery root: explicit --manifest-dir, else walk up from agent.yml,
+        // else empty (catalog falls back to cwd/binary/CORTEX_HOME).
+        if (!cfg_.manifestDir.empty())
+            model_->dashboard.manifestDir = cfg_.manifestDir;
+        else if (!cfg_.manifestPath.empty())
+            model_->dashboard.manifestDir = cfg_.manifestPath;  // resolveManifestsRoot walks up
+        else
+            model_->dashboard.manifestDir.clear();
         model_->dashboard.refreshAll();
+        if (model_->dashboard.manifests.empty()) {
+            model_->dashboard.notice =
+                "no PROD manifests found — check manifests/ next to binary or CORTEX_HOME";
+        } else {
+            model_->dashboard.notice =
+                std::to_string(model_->dashboard.manifests.size()) + " manifests · " +
+                std::to_string(model_->dashboard.agents.size()) + " top-level agents";
+        }
         // Highlight active agent among manifests when possible.
         if (!cfg_.agentName.empty() || !cfg_.manifestPath.empty()) {
             for (int i = 0; i < static_cast<int>(model_->dashboard.manifests.size()); ++i) {
@@ -332,8 +347,23 @@ class MainScene final : public BaseScene {
 
         int y = frame.y + 5;
         if (dash.manifests.empty()) {
-            surface.text({frame.x, y++}, assets::MANIFESTS_EMPTY, theme::dim());
-            surface.text({frame.x, y}, assets::MANIFESTS_HINT, theme::text());
+            surface.text({frame.x, y++}, assets::MANIFESTS_EMPTY, theme::amber());
+            surface.text({frame.x, y++}, assets::MANIFESTS_HINT, theme::text());
+            y += 1;
+            surface.text({frame.x, y++}, "Searched roots:", theme::dim());
+            auto roots = catalog::manifestsSearchRoots(dash.manifestDir);
+            if (roots.empty()) {
+                surface.text({frame.x, y++}, "  (none) — set CORTEX_HOME or run from repo root", theme::red());
+            } else {
+                for (const auto& r : roots) {
+                    if (y >= frame.bottom()) break;
+                    surface.text({frame.x, y++},
+                                 inkcell::text::truncate("  [" + r.second + "] " + r.first, frame.w),
+                                 theme::dim());
+                }
+            }
+            surface.text({frame.x, std::min(y + 1, frame.bottom() - 1)},
+                         "R refresh · override: --manifest-dir path/to/manifests", theme::green());
             return;
         }
 

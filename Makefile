@@ -220,6 +220,16 @@ $(COMPLETION_POLICY_TEST_BIN): $(OBJS) $(COMPLETION_POLICY_TEST_OBJ)
 test-completion-policy: $(COMPLETION_POLICY_TEST_BIN)
 	./$(COMPLETION_POLICY_TEST_BIN)
 
+# ── Manifest catalog / hub discovery ──
+MANIFEST_CATALOG_TEST_SRC := src/testing/manifest_catalog_test.cpp
+MANIFEST_CATALOG_TEST_BIN := manifest-catalog-test
+
+$(MANIFEST_CATALOG_TEST_BIN): $(MANIFEST_CATALOG_TEST_SRC) src/core/agent_catalog.hpp
+	$(CXX) $(CXXFLAGS) $(MANIFEST_CATALOG_TEST_SRC) -o $@ $(LDFLAGS)
+
+test-manifest-catalog: $(MANIFEST_CATALOG_TEST_BIN)
+	./$(MANIFEST_CATALOG_TEST_BIN)
+
 # ── Sandbox + context_* integration tests (SB02/SB07/BT04) ──
 SBOX_TEST_SRC := src/testing/sandbox_context_test.cpp
 SBOX_TEST_OBJ := $(BUILD_DIR)/testing/sandbox_context_test.o

@@ -70,7 +70,9 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
     model->agentProvider = cfg.provider;
     model->showThoughts = cfg.showThoughts;
     model->truncateBodies = cfg.truncateBodies;
-    model->dashboard.refreshSessions();
+    model->dashboard.manifestDir =
+        !cfg.manifestDir.empty() ? cfg.manifestDir : cfg.manifestPath;
+    model->dashboard.refreshAll();
     model->promptHistory = chat::loadPromptHistory();
     model->promptHistoryIndex = static_cast<int>(model->promptHistory.size());
     if (!cfg.sessionId.empty()) {

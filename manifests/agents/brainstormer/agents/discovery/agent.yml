@@ -1,0 +1,44 @@
+kind: Agent
+name: discovery
+version: "1.0"
+summary: Read-only landscape scout — prior art, constraints, repo/web evidence for ideation.
+
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: deepseek-v4-flash-free
+    parameters:
+      temperature: 0.4
+      max_tokens: 24576
+  fallback:
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.3
+      max_tokens: 24576
+
+context:
+  harness: ../../../../harness/small.md
+  system: ./system.md
+  persona: ./persona.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  max_iterations: 8
+  history_cap: 40
+  mode: normal
+
+import:
+  tools:
+    - list
+    - grep
+    - fs_read
+    - context_peek
+    - web_fetch
+  feeds:
+    - working_directory
+  env: []

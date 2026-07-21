@@ -2247,6 +2247,7 @@ static int cmdRun(CliConfig& cli) {
             icfg.provider = acfg.provider;
             icfg.model = acfg.model;
             icfg.manifestPath = cli.manifestPath;
+            icfg.manifestDir = cli.manifestDir;
             icfg.harnessPath = acfg.harnessPath;
             icfg.systemPromptPath = acfg.systemPromptPath;
             icfg.personaPath = acfg.personaPath;
@@ -2310,6 +2311,7 @@ static int cmdRun(CliConfig& cli) {
         icfg.provider = acfg.provider;
         icfg.model = acfg.model;
         icfg.manifestPath = cli.manifestPath;
+        icfg.manifestDir = cli.manifestDir;
         icfg.harnessPath = acfg.harnessPath;
         icfg.systemPromptPath = acfg.systemPromptPath;
         icfg.personaPath = acfg.personaPath;

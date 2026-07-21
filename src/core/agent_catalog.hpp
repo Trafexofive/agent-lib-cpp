@@ -84,31 +84,74 @@ inline bool isPathImport(const std::string& s) {
     return false;
 }
 
+// Walk up from a file or directory until a manifests/ root is found.
+// Accepts: manifests/, parent-of-manifests/, agents/, agent.yml, tool.yml, etc.
+inline fs::path resolveManifestsRoot(const fs::path& start) {
+    std::error_code ec;
+    if (start.empty())
+        return {};
+    fs::path p = start;
+    if (fs::is_regular_file(p, ec))
+        p = p.parent_path();
+    if (!fs::exists(p, ec))
+        return {};
+    for (int i = 0; i < 12; ++i) {
+        if (p.filename() == "manifests" && fs::is_directory(p, ec))
+            return p;
+        if (fs::is_directory(p / "manifests", ec))
+            return p / "manifests";
+        // .../manifests/agents/<name> or .../manifests/built-in/tools/<name>
+        if (p.filename() == "agents" || p.filename() == "built-in" ||
+            p.filename() == "workflows" || p.filename() == "tools" ||
+            p.filename() == "feeds" || p.filename() == "harness") {
+            fs::path parent = p.parent_path();
+            if (parent.filename() == "manifests" && fs::is_directory(parent, ec))
+                return parent;
+            if (parent.filename() == "built-in") {
+                fs::path gp = parent.parent_path();
+                if (gp.filename() == "manifests" && fs::is_directory(gp, ec))
+                    return gp;
+            }
+        }
+        if (!p.has_parent_path() || p == p.root_path())
+            break;
+        p = p.parent_path();
+    }
+    return {};
+}
+
+inline bool manifestsRootHasContent(const fs::path& mroot) {
+    std::error_code ec;
+    if (!fs::is_directory(mroot, ec))
+        return false;
+    // Require at least one known PROD subdir so empty placeholder dirs
+    // (e.g. stray ~/repos/manifests) do not become the only "root".
+    for (const char* sub : {"agents", "built-in", "workflows", "harness"}) {
+        if (fs::is_directory(mroot / sub, ec))
+            return true;
+    }
+    return false;
+}
+
 // Only manifests/ trees are global. Roots returned are .../manifests directories.
+// Never pass an agent.yml path as a dead-end — resolveManifestsRoot walks up.
 inline std::vector<std::pair<std::string, std::string>> manifestsSearchRoots(
     const std::string& manifestDirOverride = "") {
     std::vector<std::pair<std::string, std::string>> roots;  // {manifestsPath, source}
     std::set<std::string> seen;
 
-    auto addManifests = [&](const std::string& raw, const std::string& source) {
+    auto addManifests = [&](const std::string& raw, const std::string& source,
+                            bool requireContent = true) {
         if (raw.empty())
             return;
         std::string expanded = expandHome(raw);
         std::error_code ec;
         if (!fs::exists(expanded, ec))
             return;
-        fs::path p(expanded);
-        // Accept either .../manifests or a parent that contains manifests/
-        fs::path m = p;
-        if (p.filename() != "manifests") {
-            if (fs::is_directory(p / "manifests", ec))
-                m = p / "manifests";
-            else if (p.filename() == "agents" && p.parent_path().filename() == "manifests")
-                m = p.parent_path();
-            else
-                return;  // not a manifests tree
-        }
-        if (!fs::is_directory(m, ec))
+        fs::path m = resolveManifestsRoot(expanded);
+        if (m.empty() || !fs::is_directory(m, ec))
+            return;
+        if (requireContent && !manifestsRootHasContent(m))
             return;
         std::string key = absPath(m);
         if (!seen.insert(key).second)
@@ -116,7 +159,12 @@ inline std::vector<std::pair<std::string, std::string>> manifestsSearchRoots(
         roots.push_back({key, source});
     };
 
-    // 1. CORTEX_HOME → $CORTEX_HOME/manifests
+    // 0. Explicit override FIRST (CLI --manifest-dir, or agent.yml → walk-up).
+    //    requireContent=false so a freshly seeded manifests/ still counts.
+    if (!manifestDirOverride.empty())
+        addManifests(manifestDirOverride, "override", /*requireContent=*/false);
+
+    // 1. CORTEX_HOME
     if (const char* ch = std::getenv("CORTEX_HOME")) {
         addManifests(std::string(ch) + "/manifests", "env");
         addManifests(ch, "env");
@@ -133,18 +181,12 @@ inline std::vector<std::pair<std::string, std::string>> manifestsSearchRoots(
     else
         addManifests("~/.local/share/cortex/manifests", "share");
 
-    // 3. --manifest-dir: must resolve to a manifests tree (or parent of one)
-    if (!manifestDirOverride.empty())
-        addManifests(manifestDirOverride, "override");
-
-    // 4. CWD
+    // 3. CWD + walk-up (skip empty placeholder manifests dirs)
     addManifests("./manifests", "cwd");
-
-    // 5. Walk up from CWD for repo layouts
     {
         std::error_code ec;
         fs::path cur = fs::current_path(ec);
-        for (int i = 0; i < 8 && !ec; ++i) {
+        for (int i = 0; i < 10 && !ec; ++i) {
             addManifests((cur / "manifests").string(), "project");
             if (!cur.has_parent_path() || cur == cur.root_path())
                 break;
@@ -152,7 +194,7 @@ inline std::vector<std::pair<std::string, std::string>> manifestsSearchRoots(
         }
     }
 
-    // 6. Binary-adjacent (dev binary in repo root, or PREFIX/share/cortex/manifests)
+    // 4. Binary-adjacent (dev binary in repo root, or PREFIX/share)
     {
         char buf[PATH_MAX];
         ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
@@ -160,8 +202,17 @@ inline std::vector<std::pair<std::string, std::string>> manifestsSearchRoots(
             buf[n] = '\0';
             fs::path exe = fs::path(buf).parent_path();
             addManifests((exe / "manifests").string(), "binary");
+            addManifests(exe.string(), "binary");  // walk-up from binary dir
             addManifests((exe / ".." / "share" / "cortex" / "manifests").string(), "binary");
             addManifests((exe / ".." / "share" / "cortex").string(), "binary");
+            // walk a few parents from the binary (repo layouts)
+            fs::path cur = exe;
+            for (int i = 0; i < 6; ++i) {
+                addManifests((cur / "manifests").string(), "binary");
+                if (!cur.has_parent_path() || cur == cur.root_path())
+                    break;
+                cur = cur.parent_path();
+            }
         }
     }
 

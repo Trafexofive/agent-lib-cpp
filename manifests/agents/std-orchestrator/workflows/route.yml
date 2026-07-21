@@ -1,0 +1,34 @@
+kind: Workflow
+version: "1.0"
+name: route
+summary: "Default spine — plan, then recon. Parent free-routes implementation."
+
+description: >
+  Suggested delegation spine for std-orchestrator. After plan+recon,
+  the live model decides whether coder/skeptic steps are required.
+
+steps:
+  - id: chart
+    type: agent
+    name: "Plan packages"
+    agent: planner
+    params:
+      instruction: "Decompose for control-plane routing. Prefer researcher for facts, coder only if mutation is required. Task: ${input.task}"
+    on_error: abort
+
+  - id: sound
+    type: agent
+    name: "Recon if useful"
+    agent: researcher
+    params:
+      instruction: "Read-only recon for packages that need facts. Task: ${input.task}. Plan: ${chart.output}"
+    on_error: skip
+
+import:
+  agents:
+    - planner
+    - researcher
+
+tags:
+  - std-orchestrator
+  - control-plane

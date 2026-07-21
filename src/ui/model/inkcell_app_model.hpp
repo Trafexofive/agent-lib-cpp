@@ -26,7 +26,8 @@ struct InkcellAppConfig {
     std::string agentName;
     std::string provider;
     std::string model;
-    std::string manifestPath;
+    std::string manifestPath;   // active agent.yml (if any)
+    std::string manifestDir;    // discovery root override (--manifest-dir or derived)
     std::string harnessPath;
     std::string systemPromptPath;
     std::string personaPath;
