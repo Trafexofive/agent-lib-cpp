@@ -268,7 +268,7 @@ inline void drawScrim(inkcell::Surface& s, inkcell::Rect page, float vis) {
     }
 }
 
-// Draw palette; returns true if still animating (caller may force tick redraw).
+// Draw palette — AAA options modal (same language as Settings).
 inline bool drawCmdPalette(inkcell::Surface& s, inkcell::Rect page, CmdPalette& pal) {
     pal.finishCloseIfNeeded();
     if (!pal.active()) return false;
@@ -278,95 +278,85 @@ inline bool drawCmdPalette(inkcell::Surface& s, inkcell::Rect page, CmdPalette& 
 
     drawScrim(s, page, vis);
 
-    // Modal geometry — springs open with slight overshoot on open
     float scaleT = pal.closing ? cpSmoother(vis) : cpEaseOutBack(std::min(1.f, vis * 1.05f));
     scaleT = cpClamp01(scaleT);
 
-    int targetW = std::min(page.w - 6, std::max(48, page.w * 5 / 8));
-    int targetH = std::min(page.h - 6, std::max(12, page.h * 2 / 3));
-    int boxW = std::max(24, static_cast<int>(std::lround(targetW * (0.72f + 0.28f * scaleT))));
-    int boxH = std::max(8, static_cast<int>(std::lround(targetH * (0.55f + 0.45f * scaleT))));
+    int targetW = std::min(page.w - 8, std::max(52, page.w * 4 / 7));
+    int targetH = std::min(page.h - 8, std::max(14, page.h * 3 / 5));
+    int boxW = std::max(28, static_cast<int>(std::lround(targetW * (0.78f + 0.22f * scaleT))));
+    int boxH = std::max(10, static_cast<int>(std::lround(targetH * (0.62f + 0.38f * scaleT))));
 
-    // Rise from slightly below as it fades in
-    int baseY = page.y + (page.h - boxH) / 3;
-    int rise = static_cast<int>(std::lround((1.f - vis) * 4.f));
+    int rise = static_cast<int>(std::lround((1.f - vis) * 5.f));
     int boxX = page.x + (page.w - boxW) / 2;
-    int boxY = baseY + rise;
+    int boxY = page.y + (page.h - boxH) / 3 + rise;
     inkcell::Rect box{boxX, boxY, boxW, boxH};
 
-    // Shadow
-    auto sh = inkcell::Style::normal()
-                  .with_bg(theme::color(inkcell::Color::rgb(0, 0, 0), inkcell::Color::rgb(0, 0, 0)))
-                  .with_fg(theme::color(inkcell::Color::rgb(0, 0, 0), inkcell::Color::rgb(0, 0, 0)));
-    if (vis > 0.3f)
+    // Depth shadow (no ─ chrome)
+    if (vis > 0.25f) {
+        auto sh = inkcell::Style::normal()
+                      .with_bg(inkcell::Color::rgb(0, 0, 0))
+                      .with_fg(inkcell::Color::rgb(0, 0, 0));
         s.fill({box.x + 2, box.y + 1, box.w, box.h}, " ", sh);
-
-    // Frosted panel
-    auto panel = theme::panel_2();
-    panel.bg = theme::color(inkcell::Color::rgb(28, 28, 34), inkcell::Color::rgb(14, 20, 34));
-    s.fill(box, " ", panel);
-
-    auto borderFg = theme::color(inkcell::Color::rgb(90, 140, 155), inkcell::Color::rgb(70, 180, 220));
-    if (vis < 0.7f)
-        borderFg = theme::color(inkcell::Color::rgb(60, 70, 80), inkcell::Color::rgb(40, 70, 100));
-    s.box(box, inkcell::BorderStyle::Rounded, panel.with_fg(borderFg));
-
-    // Top accent gradient line
-    auto ac = theme::cyan().with_bg(panel.bg);
-    for (int x = box.x + 2; x < box.right() - 2; ++x) {
-        float u = static_cast<float>(x - box.x) / static_cast<float>(box.w);
-        ac.fg = theme::color(
-            inkcell::Color::rgb(static_cast<uint8_t>(100 + 40 * u),
-                                static_cast<uint8_t>(160 - 20 * u),
-                                static_cast<uint8_t>(180 - 30 * u)),
-            inkcell::Color::rgb(static_cast<uint8_t>(90 + 80 * u),
-                                static_cast<uint8_t>(220 - 40 * u),
-                                255));
-        s.text({x, box.y + 1}, "─", ac);
     }
 
-    // Title + query
-    int y = box.y + 2;
-    auto title = theme::bright().with_bg(panel.bg);
-    auto muted = theme::italic_dim().with_bg(panel.bg);
-    s.text({box.x + 2, y}, "command palette", title);
-    s.text({box.x + 20, y}, "ctrl-p · space space", muted);
+    auto panel = theme::panel_2();
+    panel.bg = theme::color(inkcell::Color::rgb(26, 26, 32), inkcell::Color::rgb(12, 18, 30));
+    s.fill(box, " ", panel);
+
+    // Top freckle accent (▀ not ─)
+    auto ac = theme::cyan().with_bg(panel.bg);
+    for (int x = box.x + 2; x < box.right() - 2; ++x) {
+        float u = static_cast<float>(x - box.x) / static_cast<float>(std::max(1, box.w));
+        ac.fg = theme::color(
+            inkcell::Color::rgb(static_cast<uint8_t>(90 + 50 * u), static_cast<uint8_t>(150 - 10 * u),
+                                static_cast<uint8_t>(170)),
+            inkcell::Color::rgb(static_cast<uint8_t>(80 + 90 * u), static_cast<uint8_t>(210),
+                                255));
+        s.text({x, box.y}, "▀", ac);
+    }
+
+    int y = box.y + 1;
+    s.text({box.x + 2, y}, "COMMANDS", theme::bright().with_bg(panel.bg));
+    s.text({box.x + 12, y},
+           inkcell::text::truncate(std::to_string(pal.filtered.size()) + " / " +
+                                       std::to_string(pal.all.size()),
+                                   12),
+           theme::italic_dim().with_bg(panel.bg));
     ++y;
 
-    // Query field
-    std::string qline =
-        "> " + pal.query + (static_cast<int>(CmdPalette::nowMs() / 530) % 2 == 0 ? "█" : " ");
-    auto qst = theme::cyan().with_bg(panel.bg);
-    s.fill({box.x + 1, y, box.w - 2, 1}, " ", theme::panel_3());
-    s.text({box.x + 2, y}, inkcell::text::truncate(qline, box.w - 4), qst);
+    // Search rail
+    bool blink = (static_cast<int>(CmdPalette::nowMs() / 530) % 2) == 0;
+    std::string qline = "  ⌕  " + pal.query + (blink ? "▌" : " ");
+    auto qbg = theme::panel_3();
+    s.fill({box.x + 1, y, box.w - 2, 1}, " ", qbg);
+    s.text({box.x + 1, y}, inkcell::text::truncate(qline, box.w - 2),
+           theme::cyan().with_bg(qbg.bg));
     ++y;
-    // hairline under query
-    s.hline({box.x + 2, y}, box.w - 4, "─", theme::dim().with_bg(panel.bg));
-    ++y;
+    ++y;  // air
 
     int listTop = y;
     int listBot = box.bottom() - 2;
     int visible = std::max(1, listBot - listTop);
+
+    // Count only item rows for scroll (headers still drawn)
     int start = 0;
-    if (pal.index >= visible) start = pal.index - visible + 1;
-    if (start < 0) start = 0;
+    if (pal.index > 0) {
+        // keep selection near top-third
+        start = std::max(0, pal.index - visible / 3);
+    }
 
-    // Stagger: rows appear with delay based on open vis
-    float rowGate = pal.closing ? 1.f : cpSmoother(std::min(1.f, (vis - 0.15f) / 0.85f));
-
+    float rowGate = pal.closing ? 1.f : cpSmoother(std::min(1.f, (vis - 0.12f) / 0.88f));
     std::string lastGroup;
     int drawn = 0;
+
     for (int i = start; i < static_cast<int>(pal.filtered.size()) && drawn < visible; ++i) {
         const auto& it = pal.filtered[static_cast<size_t>(i)];
-        // Group headers consume a row
         if (it.group != lastGroup) {
             if (drawn >= visible) break;
             lastGroup = it.group;
-            float gAppear = rowGate;
-            if (gAppear > 0.2f) {
+            if (rowGate > 0.2f) {
                 auto gs = theme::violet_soft().with_bg(panel.bg);
                 gs.italic = true;
-                if (gAppear < 0.6f) gs.dim = true;
                 s.text({box.x + 2, listTop + drawn},
                        inkcell::text::truncate(it.group, box.w - 4), gs);
             }
@@ -374,51 +364,44 @@ inline bool drawCmdPalette(inkcell::Surface& s, inkcell::Rect page, CmdPalette& 
             if (drawn >= visible) break;
         }
 
-        // Per-row stagger
-        float local = cpClamp01(rowGate * 1.2f - 0.04f * static_cast<float>(drawn));
-        if (local < 0.05f) {
+        float local = cpClamp01(rowGate * 1.15f - 0.035f * static_cast<float>(drawn));
+        if (local < 0.04f) {
             ++drawn;
             continue;
         }
 
         bool sel = (i == pal.index);
         int rowY = listTop + drawn;
-        int rowX = box.x + 1 + static_cast<int>(std::lround((1.f - local) * 3.f));  // slide in from left
-        int rowW = box.w - 2 - (rowX - (box.x + 1));
-
+        int slide = static_cast<int>(std::lround((1.f - local) * 2.f));
         auto rowBg = sel ? theme::panel_3() : panel;
         s.fill({box.x + 1, rowY, box.w - 2, 1}, " ", rowBg);
-        if (sel) {
-            s.text({box.x + 1, rowY}, "▌", theme::cyan().with_bg(rowBg.bg));
-            // soft trailing glow on selection
-            s.text({box.right() - 2, rowY}, "·", theme::cyan_soft().with_bg(rowBg.bg));
-        }
+        if (sel) s.text({box.x + 1, rowY}, "▌", theme::cyan().with_bg(rowBg.bg));
 
         auto lab = (sel ? theme::bright() : theme::text()).with_bg(rowBg.bg);
-        if (!sel && local < 0.7f) lab.dim = true;
         if (sel) lab.bold = true;
-        s.text({rowX + 1, rowY}, inkcell::text::truncate(it.label, std::max(8, rowW / 2)), lab);
+        if (!sel && local < 0.65f) lab.dim = true;
+        int lx = box.x + 3 + slide;
+        s.text({lx, rowY}, inkcell::text::truncate(it.label, box.w / 2), lab);
 
-        std::string right = it.hint;
-        if (!it.keys.empty()) right = it.keys + "  " + it.hint;
+        // Right: bind only (hint is redundant with label for most) — show hint if no keys
+        std::string right = !it.keys.empty() ? it.keys : it.hint;
         auto rs = (sel ? theme::italic_accent() : theme::italic_dim()).with_bg(rowBg.bg);
         int rw = inkcell::text::display_width(right);
-        int rx = std::max(rowX + 4, box.right() - 2 - rw);
-        s.text({rx, rowY}, inkcell::text::truncate(right, box.right() - 2 - rx), rs);
+        s.text({std::max(lx + 8, box.right() - 2 - rw), rowY},
+               inkcell::text::truncate(right, box.w / 3), rs);
         ++drawn;
     }
 
     if (pal.filtered.empty()) {
         s.text({box.x + 3, listTop}, "no matches", theme::amber().with_bg(panel.bg));
+    } else if (const auto* sel = pal.selected()) {
+        // Detail strip — one line of context for selection (no key dump)
+        s.text({box.x + 2, box.bottom() - 1},
+               inkcell::text::truncate(std::string("▸ ") + sel->label +
+                                           (sel->hint.empty() ? "" : "  —  " + sel->hint),
+                                       box.w - 4),
+               theme::italic_dim().with_bg(panel.bg));
     }
-
-    // Footer
-    auto foot = theme::italic_dim().with_bg(panel.bg);
-    s.text({box.x + 2, box.bottom() - 1},
-           inkcell::text::truncate(
-               std::to_string(pal.filtered.size()) + "  ·  ↑↓/jk  ·  enter run  ·  esc close",
-               box.w - 4),
-           foot);
 
     return pal.animating();
 }

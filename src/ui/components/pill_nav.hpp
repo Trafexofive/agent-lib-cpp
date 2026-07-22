@@ -1,6 +1,6 @@
 #pragma once
-// Floating pill dock — borderless (no ─/╭╮ chrome), thumb + ▀ track + shadow.
-// Elevated: caller must pass bottomY with 1 row free below for drop shadow.
+// Textured floating pill dock — 3-row rounded capsule + sliding thumb + ▀ track.
+// Restored from the denser design; 4-section IA + dock-focus ring kept.
 
 #include <algorithm>
 #include <cmath>
@@ -34,12 +34,14 @@ inline inkcell::Color lerpColor(inkcell::Color a, inkcell::Color b, float t) {
 
 struct PillTheme {
     inkcell::Color shellBg;
+    inkcell::Color border;
+    inkcell::Color borderFocus;
     inkcell::Color idleFg;
     inkcell::Color keyFg;
     inkcell::Color activeFg;
     inkcell::Color activeBg;
     inkcell::Color thumb;
-    inkcell::Color focusRing;
+    inkcell::Color track;
     inkcell::Color shadow;
 };
 
@@ -47,30 +49,32 @@ inline PillTheme pillTheme(bool dockFocused) {
     if (theme::activeVariant == theme::Variant::Neon) {
         return PillTheme{
             inkcell::Color::rgb(12, 16, 26),
+            dockFocused ? inkcell::Color::rgb(90, 220, 255) : inkcell::Color::rgb(40, 56, 84),
+            inkcell::Color::rgb(90, 220, 255),
             inkcell::Color::rgb(110, 124, 150),
             inkcell::Color::rgb(70, 180, 210),
             inkcell::Color::rgb(8, 14, 20),
             inkcell::Color::rgb(90, 220, 255),
             inkcell::Color::rgb(90, 220, 255),
-            inkcell::Color::rgb(90, 220, 255),
+            inkcell::Color::rgb(22, 30, 46),
             inkcell::Color::rgb(2, 4, 8),
         };
     }
     return PillTheme{
         inkcell::Color::rgb(30, 30, 34),
+        dockFocused ? inkcell::Color::rgb(120, 175, 190) : inkcell::Color::rgb(62, 62, 70),
+        inkcell::Color::rgb(120, 175, 190),
         inkcell::Color::rgb(125, 125, 135),
         inkcell::Color::rgb(100, 145, 158),
         inkcell::Color::rgb(18, 18, 20),
         inkcell::Color::rgb(210, 215, 220),
         inkcell::Color::rgb(160, 180, 188),
-        inkcell::Color::rgb(120, 175, 190),
+        inkcell::Color::rgb(40, 40, 46),
         inkcell::Color::rgb(8, 8, 10),
     };
 }
 
-// dockH = 3 body rows. bottomY = last body row.
-// Caller should leave surface row bottomY+1 free for shadow (elevated float).
-// Returns total rows consumed including shadow (4) when shadow drawn, else 3.
+// Returns height used (3). bottomY is the last row of the dock.
 inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
                         const std::vector<PillItem>& items, int current, int previous, float animT,
                         bool dockFocused) {
@@ -79,10 +83,13 @@ inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
     const PillTheme T = pillTheme(dockFocused);
     const int dockH = 3;
 
+    // Labels always show key for texture/discoverability
+    std::vector<std::string> labels;
     std::vector<int> widths;
     int inner = 0;
     for (const auto& it : items) {
         std::string lab = "  " + it.key + " " + it.label + "  ";
+        labels.push_back(lab);
         int w = inkcell::text::display_width(lab);
         widths.push_back(w);
         inner += w;
@@ -92,29 +99,23 @@ inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
     if (boxW < 24) boxW = std::min(pageW - 2, 24);
     int boxX = pageX + std::max(0, (pageW - boxW) / 2);
     int boxY = bottomY - (dockH - 1);
-    if (boxY < 0) boxY = 0;
     inkcell::Rect box{boxX, boxY, boxW, dockH};
 
-    // Drop shadow on the row under the pill — this is the "elevated" read
-    int shadowY = box.bottom();  // first row past body
-    bool drewShadow = false;
-    if (shadowY < s.bounds().bottom()) {
-        auto sh = inkcell::Style::normal().with_bg(T.shadow).with_fg(T.shadow);
-        s.fill({box.x + 2, shadowY, std::max(1, box.w - 2), 1}, " ", sh);
-        drewShadow = true;
+    // Drop shadow (depth)
+    auto sh = inkcell::Style::normal().with_bg(T.shadow).with_fg(T.shadow);
+    if (box.bottom() <= s.bounds().bottom()) {
+        s.fill({box.x + 1, std::min(box.bottom(), s.bounds().bottom() - 1), std::max(1, box.w - 1), 1},
+               " ", sh);
     }
 
-    // Solid shell — no ─/│/╭ box chrome
-    auto shell = inkcell::Style::normal().with_bg(T.shellBg).with_fg(T.idleFg);
+    auto shell = inkcell::Style::normal().with_bg(T.shellBg).with_fg(T.border);
     s.fill(box, " ", shell);
+    s.box(box, inkcell::BorderStyle::Rounded, shell.with_fg(T.border));
 
-    // Focus: soft top hair via ▀ in accent (not ─ border)
+    // Focus glow on top edge
     if (dockFocused) {
-        auto ring = inkcell::Style::normal().with_bg(T.shellBg).with_fg(T.focusRing);
-        std::string top;
-        top.reserve(static_cast<size_t>(box.w));
-        for (int i = 0; i < box.w - 2; ++i) top += "▀";
-        s.text({box.x + 1, box.y}, top, ring);
+        for (int x = box.x + 2; x < box.right() - 2; ++x)
+            s.put({x, box.y}, "─", shell.with_fg(T.borderFocus));
     }
 
     int cx0 = box.x + 1;
@@ -151,17 +152,28 @@ inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
     thumbSt.bold = true;
     s.fill({thumbX, cyLabel, thumbW, 1}, " ", thumbSt);
 
-    // Bottom track glow under thumb
+    // Bottom track glow under thumb (texture)
     std::string bar;
     for (int i = 0; i < thumbW; ++i) bar += "▀";
     auto trackSt = inkcell::Style::normal().with_bg(T.shellBg).with_fg(T.thumb);
     s.text({thumbX, box.y + 2}, bar, trackSt);
+    // restore corners
+    s.text({box.x, box.y + 2}, "╰", shell.with_fg(T.border));
+    s.text({box.right() - 1, box.y + 2}, "╯", shell.with_fg(T.border));
+    // side borders on label row
+    s.text({box.x, cyLabel}, "│", shell.with_fg(T.border));
+    s.text({box.right() - 1, cyLabel}, "│", shell.with_fg(T.border));
+    // top corners
+    s.text({box.x, box.y}, "╭", shell.with_fg(dockFocused ? T.borderFocus : T.border));
+    s.text({box.right() - 1, box.y}, "╮", shell.with_fg(dockFocused ? T.borderFocus : T.border));
 
+    // Segment labels — key dim/cyan, label bold when active
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         const auto& it = items[static_cast<size_t>(i)];
         const auto& g = geom[static_cast<size_t>(i)];
         bool on = (g.x0 + g.w / 2) >= thumbX && (g.x0 + g.w / 2) < thumbX + thumbW;
 
+        // Draw as: "  " + key + " " + label + "  "
         int x = g.x0;
         auto bg = on ? T.activeBg : T.shellBg;
         auto pad = inkcell::Style::normal().with_bg(bg).with_fg(on ? T.activeFg : T.idleFg);
@@ -174,10 +186,11 @@ inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
             keySt.bold = true;
         } else {
             keySt.fg = T.keyFg;
-            keySt.italic = true;
+            keySt.italic = true;  // shortcut keys italic — texture
         }
         s.text({x, cyLabel}, it.key, keySt);
         x += inkcell::text::display_width(it.key);
+
         s.text({x, cyLabel}, " ", pad);
         x += 1;
 
@@ -195,7 +208,7 @@ inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
         s.text({x, cyLabel}, it.label, labSt);
     }
 
-    return dockH + (drewShadow ? 1 : 0);
+    return dockH;
 }
 
 }  // namespace cortex::mk3::ui::components

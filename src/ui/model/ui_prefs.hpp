@@ -1,5 +1,5 @@
 #pragma once
-// Persist hub UI prefs: theme + field shader on/off + shader id.
+// Persist hub/chat UI prefs.
 // Path: $XDG_CONFIG_HOME/cortex-mk3/ui.json  or  ~/.config/cortex-mk3/ui.json
 
 #include <cstdlib>
@@ -13,6 +13,19 @@
 
 namespace cortex::mk3::ui {
 
+// Chat-side prefs live on ShellModel — keep a shadow copy so load works
+// before the model exists, then apply.
+struct UiPrefState {
+    bool showThoughts = true;
+    bool truncateBodies = true;
+    bool showRaw = false;
+};
+
+inline UiPrefState& uiPrefShadow() {
+    static UiPrefState s;
+    return s;
+}
+
 inline std::string uiPrefsPath() {
     if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && xdg[0])
         return std::string(xdg) + "/cortex-mk3/ui.json";
@@ -25,20 +38,16 @@ inline void ensureParentDir(const std::string& path) {
     auto slash = path.find_last_of('/');
     if (slash == std::string::npos || slash == 0) return;
     std::string dir = path.substr(0, slash);
-    // mkdir -p
     std::string acc;
     for (size_t i = 0; i < dir.size(); ++i) {
         char c = dir[i];
         acc.push_back(c);
-        if (c == '/' && acc.size() > 1) {
-            ::mkdir(acc.c_str(), 0755);
-        }
+        if (c == '/' && acc.size() > 1) ::mkdir(acc.c_str(), 0755);
     }
     if (!acc.empty() && acc.back() != '/') ::mkdir(acc.c_str(), 0755);
 }
 
 inline std::string jsonGetString(const std::string& body, const std::string& key) {
-    // minimal: "key": "value"
     std::string pat = "\"" + key + "\"";
     size_t k = body.find(pat);
     if (k == std::string::npos) return {};
@@ -76,9 +85,7 @@ inline void loadUiPrefs() {
     if (th == "neon") theme::set(theme::Variant::Neon);
     else if (th == "graphite") theme::set(theme::Variant::Graphite);
 
-    bool en = jsonGetBool(body, "shader_enabled", true);
-    gfx::setFieldEnabled(en);
-
+    gfx::setFieldEnabled(jsonGetBool(body, "shader_enabled", true));
     std::string sh = jsonGetString(body, "shader");
     if (!sh.empty()) {
         const auto& all = gfx::fieldShaders();
@@ -89,6 +96,28 @@ inline void loadUiPrefs() {
             }
         }
     }
+
+    auto& shad = uiPrefShadow();
+    shad.showThoughts = jsonGetBool(body, "show_thoughts", true);
+    shad.truncateBodies = jsonGetBool(body, "truncate_bodies", true);
+    shad.showRaw = jsonGetBool(body, "show_raw", false);
+}
+
+// Apply shadow → live model (call after model construct / load).
+template <typename Model>
+inline void applyUiPrefsToModel(Model& model) {
+    const auto& s = uiPrefShadow();
+    model.showThoughts = s.showThoughts;
+    model.truncateBodies = s.truncateBodies;
+    model.showRaw = s.showRaw;
+}
+
+template <typename Model>
+inline void captureUiPrefsFromModel(const Model& model) {
+    auto& s = uiPrefShadow();
+    s.showThoughts = model.showThoughts;
+    s.truncateBodies = model.truncateBodies;
+    s.showRaw = model.showRaw;
 }
 
 inline void saveUiPrefs() {
@@ -96,14 +125,23 @@ inline void saveUiPrefs() {
     ensureParentDir(path);
     std::ofstream out(path, std::ios::trunc);
     if (!out) return;
+    const auto& s = uiPrefShadow();
     out << "{\n"
         << "  \"theme\": \"" << theme::name() << "\",\n"
         << "  \"shader\": \"" << gfx::activeFieldId() << "\",\n"
-        << "  \"shader_enabled\": " << (gfx::fieldEnabled() ? "true" : "false") << "\n"
+        << "  \"shader_enabled\": " << (gfx::fieldEnabled() ? "true" : "false") << ",\n"
+        << "  \"show_thoughts\": " << (s.showThoughts ? "true" : "false") << ",\n"
+        << "  \"truncate_bodies\": " << (s.truncateBodies ? "true" : "false") << ",\n"
+        << "  \"show_raw\": " << (s.showRaw ? "true" : "false") << "\n"
         << "}\n";
 }
 
-// Call after any prefs mutation.
 inline void persistUiPrefs() { saveUiPrefs(); }
+
+template <typename Model>
+inline void persistUiPrefs(const Model& model) {
+    captureUiPrefsFromModel(model);
+    saveUiPrefs();
+}
 
 }  // namespace cortex::mk3::ui

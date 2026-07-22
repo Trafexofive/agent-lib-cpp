@@ -160,23 +160,54 @@ class MainScene final : public BaseScene {
             return true;
         }
 
-        // Content list nav
-        if (dash.focus == model::DashboardFocus::Content && !event.ctrl() &&
-            (event.code == KeyCode::ArrowUp ||
-             (event.code == KeyCode::Character && (event.ch == 'k' || event.ch == 'K')))) {
-            if (dash.section == model::DashboardSection::Sessions) dash.moveSession(-1);
-            else if (dash.section == model::DashboardSection::Manifests) dash.moveManifest(-1);
-            return true;
-        }
-        if (dash.focus == model::DashboardFocus::Content && !event.ctrl() &&
-            (event.code == KeyCode::ArrowDown ||
-             (event.code == KeyCode::Character && (event.ch == 'j' || event.ch == 'J')))) {
-            if (dash.section == model::DashboardSection::Sessions) dash.moveSession(1);
-            else if (dash.section == model::DashboardSection::Manifests) dash.moveManifest(1);
-            return true;
+        // Content list nav / settings option nav
+        if (dash.focus == model::DashboardFocus::Content && !event.ctrl()) {
+            const bool up = event.code == KeyCode::ArrowUp ||
+                            (event.code == KeyCode::Character && (event.ch == 'k' || event.ch == 'K'));
+            const bool down = event.code == KeyCode::ArrowDown ||
+                              (event.code == KeyCode::Character && (event.ch == 'j' || event.ch == 'J'));
+            const bool left = event.code == KeyCode::ArrowLeft ||
+                              (event.code == KeyCode::Character && (event.ch == 'h' || event.ch == 'H'));
+            const bool right = event.code == KeyCode::ArrowRight ||
+                               (event.code == KeyCode::Character && (event.ch == 'l' || event.ch == 'L'));
+
+            if (dash.section == model::DashboardSection::Settings) {
+                if (up) {
+                    dash.settingsFocus =
+                        (dash.settingsFocus + model::DashboardState::settingsOptionCount - 1) %
+                        model::DashboardState::settingsOptionCount;
+                    return true;
+                }
+                if (down) {
+                    dash.settingsFocus =
+                        (dash.settingsFocus + 1) % model::DashboardState::settingsOptionCount;
+                    return true;
+                }
+                if (left) {
+                    nudgeSetting(-1);
+                    return true;
+                }
+                if (right || event.code == KeyCode::Enter) {
+                    nudgeSetting(+1);
+                    return true;
+                }
+            } else {
+                if (up) {
+                    if (dash.section == model::DashboardSection::Sessions) dash.moveSession(-1);
+                    else if (dash.section == model::DashboardSection::Manifests)
+                        dash.moveManifest(-1);
+                    return true;
+                }
+                if (down) {
+                    if (dash.section == model::DashboardSection::Sessions) dash.moveSession(1);
+                    else if (dash.section == model::DashboardSection::Manifests)
+                        dash.moveManifest(1);
+                    return true;
+                }
+            }
         }
 
-        if (event.code == KeyCode::Enter) {
+        if (event.code == KeyCode::Enter && dash.section != model::DashboardSection::Settings) {
             activate();
             return true;
         }
@@ -193,19 +224,19 @@ class MainScene final : public BaseScene {
             }
             model_->cmdPalette.clearLeader();
 
-            // Settings: 0 = shader off, 1-7 = pick field shader
+            // Settings hot-numbers: 0 field off · 1-7 pick shader (no on-screen list)
             if (dash.section == model::DashboardSection::Settings && event.ch >= '0' &&
                 event.ch <= '9') {
                 int d = event.ch - '0';
                 if (d == 0) {
                     gfx::setFieldEnabled(false);
-                    dash.notice = "shader · off";
+                    dash.settingsFocus = 1;
                 } else if (d >= 1 && d <= gfx::fieldCount()) {
                     gfx::setFieldEnabled(true);
                     gfx::setFieldIndex(d - 1);
-                    dash.notice = std::string("shader · ") + gfx::activeFieldName();
+                    dash.settingsFocus = 2;
                 }
-                persistUiPrefs();
+                persistUiPrefs(*model_);
                 return true;
             }
             // Kind digits on Manifests — operable facets
@@ -240,10 +271,10 @@ class MainScene final : public BaseScene {
                 case 'S':
                     // On Settings: S cycles shader. Elsewhere: Sessions jump.
                     if (dash.section == model::DashboardSection::Settings) {
+                        dash.settingsFocus = 2;
                         if (!gfx::fieldEnabled()) gfx::setFieldEnabled(true);
                         else gfx::cycleField(1);
-                        dash.notice = std::string("shader · ") + gfx::activeFieldName();
-                        persistUiPrefs();
+                        persistUiPrefs(*model_);
                         return true;
                     }
                     dash.select(model::DashboardSection::Sessions);
@@ -275,12 +306,10 @@ class MainScene final : public BaseScene {
                     bumpNotice();
                     return true;
                 case 'b':
-                case 'B':  // toggle field shader on/off (global)
+                case 'B':  // toggle field on/off (global)
                     gfx::toggleFieldEnabled();
-                    dash.notice = gfx::fieldEnabled()
-                                      ? std::string("shader · ") + gfx::activeFieldName()
-                                      : std::string("shader · off");
-                    persistUiPrefs();
+                    if (dash.section == model::DashboardSection::Settings) dash.settingsFocus = 1;
+                    persistUiPrefs(*model_);
                     return true;
                 case 'n':
                 case 'N':
@@ -304,8 +333,8 @@ class MainScene final : public BaseScene {
                     return true;
                 case 'T':
                     theme::toggle();
-                    dash.notice = std::string("theme · ") + theme::name();
-                    persistUiPrefs();
+                    if (dash.section == model::DashboardSection::Settings) dash.settingsFocus = 0;
+                    persistUiPrefs(*model_);
                     return true;
                 case 'q':
                 case 'Q':
@@ -320,9 +349,8 @@ class MainScene final : public BaseScene {
         if (layout::render_min_size_notice(surface, 80, 20)) return;
         surface.clear(theme::base_bg());
 
-        // Hub page: top+side inset only — reclaim the bottom 2 rows that
-        // layout::page().inset(2) used to waste (killed pill elevation).
         const auto full = surface.bounds();
+        // Horizontal breathing only — bottom is owned by the 3-row textured pill.
         inkcell::Rect page{full.x + 2, full.y + 1, std::max(1, full.w - 4),
                            std::max(1, full.h - 1)};
 
@@ -331,25 +359,23 @@ class MainScene final : public BaseScene {
         const float tsec = gfx::nowSeconds();
         const int tvar = gfx::themeVariantIndex();
 
-        // Field on full surface so edges/bottom breathe under the floating pill
         gfx::drawFieldBg(surface, full, tvar, tsec);
-
         drawAppBar(surface, page, tier);
 
-        // Pill geometry: 3 body + 1 shadow row at true bottom.
-        // bottomY = last body row; shadow paints on bottomY+1.
+        // Textured 3-row pill (restored). bottomY = last body row.
+        // Shadow paints one row under body when available — pin body so
+        // shadow lands on full.bottom()-1 (no black dead strip).
         const int pillBodyH = 3;
-        const int pillShadowH = 1;
-        const int floatGap = 1;  // air between stage and pill
-        const int dockReserve = floatGap + pillBodyH + pillShadowH;
-        const int pillBottomY = page.bottom() - 1 - pillShadowH;  // body ends here
-
+        const int airAbovePill = 1;
+        const int pillBottomY = full.bottom() - 2;  // body ends here; shadow on last row
         int stageTop = page.y + 3;
-        int stageH = std::max(6, pillBottomY - floatGap - stageTop);
+        int stageBot = pillBottomY - (pillBodyH - 1) - airAbovePill;
+        int stageH = std::max(6, stageBot - stageTop);
         inkcell::Rect stage{page.x, stageTop, page.w, stageH};
         gfx::drawBorderlessPanel(surface, stage, theme::panel_bg());
 
-        inkcell::Rect content{stage.x + 2, stage.y + 1, std::max(1, stage.w - 4),
+        // Content has real padding — not cramped
+        inkcell::Rect content{stage.x + 3, stage.y + 1, std::max(1, stage.w - 6),
                               std::max(1, stage.h - 2)};
         const int maxSlide = std::max(4, std::min(12, content.h / 3));
         int yOff = dash.pageSlideRows(maxSlide);
@@ -372,7 +398,6 @@ class MainScene final : public BaseScene {
                                  dash.navigationIndex, dash.navPrevIndex, dash.navAnimT(),
                                  dash.focus == model::DashboardFocus::Dock);
 
-        // Command palette above everything (full surface)
         components::drawCmdPalette(surface, full, model_->cmdPalette);
     }
 
@@ -392,16 +417,16 @@ class MainScene final : public BaseScene {
             dash.notice = "refreshed";
         } else if (id == "act.theme") {
             theme::toggle();
-            persistUiPrefs();
+            persistUiPrefs(*model_);
         } else if (id == "act.shader") {
             gfx::cycleField(1);
-            persistUiPrefs();
+            persistUiPrefs(*model_);
         } else if (id == "act.shader_off") {
             gfx::setFieldEnabled(false);
-            persistUiPrefs();
+            persistUiPrefs(*model_);
         } else if (id == "act.shader_on") {
             gfx::setFieldEnabled(true);
-            persistUiPrefs();
+            persistUiPrefs(*model_);
         } else if (id == "act.launch") activate();
         else if (id == "sys.quit") model_->pendingRoute = "quit";
         bumpNotice();
@@ -525,63 +550,153 @@ class MainScene final : public BaseScene {
     }
 
     void drawHome(inkcell::Surface& surface, inkcell::Rect frame) const {
-        sectionHead(surface, frame, "Home",
-                    "live agent · harness · runtime  ·  ctrl-j/k dock  ·  a registry");
-        int y = frame.y + 4;
+        // ── Hero identity ────────────────────────────────────────────
+        const std::string name = activeName();
+        const std::string engine =
+            nonempty(model_->agentProvider, nonempty(cfg_.provider, "?")) + "/" +
+            nonempty(model_->agentModel, nonempty(cfg_.model, "?"));
+        const bool live = model_->running;
+        const char* pulse = live ? "● LIVE" : "○ READY";
 
-        int tileW = std::max(16, (frame.w - 6) / 4);
-        int tileH = 4;
-        if (y + tileH < frame.bottom() && frame.w >= 64) {
-            metricTile(surface, {frame.x, y, tileW, tileH}, "AGENT", activeName(), theme::bright());
-            metricTile(surface, {frame.x + tileW + 2, y, tileW, tileH}, "STATUS",
-                       model_->running ? "running" : "ready",
-                       model_->running ? theme::green() : theme::text());
-            metricTile(surface, {frame.x + 2 * (tileW + 2), y, tileW, tileH}, "REGISTRY",
-                       std::to_string(model_->dashboard.manifests.size()), theme::cyan());
-            metricTile(surface, {frame.x + 3 * (tileW + 2), y, tileW, tileH}, "SESSIONS",
-                       std::to_string(model_->dashboard.sessions.size()), theme::text());
+        surface.text({frame.x, frame.y}, inkcell::text::truncate(name, frame.w / 2), theme::bright());
+        surface.text({frame.x + inkcell::text::display_width(name) + 2, frame.y},
+                     pulse, live ? theme::green() : theme::muted());
+        if (frame.h > 1)
+            surface.text({frame.x, frame.y + 1},
+                         inkcell::text::truncate(engine, frame.w), theme::italic_dim());
+
+        int y = frame.y + 3;
+
+        // ── KPI strip (real counts only) ─────────────────────────────
+        int agents = 0, tools = 0, feeds = 0, other = 0;
+        for (const auto& m : model_->dashboard.manifests) {
+            if (m.kind == "agent") ++agents;
+            else if (m.kind == "tool") ++tools;
+            else if (m.kind == "feed") ++feeds;
+            else ++other;
+        }
+        int sessN = static_cast<int>(model_->dashboard.sessions.size());
+        int toolN = model_->rootAgent ? static_cast<int>(model_->rootAgent->toolNames().size()) : 0;
+        int subN = model_->rootAgent ? static_cast<int>(model_->rootAgent->subAgentNames().size()) : 0;
+
+        struct Kpi { const char* lab; std::string val; inkcell::Style st; };
+        std::vector<Kpi> kpis = {
+            {"REGISTRY", std::to_string(static_cast<int>(model_->dashboard.manifests.size())), theme::cyan()},
+            {"AGENTS", std::to_string(agents), theme::bright()},
+            {"SESSIONS", std::to_string(sessN), theme::text()},
+            {"TOOLS", std::to_string(toolN), theme::text()},
+            {"SUBS", std::to_string(subN), theme::muted()},
+        };
+        int cols = std::min(static_cast<int>(kpis.size()), std::max(3, frame.w / 18));
+        int gap = 1;
+        int tileW = std::max(12, (frame.w - gap * (cols - 1)) / cols);
+        int tileH = 3;
+        if (y + tileH < frame.bottom()) {
+            for (int i = 0; i < cols; ++i) {
+                inkcell::Rect t{frame.x + i * (tileW + gap), y, tileW, tileH};
+                surface.fill(t, " ", theme::panel_2());
+                // top accent freckle
+                surface.text({t.x + 1, t.y}, "▀",
+                             (i == 0 ? theme::cyan() : theme::dim()).with_bg(theme::panel_2().bg));
+                surface.text({t.x + 2, t.y}, inkcell::text::truncate(kpis[static_cast<size_t>(i)].lab, tileW - 3),
+                             theme::dim().with_bg(theme::panel_2().bg));
+                auto vs = kpis[static_cast<size_t>(i)].st;
+                vs.bg = theme::panel_2().bg;
+                vs.bold = true;
+                surface.text({t.x + 2, t.y + 1},
+                             inkcell::text::truncate(kpis[static_cast<size_t>(i)].val, tileW - 3), vs);
+            }
             y += tileH + 2;
         }
 
-        surface.text({frame.x, y++}, "RUNTIME", theme::cyan_soft());
-        components::fieldLine(surface, frame.x, y++, frame.w, "engine",
-                              nonempty(model_->agentProvider, nonempty(cfg_.provider, "?")) + "/" +
-                                  nonempty(model_->agentModel, nonempty(cfg_.model, "?")));
-        components::fieldLine(surface, frame.x, y++, frame.w, "manifest",
-                              activeManifest().empty() ? "none" : activeManifest());
-        components::fieldLine(surface, frame.x, y++, frame.w, "session",
-                              suffix(model_->activeSessionId));
-        components::fieldLine(surface, frame.x, y++, frame.w, "turn",
-                              model_->running ? "running" : "idle");
-        y += 1;
+        // ── Two-column: runtime | loadout ────────────────────────────
+        int colW = frame.w >= 70 ? (frame.w - 3) / 2 : frame.w;
+        int leftX = frame.x;
+        int rightX = frame.w >= 70 ? frame.x + colW + 3 : frame.x;
+        int yL = y, yR = y;
 
-        surface.text({frame.x, y++}, "HARNESS", theme::amber_soft());
-        components::fieldLine(surface, frame.x, y++, frame.w, "harness", basename(cfg_.harnessPath));
-        components::fieldLine(surface, frame.x, y++, frame.w, "system",
-                              basename(cfg_.systemPromptPath));
-        components::fieldLine(surface, frame.x, y++, frame.w, "persona", basename(cfg_.personaPath));
-        if (model_->rootAgent) {
-            y += 1;
-            auto oneLine = [&](const char* lab, const std::vector<std::string>& names) {
-                if (y >= frame.bottom()) return;
-                std::string joined;
-                for (const auto& n : names) {
-                    if (!joined.empty()) joined += " · ";
-                    joined += n;
+        auto head = [&](int x, int& yy, const char* t, inkcell::Style st) {
+            if (yy >= frame.bottom()) return;
+            surface.text({x, yy++}, t, st);
+        };
+        auto row = [&](int x, int& yy, int w, const char* k, const std::string& v) {
+            if (yy >= frame.bottom()) return;
+            components::fieldLine(surface, x, yy++, w, k, v);
+        };
+
+        head(leftX, yL, "RUNTIME", theme::cyan_soft());
+        row(leftX, yL, colW, "manifest",
+            activeManifest().empty() ? "—" : basename(activeManifest()));
+        row(leftX, yL, colW, "session",
+            model_->activeSessionId.empty() ? "—" : suffix(model_->activeSessionId));
+        row(leftX, yL, colW, "harness", basename(cfg_.harnessPath));
+        row(leftX, yL, colW, "system", basename(cfg_.systemPromptPath));
+        row(leftX, yL, colW, "persona", basename(cfg_.personaPath));
+        row(leftX, yL, colW, "turn", live ? "running" : "idle");
+
+        if (frame.w >= 70) {
+            head(rightX, yR, "LOADOUT", theme::amber_soft());
+            auto joinN = [&](const std::vector<std::string>& names, int maxN) {
+                std::string j;
+                int n = 0;
+                for (const auto& nm : names) {
+                    if (n >= maxN) {
+                        j += " · +";
+                        j += std::to_string(static_cast<int>(names.size()) - maxN);
+                        break;
+                    }
+                    if (!j.empty()) j += " · ";
+                    j += nm;
+                    ++n;
                 }
-                components::fieldLine(surface, frame.x, y++, frame.w, lab,
-                                      joined.empty() ? "none" : joined);
+                return j.empty() ? std::string("—") : j;
             };
-            oneLine("tools", model_->rootAgent->toolNames());
-            oneLine("agents", model_->rootAgent->subAgentNames());
-            oneLine("feeds", model_->rootAgent->feedNames());
+            if (model_->rootAgent) {
+                row(rightX, yR, colW, "tools", joinN(model_->rootAgent->toolNames(), 6));
+                row(rightX, yR, colW, "agents", joinN(model_->rootAgent->subAgentNames(), 5));
+                row(rightX, yR, colW, "feeds", joinN(model_->rootAgent->feedNames(), 4));
+            } else {
+                row(rightX, yR, colW, "tools", "—");
+                row(rightX, yR, colW, "agents", "—");
+                row(rightX, yR, colW, "feeds", "—");
+            }
+            row(rightX, yR, colW, "registry", std::to_string(agents) + "a · " +
+                                                  std::to_string(tools) + "t · " +
+                                                  std::to_string(feeds) + "f");
+            row(rightX, yR, colW, "field",
+                gfx::fieldEnabled() ? std::string(gfx::activeFieldName()) : std::string("off"));
         }
+
+        y = std::max(yL, yR) + 1;
+
+        // ── Recent sessions (actionable) ─────────────────────────────
+        if (y + 2 < frame.bottom() && !model_->dashboard.sessions.empty()) {
+            surface.text({frame.x, y++}, "RECENT", theme::violet());
+            int shown = 0;
+            for (const auto& s : model_->dashboard.sessions) {
+                if (shown >= 4 || y >= frame.bottom() - 1) break;
+                bool cur = !model_->activeSessionId.empty() && s.id == model_->activeSessionId;
+                std::string line = std::string(cur ? "▸ " : "  ") +
+                                   (s.agentName.empty() ? s.id : s.agentName);
+                line += "  ·  " + std::to_string(s.turnCount) + "t";
+                if (!s.updated.empty()) line += "  ·  " + s.updated;
+                surface.text({frame.x, y++}, inkcell::text::truncate(line, frame.w),
+                             cur ? theme::bright() : theme::muted());
+                ++shown;
+            }
+        }
+
         if (!model_->launchError.empty() && y < frame.bottom()) {
-            y += 1;
             surface.text({frame.x, y},
-                         inkcell::text::truncate("launch error: " + model_->launchError, frame.w),
+                         inkcell::text::truncate("⚠  " + model_->launchError, frame.w),
                          theme::red());
         }
+
+        // Footer action — one line, no key encyclopedia
+        if (frame.bottom() - 1 > y)
+            surface.text({frame.x, frame.bottom() - 1},
+                         "enter open chat  ·  a registry  ·  s sessions",
+                         theme::italic_dim());
     }
 
     void drawSessions(inkcell::Surface& surface, inkcell::Rect frame) const {
@@ -869,73 +984,132 @@ class MainScene final : public BaseScene {
         }
     }
 
+    // AAA options: j/k focus · h/l or enter cycle · no redundant dumps
+    void nudgeSetting(int dir) {
+        auto& dash = model_->dashboard;
+        switch (dash.settingsFocus) {
+            case 0:  // theme
+                theme::toggle();
+                break;
+            case 1:  // field on/off
+                gfx::toggleFieldEnabled();
+                break;
+            case 2:  // shader carousel
+                if (!gfx::fieldEnabled()) gfx::setFieldEnabled(true);
+                gfx::cycleField(dir >= 0 ? 1 : -1);
+                break;
+            case 3:  // thoughts
+                model_->showThoughts = !model_->showThoughts;
+                model_->rebuildViews();
+                break;
+            case 4:  // truncate
+                model_->truncateBodies = !model_->truncateBodies;
+                model_->rebuildViews();
+                break;
+            case 5:  // raw
+                model_->showRaw = !model_->showRaw;
+                model_->rebuildViews();
+                break;
+            default:
+                break;
+        }
+        persistUiPrefs(*model_);
+        dash.notice.clear();
+    }
+
     void drawSettings(inkcell::Surface& surface, inkcell::Rect frame) const {
-        sectionHead(surface, frame, "Settings", "theme · field shader · keys");
-        int y = frame.y + 3;
+        // Title plate
+        surface.text({frame.x, frame.y}, "SETTINGS", theme::bright());
+        surface.text({frame.x + 10, frame.y}, "OPTIONS",
+                     theme::italic_dim());
 
-        // ── Appearance ──────────────────────────────────────────────
-        surface.text({frame.x, y++}, "APPEARANCE", theme::violet());
+        int y = frame.y + 2;
+        // Live preview strip — what the field actually is right now
+        int previewH = std::min(5, std::max(3, frame.h / 6));
+        if (y + previewH + 8 < frame.bottom()) {
+            inkcell::Rect prev{frame.x, y, frame.w, previewH};
+            if (gfx::fieldEnabled()) {
+                gfx::drawFieldBg(surface, prev, gfx::themeVariantIndex(), gfx::nowSeconds());
+            } else {
+                surface.fill(prev, " ", theme::base_bg());
+            }
+            // Overlay label on preview
+            std::string tag = gfx::fieldEnabled()
+                                  ? std::string("FIELD  ·  ") + gfx::activeFieldName()
+                                  : std::string("FIELD  ·  OFF");
+            auto tagSt = theme::bright();
+            tagSt.bg = inkcell::Color::rgb(0, 0, 0);
+            surface.text({prev.x + 2, prev.y + previewH / 2},
+                         inkcell::text::truncate(tag, prev.w - 4), tagSt);
+            y = prev.bottom() + 1;
+        }
 
-        auto row = [&](const char* key, const std::string& val, const char* bind) {
+        // Section labels
+        auto section = [&](const char* name) {
             if (y >= frame.bottom()) return;
-            components::fieldLine(surface, frame.x, y, frame.w - 18, key, val);
-            surface.text({frame.x + std::max(20, frame.w - 16), y},
-                         bind, theme::italic_accent());
+            surface.text({frame.x, y++}, name, theme::violet());
+        };
+
+        // Game-style option row:  [▸] LABEL ……… ◂ VALUE ▸   bind
+        auto option = [&](int idx, const char* label, const std::string& value, const char* bind,
+                          bool carousel) {
+            if (y >= frame.bottom()) return;
+            bool foc = (dashFocus() == idx);
+            auto rowBg = foc ? theme::panel_3() : theme::panel_2();
+            surface.fill({frame.x, y, frame.w, 1}, " ", rowBg);
+            if (foc)
+                surface.text({frame.x, y}, "▌",
+                             theme::cyan().with_bg(rowBg.bg));
+
+            auto labSt = (foc ? theme::bright() : theme::muted()).with_bg(rowBg.bg);
+            surface.text({frame.x + 2, y}, inkcell::text::truncate(label, 16), labSt);
+
+            // Value — centered carousel or toggle glyph
+            std::string val = value;
+            if (carousel) val = "◂  " + value + "  ▸";
+            int vw = inkcell::text::display_width(val);
+            int vx = frame.x + std::max(20, (frame.w - vw) / 2);
+            auto valSt = (foc ? theme::bright() : theme::text()).with_bg(rowBg.bg);
+            if (foc) valSt.bold = true;
+            surface.text({vx, y}, inkcell::text::truncate(val, frame.w - 24), valSt);
+
+            // Bind chip right
+            auto bindSt = theme::italic_accent().with_bg(rowBg.bg);
+            int bw = inkcell::text::display_width(bind);
+            surface.text({frame.right() - bw - 1, y}, bind, bindSt);
             ++y;
         };
 
-        row("theme", theme::name(), "T");
+        section("DISPLAY");
+        option(0, "THEME", upperCopy(theme::name()), "T / ←→", true);
+        option(1, "FIELD", gfx::fieldEnabled() ? "ON" : "OFF", "B", false);
+        option(2, "SHADER",
+               gfx::fieldEnabled() ? upperCopy(gfx::activeFieldName()) : std::string("—"),
+               "S / ←→", true);
 
-        std::string shLabel =
-            gfx::fieldEnabled() ? std::string(gfx::activeFieldName()) : std::string("off (solid bg)");
-        row("shader", shLabel, "S / B");
-        if (y < frame.bottom()) {
-            surface.text({frame.x, y++},
-                         inkcell::text::truncate(std::string("prefs      ") + uiPrefsPath(), frame.w),
+        if (y < frame.bottom()) ++y;
+        section("CHAT");
+        option(3, "THOUGHTS", model_->showThoughts ? "ON" : "OFF", "^T", false);
+        option(4, "TRUNCATE", model_->truncateBodies ? "ON" : "OFF", "^O", false);
+        option(5, "RAW STREAM", model_->showRaw ? "ON" : "OFF", "^R", false);
+
+        // Single footer — path only, no key encyclopedia
+        if (y + 1 < frame.bottom()) {
+            y = frame.bottom() - 1;
+            surface.text({frame.x, y},
+                         inkcell::text::truncate(
+                             std::string("j/k select  ·  h/l or enter cycle  ·  ") + uiPrefsPath(),
+                             frame.w),
                          theme::italic_dim());
         }
+    }
 
-        if (y < frame.bottom()) {
-            surface.text({frame.x, y++}, "",
-                         theme::dim());  // spacer via empty
-        }
-        // Shader catalog list
-        if (y < frame.bottom())
-            surface.text({frame.x, y++}, "SHADERS", theme::cyan_soft());
-        const auto& all = gfx::fieldShaders();
-        for (int i = 0; i < static_cast<int>(all.size()) && y < frame.bottom(); ++i) {
-            bool on = gfx::fieldEnabled() && i == gfx::activeFieldIndex();
-            std::string line = std::string(on ? "▸ " : "  ") + std::to_string(i + 1) + "  " +
-                               all[static_cast<size_t>(i)].name;
-            surface.text({frame.x, y++}, inkcell::text::truncate(line, frame.w),
-                         on ? theme::bright() : theme::muted());
-        }
-        if (y < frame.bottom()) {
-            bool off = !gfx::fieldEnabled();
-            surface.text({frame.x, y++},
-                         inkcell::text::truncate(std::string(off ? "▸ " : "  ") + "0  off (theme bg)",
-                                                 frame.w),
-                         off ? theme::amber() : theme::muted());
-        }
+    int dashFocus() const { return model_->dashboard.settingsFocus; }
 
-        y += 1;
-        if (y < frame.bottom())
-            surface.text({frame.x, y++}, "KEYS", theme::violet());
-        const char* keys[] = {
-            "  T                 cycle theme (graphite/neon)",
-            "  S                 next shader (here in Settings)",
-            "  B                 toggle shader on/off (global)",
-            "  0                 shader off · 1-7 pick shader",
-            "  ctrl-j / ctrl-k   prev / next section",
-            "  ctrl-p / spc spc  command palette",
-            "  g s a ?           Home / Sessions / Manifests / Settings",
-            "  enter             launch selected agent",
-            "  c chat · q quit",
-        };
-        for (const char* line : keys) {
-            if (y >= frame.bottom()) break;
-            surface.text({frame.x, y++}, line, theme::muted());
-        }
+    static std::string upperCopy(const std::string& s) {
+        std::string o = s;
+        for (char& c : o) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        return o;
     }
 
     void activate() {

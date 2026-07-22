@@ -64,6 +64,7 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
         if (value == "neon") theme::set(theme::Variant::Neon);
         else theme::set(theme::Variant::Graphite);
     }
+    applyUiPrefsToModel(*model);
     model->activeSessionId = cfg.sessionId;
     // Wire the agent display identity so the chat transcript labels the
     // assistant's own turns with the real agent name + model/provider (not the

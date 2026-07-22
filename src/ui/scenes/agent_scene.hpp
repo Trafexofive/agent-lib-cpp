@@ -10,6 +10,7 @@
 #include "src/ui/chat/chat_io.hpp"
 #include "src/ui/chat/chat_view.hpp"
 #include "src/ui/components/cmd_palette.hpp"
+#include "src/ui/model/ui_prefs.hpp"
 
 namespace cortex::mk3::ui::scenes {
 
@@ -64,16 +65,19 @@ class AgentScene final : public BaseScene {
             if (event.ch == 't' || event.ch == 'T') {
                 model_->showThoughts = !model_->showThoughts;
                 model_->rebuildViews();
+                persistUiPrefs(*model_);
                 return true;
             }
             if (event.ch == 'o' || event.ch == 'O') {
                 model_->truncateBodies = !model_->truncateBodies;
                 model_->rebuildViews();
+                persistUiPrefs(*model_);
                 return true;
             }
             if (event.ch == 'r' || event.ch == 'R') {
                 model_->showRaw = !model_->showRaw;
                 model_->rebuildViews();
+                persistUiPrefs(*model_);
                 return true;
             }
         }
@@ -312,16 +316,19 @@ class AgentScene final : public BaseScene {
         if (id == "chat.thoughts") {
             model_->showThoughts = !model_->showThoughts;
             model_->rebuildViews();
+            persistUiPrefs(*model_);
             return;
         }
         if (id == "chat.truncate") {
             model_->truncateBodies = !model_->truncateBodies;
             model_->rebuildViews();
+            persistUiPrefs(*model_);
             return;
         }
         if (id == "chat.raw") {
             model_->showRaw = !model_->showRaw;
             model_->rebuildViews();
+            persistUiPrefs(*model_);
             return;
         }
         if (id == "chat.clear") {
@@ -334,6 +341,7 @@ class AgentScene final : public BaseScene {
         }
         if (id == "act.theme") {
             theme::toggle();
+            persistUiPrefs(*model_);
             return;
         }
         if (id == "sys.quit") {
@@ -482,21 +490,29 @@ class AgentScene final : public BaseScene {
         if (result.quit) model_->pendingRoute = "quit";
         if (result.stopLoop) stopAgentLoop("slash");
         if (result.clearTranscript) model_->clearTranscript();
+        bool prefsDirty = false;
         if (result.toggleThoughts) {
             model_->showThoughts = !model_->showThoughts;
             model_->rebuildViews();
+            prefsDirty = true;
         }
         if (result.toggleTruncate) {
             model_->truncateBodies = !model_->truncateBodies;
             model_->rebuildViews();
+            prefsDirty = true;
         }
-        if (result.toggleRaw) model_->showRaw = !model_->showRaw;
+        if (result.toggleRaw) {
+            model_->showRaw = !model_->showRaw;
+            prefsDirty = true;
+        }
         if (result.toggleTheme) {
             if (result.themeName == "graphite") theme::set(theme::Variant::Graphite);
             else if (result.themeName == "neon") theme::set(theme::Variant::Neon);
             else theme::toggle();
             result.lines = {std::string("active theme: ") + theme::name()};
+            prefsDirty = true;
         }
+        if (prefsDirty) persistUiPrefs(*model_);
         if (result.showPrompts) showCapturedPrompts();
         if (result.dumpPrompts) {
             auto messages = chat::dumpPrompts(model_->rootAgent ? model_->rootAgent->iterationPrompts()

@@ -56,6 +56,10 @@ struct DashboardState {
     static constexpr int navAnimDurationMs = 280;
     static constexpr int sectionCount = 4;
 
+    // Settings option focus (0=theme 1=field 2=shader 3=thoughts 4=truncate 5=raw)
+    int settingsFocus = 0;
+    static constexpr int settingsOptionCount = 6;
+
     // Manifest card swipe (j/k) — curved dual-card transition
     int cardPrevIndex = -1;
     int cardAnimDir = 1;  // +1 next (j down list), -1 prev
