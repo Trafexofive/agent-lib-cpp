@@ -28,3 +28,9 @@ Last updated: 2026-07-21
 
 Dashboard → **Manifests** (`a`): recursive registry.  
 Empty state prints searched roots. Discovery walks up from `agent.yml` and the binary path; skips empty placeholder `manifests/` dirs.
+
+## Skills
+
+- `skills/inkcell` — inkcell TUI framework masterclass (pi + hub)
+- `skills/mk3-manifest` — MK3 manifest authoring
+- `skills/harness-tuner` — harness compliance tuning
