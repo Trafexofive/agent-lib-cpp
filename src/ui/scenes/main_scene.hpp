@@ -23,7 +23,9 @@
 #include "src/ui/gfx/field_raster.hpp"
 #include "src/ui/gfx/shaders_dedsec.hpp"
 #include "src/ui/layout/density.hpp"
+#include "src/ui/layout/sbtui_layout.hpp"
 #include "src/ui/model/dashboard_controller.hpp"
+#include "src/ui/model/ui_prefs.hpp"
 
 namespace cortex::mk3::ui::scenes {
 
@@ -34,6 +36,7 @@ class MainScene final : public BaseScene {
 
     void on_enter() override {
         BaseScene::on_enter();
+        loadUiPrefs();  // theme + shader from ~/.config/cortex-mk3/ui.json
         if (!cfg_.manifestDir.empty())
             model_->dashboard.manifestDir = cfg_.manifestDir;
         else if (!activeManifest().empty())
@@ -202,6 +205,7 @@ class MainScene final : public BaseScene {
                     gfx::setFieldIndex(d - 1);
                     dash.notice = std::string("shader · ") + gfx::activeFieldName();
                 }
+                persistUiPrefs();
                 return true;
             }
             // Kind digits on Manifests — operable facets
@@ -239,6 +243,7 @@ class MainScene final : public BaseScene {
                         if (!gfx::fieldEnabled()) gfx::setFieldEnabled(true);
                         else gfx::cycleField(1);
                         dash.notice = std::string("shader · ") + gfx::activeFieldName();
+                        persistUiPrefs();
                         return true;
                     }
                     dash.select(model::DashboardSection::Sessions);
@@ -275,6 +280,7 @@ class MainScene final : public BaseScene {
                     dash.notice = gfx::fieldEnabled()
                                       ? std::string("shader · ") + gfx::activeFieldName()
                                       : std::string("shader · off");
+                    persistUiPrefs();
                     return true;
                 case 'n':
                 case 'N':
@@ -299,6 +305,7 @@ class MainScene final : public BaseScene {
                 case 'T':
                     theme::toggle();
                     dash.notice = std::string("theme · ") + theme::name();
+                    persistUiPrefs();
                     return true;
                 case 'q':
                 case 'Q':
@@ -312,20 +319,33 @@ class MainScene final : public BaseScene {
     void draw(inkcell::Surface& surface) const override {
         if (layout::render_min_size_notice(surface, 80, 20)) return;
         surface.clear(theme::base_bg());
-        const inkcell::Rect page = layout::page(surface);
+
+        // Hub page: top+side inset only — reclaim the bottom 2 rows that
+        // layout::page().inset(2) used to waste (killed pill elevation).
+        const auto full = surface.bounds();
+        inkcell::Rect page{full.x + 2, full.y + 1, std::max(1, full.w - 4),
+                           std::max(1, full.h - 1)};
+
         const auto tier = layout::densityOf(page.w);
         const auto& dash = model_->dashboard;
         const float tsec = gfx::nowSeconds();
         const int tvar = gfx::themeVariantIndex();
 
-        // Field bg (or solid theme base when disabled). No stage ─ chrome.
-        gfx::drawFieldBg(surface, page, tvar, tsec);
+        // Field on full surface so edges/bottom breathe under the floating pill
+        gfx::drawFieldBg(surface, full, tvar, tsec);
 
         drawAppBar(surface, page, tier);
 
-        const int dockReserve = 4;
-        int stageTop = page.y + 3;  // page.y+2 = pure field/theme strip
-        int stageH = std::max(6, page.bottom() - dockReserve - stageTop);
+        // Pill geometry: 3 body + 1 shadow row at true bottom.
+        // bottomY = last body row; shadow paints on bottomY+1.
+        const int pillBodyH = 3;
+        const int pillShadowH = 1;
+        const int floatGap = 1;  // air between stage and pill
+        const int dockReserve = floatGap + pillBodyH + pillShadowH;
+        const int pillBottomY = page.bottom() - 1 - pillShadowH;  // body ends here
+
+        int stageTop = page.y + 3;
+        int stageH = std::max(6, pillBottomY - floatGap - stageTop);
         inkcell::Rect stage{page.x, stageTop, page.w, stageH};
         gfx::drawBorderlessPanel(surface, stage, theme::panel_bg());
 
@@ -348,12 +368,12 @@ class MainScene final : public BaseScene {
             {"a", "Manifests"},
             {"?", "Settings"},
         };
-        components::drawPillDock(surface, page.x, page.w, page.bottom() - 1, pills,
+        components::drawPillDock(surface, page.x, page.w, pillBottomY, pills,
                                  dash.navigationIndex, dash.navPrevIndex, dash.navAnimT(),
                                  dash.focus == model::DashboardFocus::Dock);
 
-        // Command palette above everything
-        components::drawCmdPalette(surface, page, model_->cmdPalette);
+        // Command palette above everything (full surface)
+        components::drawCmdPalette(surface, full, model_->cmdPalette);
     }
 
    private:
@@ -370,11 +390,19 @@ class MainScene final : public BaseScene {
         else if (id == "act.refresh") {
             dash.refreshAll();
             dash.notice = "refreshed";
-        } else if (id == "act.theme") theme::toggle();
-        else if (id == "act.shader") gfx::cycleField(1);
-        else if (id == "act.shader_off") gfx::setFieldEnabled(false);
-        else if (id == "act.shader_on") gfx::setFieldEnabled(true);
-        else if (id == "act.launch") activate();
+        } else if (id == "act.theme") {
+            theme::toggle();
+            persistUiPrefs();
+        } else if (id == "act.shader") {
+            gfx::cycleField(1);
+            persistUiPrefs();
+        } else if (id == "act.shader_off") {
+            gfx::setFieldEnabled(false);
+            persistUiPrefs();
+        } else if (id == "act.shader_on") {
+            gfx::setFieldEnabled(true);
+            persistUiPrefs();
+        } else if (id == "act.launch") activate();
         else if (id == "sys.quit") model_->pendingRoute = "quit";
         bumpNotice();
     }
@@ -861,6 +889,11 @@ class MainScene final : public BaseScene {
         std::string shLabel =
             gfx::fieldEnabled() ? std::string(gfx::activeFieldName()) : std::string("off (solid bg)");
         row("shader", shLabel, "S / B");
+        if (y < frame.bottom()) {
+            surface.text({frame.x, y++},
+                         inkcell::text::truncate(std::string("prefs      ") + uiPrefsPath(), frame.w),
+                         theme::italic_dim());
+        }
 
         if (y < frame.bottom()) {
             surface.text({frame.x, y++}, "",

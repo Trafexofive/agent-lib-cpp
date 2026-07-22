@@ -19,6 +19,7 @@
 #include "src/ui/bridge/agent_bridge.hpp"
 #include "src/ui/chat/prompt_history.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
+#include "src/ui/model/ui_prefs.hpp"
 #include "src/ui/scenes/agent_scene.hpp"
 #include "src/ui/scenes/main_scene.hpp"
 
@@ -56,12 +57,12 @@ inline void collectProtocolChanges(std::vector<UiEvent>& out,
 
 inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
                                const InkcellAppConfig& cfg) {
+    // Disk prefs first; MK3_TUI_THEME env still wins when set.
+    loadUiPrefs();
     if (const char* requestedTheme = std::getenv("MK3_TUI_THEME")) {
         std::string value = requestedTheme;
         if (value == "neon") theme::set(theme::Variant::Neon);
         else theme::set(theme::Variant::Graphite);
-    } else {
-        theme::set(theme::Variant::Graphite);
     }
     model->activeSessionId = cfg.sessionId;
     // Wire the agent display identity so the chat transcript labels the
