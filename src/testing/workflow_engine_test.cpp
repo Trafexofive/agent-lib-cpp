@@ -6,6 +6,7 @@
 // ${step.*} variables, and honor on_error policy.
 // =============================================================================
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -357,6 +358,50 @@ steps:
     PASS();
 }
 
+void test_progress_callback_and_smoke_test_yml() {
+    TEST("progress callback fires and smoke-test.yml runs end-to-end");
+
+    fs::path smoke = fs::path("manifests/workflows/smoke-test.yml");
+    CHECK(fs::exists(smoke), "smoke-test.yml missing from CWD");
+
+    WorkflowEngine engine;
+    auto& wf = engine.load(smoke.string());
+    CHECK(wf.isValid(), "smoke-test failed to load");
+    CHECK(wf.steps().size() >= 4, "smoke-test should have multiple top-level steps");
+
+    std::vector<std::string> enters;
+    std::vector<std::string> exits;
+    WorkflowRuntime rt;
+    rt.onProgress = [&](const StepProgress& p) {
+        if (p.phase == StepProgress::Phase::Enter)
+            enters.push_back(p.id);
+        else
+            exits.push_back(p.id + ":" + std::to_string(static_cast<int>(p.phase)));
+    };
+    rt.executeTool = [](const std::string& name, const Json::Value&) -> Json::Value {
+        Json::Value r;
+        r["success"] = false;
+        r["error"] = "missing " + name;
+        return r;
+    };
+    rt.executeEmit = [](const std::string&, const Json::Value&) {};
+    rt.executeCheckpoint = [](const std::string&, const Json::Value&) {};
+
+    Json::Value input;
+    input["target"] = "unit";
+    input["environment"] = "staging";
+    auto result = engine.execute(wf, rt, input);
+    CHECK(result.success, "smoke-test should succeed via try_catch: " + result.error);
+    CHECK(!enters.empty(), "progress Enter events missing");
+    CHECK(!exits.empty(), "progress exit events missing");
+    CHECK(std::find(enters.begin(), enters.end(), "announce") != enters.end(),
+          "announce step should enter");
+    CHECK(result.outputs.count("done") == 1 || result.stepIds.back() == "done",
+          "return step should complete");
+
+    PASS();
+}
+
 int main() {
     std::cout.setf(std::ios::unitbuf);
     std::cout << "\n╔══════════════════════════════════════════╗\n";
@@ -368,6 +413,7 @@ int main() {
     test_on_error_abort_stops_after_failed_step();
     test_agent_step_propagates_modifiers_to_callback();
     test_parallel_step_resolves_symbols_isolated_per_task();
+    test_progress_callback_and_smoke_test_yml();
 
     std::cout << "\n──────────────────────────────────────────\n";
     std::cout << "  " << passed << " passed, " << failed << " failed\n";

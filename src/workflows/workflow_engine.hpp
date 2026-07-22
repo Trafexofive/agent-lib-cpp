@@ -340,12 +340,62 @@ class WorkflowEngine {
             symbols["input"] = inputParams;
         }
 
+        auto emitProgress = [&](const WorkflowStep& step, StepProgress::Phase phase,
+                                double ms = 0.0, const std::string& summary = {},
+                                const std::string& error = {}) {
+            if (!rt.onProgress) return;
+            StepProgress p;
+            p.id = step.id;
+            p.type = step.type;
+            p.phase = phase;
+            p.elapsedMs = ms;
+            p.summary = summary;
+            p.error = error;
+            rt.onProgress(p);
+        };
+
         std::function<bool(const std::vector<WorkflowStep>&, WorkflowResult&)> execSteps;
         execSteps = [&](const std::vector<WorkflowStep>& steps, WorkflowResult& res) -> bool {
             for (auto& step : steps) {
+                if (rt.shouldCancel && rt.shouldCancel()) {
+                    res.success = false;
+                    res.error = "cancelled";
+                    return false;
+                }
+
                 // Slice 11: per-step timing
                 auto stepStart = std::chrono::steady_clock::now();
                 bool stepOk = true;
+                bool stepSkipped = false;
+                emitProgress(step, StepProgress::Phase::Enter);
+
+                auto stepElapsedMs = [&]() -> double {
+                    return std::chrono::duration_cast<std::chrono::microseconds>(
+                               std::chrono::steady_clock::now() - stepStart)
+                               .count() /
+                           1000.0;
+                };
+                auto recordMetric = [&](bool ok) {
+                    WorkflowResult::StepMetric m;
+                    m.id = step.id;
+                    m.type = step.type;
+                    m.elapsedMs = stepElapsedMs();
+                    m.success = ok;
+                    res.stepMetrics.push_back(m);
+                    return m.elapsedMs;
+                };
+                auto abortStep = [&](const std::string& err) -> bool {
+                    double ms = recordMetric(false);
+                    emitProgress(step, StepProgress::Phase::Fail, ms, {}, err);
+                    res.success = false;
+                    res.error = err;
+                    return false;
+                };
+                auto skipRest = [&](const std::string& diag) {
+                    if (!diag.empty()) res.diagnostics.push_back(diag);
+                    double ms = recordMetric(false);
+                    emitProgress(step, StepProgress::Phase::Skip, ms);
+                };
 
                 // Resolve params against current symbol table
                 Json::Value resolvedParams = resolveParams(step.params, symbols);
@@ -357,9 +407,7 @@ class WorkflowEngine {
                         for (auto& e : errs)
                             res.diagnostics.push_back("step " + step.id + " params: " + e.path + " " + e.message);
                         if (step.onError == "abort") {
-                            res.success = false;
-                            res.error = "step " + step.id + " params validation failed";
-                            return false;
+                            return abortStep("step " + step.id + " params validation failed");
                         }
                     }
                 }
@@ -372,14 +420,14 @@ class WorkflowEngine {
                         res.stepOutputs.push_back(symbols[step.id]);
                     }
                     if (!out.success) {
-                        if (step.onError == "abort") {
-                            res.success = false;
-                            res.error = out.error;
-                            return false;
-                        }
-                        res.diagnostics.push_back("step " + step.id + " failed: " + out.error);
-                        if (step.onError == "skip")
+                        if (step.onError == "abort")
+                            return abortStep(out.error);
+                        if (step.onError == "skip") {
+                            skipRest("step " + step.id + " failed: " + out.error);
                             continue;
+                        }
+                        stepOk = false;
+                        res.diagnostics.push_back("step " + step.id + " failed: " + out.error);
                     }
                 } else if (step.type == "agent") {
                     auto out = executeAgentStep(step, resolvedParams, rt, symbols);
@@ -389,23 +437,23 @@ class WorkflowEngine {
                         res.stepOutputs.push_back(symbols[step.id]);
                     }
                     if (!out.success) {
-                        if (step.onError == "abort") {
-                            res.success = false;
-                            res.error = out.error;
-                            return false;
-                        }
-                        res.diagnostics.push_back("step " + step.id + " failed: " + out.error);
-                        if (step.onError == "skip")
+                        if (step.onError == "abort")
+                            return abortStep(out.error);
+                        if (step.onError == "skip") {
+                            skipRest("step " + step.id + " failed: " + out.error);
                             continue;
+                        }
+                        stepOk = false;
+                        res.diagnostics.push_back("step " + step.id + " failed: " + out.error);
                     }
                 } else if (step.type == "condition") {
                     bool condMet = evalCondition(step.condition, symbols);
                     if (condMet && !step.thenSteps.empty()) {
                         if (!execSteps(step.thenSteps, res))
-                            return false;
+                            return abortStep(res.error.empty() ? "condition branch failed" : res.error);
                     } else if (!condMet && !step.elseSteps.empty()) {
                         if (!execSteps(step.elseSteps, res))
-                            return false;
+                            return abortStep(res.error.empty() ? "condition branch failed" : res.error);
                     }
                 } else if (step.type == "parallel") {
                     auto out = executeParallelSteps(step.steps, rt, symbols);
@@ -430,11 +478,9 @@ class WorkflowEngine {
                         res.outputs[step.id] = wfVal;
                         res.stepIds.push_back(step.id);
                         res.stepOutputs.push_back(wfVal);
-                        if (!subResult.success && step.onError == "abort") {
-                            res.success = false;
-                            res.error = subResult.error;
-                            return false;
-                        }
+                        if (!subResult.success && step.onError == "abort")
+                            return abortStep(subResult.error.empty() ? "sub-workflow failed"
+                                                                     : subResult.error);
                     }
                 } else if (step.type == "loop") {
                     int iter = 0;
@@ -442,7 +488,7 @@ class WorkflowEngine {
                         if (!step.condition.empty() && evalCondition(step.condition, symbols))
                             break;
                         if (!execSteps(step.body, res))
-                            return false;
+                            return abortStep(res.error.empty() ? "loop body failed" : res.error);
                         iter++;
                     }
                 }
@@ -472,11 +518,9 @@ class WorkflowEngine {
                     res.stepIds.push_back(step.id);
                     res.stepOutputs.push_back(out);
                     if (!out.isObject() || !out.get("success", false).asBool()) {
-                        if (step.onError == "abort") {
-                            res.success = false;
-                            res.error = "relic " + step.relic + "." + step.action + " failed";
-                            return false;
-                        }
+                        if (step.onError == "abort")
+                            return abortStep("relic " + step.relic + "." + step.action + " failed");
+                        stepOk = false;
                         res.diagnostics.push_back("step " + step.id + " relic failed");
                     }
                 }
@@ -519,7 +563,7 @@ class WorkflowEngine {
                         for (Json::ArrayIndex i = 0; i < list.size(); i++) {
                             symbols[step.asVar] = list[i];
                             if (!execSteps({step.steps[0]}, res))
-                                return false;
+                                return abortStep(res.error.empty() ? "map body failed" : res.error);
                             auto lastId = step.steps[0].id;
                             if (!lastId.empty() && res.outputs.count(lastId))
                                 results.append(res.outputs[lastId]);
@@ -541,7 +585,7 @@ class WorkflowEngine {
                             symbols[step.accVar] = acc;
                             symbols[step.asVar] = list[i];
                             if (!execSteps({step.steps[0]}, res))
-                                return false;
+                                return abortStep(res.error.empty() ? "reduce body failed" : res.error);
                             auto lastId = step.steps[0].id;
                             if (!lastId.empty() && res.outputs.count(lastId))
                                 acc = res.outputs[lastId];
@@ -559,13 +603,13 @@ class WorkflowEngine {
                         if (val == sw) {
                             matched = true;
                             if (!execSteps(stSteps, res))
-                                return false;
+                                return abortStep(res.error.empty() ? "switch case failed" : res.error);
                             break;
                         }
                     }
                     if (!matched && !step.switchDefault.empty()) {
                         if (!execSteps(step.switchDefault, res))
-                            return false;
+                            return abortStep(res.error.empty() ? "switch default failed" : res.error);
                     }
                     Json::Value empty(Json::objectValue);
                     symbols[step.id] = empty;
@@ -592,18 +636,25 @@ class WorkflowEngine {
                     res.stepIds.push_back(step.id);
                     res.stepOutputs.push_back(rv);
                     res.success = true;
+                    {
+                        double ms = recordMetric(true);
+                        emitProgress(step, StepProgress::Phase::Ok, ms);
+                    }
                     return true;
                 }
                 else if (step.type == "try_catch") {
                     bool caught = false;
                     if (!execSteps(step.tryBody, res)) {
+                        // Body aborted — catch recovers unless catch also fails.
                         caught = true;
+                        res.success = true;
+                        res.error.clear();
                         if (!execSteps(step.catchBody, res))
-                            return false;
+                            return abortStep(res.error.empty() ? "catch body failed" : res.error);
                     }
                     if (!step.finallyBody.empty()) {
                         if (!execSteps(step.finallyBody, res))
-                            return false;
+                            return abortStep(res.error.empty() ? "finally body failed" : res.error);
                     }
                     Json::Value tc;
                     tc["caught"] = caught;
@@ -634,24 +685,27 @@ class WorkflowEngine {
                         if (v.isObject() && v.isMember("success") && !v["success"].asBool())
                             anyFailed = true;
                     }
-                    if (anyFailed && step.onError == "abort") {
-                        res.success = false;
-                        res.error = "parallel_join " + step.id + " had failures";
-                        return false;
-                    }
+                    if (anyFailed && step.onError == "abort")
+                        return abortStep("parallel_join " + step.id + " had failures");
                     symbols[step.id] = out;
                     res.outputs[step.id] = out;
                     res.stepIds.push_back(step.id);
                     res.stepOutputs.push_back(out);
                 }
-                // Slice 11: record per-step metric
+                // Slice 11: record per-step metric + UI progress
                 auto stepEnd = std::chrono::steady_clock::now();
                 WorkflowResult::StepMetric m;
                 m.id = step.id;
                 m.type = step.type;
                 m.elapsedMs = std::chrono::duration_cast<std::chrono::microseconds>(stepEnd - stepStart).count() / 1000.0;
-                m.success = stepOk;
+                m.success = stepOk && !stepSkipped;
                 res.stepMetrics.push_back(m);
+                if (stepSkipped)
+                    emitProgress(step, StepProgress::Phase::Skip, m.elapsedMs);
+                else if (!stepOk)
+                    emitProgress(step, StepProgress::Phase::Fail, m.elapsedMs, {}, res.error);
+                else
+                    emitProgress(step, StepProgress::Phase::Ok, m.elapsedMs);
             }
             return true;
         };

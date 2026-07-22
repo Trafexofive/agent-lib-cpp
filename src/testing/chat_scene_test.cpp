@@ -91,6 +91,21 @@ void test_dashboard_scene() {
         break;
     }
     check(!model->dashboard.manifests.empty(), "manifests available for launch test");
+
+    // Enter on workflow queues real engine run (not inspect-only notice).
+    bool wfQueued = false;
+    for (int i = 0; i < static_cast<int>(model->dashboard.manifests.size()); ++i) {
+        model->dashboard.manifestIndex = i;
+        const auto* m = model->dashboard.selectedManifest();
+        if (!m || m->kind != "workflow") continue;
+        if (m->name == "workflow_spec") continue;
+        scene.on_key(key(inkcell::KeyCode::Enter));
+        wfQueued = !model->pendingRunWorkflow.empty() && model->pendingRunWorkflow == m->path;
+        check(wfQueued, "enter on workflow queues pendingRunWorkflow");
+        model->pendingRunWorkflow.clear();
+        break;
+    }
+    check(wfQueued, "at least one runnable workflow in manifests");
     scene.on_key(key(inkcell::KeyCode::Character, 'c'));
     check(model->pendingRoute == "agent", "dashboard chat shortcut requests chat route");
     model->pendingRoute.clear();

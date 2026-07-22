@@ -19,6 +19,9 @@
 #include "src/ui/components/chrome.hpp"
 #include "src/ui/components/cmd_palette.hpp"
 #include "src/ui/components/pill_nav.hpp"
+#include "src/ui/components/workflow_canvas.hpp"
+#include "src/ui/components/workflow_rail.hpp"
+#include "src/ui/components/workflow_run.hpp"
 #include "src/ui/gfx/blit.hpp"
 #include "src/ui/gfx/field_raster.hpp"
 #include "src/ui/gfx/shaders_dedsec.hpp"
@@ -26,6 +29,8 @@
 #include "src/ui/layout/sbtui_layout.hpp"
 #include "src/ui/model/dashboard_controller.hpp"
 #include "src/ui/model/ui_prefs.hpp"
+#include "src/ui/model/workflow_runner.hpp"
+#include "src/workflows/workflow_engine.hpp"
 
 namespace cortex::mk3::ui::scenes {
 
@@ -101,6 +106,13 @@ class MainScene final : public BaseScene {
 
         // Tab toggles dock vs content focus
         if (event.code == KeyCode::Tab) {
+            if (dash.section == model::DashboardSection::Manifests && workflowSelectionActive()) {
+                dash.wfCanvasFocus = !dash.wfCanvasFocus;
+                dash.focus = model::DashboardFocus::Content;
+                dash.notice = dash.wfCanvasFocus ? "canvas focus · hjkl pan · [] node"
+                                                 : "list focus";
+                return true;
+            }
             dash.toggleFocus();
             return true;
         }
@@ -135,6 +147,22 @@ class MainScene final : public BaseScene {
         }
 
         if (event.code == KeyCode::Escape) {
+            if (model_->workflowRun.isLive() || model_->workflowRun.isActive()) {
+                model_->pendingStopWorkflow = true;
+                model_->workflowRun.requestCancel();
+                dash.notice = "stopping workflow…";
+                return true;
+            }
+            if (dash.wfCanvasExpanded) {
+                dash.wfCanvasExpanded = false;
+                dash.notice = "canvas docked";
+                return true;
+            }
+            if (dash.wfCanvasFocus) {
+                dash.wfCanvasFocus = false;
+                dash.notice = "list focus";
+                return true;
+            }
             if (dash.focus == model::DashboardFocus::Dock) {
                 dash.focus = model::DashboardFocus::Content;
                 return true;
@@ -170,6 +198,36 @@ class MainScene final : public BaseScene {
                               (event.code == KeyCode::Character && (event.ch == 'h' || event.ch == 'H'));
             const bool right = event.code == KeyCode::ArrowRight ||
                                (event.code == KeyCode::Character && (event.ch == 'l' || event.ch == 'L'));
+
+            // Infinite canvas owns hjkl when focused (workflow selected).
+            if (dash.section == model::DashboardSection::Manifests && dash.wfCanvasFocus &&
+                workflowSelectionActive()) {
+                const float pan = event.shift() ? 8.f : 3.f;
+                if (left) {
+                    dash.wfCamX -= pan;
+                    return true;
+                }
+                if (right) {
+                    dash.wfCamX += pan;
+                    return true;
+                }
+                if (up) {
+                    dash.wfCamY -= pan;
+                    return true;
+                }
+                if (down) {
+                    dash.wfCamY += pan;
+                    return true;
+                }
+                if (event.code == KeyCode::Character && (event.ch == '[' || event.ch == 'p')) {
+                    dash.wfFocusNode = std::max(0, dash.wfFocusNode - 1);
+                    return true;
+                }
+                if (event.code == KeyCode::Character && (event.ch == ']' || event.ch == 'n')) {
+                    ++dash.wfFocusNode;
+                    return true;
+                }
+            }
 
             if (dash.section == model::DashboardSection::Settings) {
                 if (up) {
@@ -258,8 +316,17 @@ class MainScene final : public BaseScene {
                     break;
                 case 'c':
                 case 'C':
+                    // Chat route always — canvas center is '.' (no clash).
                     model_->pendingRoute = "agent";
                     return true;
+                case '.':
+                    if (dash.section == model::DashboardSection::Manifests &&
+                        workflowSelectionActive()) {
+                        dash.wfCamX = 1e9f;  // sentinel → reframe on next draw
+                        dash.notice = "center";
+                        return true;
+                    }
+                    break;
                 case 'o':
                 case 'O':
                 case 'g':
@@ -291,6 +358,13 @@ class MainScene final : public BaseScene {
                 case 'f':
                 case 'F':
                     if (dash.section == model::DashboardSection::Manifests) {
+                        if (event.ch == 'F' && workflowSelectionActive()) {
+                            dash.wfCanvasExpanded = !dash.wfCanvasExpanded;
+                            dash.wfCanvasFocus = dash.wfCanvasExpanded;
+                            dash.notice = dash.wfCanvasExpanded ? "canvas expanded"
+                                                               : "canvas docked";
+                            return true;
+                        }
                         dash.cycleManifestFilter();
                         bumpNotice();
                     }
@@ -327,6 +401,32 @@ class MainScene final : public BaseScene {
                         dash.notice = "yank: " + dash.yankBuffer;
                     }
                     return true;
+                case 'r':
+                    if (dash.section == model::DashboardSection::Manifests) {
+                        resumeLastWorkflow();
+                        return true;
+                    }
+                    break;
+                case 'x':
+                case 'X':
+                    if (model_->workflowRun.isLive() || model_->workflowRun.isActive()) {
+                        model_->pendingStopWorkflow = true;
+                        model_->workflowRun.requestCancel();
+                        dash.notice = "stopping workflow…";
+                        return true;
+                    }
+                    break;
+                case 'z':
+                case 'Z':
+                    if (dash.section == model::DashboardSection::Manifests &&
+                        workflowSelectionActive()) {
+                        dash.wfCanvasExpanded = !dash.wfCanvasExpanded;
+                        dash.wfCanvasFocus = true;
+                        dash.notice =
+                            dash.wfCanvasExpanded ? "infinite canvas" : "canvas docked";
+                        return true;
+                    }
+                    break;
                 case 'R':
                     dash.refreshAll();
                     dash.notice = "refreshed";
@@ -427,8 +527,27 @@ class MainScene final : public BaseScene {
         } else if (id == "act.shader_on") {
             gfx::setFieldEnabled(true);
             persistUiPrefs(*model_);
-        } else if (id == "act.launch") activate();
-        else if (id == "sys.quit") model_->pendingRoute = "quit";
+        } else if (id == "act.launch" || id == "act.wf_run") activate();
+        else if (id == "act.wf_stop") {
+            model_->pendingStopWorkflow = true;
+            model_->workflowRun.requestCancel();
+            dash.notice = "stopping workflow…";
+        } else if (id == "act.wf_resume") {
+            resumeLastWorkflow();
+        } else if (id == "nav.wf_facet") {
+            dash.select(model::DashboardSection::Manifests);
+            dash.manifestFilter = "workflow";
+            dash.refreshManifests();
+            dash.notice = "facet · workflow";
+        } else if (id == "act.wf_canvas") {
+            if (workflowSelectionActive()) {
+                dash.wfCanvasExpanded = !dash.wfCanvasExpanded;
+                dash.wfCanvasFocus = true;
+                dash.notice = dash.wfCanvasExpanded ? "infinite canvas" : "canvas docked";
+            } else {
+                dash.notice = "select a workflow first";
+            }
+        } else if (id == "sys.quit") model_->pendingRoute = "quit";
         bumpNotice();
     }
     std::string activeName() const {
@@ -728,9 +847,19 @@ class MainScene final : public BaseScene {
         auto L = layout::manifestLayoutFor(frame.w);
 
         sectionHead(surface, frame, "Manifests",
-                    "enter launches agent · 1-9 kind · f cycle · t tag · / search");
+                    "↵ run/launch · 1-9 kind · f facet · z canvas · tab focus · / search");
 
         int y = frame.y + 4;
+
+        // Expanded infinite canvas owns the whole stage.
+        if (dash.wfCanvasExpanded) {
+            const auto* sel = dash.selectedManifest();
+            if (sel && sel->kind == "workflow") {
+                drawWorkflowStage(surface, {frame.x, y, frame.w, frame.bottom() - y}, *sel,
+                                  gfx::nowSeconds());
+                return;
+            }
+        }
 
         // Operable kind chips with indices: [1 agent 12] ...
         std::map<std::string, int> kindCounts;
@@ -836,6 +965,12 @@ class MainScene final : public BaseScene {
 
             std::string name = std::string(active ? "● " : "  ") + m.name;
             if (m.launchable && m.kind == "agent") name += selected ? "  ↵ launch" : "";
+            if (m.kind == "workflow") {
+                name += selected ? "  ↵ run" : "  ▷";
+                auto live = model_->workflowRun.snapshot();
+                if (live.live && (live.path == m.path || live.name == m.name))
+                    name += "  ●";
+            }
             int nameCol = rowX + 8;
             int nameBudget = rowW - 10;
             if (L.showTagColumn && L.tagColMax > 0) {
@@ -860,11 +995,19 @@ class MainScene final : public BaseScene {
             return;
         }
 
-        // Card well — fill only, no ─ box (field/theme is the frame)
-        surface.fill(det, " ", theme::panel_bg());
+        // Card well — fill only for non-workflow; canvas wants field void.
+        const auto* selPeek = dash.selectedManifest();
+        const bool wfDetail = selPeek && selPeek->kind == "workflow";
+        if (!wfDetail) surface.fill(det, " ", theme::panel_bg());
 
         auto paintManifestBody = [&](inkcell::Surface& s, inkcell::Rect inner, float alpha,
                                      const catalog::ManifestEntry& m) {
+            // Workflows get infinite canvas + rail — not the generic field card.
+            if (m.kind == "workflow" && alpha >= 0.55f) {
+                drawWorkflowStage(s, inner, m, gfx::nowSeconds());
+                return;
+            }
+
             bool ghost = alpha < 0.55f;
             auto titleSt = ghost ? theme::muted() : theme::bright();
             auto kindSt = ghost ? theme::dim() : theme::kindAccent(m.kind, true);
@@ -1136,9 +1279,176 @@ class MainScene final : public BaseScene {
                 model_->launchError.clear();
                 return;
             }
+            if (m->kind == "workflow") {
+                queueWorkflowRun(*m);
+                return;
+            }
             dash.notice = m->kind + " · " + m->category + " · inspect only";
             return;
         }
+    }
+
+    bool workflowSelectionActive() const {
+        const auto* m = model_->dashboard.selectedManifest();
+        return m && m->kind == "workflow" &&
+               model::workflowRunnablePath(m->path, m->name);
+    }
+
+    // Infinite canvas stage: header + graph void + optional live strip.
+    void drawWorkflowStage(inkcell::Surface& surface, inkcell::Rect frame,
+                           const catalog::ManifestEntry& m, float tsec) const {
+        if (frame.w < 12 || frame.h < 6) return;
+
+        auto& engine = workflows::WorkflowEngine::instance();
+        auto& loaded = engine.load(m.path);
+        if (!loaded.isValid()) {
+            surface.text({frame.x, frame.y}, "failed to load workflow", theme::red());
+            surface.text({frame.x, frame.y + 1},
+                         inkcell::text::truncate(m.path, frame.w), theme::dim());
+            return;
+        }
+        const auto& mf = loaded.manifest();
+        auto graph = components::buildCanvasGraph(mf);
+
+        auto run = model_->workflowRun.snapshot();
+        const bool liveHere =
+            (run.live || model::runStatusActive(run.status) ||
+             run.status == model::RunStatus::Succeeded ||
+             run.status == model::RunStatus::Failed ||
+             run.status == model::RunStatus::Cancelled) &&
+            (!run.path.empty() ? run.path == m.path : run.name == m.name);
+        if (liveHere) components::applyRunStatusToGraph(graph, run);
+
+        // Header strip (2 rows)
+        std::string title = m.name;
+        if (!m.version.empty()) title += "  v" + m.version;
+        surface.text({frame.x, frame.y}, inkcell::text::truncate(title, frame.w), theme::bright());
+
+        model::WorkflowTopology topo;
+        model::countTopo(mf.steps, topo);
+        std::string meta = components::topologyLine(topo);
+        if (!m.summary.empty()) meta += "  ·  " + m.summary;
+        if (liveHere) {
+            meta = std::string(model::runStatusLabel(run.status)) + "  ·  " +
+                   components::formatRunElapsed(run.elapsedMs) + "  ·  " + meta;
+        }
+        surface.text({frame.x, frame.y + 1}, inkcell::text::truncate(meta, frame.w),
+                     liveHere ? components::runStatusChipStyle(run.status) : theme::italic_dim());
+
+        int bodyTop = frame.y + 3;
+        int eventH = liveHere ? std::min(5, std::max(2, frame.h / 6)) : 0;
+        int canvasH = std::max(4, frame.bottom() - bodyTop - eventH - (liveHere ? 0 : 1));
+        inkcell::Rect canvas{frame.x, bodyTop, frame.w, canvasH};
+
+        // Camera — settle path changes / center sentinel
+        auto& dashMut = const_cast<model::DashboardState&>(model_->dashboard);
+        components::CanvasCamera cam;
+        cam.x = dashMut.wfCamX;
+        cam.y = dashMut.wfCamY;
+        bool needFrame = (dashMut.wfCanvasPath != m.path) || cam.x > 1e8f;
+        if (needFrame) {
+            if (!graph.nodes.empty() && dashMut.wfFocusNode >= 0 &&
+                dashMut.wfFocusNode < static_cast<int>(graph.nodes.size()) && cam.x > 1e8f) {
+                components::cameraCenterNode(
+                    cam, graph.nodes[static_cast<size_t>(dashMut.wfFocusNode)], canvas.w,
+                    canvas.h);
+            } else {
+                components::cameraFrameGraph(cam, graph, canvas.w, canvas.h);
+            }
+            dashMut.wfCamX = cam.x;
+            dashMut.wfCamY = cam.y;
+            dashMut.wfCanvasPath = m.path;
+            if (dashMut.wfFocusNode >= static_cast<int>(graph.nodes.size()))
+                dashMut.wfFocusNode = 0;
+        }
+        if (dashMut.wfFocusNode < 0) dashMut.wfFocusNode = 0;
+        if (!graph.nodes.empty()) {
+            int n = static_cast<int>(graph.nodes.size());
+            dashMut.wfFocusNode = dashMut.wfFocusNode % n;
+            if (dashMut.wfFocusNode < 0) dashMut.wfFocusNode += n;
+        }
+
+        components::CanvasDrawOpts opt;
+        opt.selected = dashMut.wfFocusNode;
+        opt.tSec = tsec;
+        opt.showChrome = true;
+        if (liveHere && run.currentIdx >= 0 &&
+            run.currentIdx < static_cast<int>(run.steps.size()))
+            opt.currentId = run.steps[static_cast<size_t>(run.currentIdx)].id;
+        opt.statusLine = dashMut.wfCanvasFocus
+                             ? "hjkl pan · [] node · . center · z expand · ↵ run · Esc stop"
+                             : "tab canvas · z expand · ↵ run";
+        if (liveHere && !run.lastError.empty() &&
+            (run.status == model::RunStatus::Failed ||
+             run.status == model::RunStatus::Cancelled))
+            opt.statusLine = run.lastError;
+
+        components::drawWorkflowCanvas(surface, canvas, graph, cam, opt);
+
+        // Live event strip under canvas
+        if (liveHere && eventH > 0) {
+            inkcell::Rect strip{frame.x, canvas.bottom(), frame.w, frame.bottom() - canvas.bottom()};
+            if (strip.h >= 2) {
+                components::hairline(surface, strip.x, strip.y, strip.w, theme::dim());
+                int ey = strip.y + 1;
+                int n = static_cast<int>(run.events.size());
+                int vis = std::max(1, strip.bottom() - ey);
+                int start = n > vis ? n - vis : 0;
+                for (int i = start; i < n && ey < strip.bottom(); ++i) {
+                    const auto& ev = run.events[static_cast<size_t>(i)];
+                    auto st = theme::dim();
+                    if (ev.kind.find("fail") != std::string::npos)
+                        st = theme::red();
+                    else if (ev.kind == "step.ok" || ev.kind == "done")
+                        st = theme::green_soft();
+                    else if (ev.kind == "step.enter" || ev.kind == "hitl")
+                        st = theme::cyan();
+                    else if (ev.kind == "checkpoint" || ev.kind == "emit")
+                        st = theme::amber_soft();
+                    std::string line = ev.kind;
+                    if (!ev.text.empty()) line += "  " + ev.text;
+                    surface.text({strip.x, ey++},
+                                 inkcell::text::truncate(line, strip.w), st);
+                }
+            }
+        }
+    }
+
+    void queueWorkflowRun(const catalog::ManifestEntry& m) {
+        auto& dash = model_->dashboard;
+        if (!model::workflowRunnablePath(m.path, m.name)) {
+            dash.notice = "workflow spec · not runnable";
+            return;
+        }
+        if (model_->workflowRun.isLive()) {
+            dash.notice = "workflow already running · Esc/x stop";
+            return;
+        }
+        dash.yankBuffer = "workflow run " + m.path;
+        model_->pendingRunWorkflow = m.path;
+        dash.wfCanvasFocus = true;
+        dash.notice = "running " + m.name + "…";
+    }
+
+    void resumeLastWorkflow() {
+        auto& dash = model_->dashboard;
+        auto snap = model_->workflowRun.snapshot();
+        std::string path = snap.path;
+        if (path.empty()) {
+            const auto* m = dash.selectedManifest();
+            if (m && m->kind == "workflow") path = m->path;
+        }
+        if (path.empty()) {
+            dash.notice = "no workflow to resume";
+            return;
+        }
+        if (model_->workflowRun.isLive()) {
+            dash.notice = "already running";
+            return;
+        }
+        model_->pendingRunWorkflow = path;
+        dash.wfCanvasFocus = true;
+        dash.notice = "re-running " + (snap.name.empty() ? path : snap.name) + "…";
     }
 
     void resumeSelectedSession() {

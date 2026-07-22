@@ -17,6 +17,9 @@
 #include "src/ui/model/dashboard_controller.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
 #include "src/ui/model/navigation_model.hpp"
+#include "src/ui/model/workflow_run_model.hpp"
+#include "src/ui/model/workflow_runner.hpp"
+#include "src/workflows/workflow.hpp"
 
 using namespace cortex::mk3;
 using namespace cortex::mk3::ui;
@@ -251,6 +254,72 @@ int countRows(const ShellModel& model, TimelineKind kind) {
     for (const auto& row : model.rootRows)
         if (row.kind == kind) ++count;
     return count;
+}
+
+void test_workflow_run_hub_transitions() {
+    using namespace model;
+    WorkflowRunHub hub;
+
+    workflows::WorkflowManifest mf;
+    mf.name = "smoke-test";
+    mf.version = "2.0";
+    mf.summary = "unit";
+    workflows::WorkflowStep a;
+    a.id = "announce";
+    a.type = "emit";
+    a.emitEvent = "smoke.started";
+    workflows::WorkflowStep b;
+    b.id = "done";
+    b.type = "return";
+    mf.steps = {a, b};
+
+    hub.prepare(mf, "manifests/workflows/smoke-test.yml");
+    auto s0 = hub.snapshot();
+    check(s0.status == RunStatus::Starting && s0.steps.size() == 2 && s0.live,
+          "workflow hub prepare seeds steps and starting status");
+
+    workflows::StepProgress enter;
+    enter.id = "announce";
+    enter.type = "emit";
+    enter.phase = workflows::StepProgress::Phase::Enter;
+    hub.onProgress(enter);
+    hub.markRunning();
+    auto s1 = hub.snapshot();
+    check(s1.status == RunStatus::Running && s1.currentIdx == 0 &&
+              s1.steps[0].status == StepStatus::Running,
+          "workflow hub enter marks running step");
+
+    workflows::StepProgress ok;
+    ok.id = "announce";
+    ok.type = "emit";
+    ok.phase = workflows::StepProgress::Phase::Ok;
+    ok.elapsedMs = 1.5;
+    hub.onProgress(ok);
+
+    workflows::WorkflowResult result;
+    result.success = true;
+    result.workflowName = "smoke-test";
+    result.elapsedMs = 12.0;
+    result.stepMetrics.push_back({"announce", "emit", 1.5, true});
+    result.stepMetrics.push_back({"done", "return", 0.2, true});
+    hub.finish(result);
+    auto s2 = hub.snapshot();
+    check(s2.status == RunStatus::Succeeded && !s2.live && s2.steps[0].status == StepStatus::Ok,
+          "workflow hub finish succeeds and clears live");
+
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["environment"]["type"] = "string";
+    schema["properties"]["environment"]["default"] = "staging";
+    auto input = defaultInputFromSchema(schema);
+    check(input.isMember("target") && input["environment"].asString() == "staging",
+          "defaultInputFromSchema fills required defaults");
+
+    check(workflowRunnablePath("manifests/workflows/smoke-test.yml", "smoke-test"),
+          "smoke-test is runnable");
+    check(!workflowRunnablePath("manifests/workflows/workflow_spec.yml", "workflow_spec"),
+          "workflow_spec is not runnable");
 }
 
 void test_dashboard_model() {
@@ -906,6 +975,7 @@ int main() {
     test_command_inventory_disabled_reasons();
     test_context_status_line();
     test_navigation_stack_agent_drill();
+    test_workflow_run_hub_transitions();
     test_dashboard_model();
     test_dashboard_session_controller();
     test_chat_persistence();

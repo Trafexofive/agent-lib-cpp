@@ -204,7 +204,12 @@ inline std::vector<CmdItem> hubCommands() {
         {"nav.chat", "Open chat", "switch to agent scene", "NAV", "c"},
         {"act.refresh", "Refresh hub", "reload sessions + manifests", "ACTION", "R"},
         {"act.theme", "Toggle theme", "graphite ↔ neon", "ACTION", "T"},
-        {"act.launch", "Launch selected agent", "hot-swap from manifests selection", "ACTION", "↵"},
+        {"act.launch", "Launch / run selected", "agent hot-swap · workflow run", "ACTION", "↵"},
+        {"act.wf_run", "Run workflow", "execute selected workflow manifest", "ACTION", "↵"},
+        {"act.wf_stop", "Stop workflow", "cancel live workflow run", "ACTION", "Esc"},
+        {"act.wf_resume", "Resume last run", "re-run last workflow path", "ACTION", "r"},
+        {"nav.wf_facet", "Workflows facet", "filter manifests to workflows", "NAV", "4"},
+        {"act.wf_canvas", "Toggle workflow canvas", "expand infinite canvas stage", "ACTION", "f"},
         {"sys.quit", "Quit", "exit cortex", "SYSTEM", "q"},
     };
 }

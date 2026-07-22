@@ -20,6 +20,7 @@
 #include "src/ui/chat/prompt_history.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
 #include "src/ui/model/ui_prefs.hpp"
+#include "src/ui/model/workflow_runner.hpp"
 #include "src/ui/scenes/agent_scene.hpp"
 #include "src/ui/scenes/main_scene.hpp"
 
@@ -310,12 +311,18 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     initializeChatModel(model, cfg);
     agent.setAskToolHandler([&bridge](const Json::Value& params) { return bridge.requestAsk(params); });
     std::atomic<bool> workerBusy{false};
+    std::atomic<bool> wfBusy{false};
     std::atomic<bool> quitPosted{false};
     std::thread worker;
+    std::thread wfWorker;
 
     auto joinWorker = [&]() {
         if (worker.joinable()) worker.join();
         workerBusy.store(false, std::memory_order_release);
+    };
+    auto joinWfWorker = [&]() {
+        if (wfWorker.joinable()) wfWorker.join();
+        wfBusy.store(false, std::memory_order_release);
     };
 
     auto applyLiveIdentity = [&](const AgentConfig& acfg, const std::string& manifestPath) {
@@ -343,9 +350,46 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     auto app = makeInkcellApp(cfg, bridge, model, startAtDashboard);
     app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([]() {});
     const bool exitOnDone = cfg.ephemeral;
-    app.engine().on_tick([model, slot, &bridge, &app, &workerBusy, &worker, &joinWorker, &quitPosted,
-                          noSession, exitOnDone, applyLiveIdentity](inkcell::Tick) {
+    app.engine().on_tick([model, slot, &bridge, &app, &workerBusy, &worker, &joinWorker, &wfBusy,
+                          &wfWorker, &joinWfWorker, &quitPosted, noSession, exitOnDone,
+                          applyLiveIdentity](inkcell::Tick) {
         model->drain(bridge);
+
+        // Hub workflow stop request (worker polls shouldCancel).
+        if (model->pendingStopWorkflow) {
+            model->pendingStopWorkflow = false;
+            model->workflowRun.requestCancel();
+        }
+
+        // Hub workflow run: execute on dedicated worker; live rail via WorkflowRunHub.
+        if (!model->pendingRunWorkflow.empty() && !wfBusy.load(std::memory_order_acquire)) {
+            std::string path = model->pendingRunWorkflow;
+            model->pendingRunWorkflow.clear();
+            joinWfWorker();
+            wfBusy.store(true, std::memory_order_release);
+            model->dashboard.notice = "workflow running…";
+            wfWorker = std::thread([model, &bridge, path, &wfBusy]() {
+                try {
+                    auto result = model::runWorkflowOnHub(path, model->workflowRun, &bridge);
+                    if (result.success) {
+                        model->dashboard.notice =
+                            "workflow ok · " + result.workflowName + " · " +
+                            std::to_string(static_cast<int>(result.elapsedMs)) + "ms";
+                    } else if (result.error == "cancelled" ||
+                               model->workflowRun.cancelRequested()) {
+                        model->dashboard.notice = "workflow cancelled";
+                    } else {
+                        model->dashboard.notice =
+                            "workflow fail · " +
+                            (result.error.empty() ? result.workflowName : result.error);
+                    }
+                } catch (const std::exception& e) {
+                    model->workflowRun.fail(e.what());
+                    model->dashboard.notice = std::string("workflow exception · ") + e.what();
+                }
+                wfBusy.store(false, std::memory_order_release);
+            });
+        }
 
         // Hub launch: hot-swap agent from selected manifest, then open chat.
         if (!model->pendingLaunchManifest.empty() &&
@@ -416,7 +460,9 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     int rc = app.run(startAtDashboard ? "main" : "agent");
     g_running = false;
     bridge.cancelAsk();
+    model->workflowRun.requestCancel();
     joinWorker();
+    joinWfWorker();
     chat::savePromptHistory(model->promptHistory);
     g_running = true;
     return rc;

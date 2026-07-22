@@ -66,6 +66,14 @@ struct DashboardState {
     int64_t cardAnimStartMs = 0;
     static constexpr int cardAnimDurationMs = 480;  // longer = less rigid at 30fps
 
+    // Workflow infinite canvas (Manifests detail when kind=workflow)
+    float wfCamX = 0.f;
+    float wfCamY = 0.f;
+    int wfFocusNode = 0;
+    bool wfCanvasFocus = false;  // true: keys pan/select on canvas; false: list
+    bool wfCanvasExpanded = false;  // list collapses; canvas owns the stage
+    std::string wfCanvasPath;  // path graph was built for (invalidate on change)
+
     // Kind facet order for 1-9 binding (0/all is unnumbered / `f` or `0`)
     static const std::vector<std::string>& kindFacets() {
         static const std::vector<std::string> k = {

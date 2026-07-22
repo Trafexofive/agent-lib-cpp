@@ -151,6 +151,17 @@ struct WorkflowAgentInvocation {
     bool dumpContext = false; // return trace context alongside the response
 };
 
+// Live step lifecycle for TUI / tracers. Nested steps report too.
+struct StepProgress {
+    enum class Phase { Enter, Ok, Fail, Skip };
+    std::string id;
+    std::string type;
+    Phase phase = Phase::Enter;
+    double elapsedMs = 0.0;
+    std::string summary;
+    std::string error;
+};
+
 // Wired by the agent at dispatch time — the Workflow doesn't own tools/agents.
 struct WorkflowRuntime {
     using ToolFn = std::function<Json::Value(const std::string& name, const Json::Value& params)>;
@@ -165,6 +176,8 @@ struct WorkflowRuntime {
     using EmitFn = std::function<void(const std::string& event, const Json::Value& payload)>;
     using CheckpointFn = std::function<void(const std::string& id, const Json::Value& state)>;
     using ParallelRaceFn = std::function<Json::Value(const std::vector<WorkflowStep>& steps, const std::map<std::string, Json::Value>& symbols)>;
+    using ProgressFn = std::function<void(const StepProgress&)>;
+    using CancelFn = std::function<bool()>;  // true → abort run
 
     ToolFn executeTool;
     AgentFn executeAgent;
@@ -175,6 +188,8 @@ struct WorkflowRuntime {
     EmitFn executeEmit;
     CheckpointFn executeCheckpoint;
     ParallelRaceFn executeParallelRace;
+    ProgressFn onProgress;
+    CancelFn shouldCancel;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -19,6 +19,7 @@
 #include "src/ui/chat/transcript_cache.hpp"
 #include "src/ui/components/cmd_palette.hpp"
 #include "src/ui/model/dashboard_model.hpp"
+#include "src/ui/model/workflow_run_model.hpp"
 #include "src/ui/bridge/agent_bridge.hpp"
 
 namespace cortex::mk3::ui {
@@ -291,6 +292,11 @@ struct ShellModel {
     // live Agent then routes to the chat scene. Cleared after attempt.
     std::string pendingLaunchManifest;
     std::string launchError;  // last hot-swap failure (surfaced on Home/app bar)
+    // Hub Enter on kind=workflow — REPL tick runs WorkflowEngine on a worker.
+    std::string pendingRunWorkflow;
+    bool pendingStopWorkflow = false;
+    // Shared live run hub (worker writes, UI snapshots).
+    model::WorkflowRunHub workflowRun;
     std::string activeSessionId;
     // Agent display identity for the chat transcript labels. The assistant's own
     // turns (Response/Final) are labeled with agentName + agentModel/agentProvider
