@@ -215,6 +215,14 @@ inline Json::Value defaultInputFromSchema(const Json::Value& schema) {
                 out[name] = "hub";
             else if (name == "environment" || name == "env")
                 out[name] = "staging";
+            else if (name == "topic")
+                out[name] = "terminal-native content systems";
+            else if (name == "out_dir")
+                out[name] = "/tmp/cortex-content";
+            else if (name == "audience")
+                out[name] = "builders";
+            else if (name == "angle")
+                out[name] = "first-principles";
             else
                 out[name] = name;
         } else if (ty == "integer" || ty == "number") {

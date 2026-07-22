@@ -1,0 +1,292 @@
+# =============================================================================
+# Content creation pipeline — terminal-native dogfood for workflow canvas/runtime
+#
+# Exercises: input_schema, emit, human, switch, map, parallel, try_catch,
+#            tool (exec/grep), agent (hub-stubbed), checkpoint, return
+#
+# NOTE: MiniYaml only accepts single-line values — keep commands one-line.
+# Hub Enter runs without an LLM. Human defaults to "y" if ask cancelled.
+# Output: ${input.out_dir} (default /tmp/cortex-content)
+# =============================================================================
+
+kind: Workflow
+version: "1.0"
+name: content-create
+summary: "Topic → brief → format spine → draft sections → assemble → ship"
+
+description: |
+  Content cockpit workflow. Operator supplies a topic (+ optional format/tone).
+  Pipeline: announce, workspace, HITL angle, brief, format-routed map spine,
+  parallel research, try_catch assemble, checkpoint, ship, return.
+
+input_schema:
+  type: object
+  required: [topic]
+  properties:
+    topic:
+      type: string
+      description: "Subject of the piece"
+    format:
+      type: string
+      enum: [essay, thread, script]
+      default: essay
+    tone:
+      type: string
+      enum: [technical, punchy, zen]
+      default: technical
+    audience:
+      type: string
+      default: builders
+    out_dir:
+      type: string
+      default: /tmp/cortex-content
+    angle:
+      type: string
+      default: first-principles
+
+output_schema:
+  type: object
+  required: [status, topic, draft_path]
+  properties:
+    status: { type: string }
+    topic: { type: string }
+    format: { type: string }
+    draft_path: { type: string }
+    brief_path: { type: string }
+
+tags:
+  - workflow
+  - content
+  - creative
+  - dogfood
+  - runnable
+
+import:
+  tools:
+    - builtin/exec
+    - builtin/grep
+
+steps:
+  - id: announce
+    type: emit
+    name: "Announce run"
+    event: "content.started"
+    payload:
+      topic: "${input.topic}"
+      format: "${input.format}"
+      tone: "${input.tone}"
+      audience: "${input.audience}"
+
+  - id: workspace
+    type: tool
+    name: "Ensure workspace"
+    tool: exec
+    params:
+      command: "mkdir -p '${input.out_dir}/sections' '${input.out_dir}/research' && printf ok"
+    on_error: abort
+
+  - id: confirm_angle
+    type: human
+    name: "Confirm angle"
+    prompt: "Ship '${input.topic}' as ${input.format} (${input.tone} · ${input.audience}) angle='${input.angle}'? [y/n]"
+    default: "y"
+    timeout_sec: 60
+    response_var: angle_ok
+
+  - id: angle_gate
+    type: switch
+    name: "Angle gate"
+    on: "${angle_ok}"
+    cases:
+      - value: "n"
+        steps:
+          - id: cancelled
+            type: emit
+            event: "content.cancelled"
+            payload:
+              reason: "operator declined angle"
+              topic: "${input.topic}"
+          - id: cancel_return
+            type: return
+            value:
+              status: "cancelled"
+              topic: "${input.topic}"
+              format: "${input.format}"
+              draft_path: ""
+              brief_path: ""
+      - value: "N"
+        steps:
+          - id: cancelled_N
+            type: return
+            value:
+              status: "cancelled"
+              topic: "${input.topic}"
+              format: "${input.format}"
+              draft_path: ""
+              brief_path: ""
+
+  - id: write_brief
+    type: tool
+    name: "Write brief"
+    tool: exec
+    params:
+      command: "printf '%s\n' '# Brief — ${input.topic}' '' '- format: ${input.format}' '- tone: ${input.tone}' '- audience: ${input.audience}' '- angle: ${input.angle}' '- generated: cortex content-create' '' '## Thesis' 'First-principles take on ${input.topic} for ${input.audience}.' > '${input.out_dir}/brief.md' && printf '%s\n' '${input.out_dir}/brief.md'"
+    on_error: abort
+
+  - id: ideate
+    type: agent
+    name: "Ideate angles"
+    agent: brainstormer
+    params:
+      instruction: "Propose 3 sharp angles for content about: ${input.topic}"
+      query: "content brief for ${input.topic}"
+    on_error: skip
+
+  - id: route_format
+    type: switch
+    name: "Route format spine"
+    on: "${input.format}"
+    cases:
+      - value: "essay"
+        steps:
+          - id: spine_essay
+            type: map
+            name: "Essay sections"
+            over: '["hook","problem","mechanism","proof","close"]'
+            as: section
+            step:
+              id: draft_essay_section
+              type: tool
+              tool: exec
+              params:
+                command: "printf '%s\n' '## ${section}' '' '_${input.tone} · ${input.audience}_' '' 'Topic: ${input.topic}' '' 'Expand this ${section} beat. Angle: ${input.angle}.' '' > '${input.out_dir}/sections/${section}.md' && printf '%s\n' '${section}'"
+              on_error: abort
+      - value: "thread"
+        steps:
+          - id: spine_thread
+            type: map
+            name: "Thread beats"
+            over: '["01","02","03","04","05","06","07"]'
+            as: section
+            step:
+              id: draft_thread_beat
+              type: tool
+              tool: exec
+              params:
+                command: "printf '%s\n' '### ${section}' '' '${input.topic} — beat ${section} (${input.tone})' '' '→ punchy line for ${input.audience}' '' > '${input.out_dir}/sections/${section}.md' && printf '%s\n' '${section}'"
+              on_error: abort
+      - value: "script"
+        steps:
+          - id: spine_script
+            type: map
+            name: "Script acts"
+            over: '["cold_open","act1","act2","cta"]'
+            as: section
+            step:
+              id: draft_script_act
+              type: tool
+              tool: exec
+              params:
+                command: "printf '%s\n' '## ${section}' '' 'VISUAL: …' 'VO: ${input.topic} / ${input.angle}' '' 'Beat notes for ${input.audience} (${input.tone}).' '' > '${input.out_dir}/sections/${section}.md' && printf '%s\n' '${section}'"
+              on_error: abort
+    default:
+      - id: spine_fallback
+        type: map
+        over: '["body"]'
+        as: section
+        step:
+          id: draft_fallback
+          type: tool
+          tool: exec
+          params:
+            command: "printf '%s\n' '## body' '' '${input.topic}' '' > '${input.out_dir}/sections/body.md' && printf body"
+
+  - id: research_pack
+    type: parallel
+    name: "Research pack"
+    steps:
+      - id: scan_manifests
+        type: tool
+        name: "Scan manifests for topic"
+        tool: grep
+        params:
+          pattern: "${input.topic}"
+          path: "manifests"
+        on_error: skip
+      - id: stamp
+        type: tool
+        name: "Timestamp stamp"
+        tool: exec
+        params:
+          command: "date -Iseconds | tee '${input.out_dir}/research/stamp.txt' >/dev/null && printf 'topic=%s format=%s\n' '${input.topic}' '${input.format}' >> '${input.out_dir}/research/stamp.txt' && cat '${input.out_dir}/research/stamp.txt'"
+        on_error: skip
+      - id: inventory
+        type: tool
+        name: "List section drafts"
+        tool: exec
+        params:
+          command: "ls -1 '${input.out_dir}/sections' | tee '${input.out_dir}/research/sections.txt'"
+        on_error: skip
+
+  - id: assemble
+    type: try_catch
+    name: "Assemble draft"
+    body:
+      - id: cat_draft
+        type: tool
+        name: "Concatenate sections"
+        tool: exec
+        params:
+          command: "( printf '%s\n' '# ${input.topic}' '' '> ${input.format} / ${input.tone} / ${input.audience} / angle: ${input.angle}' '' '---' ''; cat '${input.out_dir}/brief.md'; printf '%s\n' '' '---' ''; cat '${input.out_dir}/sections'/*.md; printf '%s\n' '' '---' '' '_assembled by cortex content-create_' ) > '${input.out_dir}/draft.md' && wc -l '${input.out_dir}/draft.md'"
+        on_error: abort
+      - id: wordcount
+        type: tool
+        name: "Word count"
+        tool: exec
+        params:
+          command: "wc -w '${input.out_dir}/draft.md' | awk '{print $1}'"
+        on_error: skip
+    catch:
+      - id: assemble_fallback
+        type: tool
+        name: "Fallback draft"
+        tool: exec
+        params:
+          command: "printf '%s\n' '# ${input.topic}' '' 'Assembly failed — minimal stub.' '' 'Angle: ${input.angle}' '' > '${input.out_dir}/draft.md' && printf fallback"
+        on_error: abort
+      - id: assemble_caught
+        type: emit
+        event: "content.assemble_caught"
+        payload:
+          topic: "${input.topic}"
+          note: "fell back to stub draft"
+
+  - id: checkpoint_ship
+    type: checkpoint
+    name: "Checkpoint"
+    message: "content draft ready for ${input.topic}"
+    state:
+      topic: "${input.topic}"
+      format: "${input.format}"
+      draft: "${input.out_dir}/draft.md"
+      brief: "${input.out_dir}/brief.md"
+
+  - id: shipped
+    type: emit
+    name: "Ship event"
+    event: "content.shipped"
+    payload:
+      topic: "${input.topic}"
+      format: "${input.format}"
+      draft_path: "${input.out_dir}/draft.md"
+      brief_path: "${input.out_dir}/brief.md"
+
+  - id: done
+    type: return
+    name: "Return result"
+    value:
+      status: "succeeded"
+      topic: "${input.topic}"
+      format: "${input.format}"
+      draft_path: "${input.out_dir}/draft.md"
+      brief_path: "${input.out_dir}/brief.md"

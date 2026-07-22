@@ -809,18 +809,23 @@ class WorkflowEngine {
             auto it = symbols.find(stepId);
             if (it != symbols.end()) {
                 const Json::Value& val = it->second;
-                if (field.empty()) {
-                    Json::StreamWriterBuilder w;
-                    w["indentation"] = "";
-                    buf += Json::writeString(w, val);
-                } else if (val.isMember(field)) {
-                    if (val[field].isString())
-                        buf += val[field].asString();
+                auto appendScalar = [&](const Json::Value& v) {
+                    if (v.isString())
+                        buf += v.asString();
+                    else if (v.isBool())
+                        buf += v.asBool() ? "true" : "false";
+                    else if (v.isNumeric())
+                        buf += v.asString();  // jsoncpp numeric → decimal string
                     else {
                         Json::StreamWriterBuilder w;
                         w["indentation"] = "";
-                        buf += Json::writeString(w, val[field]);
+                        buf += Json::writeString(w, v);
                     }
+                };
+                if (field.empty()) {
+                    appendScalar(val);
+                } else if (val.isMember(field)) {
+                    appendScalar(val[field]);
                 } else {
                     buf += "null";
                 }
@@ -1104,9 +1109,37 @@ class WorkflowEngine {
         s.accVar = getAttr("acc_var", "acc");
         s.initial = getAttr("initial");
         s.switchOn = getAttr("on");
-        s.checkpointState = getAttr("state");
+        // checkpoint state may be a scalar or a nested map
+        if (auto* stateNode = MiniYaml::find(node, "state")) {
+            if (!stateNode->children.empty() || stateNode->value.empty())
+                s.checkpointState.clear();  // object form via emitPayload-style below
+            else
+                s.checkpointState = stateNode->value;
+            // Stash object state in emitPayload-compatible Json via params? keep Json field:
+            // WorkflowStep.checkpointState is string — use returnValue pattern: store JSON text
+            if (!stateNode->children.empty()) {
+                Json::Value st = parseYamlValue(stateNode);
+                Json::StreamWriterBuilder w;
+                w["indentation"] = "";
+                s.checkpointState = Json::writeString(w, st);
+            }
+        } else {
+            s.checkpointState = getAttr("state");
+        }
         s.checkpointMessage = getAttr("message");
-        s.returnValue = getAttr("value");
+        // return value may be scalar or nested object
+        if (auto* rvNode = MiniYaml::find(node, "value")) {
+            if (!rvNode->children.empty()) {
+                Json::Value rv = parseYamlValue(rvNode);
+                Json::StreamWriterBuilder w;
+                w["indentation"] = "";
+                s.returnValue = Json::writeString(w, rv);
+            } else {
+                s.returnValue = rvNode->value.empty() ? getAttr("value") : rvNode->value;
+            }
+        } else {
+            s.returnValue = getAttr("value");
+        }
 
         // Slice 1: per-step params schema
         s.paramsSchema = parseYamlValue(MiniYaml::find(node, "params_schema"));
@@ -1120,9 +1153,23 @@ class WorkflowEngine {
             for (auto& st : elseNode->children)
                 s.elseSteps.push_back(parseStep(st));
         auto* bodyNode = MiniYaml::find(node, "body");
-        if (bodyNode)
-            for (auto& st : bodyNode->children)
-                s.body.push_back(parseStep(st));
+        if (bodyNode) {
+            for (auto& st : bodyNode->children) {
+                // try_catch uses tryBody; loop/map-style steps use body.
+                if (s.type == "try_catch")
+                    s.tryBody.push_back(parseStep(st));
+                else
+                    s.body.push_back(parseStep(st));
+            }
+        }
+        auto* catchNode = MiniYaml::find(node, "catch");
+        if (catchNode && s.type == "try_catch")
+            for (auto& st : catchNode->children)
+                s.catchBody.push_back(parseStep(st));
+        auto* finallyNode = MiniYaml::find(node, "finally");
+        if (finallyNode && s.type == "try_catch")
+            for (auto& st : finallyNode->children)
+                s.finallyBody.push_back(parseStep(st));
         auto* stepsNode = MiniYaml::find(node, "steps");
         if (!stepsNode) {
             // Singular "step:" is the WHOLE block as one step, not a list.
