@@ -1488,6 +1488,15 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // Call LLM with exponential-backoff retry on transient empty/filtered
         // responses. Network exceptions are surfaced immediately (existing
         // behavior); only successful-but-empty streams are retried.
+        //
+        // RETRY ISOLATION (vet-fix): every retry rebuilds the visible stream
+        // from scratch. Two independent observers must agree the iteration is
+        // fresh: the protocol/parser state on this side AND the UI's previous
+        // event baseline on the other. Without an out-of-band signal, the UI
+        // would replay the failed attempt's partial protocol rows on top of
+        // the retry attempt's real ones, causing visual flicker and stale
+        // "running" badges. We emit a ProtocolEventKind::RETRY marker so the
+        // bridge can reset its previousEvent baseline coherently.
         ILlmProvider::StreamStats streamStats;
         int maxAttempts = std::max(1, 1 + config_.emptyResponseMaxRetries);
         int attempt = 0;
@@ -1504,6 +1513,17 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 thoughtOutput_.clear();
                 protocolEvents_.clear();
                 parser.reset();
+
+                // Out-of-band retry marker — bridge consumes this and
+                // resets its known-protocol baseline so the retry stream
+                // starts without double-rendering attempt-N streams.
+                {
+                    ProtocolEvent retryMarker;
+                    retryMarker.kind = ProtocolEventKind::RETRY;
+                    retryMarker.text = std::string("retry ") + std::to_string(attempt) +
+                                        " / " + std::to_string(maxAttempts - 1);
+                    protocolEvents_.push_back(std::move(retryMarker));
+                }
 
                 int delay =
                     std::min(backoffMs, config_.emptyResponseMaxBackoffMs);

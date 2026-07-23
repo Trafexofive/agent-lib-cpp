@@ -155,6 +155,14 @@ inline std::vector<TimelineBlock> protocolEventsToTimeline(
                 blocks.push_back(std::move(b));
                 break;
             }
+            case ProtocolEventKind::RETRY: {
+                // Vet-fix: RETRY markers are NOT timeline content. The live
+                // observer path in inkcell_app_model consumes them to reset
+                // its previousEvents baseline so the post-retry stream does
+                // not double-render attempt-N protocol rows. Non-UI callers
+                // (timeline dumps, history records) simply ignore them.
+                break;
+            }
         }
     }
     return blocks;

@@ -147,6 +147,15 @@ inline TimelineRow rowFromProtocol(const ProtocolEvent& pe) {
         row.kind = TimelineKind::Response;
         row.title = "response";
         row.body = pe.text;
+    } else if (pe.kind == ProtocolEventKind::RETRY) {
+        // Vet-fix: RETRY = protocol-only signal, NOT visible timeline content.
+        // Tagged as Log with ok=false so the live apply() can recognize and
+        // reset baseline (see apply() handler below). Non-live dump paths
+        // (loadSessionRecords / rowsFromAgent) skip Log kind in display.
+        row.kind = TimelineKind::Log;
+        row.title = "RETRY";
+        row.body = pe.text;
+        row.ok = false;
     }
     return row;
 }
