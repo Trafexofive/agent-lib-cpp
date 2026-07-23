@@ -229,10 +229,15 @@ void Agent::saveSession(const std::string& id) {
     Session session;
     if (sessionMgr_.exists(id)) {
         session = sessionMgr_.load(id);
-        // Update mutable fields; keep `created`/`id` stable.
-        session.agentName = config_.name;
-        session.model = config_.model;
-        session.provider = config_.provider;
+        // Vet-fix: stop clobbering persisted agent identity with current
+        // process defaults. The on-disk agentName/model/provider is the
+        // session's actual identity — if it's empty (legacy file), fill
+        // from this agent; otherwise leave it untouched so a session
+        // started with `--manifest coder/...` doesn't keep its name as
+        // "cortext-builtin-agent" every time the runtime boots.
+        if (session.agentName.empty()) session.agentName = config_.name;
+        if (session.model.empty())     session.model     = config_.model;
+        if (session.provider.empty())  session.provider  = config_.provider;
         session.updated = session::SessionManager::iso8601();
         session.records.clear();
     } else {

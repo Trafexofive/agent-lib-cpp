@@ -188,6 +188,17 @@ std::vector<SessionManager::SessionInfo> SessionManager::list() const {
     for (auto& e : std::filesystem::directory_iterator(baseDir_)) {
         if (!e.is_regular_file() || e.path().extension() != ".json")
             continue;
+        // Vet-fix: each session writes a sibling `<id>.state.json` checkpoint
+        // file. List must not double-count that as a separate session. Filters
+        // by filename suffix rather than JSON shape so legacy / foreign
+        // state files also disappear.
+        {
+            std::string fn = e.path().filename().string();
+            const std::string suffix = ".state.json";
+            if (fn.size() > suffix.size() &&
+                fn.compare(fn.size() - suffix.size(), suffix.size(), suffix) == 0)
+                continue;
+        }
         try {
             std::ifstream f(e.path());
             Json::Value root;
@@ -198,6 +209,12 @@ std::vector<SessionManager::SessionInfo> SessionManager::list() const {
             info.model = root.get("model", "").asString();
             info.updated = root.get("updated", "").asString();
             info.turnCount = root.isMember("records") ? root["records"].size() : 0;
+            // Prefer an operator-set display name over the ambiguous
+            // agent_name field, so a session can be tagged cleanly.
+            if (root.isMember("metadata") && root["metadata"].isObject() &&
+                root["metadata"].isMember("name") && root["metadata"]["name"].isString()) {
+                info.agentName = root["metadata"]["name"].asString();
+            }
             result.push_back(info);
         } catch (...) {
         }
