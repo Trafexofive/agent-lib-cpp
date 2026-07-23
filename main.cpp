@@ -1969,7 +1969,7 @@ static int cmdRun(CliConfig& cli) {
     }
 
     if (!cli.noSession && (cli.resumePicker || cli.continueSession || !cli.sessionId.empty())) {
-        std::string resolved = resolveSessionId(cli, true);
+        std::string resolved = resolveSessionId(cli, false);
         // If the user cancelled -r, the picker returns "". Exit cleanly
         // instead of dropping them into a fresh session.
         if (cli.resumePicker && resolved.empty()) {
@@ -2237,8 +2237,12 @@ static int cmdRun(CliConfig& cli) {
         std::string promptSessionId =
             cli.noSession
                 ? ""
-                : (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId);
-        if (!cli.noSession)
+                : (activeSessionId.empty() ? resolveSessionId(cli, false) : activeSessionId);
+        // Vet-fix: bare launch with no `--resume/--continue/--session`
+        // and no recorded session id stays entirely empty — no
+        // auto-mint, no metadata file. The Sessions hub will only see
+        // previously-persisted real sessions on disk.
+        if (!cli.noSession && !promptSessionId.empty())
             persistSessionMetadata(promptSessionId, cli, acfg);
 
         if (cli.tuiMode == "experimental") {
@@ -2303,8 +2307,8 @@ static int cmdRun(CliConfig& cli) {
         std::string experimentalSessionId =
             cli.noSession
                 ? ""
-                : (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId);
-        if (!cli.noSession)
+                : (activeSessionId.empty() ? resolveSessionId(cli, false) : activeSessionId);
+        if (!cli.noSession && !experimentalSessionId.empty())
             persistSessionMetadata(experimentalSessionId, cli, acfg);
         ui::InkcellAppConfig icfg;
         icfg.agentName = acfg.name;
@@ -2332,8 +2336,8 @@ static int cmdRun(CliConfig& cli) {
     std::string replSessionId =
         cli.noSession
             ? ""
-            : (activeSessionId.empty() ? resolveSessionId(cli, true) : activeSessionId);
-    if (!cli.noSession)
+            : (activeSessionId.empty() ? resolveSessionId(cli, false) : activeSessionId);
+    if (!cli.noSession && !replSessionId.empty())
         persistSessionMetadata(replSessionId, cli, acfg);
 
     tui::ReplSessionConfig replCfg;
