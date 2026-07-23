@@ -209,6 +209,23 @@ void Agent::saveSession(const std::string& id) {
     // AC04 — preserve `created` timestamp across saves by loading-then-merging
     //        instead of unconditionally calling create().
     // AC14 — use the agent's actual provider rather than hardcoded "deepseek".
+    // Vet-fix: do NOT auto-save empty sessions. Sessions hub was littered with
+    // zero-record `.json` files because saveSession fired on TurnDone for any
+    // turn, and isolated prompts (--no-session-ish flows, ephemeral runs, or
+    // turns that exited mid-protocol before any user-side content landed) all
+    // created files that meant nothing to resume from. We now skip if the
+    // capture is genuinely empty.
+    bool hasContent = false;
+    for (const auto& h : history_) {
+        if (h.empty()) continue;
+        // Strip prefix but treat empty prefix as empty record anyway.
+        hasContent = true;
+        break;
+    }
+    if (!hasContent && contextFeeds_.empty()) {
+        return;
+    }
+
     Session session;
     if (sessionMgr_.exists(id)) {
         session = sessionMgr_.load(id);

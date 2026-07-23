@@ -367,8 +367,18 @@ void test_dashboard_session_controller() {
     auto created = model::createDashboardSession(
         dashboard, sessions, "coder", "gpt-5.5", "openai-codex",
         [&] { clearedAgent = true; }, "new-session");
-    check(created.ok && created.sessionId == "new-session" && clearedAgent && sessions.exists("new-session"),
-          "dashboard controller creates and activates clean session");
+    // Vet-fix: vet-fix: end-of-life tests must follow the new semantics —
+    // createDashboardSession now ARMS the session id (sets agent.sessionId)
+    // but does NOT write the file. The file is persisted by Agent::saveSession
+    // only when the run produced real content. So the file should NOT exist
+    // yet, unless something else has gated-persisted.
+    check(created.ok && created.sessionId == "new-session" && clearedAgent &&
+              !sessions.exists("new-session"),
+          "dashboard controller arms session id without writing empty file");
+    // If we now persist through the manager, the file appears.
+    sessions.save(sessions.load("new-session"));
+    check(sessions.exists("new-session"),
+          "dashboard controller lets the manager persist on demand");
     std::filesystem::remove_all(base);
 }
 

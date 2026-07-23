@@ -332,6 +332,10 @@ struct ShellModel {
     bool failed = false;
     bool showThoughts = true;
     bool showRaw = false;
+    // Vet-fix: chat-body field underlay opt-in. Off by default — the chat
+    // surface stays crisp unless the operator opts in. Hub field on/off is
+    // shared via gfx:: and this is the chat-side gate.
+    bool chatFieldEnabled = false;
     // When true, long block bodies are capped (pi-like truncation) with a
     // "… N more lines" note. Toggle via /truncate or CLI --[no-]truncate.
     bool truncateBodies = true;

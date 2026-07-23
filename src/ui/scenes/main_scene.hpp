@@ -395,6 +395,11 @@ class MainScene final : public BaseScene {
                 case 'D':
                     if (dash.section == model::DashboardSection::Sessions) deleteSelectedSession();
                     return true;
+                case 'e':
+                case 'E':
+                    if (dash.section == model::DashboardSection::Sessions)
+                        exportSelectedSession();
+                    return true;
                 case 'y':
                 case 'Y':
                     if (!dash.yankBuffer.empty()) {
@@ -819,26 +824,132 @@ class MainScene final : public BaseScene {
     }
 
     void drawSessions(inkcell::Surface& surface, inkcell::Rect frame) const {
-        sectionHead(surface, frame, "Sessions", "enter resume · n new · d delete");
+        // Vet-fix smarter sessions page: LIVE chip on the active session,
+        // column-rich row, active-delete guard refused via notice (not a
+        // hint-only silent failure), empty-state with shortcut, scoped
+        // header KPI. Same AAA grammar as Home.
         const auto& dash = model_->dashboard;
-        int y = frame.y + 4;
+
+        // Hero + KPI label
+        surface.text({frame.x, frame.y}, "SESSIONS", theme::bright());
+        const int totalSess = static_cast<int>(dash.sessions.size());
+        const int activeFlag = !model_->activeSessionId.empty() ? 1 : 0;
+        std::string stat =
+            " " + std::to_string(totalSess) +
+            " on disk" + (activeFlag ? "  ·  1 active" : "");
+        surface.text({frame.x + 9, frame.y}, inkcell::text::truncate(stat, frame.w - 9),
+                     theme::italic_dim());
+        if (frame.h > 1) {
+            int liveTurn = model_->running ? 1 : 0;
+            std::string meta = std::string("enter resume · n new · d delete · e export · / search") +
+                                (liveTurn ? std::string("  ·  ● live") : std::string("  ·  ○ idle"));
+            surface.text({frame.x, frame.y + 1},
+                         inkcell::text::truncate(meta, frame.w), theme::italic_dim());
+        }
+
+        int y = frame.y + 3;
         if (dash.sessions.empty()) {
-            surface.text({frame.x, y++}, "No sessions yet.", theme::dim());
-            surface.text({frame.x, y}, "n → create and open chat.", theme::text());
+            inkcell::Style tip = theme::muted();
+            surface.text({frame.x, y++}, "Nothing yet.", tip);
+            surface.text({frame.x, y++}, "Press  n  to create and open chat.", theme::text());
+            surface.text({frame.x, y}, "Press  e  on a later session to export as .json.", theme::dim());
             return;
         }
-        int visible = std::max(1, frame.bottom() - y);
+
+        // Visible column headers
+        if (frame.w >= 64) {
+            int rowW = frame.w;
+            int idsX = frame.x;
+            int liveX = frame.x + 4;
+            int agentX = frame.x + 12;
+            int turnsX = std::max(agentX + 18, frame.x + rowW - 28);
+            int updatedX = std::max(turnsX + 6, frame.x + rowW - 14);
+            auto head = theme::dim();
+            surface.text({idsX, y}, "ID", head);
+            surface.text({liveX, y}, "STATE", head);
+            surface.text({agentX, y}, "AGENT", head);
+            surface.text({turnsX, y}, "TURNS", head);
+            surface.text({updatedX, y}, "UPDATED", head);
+            ++y;
+        }
+
+        int visible = std::max(1, frame.bottom() - y - 1);  // reserve row for footer
         int start = std::max(0, std::min(dash.sessionIndex - visible / 2,
                                          static_cast<int>(dash.sessions.size()) - visible));
+
         for (int i = start; i < static_cast<int>(dash.sessions.size()) && y < frame.bottom(); ++i) {
             const auto& s = dash.sessions[static_cast<size_t>(i)];
             bool selected = i == dash.sessionIndex;
-            components::drawCardRow(surface, {frame.x, y, frame.w, 1}, selected, false);
-            std::string line = "  " + suffix(s.id) + "  " + nonempty(s.agentName, "?") + "  " +
-                               std::to_string(s.turnCount) + "r  " + s.updated;
-            surface.text({frame.x + 1, y}, inkcell::text::truncate(line, frame.w - 2),
-                         selected ? theme::bright() : theme::text());
+            bool active = !model_->activeSessionId.empty() &&
+                          s.id == model_->activeSessionId;
+
+            auto rowBg = selected ? theme::panel_3()
+                          : active   ? theme::panel_2()
+                                     : theme::panel_bg();
+            surface.fill({frame.x, y, frame.w, 1}, " ", rowBg);
+            if (selected)
+                surface.text({frame.x, y}, "▌", theme::cyan().with_bg(rowBg.bg));
+
+            // ID — short suffix for scan-ability
+            std::string idTxt = suffix(s.id);
+            int idW = std::max(2, inkcell::text::display_width(idTxt));
+            auto idSt = active ? theme::bright() : theme::muted();
+            idSt.bg = rowBg.bg;
+            surface.text({frame.x + 1, y},
+                         inkcell::text::truncate(idTxt, std::max(2, frame.w - 3)),
+                         active ? idSt.strong() : idSt);
+
+            if (frame.w >= 64) {
+                // STATE badge
+                auto state = active ? theme::green() : theme::dim();
+                state.bg = rowBg.bg;
+                state.bold = active;
+                surface.text({frame.x + idW + 2, y},
+                             active ? "● LIVE" : "◯", state);
+
+                // AGENT column
+                std::string agentTxt = nonempty(s.agentName, "?");
+                int agW = std::max(8, inkcell::text::display_width(agentTxt));
+                surface.text({frame.x + idW + 9, y},
+                             inkcell::text::truncate(agentTxt, std::max(8, frame.w - idW - 30)),
+                             (theme::text()).with_bg(rowBg.bg));
+
+                // TURNS
+                auto turnSt = theme::text().with_bg(rowBg.bg);
+                turnSt.bold = (s.turnCount > 0);
+                char buf[16];
+                std::snprintf(buf, sizeof(buf), "%zut",
+                              static_cast<size_t>(s.turnCount));
+                surface.text({frame.x + frame.w - 22, y},
+                             inkcell::text::truncate(buf, 6), turnSt);
+
+                // UPDATED — age-style short suffix (last 4 of iso or -)
+                std::string whenTxt = s.updated.empty()
+                                          ? std::string("—")
+                                          : s.updated.substr(std::max<size_t>(0, s.updated.size() - 16));
+                whenTxt += "Z";
+                auto updSt = theme::italic_dim();
+                updSt.bg = rowBg.bg;
+                surface.text({frame.x + frame.w - 14, y},
+                             inkcell::text::truncate(whenTxt, 14), updSt);
+            } else {
+                std::string oneLine = active ? "● " : "  ";
+                oneLine += " " + idTxt + "  " + nonempty(s.agentName, "?") + "  " +
+                           std::to_string(s.turnCount) + "r  ";
+                if (!s.updated.empty()) oneLine += s.updated;
+                auto st = ((selected ? theme::bright() : theme::text())).with_bg(rowBg.bg);
+                if (active) st.bold = true;
+                surface.text({frame.x + 1, y},
+                             inkcell::text::truncate(oneLine, frame.w - 2), st);
+            }
             ++y;
+        }
+
+        // Footer row: error context message + J/K hint
+        if (y < frame.bottom()) {
+            std::string hint = "j/k move · enter resume · n new · d delete · e export";
+            surface.text({frame.x, y}, inkcell::text::truncate(hint, frame.w),
+                         theme::italic_dim());
         }
     }
 
@@ -1153,6 +1264,17 @@ class MainScene final : public BaseScene {
                 model_->showRaw = !model_->showRaw;
                 model_->rebuildViews();
                 break;
+            case 6:  // chat field bg
+                // Vet-fix: independent from hub field on/off; chat-side underlay
+                // persists via ui_prefs alongside theme + chat toggles.
+                model_->chatFieldEnabled = !model_->chatFieldEnabled;
+                dash.notice = model_->chatFieldEnabled
+                                  ? std::string("chat · field bg on — ") +
+                                        gfx::activeFieldName()
+                                  : std::string("chat · field bg off (solid theme)");
+                persistUiPrefs(*model_);
+                dash.notice.clear();
+                break;
             default:
                 break;
         }
@@ -1235,6 +1357,13 @@ class MainScene final : public BaseScene {
         option(3, "THOUGHTS", model_->showThoughts ? "ON" : "OFF", "^T", false);
         option(4, "TRUNCATE", model_->truncateBodies ? "ON" : "OFF", "^O", false);
         option(5, "RAW STREAM", model_->showRaw ? "ON" : "OFF", "^R", false);
+        option(6, "CHAT FIELD",
+               model_->chatFieldEnabled
+                   ? (gfx::fieldEnabled() ? std::string("ON  · ")
+                                              + gfx::activeFieldName()
+                                            : std::string("ON  ·  hub off"))
+                   : "OFF",
+               "B / S", true);
 
         // Single footer — path only, no key encyclopedia
         if (y + 1 < frame.bottom()) {
@@ -1483,6 +1612,28 @@ class MainScene final : public BaseScene {
         model_->pendingRoute = "agent";
     }
 
+    void exportSelectedSession() {
+        // Vet-fix smarter export: portable .json via SessionManager::exportToFile
+        // rather than dumping raw. Path is well-known: /tmp/mk3-session-<id>.json.
+        // Falls back to a notice if anything stalls so the operator can recover.
+        const auto* sel = model_->dashboard.selectedSession();
+        if (!sel) {
+            model_->dashboard.notice = "no session selected";
+            return;
+        }
+        try {
+            session::SessionManager sessions;
+            std::string path = "/tmp/mk3-session-" + sel->id + ".json";
+            if (sessions.exportToFile(sel->id, path)) {
+                model_->dashboard.notice = "exported → " + path;
+            } else {
+                model_->dashboard.notice = "export failed (empty/loadable?): " + sel->id;
+            }
+        } catch (const std::exception& e) {
+            model_->dashboard.notice = std::string("export error: ") + e.what();
+        }
+    }
+
     void deleteSelectedSession() {
         const auto* sel = model_->dashboard.selectedSession();
         if (!sel) {
@@ -1490,14 +1641,20 @@ class MainScene final : public BaseScene {
             return;
         }
         std::string id = sel->id;
+        // Vet-fix: refuse to delete the active session — that would
+        // silently strand the live agent. Operator must end/clear first.
+        if (model_->activeSessionId == id) {
+            model_->dashboard.notice =
+                "active session — /clear or resume another first (esc to clear)";
+            return;
+        }
         try {
             session::SessionManager sessions;
             sessions.remove(id);
-            if (model_->activeSessionId == id) {
-                model_->activeSessionId.clear();
-                model_->clearTranscript();
-                if (model_->rootAgent) model_->rootAgent->clearHistory();
-            }
+            // Clamp selector if we just shrank the list.
+            model_->dashboard.sessionIndex =
+                std::max(0, std::min(model_->dashboard.sessionIndex,
+                                     static_cast<int>(model_->dashboard.sessions.size()) - 1));
             model_->dashboard.refreshSessions(sessions);
             model_->dashboard.notice = "deleted " + id;
         } catch (const std::exception& e) {

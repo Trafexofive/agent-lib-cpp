@@ -19,6 +19,9 @@ struct UiPrefState {
     bool showThoughts = true;
     bool truncateBodies = true;
     bool showRaw = false;
+    // Chat-side field underlay. Inherits shared gfx::activeFieldIndex; this
+    // is the on/off gate for the chat surface specifically.
+    bool chatFieldEnabled = false;
 };
 
 inline UiPrefState& uiPrefShadow() {
@@ -101,6 +104,7 @@ inline void loadUiPrefs() {
     shad.showThoughts = jsonGetBool(body, "show_thoughts", true);
     shad.truncateBodies = jsonGetBool(body, "truncate_bodies", true);
     shad.showRaw = jsonGetBool(body, "show_raw", false);
+    shad.chatFieldEnabled = jsonGetBool(body, "chat_field_enabled", false);
 }
 
 // Apply shadow → live model (call after model construct / load).
@@ -110,6 +114,7 @@ inline void applyUiPrefsToModel(Model& model) {
     model.showThoughts = s.showThoughts;
     model.truncateBodies = s.truncateBodies;
     model.showRaw = s.showRaw;
+    model.chatFieldEnabled = s.chatFieldEnabled;
 }
 
 template <typename Model>
@@ -132,7 +137,8 @@ inline void saveUiPrefs() {
         << "  \"shader_enabled\": " << (gfx::fieldEnabled() ? "true" : "false") << ",\n"
         << "  \"show_thoughts\": " << (s.showThoughts ? "true" : "false") << ",\n"
         << "  \"truncate_bodies\": " << (s.truncateBodies ? "true" : "false") << ",\n"
-        << "  \"show_raw\": " << (s.showRaw ? "true" : "false") << "\n"
+        << "  \"show_raw\": " << (s.showRaw ? "true" : "false") << ",\n"
+        << "  \"chat_field_enabled\": " << (s.chatFieldEnabled ? "true" : "false") << "\n"
         << "}\n";
 }
 

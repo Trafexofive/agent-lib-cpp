@@ -58,7 +58,7 @@ struct DashboardState {
 
     // Settings option focus (0=theme 1=field 2=shader 3=thoughts 4=truncate 5=raw)
     int settingsFocus = 0;
-    static constexpr int settingsOptionCount = 6;
+    static constexpr int settingsOptionCount = 7;
 
     // Manifest card swipe (j/k) — curved dual-card transition
     int cardPrevIndex = -1;
@@ -305,6 +305,10 @@ struct DashboardState {
     const session::SessionManager::SessionInfo* selectedSession() const {
         if (sessionIndex < 0 || sessionIndex >= static_cast<int>(sessions.size())) return nullptr;
         return &sessions[static_cast<size_t>(sessionIndex)];
+    }
+
+    bool isSessionActive(const std::string& id, const std::string& activeSessionId) const {
+        return !id.empty() && id == activeSessionId;
     }
 
     const catalog::ManifestEntry* selectedManifest() const {

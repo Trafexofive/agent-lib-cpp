@@ -50,10 +50,16 @@ inline DashboardSessionResult createDashboardSession(
         id = "chat-" + std::to_string(stamp);
     }
     try {
-        sessions.create(id, agentName, model, provider);
+        // Vet-fix: do NOT call sessions.create(). The file is created only
+        // once saveSession() decides the turn had real content (and only
+        // then does the id appear in the Sessions page listing). This
+        // removes the empty-zero-record file litter the hub accumulated.
+        // Caller is expected to set agent.sessionId = id via clearAgentSession
+        // callback so resumes work.
+        (void)sessions; // silence unused warning when stub
         clearAgentSession();
         dashboard.refreshSessions(sessions);
-        dashboard.notice = "created " + id;
+        dashboard.notice = "armed " + id;
         return {true, id, dashboard.notice, {}};
     } catch (const std::exception& error) {
         dashboard.notice = std::string("create failed: ") + error.what();
