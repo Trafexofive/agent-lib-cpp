@@ -1839,9 +1839,23 @@ std::string Agent::runLoop(AgentContext &ctx) {
         }
     }
 
+    // Vet-fix: skip auto-saves when the run produced no captured content
+    // AND no live state worth persisting. Empty-then-create + empty-then-
+    // checkpoint was creating pairs of zero-row files the Sessions page had
+    // to filter out by hand.
     if (!ctx.ephemeral && !ctx.sessionId.empty()) {
-        saveSession(ctx.sessionId);
-        saveStateCheckpoint(ctx.sessionId);
+        const bool hasContent =
+            std::any_of(history_.begin(), history_.end(),
+                         [](const std::string& h) { return !h.empty(); });
+        if (hasContent || !contextFeeds_.empty()) {
+            saveSession(ctx.sessionId);
+            saveStateCheckpoint(ctx.sessionId);
+        } else if (sessionMgr_.exists(ctx.sessionId)) {
+            // Session previously persisted — refresh its checkpoint so
+            // operator-controlled resume still works even after our newer
+            // content-gating engagement above.
+            saveStateCheckpoint(ctx.sessionId);
+        }
     }
 
     if (ctx.raw && !rawOutput.empty()) {

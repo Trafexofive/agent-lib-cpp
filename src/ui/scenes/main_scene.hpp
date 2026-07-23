@@ -400,6 +400,10 @@ class MainScene final : public BaseScene {
                     if (dash.section == model::DashboardSection::Sessions)
                         exportSelectedSession();
                     return true;
+                case 'k':  // alias — lowercase k for quick kill on Sessions
+                case 'K':
+                    if (dash.section == model::DashboardSection::Sessions) killLiveSession();
+                    return true;
                 case 'y':
                 case 'Y':
                     if (!dash.yankBuffer.empty()) {
@@ -413,13 +417,23 @@ class MainScene final : public BaseScene {
                     }
                     break;
                 case 'x':
-                case 'X':
+                    if (dash.section == model::DashboardSection::Sessions) {
+                        // 'x' shortcut — kill live session, mirroring
+                        // Ctrl-X semantics. Doesn't conflict with workflow
+                        // cancel because we're on the Sessions page.
+                        killLiveSession();
+                        return true;
+                    }
                     if (model_->workflowRun.isLive() || model_->workflowRun.isActive()) {
                         model_->pendingStopWorkflow = true;
                         model_->workflowRun.requestCancel();
                         dash.notice = "stopping workflow…";
                         return true;
                     }
+                    break;
+                case 'X':
+                    if (dash.section == model::DashboardSection::Sessions) killLiveSession();
+                    return true;
                     break;
                 case 'z':
                 case 'Z':
@@ -841,7 +855,7 @@ class MainScene final : public BaseScene {
                      theme::italic_dim());
         if (frame.h > 1) {
             int liveTurn = model_->running ? 1 : 0;
-            std::string meta = std::string("enter resume · n new · d delete · e export · / search") +
+            std::string meta = std::string("enter resume · n new · d delete · e export · x kill-live · / search") +
                                 (liveTurn ? std::string("  ·  ● live") : std::string("  ·  ○ idle"));
             surface.text({frame.x, frame.y + 1},
                          inkcell::text::truncate(meta, frame.w), theme::italic_dim());
@@ -947,7 +961,7 @@ class MainScene final : public BaseScene {
 
         // Footer row: error context message + J/K hint
         if (y < frame.bottom()) {
-            std::string hint = "j/k move · enter resume · n new · d delete · e export";
+            std::string hint = "j/k move · enter resume · n new · d delete · e export · x kill-live";
             surface.text({frame.x, y}, inkcell::text::truncate(hint, frame.w),
                          theme::italic_dim());
         }
@@ -1610,6 +1624,53 @@ class MainScene final : public BaseScene {
         model_->clearTranscript();
         model_->activeSessionId = result.sessionId;
         model_->pendingRoute = "agent";
+    }
+
+    void killLiveSession() {
+        // Operator-locked requirement: a way to end a live session in-place
+        // from the Sessions page (not just refuse-to-delete). We:
+        //   1) flip g_running so the worker exits its current iteration;
+        //   2) explicitly tell the model the live run is cancelled;
+        //   3) drop the persistence file (which the Sessions list can now
+        //      re-read on next refresh — it's truly gone);
+        //   4) clear the in-memory transcript so a stale chat footer
+        //      doesn't haunt the operator.
+        const auto* sel = model_->dashboard.selectedSession();
+        if (!sel) {
+            model_->dashboard.notice = "no session selected";
+            return;
+        }
+        std::string id = sel->id;
+        if (model_->activeSessionId.empty()) {
+            // Selected the row but nothing live → just delete it.
+            deleteSelectedSession();
+            return;
+        }
+        if (model_->activeSessionId != id) {
+            model_->dashboard.notice =
+                "live is " + suffix(model_->activeSessionId) + " — select it to kill";
+            return;
+        }
+        // 1. signal worker to stop. Next iteration check will exit before
+        // a new prompt() round, and the bridge publishes TurnDone.
+        g_running = false;
+        // 2. clear live flags synchronously so the hub reflects the state
+        // immediately (the worker may take a moment to publish TurnDone).
+        model_->running = false;
+        model_->status = "stopped";
+        try {
+            session::SessionManager sessions;
+            sessions.remove(id);
+            // 3. clear in-memory session record of the dead session.
+            model_->activeSessionId.clear();
+            model_->pendingSubmit.clear();
+            if (model_->rootAgent) model_->rootAgent->clearHistory();
+            model_->clearTranscript();
+            model_->dashboard.refreshSessions(sessions);
+            model_->dashboard.notice = "killed live session " + suffix(id);
+        } catch (const std::exception& e) {
+            model_->dashboard.notice = std::string("kill failed: ") + e.what();
+        }
     }
 
     void exportSelectedSession() {
