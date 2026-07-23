@@ -4,11 +4,14 @@
 
 #include "parser.hpp"
 
+#include <atomic>
 #include <cctype>
 #include <iostream>
 #include <regex>
 #include <sstream>
 #include <thread>
+
+#include "src/core/agent.hpp"  // extern std::atomic<bool> g_running
 
 namespace cortex::mk3::protocol {
 
@@ -875,15 +878,36 @@ bool Parser::waitForActions(std::chrono::seconds deadline) {
         std::lock_guard<std::mutex> lock(mtx_);
         futs = std::move(futures_);
     }
+    // Vet-fix: Ctrl-C speed. The previous one-shot `wait_for(deadline)` could
+    // stall the worker for `actionTimeoutSec` (default ~30s+) because the
+    // future was either finished or not — there was no in-band cancellation
+    // path. We slice the wait into short segments and consult g_running on
+    // every slice so Ctrl-C/quit aborts within ~250ms regardless of the
+    // remaining budget. Deadline is honored as an upper bound.
+    auto wallStart = std::chrono::steady_clock::now();
+    auto deadlineAbs = wallStart + deadline;
+    bool hasDeadline = deadline.count() > 0;
     for (auto& f : futs) {
         if (!f.valid())
             continue;
-        if (deadline.count() > 0) {
-            auto status = f.wait_for(deadline);
-            if (status == std::future_status::timeout)
+        while (true) {
+            if (!g_running)
                 return false;
-        } else {
-            f.wait();
+            auto now = std::chrono::steady_clock::now();
+            // Both branches emit a duration in the same unit so std::min works.
+            std::chrono::milliseconds remaining =
+                hasDeadline ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 deadlineAbs - now)
+                            : std::chrono::milliseconds(250);
+            if (hasDeadline && remaining <= std::chrono::milliseconds(0))
+                return false; // deadline reached, abandon
+            std::chrono::milliseconds want =
+                hasDeadline ? std::min(remaining, std::chrono::milliseconds(250))
+                            : std::chrono::milliseconds(250);
+            auto status = f.wait_for(want);
+            if (status == std::future_status::ready)
+                break;
+            // timeout/deferred — loop back, re-read g_running, re-slice.
         }
     }
     return true;

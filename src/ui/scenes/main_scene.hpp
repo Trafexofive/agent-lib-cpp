@@ -51,6 +51,19 @@ class MainScene final : public BaseScene {
         model_->dashboard.refreshAll();
         model_->dashboard.focus = model::DashboardFocus::Content;
         model_->dashboard.searchMode = false;
+        // Vet-fix: phantom-live UX guard. The hub used to inherit a stale
+        // `model_->running = true` carry-over after a previous turn that
+        // crashed before TurnDone got published. Reconcile against the
+        // bridge's authoritative snapshot so the dashboard never shows
+        // "● live" before the operator actually sent anything.
+        {
+            auto snap = bridge_.snapshot();
+            if (!snap.running) {
+                model_->running = false;
+                if (model_->status.empty() || model_->status == "cancelling")
+                    model_->status = "ready";
+            }
+        }
         bumpNotice();
         highlightActiveAgent();
     }
