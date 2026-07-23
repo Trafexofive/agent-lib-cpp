@@ -103,6 +103,23 @@ static std::string findHarnessPath(const std::string& fromManifest,
     if (const char* home = std::getenv("CORTEX_HOME"); home && *home) {
         if (auto r = tryRoot(home); !r.empty()) return r;
     }
+    // 2'. Exe-relative: the binary lives at <install>/cortex-mk3 and
+    // shares an install tree with manifests/. When launched from any
+    // cwd (e.g. ~) this is the only reliable way to find the harness
+    // without a CORTEX_HOME hint.
+    try {
+        std::error_code ec;
+        auto self = std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (!ec && !self.empty()) {
+            std::string exe = self.string();
+            size_t slash = exe.find_last_of('/');
+            if (slash != std::string::npos) {
+                std::string exeDir = exe.substr(0, slash);
+                if (auto r = tryRoot(exeDir); !r.empty()) return r;
+            }
+        }
+    } catch (...) {
+    }
     // 3. cwd-relative (any cwd, not hardcoded developer box)
     tryRoot(std::filesystem::current_path().string());
     // 4. ~/.config/cortex-mk3 (installed layout)
@@ -113,6 +130,20 @@ static std::string findHarnessPath(const std::string& fromManifest,
     if (hintRel != "default.md") {
         if (const char* home = std::getenv("CORTEX_HOME"); home && *home) {
             if (auto r = tryRootDefault(home); !r.empty()) return r;
+        }
+        // Same exe-dir fallback as above for default.md.
+        try {
+            std::error_code ec;
+            auto self = std::filesystem::read_symlink("/proc/self/exe", ec);
+            if (!ec && !self.empty()) {
+                std::string exe = self.string();
+                size_t slash = exe.find_last_of('/');
+                if (slash != std::string::npos) {
+                    std::string exeDir = exe.substr(0, slash);
+                    if (auto r = tryRootDefault(exeDir); !r.empty()) return r;
+                }
+            }
+        } catch (...) {
         }
         tryRootDefault(std::filesystem::current_path().string());
         if (const char* home = std::getenv("HOME"); home && *home) {

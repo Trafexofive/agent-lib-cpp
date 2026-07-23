@@ -2376,32 +2376,46 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, signalHandler);
     signal(SIGWINCH, signalHandler);
 
-    CliConfig cli = parseArgs(argc, argv);
+    try {
+        CliConfig cli = parseArgs(argc, argv);
 
-    // Load config file
-    if (cli.configPath.empty())
-        cli.configPath = defaultConfigPath();
-    auto cfg = loadConfigFile(cli.configPath);
-    applyConfig(cli, cfg);
+        // Load config file
+        if (cli.configPath.empty())
+            cli.configPath = defaultConfigPath();
+        auto cfg = loadConfigFile(cli.configPath);
+        applyConfig(cli, cfg);
 
-    // Dispatch
-    if (cli.showHelp)
-        return cmdHelp(cli);
-    if (cli.command == "version")
-        return cmdVersion();
-    if (cli.command == "help")
-        return cmdHelp(cli);
-    if (cli.command == "list")
-        return cmdList(cli);
-    if (cli.command == "config")
-        return cmdConfig(cli);
-    if (cli.command == "completions")
-        return cmdCompletions(cli);
-    if (cli.command == "serve")
-        return cmdServe(cli);
-    if (cli.command == "sessions")
-        return cmdSessions(cli);
+        // Dispatch
+        if (cli.showHelp)
+            return cmdHelp(cli);
+        if (cli.command == "version")
+            return cmdVersion();
+        if (cli.command == "help")
+            return cmdHelp(cli);
+        if (cli.command == "list")
+            return cmdList(cli);
+        if (cli.command == "config")
+            return cmdConfig(cli);
+        if (cli.command == "completions")
+            return cmdCompletions(cli);
+        if (cli.command == "serve")
+            return cmdServe(cli);
+        if (cli.command == "sessions")
+            return cmdSessions(cli);
 
-    // Default: run
-    return cmdRun(cli);
+        // Default: run
+        return cmdRun(cli);
+    } catch (const std::exception& e) {
+        // Operator-locked fail-soft entry path: a missing harness prompt or
+        // a torn config file used to terminate() mid-main with a noisy
+        // SIGABRT. Pretty-print the exception and exit 1 so operators can
+        // see the message and continue without a core dump.
+        std::cerr << "\033[31mcortex-mk3:\033[0m " << e.what() << "\n";
+        if (const char* hint = std::getenv("CORTEX_HOME"); !hint || !*hint) {
+            std::cerr << "  \033[2mhint\033[0m: configure with "
+                         "`--manifest-dir /path/to/cortex` or "
+                         "`CORTEX_HOME=/path/to/cortex`.\n";
+        }
+        return 2;
+    }
 }
