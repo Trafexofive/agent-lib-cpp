@@ -260,7 +260,18 @@ inline int runInkcellShell(const InkcellAppConfig& cfg, Agent& agent) {
         app.render_to(std::cout, "main", {120, 34});
         return 0;
     }
-    return app.run("main");
+    int rc = app.run("main");
+    // Vet-fix: if user picked `./cortex-mk3 --tui experimental`, exited
+    // via Ctrl-C or quit, the Agent never reached the prompt() tail
+    // that would have called saveSession. We flush whatever the Agent
+    // captured (history, context feeds) on every TUI exit so
+    // brainstormer / chat / experimental sessions land on disk before
+    // the process tears down. saveSession is id-only gated; empty runs
+    // write nothing — no phantom files.
+    flushAgentSession(agent, cfg.sessionId, false);
+    flushAgentSession(agent, model->activeSessionId, false);
+    (void)bridge;  // bridge still required to outlive App::run's worker observers
+    return rc;
 }
 
 inline int runInkcellSmoke(const InkcellAppConfig& cfg, Agent& agent) { return runInkcellShell(cfg, agent); }

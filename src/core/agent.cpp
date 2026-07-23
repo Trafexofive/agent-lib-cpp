@@ -54,6 +54,74 @@ static std::string xmlAttr(const std::string &s) {
     return out;
 }
 
+// Vet-fix: harness resolver. Searches a deterministic list of roots
+// (any cwd, any host) so the agent never falls back to a hardcoded
+// developer-machine absolute path. The order favours:
+//   1. exact path the manifest loader resolved to (config_.harnessPath)
+//   2. $CORTEX_HOME/manifests/harness/<relative>
+//   3. ./manifests/harness/<relative>      (cwd-relative; standard repo layout)
+//   4. ~/.config/cortex-mk3/manifests/harness/<relative>  (installed layout)
+// If none match and the relative hint is empty, fall back to default.md in
+// the same roots, in the same order. Returns empty string when nothing
+// resolves; caller throws.
+static std::string findHarnessPath(const std::string& fromManifest,
+                                 std::vector<std::string>& looked) {
+    auto tryOpen = [](const std::string& cand, std::vector<std::string>& looked) -> std::string {
+        looked.push_back(cand);
+        std::ifstream f(cand);
+        if (f.good()) return cand;
+        return {};
+    };
+    auto appendIf = [](std::string base, const std::string& tail) -> std::string {
+        if (base.empty()) return tail;
+        if (base.back() != '/') base += '/';
+        return base + tail;
+    };
+    const std::string hintRel = [&]() -> std::string {
+        if (fromManifest.empty()) return "default.md";
+        std::string stem = fromManifest;
+        size_t slash = stem.find_last_of('/');
+        if (slash != std::string::npos) stem = stem.substr(slash + 1);
+        size_t dot = stem.find_last_of('.');
+        if (dot != std::string::npos) stem = stem.substr(0, dot);
+        if (stem.empty()) return "default.md";
+        return stem + ".md";
+    }();
+    auto tryRoot = [&](const std::string& root) -> std::string {
+        std::string cand = appendIf(root, appendIf("manifests/harness", hintRel));
+        return tryOpen(cand, looked);
+    };
+    auto tryRootDefault = [&](const std::string& root) -> std::string {
+        std::string cand = appendIf(root, "manifests/harness/default.md");
+        return tryOpen(cand, looked);
+    };
+    // 1. Exactly what the manifest loader provided first.
+    if (!fromManifest.empty() && fromManifest.find("default.md") == std::string::npos) {
+        if (auto r = tryOpen(fromManifest, looked); !r.empty()) return r;
+    }
+    // 2. CORTEX_HOME
+    if (const char* home = std::getenv("CORTEX_HOME"); home && *home) {
+        if (auto r = tryRoot(home); !r.empty()) return r;
+    }
+    // 3. cwd-relative (any cwd, not hardcoded developer box)
+    tryRoot(std::filesystem::current_path().string());
+    // 4. ~/.config/cortex-mk3 (installed layout)
+    if (const char* home = std::getenv("HOME"); home && *home) {
+        tryRoot(std::string(home) + "/.config/cortex-mk3");
+    }
+    // Final fallback: default.md in same roots, in the same order.
+    if (hintRel != "default.md") {
+        if (const char* home = std::getenv("CORTEX_HOME"); home && *home) {
+            if (auto r = tryRootDefault(home); !r.empty()) return r;
+        }
+        tryRootDefault(std::filesystem::current_path().string());
+        if (const char* home = std::getenv("HOME"); home && *home) {
+            tryRootDefault(std::string(home) + "/.config/cortex-mk3");
+        }
+    }
+    return {};
+}
+
 static std::string indentText(const std::string &text, int spaces) {
     std::ostringstream out;
     std::istringstream in(text);
@@ -100,17 +168,34 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
     // Cache harness file once (doesn't change at runtime).
     // Pre-indent every line so buildSystemPrompt doesn't redo O(n) work per
     // turn.
+    //
+    // Vet-fix: harness resolution must NOT hardcode /home/mlamkadm.
+    // The previous fallback was a developer-machine absolute path that
+    // crashed on any other host and silently mis-resolved on the dev's
+    // host when the build tree moved. Operator wants harness to load
+    // consistently from $CORTEX_HOME -> ./manifests -> ~/.config lookups
+    // regardless of where the agent was compiled or run.
     {
-        std::ifstream hf(config_.harnessPath);
+        std::vector<std::string> looked;
+        std::string resolved = findHarnessPath(config_.harnessPath, looked);
+        if (resolved.empty()) {
+            std::string routes;
+            for (std::size_t i = 0; i < looked.size(); ++i) {
+                if (i) routes += "\n  ";
+                routes += looked[i] + (i + 1 < looked.size() ? " (miss)" : "");
+            }
+            throw std::runtime_error(
+                "harness prompt not found — searched:\n  " + routes +
+                "\nUse --manifest-dir <path> or set CORTEX_HOME. Default fallback is manifests/harness/default.md");
+        }
+        config_.harnessPath = resolved;  // remember what we resolved to
+        std::ifstream hf(resolved);
         if (hf.is_open()) {
             std::ostringstream oss;
             std::string line;
             while (std::getline(hf, line))
                 oss << "    " << line << "\n";
             harnessText_ = oss.str();
-        } else if (!config_.harnessPath.empty()) {
-            throw std::runtime_error("harness prompt not found: " +
-                                     config_.harnessPath);
         }
     }
 
@@ -479,9 +564,9 @@ static std::string buildResultTag(const std::string &id,
     // sees path/bytes/cycles in <result> tags (not an empty body).
     if (body.empty() && result.isObject()) {
         Json::Value slim;
-        for (const char* k : {"success", "path", "mode", "bytes",
-                              "cycles_remaining", "pinned_count", "peek_count",
-                              "note", "error", "keys"}) {
+        for (const char *k :
+             {"success", "path", "mode", "bytes", "cycles_remaining",
+              "pinned_count", "peek_count", "note", "error", "keys"}) {
             if (result.isMember(k))
                 slim[k] = result[k];
         }
@@ -554,11 +639,15 @@ std::string Agent::runLoop(AgentContext &ctx) {
     // Derived from runtime.mode + optional runtime.completion_policy.
     enum class CompPolicy { Recover, Promote, Strict };
     auto resolveCompPolicy = [&]() -> CompPolicy {
-        if (config_.completionPolicy == "strict") return CompPolicy::Strict;
-        if (config_.completionPolicy == "promote") return CompPolicy::Promote;
-        if (config_.completionPolicy == "recover") return CompPolicy::Recover;
-        if (config_.runtimeMode == "autonomous") return CompPolicy::Promote;
-        return CompPolicy::Recover;  // normal default
+        if (config_.completionPolicy == "strict")
+            return CompPolicy::Strict;
+        if (config_.completionPolicy == "promote")
+            return CompPolicy::Promote;
+        if (config_.completionPolicy == "recover")
+            return CompPolicy::Recover;
+        if (config_.runtimeMode == "autonomous")
+            return CompPolicy::Promote;
+        return CompPolicy::Recover; // normal default
     };
     const CompPolicy compPolicy = resolveCompPolicy();
     const int promoteAfter =
@@ -566,21 +655,25 @@ std::string Agent::runLoop(AgentContext &ctx) {
             ? config_.bareRecoveryPromoteAfter
             : (compPolicy == CompPolicy::Promote ? 2 : 1000000);
     int bareRecoveryCount = 0;
-    std::string lastSalvage;  // best non-final content this turn (for promote)
+    std::string lastSalvage; // best non-final content this turn (for promote)
 
     auto trimCopy = [](std::string s) {
         size_t a = s.find_first_not_of(" \t\n\r");
-        if (a == std::string::npos) return std::string();
+        if (a == std::string::npos)
+            return std::string();
         size_t b = s.find_last_not_of(" \t\n\r");
         return s.substr(a, b - a + 1);
     };
-    auto pickSalvage = [&](const std::string& raw, const std::string& responseBody) {
-        // Prefer structured response body (non-final <response>) over raw stream.
+    auto pickSalvage = [&](const std::string &raw,
+                           const std::string &responseBody) {
+        // Prefer structured response body (non-final <response>) over raw
+        // stream.
         std::string r = trimCopy(responseBody);
-        if (!r.empty()) return r;
+        if (!r.empty())
+            return r;
         return trimCopy(raw);
     };
-    auto buildRecoveryCorrection = [&](const std::string& salvage,
+    auto buildRecoveryCorrection = [&](const std::string &salvage,
                                        bool nonFinalResponse) -> std::string {
         std::ostringstream os;
         os << "[PROTOCOL RECOVERY] Previous model output had no valid "
@@ -597,8 +690,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // Cap injection so a huge bare dump cannot blow the next prompt.
         const size_t kMax = 12000;
         if (salvage.size() > kMax) {
-            os << salvage.substr(0, kMax)
-               << "\n…[truncated " << (salvage.size() - kMax) << " bytes]";
+            os << salvage.substr(0, kMax) << "\n…[truncated "
+               << (salvage.size() - kMax) << " bytes]";
         } else {
             os << salvage;
         }
@@ -612,9 +705,9 @@ std::string Agent::runLoop(AgentContext &ctx) {
     const int workCap = std::max(1, config_.iterationCap);
     bool finalizationTurn = false;
     bool finalizationDone = false;
-    std::string limitReason;  // set when we enter finalization due to a cap
+    std::string limitReason; // set when we enter finalization due to a cap
 
-    auto emitStatus = [&](const std::string& text) {
+    auto emitStatus = [&](const std::string &text) {
         history_.push_back("System: " + text);
         protocolEvents_.push_back({ProtocolEventKind::STATUS, text, {}, {}});
         // Heartbeat so TUI drains the STATUS event mid-turn.
@@ -622,8 +715,9 @@ std::string Agent::runLoop(AgentContext &ctx) {
             ctx.onToken("", false);
     };
 
-    // Work turns 1..workCap, then at most one FINALIZATION turn (tools disabled)
-    // so the model always gets an honest last chance to emit final=true.
+    // Work turns 1..workCap, then at most one FINALIZATION turn (tools
+    // disabled) so the model always gets an honest last chance to emit
+    // final=true.
     for (ctx.iteration = 1;; ctx.iteration++) {
         if (!g_running) {
             fullResponse = "[cancelled]";
@@ -637,14 +731,13 @@ std::string Agent::runLoop(AgentContext &ctx) {
             finalizationTurn = true;
             ctx.iteration = workCap + 1;
             limitReason = "max_iterations=" + std::to_string(workCap);
-            emitStatus(
-                "[LIMIT] " + limitReason +
-                " reached without <response final=\"true\">. "
-                "Entering FINALIZATION turn — tools disabled; emit final reply now.");
-            emitStatus(
-                "[FINALIZE] This is your last turn. Output ONLY:\n"
-                "  <response final=\"true\">…your answer…</response>\n"
-                "Do not call tools. Do not emit bare text.");
+            emitStatus("[LIMIT] " + limitReason +
+                       " reached without <response final=\"true\">. "
+                       "Entering FINALIZATION turn — tools disabled; emit "
+                       "final reply now.");
+            emitStatus("[FINALIZE] This is your last turn. Output ONLY:\n"
+                       "  <response final=\"true\">…your answer…</response>\n"
+                       "Do not call tools. Do not emit bare text.");
         }
 
         if (finalizationTurn && finalizationDone)
@@ -700,7 +793,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 std::to_string(workCap) + "/" + std::to_string(workCap) +
                 ". After this turn the runtime will force a FINALIZATION turn "
                 "with tools disabled. Prefer <response final=\"true\"> now if "
-                "you have enough evidence; otherwise finish critical tools quickly."));
+                "you have enough evidence; otherwise finish critical tools "
+                "quickly."));
         }
         // Hard finalization prompt — no tools, must close.
         if (finalizationTurn) {
@@ -1201,17 +1295,22 @@ std::string Agent::runLoop(AgentContext &ctx) {
                         if (!out.empty())
                             summary = out;
                         // Check multiple common result field names
-                        else if (result.isMember("result") && result["result"].isString())
+                        else if (result.isMember("result") &&
+                                 result["result"].isString())
                             summary = result["result"].asString();
-                        else if (result.isMember("results") && result["results"].isString())
+                        else if (result.isMember("results") &&
+                                 result["results"].isString())
                             summary = result["results"].asString();
-                        else if (result.isMember("output") && result["output"].isString())
+                        else if (result.isMember("output") &&
+                                 result["output"].isString())
                             summary = result["output"].asString();
-                        else if (result.isMember("data") && result["data"].isString())
+                        else if (result.isMember("data") &&
+                                 result["data"].isString())
                             summary = result["data"].asString();
-                        // context_peek / pin / unpin return structured JSON without
-                        // an "output" string — synthesize a scannable summary so
-                        // RESULT cards are not empty tool-name stubs.
+                        // context_peek / pin / unpin return structured JSON
+                        // without an "output" string — synthesize a scannable
+                        // summary so RESULT cards are not empty tool-name
+                        // stubs.
                         if (summary.empty() &&
                             (expandedAction.name == "context_peek" ||
                              expandedAction.name == "context_pin" ||
@@ -1228,11 +1327,14 @@ std::string Agent::runLoop(AgentContext &ctx) {
                                    << result["bytes"].asUInt64() << "B";
                             if (result.isMember("cycles_remaining"))
                                 ss << (ss.str().empty() ? "" : " · ")
-                                   << "cycles=" << result["cycles_remaining"].asInt();
-                            if (result.isMember("note") && result["note"].isString())
+                                   << "cycles="
+                                   << result["cycles_remaining"].asInt();
+                            if (result.isMember("note") &&
+                                result["note"].isString())
                                 ss << (ss.str().empty() ? "" : "\n")
                                    << result["note"].asString();
-                            if (result.isMember("error") && result["error"].isString())
+                            if (result.isMember("error") &&
+                                result["error"].isString())
                                 ss << (ss.str().empty() ? "" : "\n")
                                    << "error: " << result["error"].asString();
                             summary = ss.str();
@@ -1520,8 +1622,9 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 {
                     ProtocolEvent retryMarker;
                     retryMarker.kind = ProtocolEventKind::RETRY;
-                    retryMarker.text = std::string("retry ") + std::to_string(attempt) +
-                                        " / " + std::to_string(maxAttempts - 1);
+                    retryMarker.text = std::string("retry ") +
+                                       std::to_string(attempt) + " / " +
+                                       std::to_string(maxAttempts - 1);
                     protocolEvents_.push_back(std::move(retryMarker));
                 }
 
@@ -1533,7 +1636,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 // empty-response retries visually equivalent.
                 if (retryHandler_) {
                     RetrySignal rs;
-                    rs.kind = RetrySignal::Kind::Network; // empty-response = upstream silence
+                    rs.kind = RetrySignal::Kind::Network; // empty-response =
+                                                          // upstream silence
                     rs.attempt = attempt;
                     rs.maxAttempts = std::max(0, maxAttempts - 1);
                     rs.curlError = "empty-response";
@@ -1700,7 +1804,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 // re-emit it inside a proper final response (small-model QoL).
                 std::string salvage =
                     pickSalvage(iterationRawOutput, responseOutput_);
-                const bool hadNonFinalResponse = !trimCopy(responseOutput_).empty();
+                const bool hadNonFinalResponse =
+                    !trimCopy(responseOutput_).empty();
                 if (!salvage.empty())
                     lastSalvage = salvage;
 
@@ -1833,9 +1938,9 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 "⚠ Agent stopped without emitting <response final=\"true\">. "
                 "The runtime refused to treat non-final/bare output as "
                 "completion" +
-                (lastSalvage.empty()
-                     ? std::string(".")
-                     : " (salvage was available but completion_policy=strict).");
+                (lastSalvage.empty() ? std::string(".")
+                                     : " (salvage was available but "
+                                       "completion_policy=strict).");
         }
     }
 
@@ -1846,7 +1951,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
     if (!ctx.ephemeral && !ctx.sessionId.empty()) {
         const bool hasContent =
             std::any_of(history_.begin(), history_.end(),
-                         [](const std::string& h) { return !h.empty(); });
+                        [](const std::string &h) { return !h.empty(); });
         if (hasContent || !contextFeeds_.empty()) {
             saveSession(ctx.sessionId);
             saveStateCheckpoint(ctx.sessionId);
