@@ -61,13 +61,27 @@ class AgentScene final : public BaseScene {
                 return true;
             }
             if (model_->timelineFocus) {
-                // Already on the timeline — unfocus composer-ready so `i` to
-                // type works without bouncing the operator off the latest line.
+                // Vet-fix: third rung in the Esc ladder — return to the
+                // dashboard. Pairs with `i` to refocus composer, and the
+                // operator's "backspace/Esc → main" UX now works as
+                // advertised (backspace is handled below, separate chord).
                 model_->timelineFocus = false;
                 model_->composer.focused = false;
+                model_->pendingRoute = "main";
                 return true;
             }
             // No ladder rung consumed — fall through to existing Esc chain.
+        }
+
+        // Vet-fix: Backspace = 'back to dashboard' from anywhere outside
+        // the composer (so a typed backspace still deletes). Operator said
+        // "what's the point?" of having backspace tied to composer only —
+        // this gives them a left-handed, no-shift, OS-native nav chord.
+        if (event.code == KeyCode::Backspace && !model_->composer.focused &&
+            !model_->askActive && !model_->helpVisible &&
+            !model_->cmdPalette.open) {
+            model_->pendingRoute = "main";
+            return true;
         }
 
         if (model_->helpVisible) {

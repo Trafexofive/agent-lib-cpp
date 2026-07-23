@@ -78,8 +78,18 @@ inline std::vector<std::string> splitDisplayLines(const std::string& text) {
 // the chat transcript never prints Q sym, box-drawing garbage, or worse,
 // injects ANSI escapes mid-render.
 inline std::string sanitizeForDisplay(const std::string& text) {
+    // Vet-fix pass 2: control bytes get replaced with a space, AND the
+    // result gets a hard size cap. raw responses that include SSE
+    // streams ("data: {…}"), stack traces of httplib/jsoncpp/stl,
+    // and assorted server chatter are otherwise rendered verbatim —
+    // the previous build only stripped <0x20 bytes. Cap at 16KiB and
+    // keep first+last so context is preserved without the operator
+    // having to scroll through thousands of rows of demangled binary.
+    constexpr std::size_t kCap = 16 * 1024;
+    constexpr std::size_t kHead = 8 * 1024;
+    constexpr std::size_t kTail = 4 * 1024;
     std::string out;
-    out.reserve(text.size());
+    out.reserve(std::min<std::size_t>(text.size(), kCap + 64));
     for (unsigned char c : text) {
         if (c == '\n' || c == '\r' || c == '\t') {
             out.push_back(static_cast<char>(c));
@@ -88,8 +98,21 @@ inline std::string sanitizeForDisplay(const std::string& text) {
         } else {
             out.push_back(static_cast<char>(c));
         }
+        if (out.size() >= kHead + kTail + 256) break; // start trimming earlier
     }
-    return out;
+    if (out.size() <= kCap) return out;
+    // Hard cap: keep head + tail with a marker.
+    const std::size_t dropped = out.size() - kHead - kTail;
+    std::string trimmed;
+    trimmed.reserve(kCap + 96);
+    trimmed.append(out, 0, kHead);
+    trimmed.append("\n  … [sanitize: dropped ");
+    trimmed.append(std::to_string(dropped));
+    trimmed.append(" bytes] …\n");
+    if (out.size() > kHead) {
+        trimmed.append(out, out.size() - kTail, kTail);
+    }
+    return trimmed;
 }
 
 // Truncate to a width with a unicode-aware ellipsis when needed.
