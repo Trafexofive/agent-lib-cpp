@@ -1527,6 +1527,19 @@ std::string Agent::runLoop(AgentContext &ctx) {
 
                 int delay =
                     std::min(backoffMs, config_.emptyResponseMaxBackoffMs);
+                // Vet-fix: also fire the structured retry signal so a TUI hook
+                // can publish a Notification card. The bridge collapses by
+                // source+id; the same callback path makes network/HTTP and
+                // empty-response retries visually equivalent.
+                if (retryHandler_) {
+                    RetrySignal rs;
+                    rs.kind = RetrySignal::Kind::Network; // empty-response = upstream silence
+                    rs.attempt = attempt;
+                    rs.maxAttempts = std::max(0, maxAttempts - 1);
+                    rs.curlError = "empty-response";
+                    rs.backoffMs = delay;
+                    retryHandler_(rs);
+                }
                 if (ctx.debug) {
                     std::cerr
                         << "[MK3:RETRY] empty-response attempt=" << attempt

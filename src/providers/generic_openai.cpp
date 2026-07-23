@@ -375,10 +375,18 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
                  res == CURLE_GOT_NOTHING || res == CURLE_OPERATION_TIMEDOUT);
             if (isRetryable && retry < maxRetries_) {
                 int waitSec = std::min((1 << (retry + 1)) * 5, 120);
-                if (!quietLogs_) {
-                    std::cerr << "[MK3:RETRY] CURL error " << res << " — retrying in " << waitSec
-                              << "s (attempt " << (retry + 1) << "/" << maxRetries_ << ")"
-                              << std::endl;
+                // Vet-fix: never print retry info to stderr in interactive sessions.
+                // Surfaces structured retry through the bridge instead; quietly
+                // tolerate it when a non-interactive consumer never installed a
+                // callback (tests, snapshot/CI runs).
+                if (retryCb_) {
+                    RetrySignal rs;
+                    rs.kind = RetrySignal::Kind::Network;
+                    rs.attempt = retry + 1;
+                    rs.maxAttempts = maxRetries_;
+                    rs.curlError = curl_easy_strerror(res);
+                    rs.backoffMs = waitSec * 1000;
+                    retryCb_(rs);
                 }
                 if (!sleepInterruptible(std::chrono::seconds(waitSec)))
                     throw std::runtime_error("cancelled during retry backoff");
@@ -401,10 +409,14 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
 
             if (isRetryable && retry < maxRetries_) {
                 int waitSec = std::min((1 << (retry + 1)) * 5, 120);
-                if (!quietLogs_) {
-                    std::cerr << "[MK3:RETRY] HTTP " << httpCode << " — retrying in " << waitSec
-                              << "s (attempt " << (retry + 1) << "/" << maxRetries_ << ")"
-                              << std::endl;
+                if (retryCb_) {
+                    RetrySignal rs;
+                    rs.kind = RetrySignal::Kind::Http;
+                    rs.attempt = retry + 1;
+                    rs.maxAttempts = maxRetries_;
+                    rs.httpStatus = httpCode;
+                    rs.backoffMs = waitSec * 1000;
+                    retryCb_(rs);
                 }
                 if (!sleepInterruptible(std::chrono::seconds(waitSec)))
                     throw std::runtime_error("cancelled during retry backoff");

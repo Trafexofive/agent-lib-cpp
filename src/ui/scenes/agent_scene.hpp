@@ -38,6 +38,38 @@ class AgentScene final : public BaseScene {
             return true;
         }
 
+        // Help-overlay own Esc/?. Always closes first, regardless of focus rung.
+        if (model_->helpVisible &&
+            (event.code == KeyCode::Escape ||
+             (event.code == KeyCode::Character && event.ch == '?'))) {
+            model_->helpVisible = false;
+            return true;
+        }
+
+        // Vet-fix: Esc ladder. Operator priority is "newest by default, `i` is
+        // composer key, backspace/Esc back to main". Esc first dismisses the
+        // top notification (if any), then drops focus timeline <-> composer
+        // without stomp-scrolling. We do not auto-scroll to newest on Esc.
+        if (event.code == KeyCode::Escape) {
+            if (!model_->notificationStack.empty()) {
+                model_->notificationStack.dismissTop();
+                return true;
+            }
+            if (model_->composer.focused) {
+                // Composer owned focus — drop to timeline without stomp-scrolling.
+                model_->focusTimeline();
+                return true;
+            }
+            if (model_->timelineFocus) {
+                // Already on the timeline — unfocus composer-ready so `i` to
+                // type works without bouncing the operator off the latest line.
+                model_->timelineFocus = false;
+                model_->composer.focused = false;
+                return true;
+            }
+            // No ladder rung consumed — fall through to existing Esc chain.
+        }
+
         if (model_->helpVisible) {
             if (event.code == KeyCode::Escape ||
                 (event.code == KeyCode::Character && event.ch == '?'))

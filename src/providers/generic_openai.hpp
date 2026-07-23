@@ -11,6 +11,7 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <sstream>
 #include <string>
@@ -203,6 +204,9 @@ class GenericOpenAIClient : public ILlmProvider {
     void setQuietLogs(bool q) override {
         quietLogs_ = q;
     }
+    void setRetryCallback(RetryCallback cb) override {
+        retryCb_ = cb;
+    }
     std::string getModel() const override {
         return model_;
     }
@@ -266,6 +270,7 @@ class GenericOpenAIClient : public ILlmProvider {
     mutable std::unordered_map<std::string, bool> modelTopKSupport_;
     int maxRetries_ = 3;
     bool quietLogs_ = false;
+    RetryCallback retryCb_;
 
     static std::string resolveCodexAccountId(const std::string& token);
 };

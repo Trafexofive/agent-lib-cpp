@@ -164,6 +164,30 @@ inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& p
                          const std::string& sessionId, bool ephemeral, std::atomic<bool>& done) {
     try {
         bridge.publish(UiEvent::status("agent running"));
+        // Vet-fix: pipe retry signals into a Notification event. Provider
+        // suppresses stderr once quiet logs are on, so the chat chrome stays
+        // clean during transient upstream flakes.
+        {
+            // Local provider fetch — captures by reference below; the ptr is
+            // only used at install time.
+            auto provider = agent.provider();
+            if (provider) provider->setQuietLogs(true);
+        }
+        agent.setRetryHandler([&bridge, &agent, sessionId](const RetrySignal& rs) {
+            std::string source = rs.kind == RetrySignal::Kind::Http ? "http" : "network";
+            std::string detail = rs.kind == RetrySignal::Kind::Http
+                                     ? std::string("HTTP ") + std::to_string(rs.httpStatus)
+                                     : rs.curlError;
+            std::string title = source + " retry · " + detail;
+            std::string fmt =
+                std::string("attempt ") + std::to_string(rs.attempt) + "/" +
+                std::to_string(rs.maxAttempts) + " · " +
+                std::to_string(rs.backoffMs / 1000) + "s";
+            // Stable id per (provider, turn) so retries collapse to one badge.
+            std::string id = std::string("retry:") + agent.name() + ":" + sessionId;
+            bridge.publish(UiEvent::notification(source, "warn", title + " — " + fmt,
+                                                  rs.attempt, rs.maxAttempts, id));
+        });
         size_t rawSeen = 0;
         std::vector<ProtocolEvent> previousEvents;
         auto lastUiFlush = std::chrono::steady_clock::now() - std::chrono::milliseconds(16);

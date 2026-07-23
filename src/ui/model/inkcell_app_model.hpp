@@ -15,6 +15,7 @@
 #include "inkcell/widgets/scroll_view.hpp"
 #include "inkcell/widgets/textarea.hpp"
 #include "src/core/agent.hpp"
+#include "src/ui/chat/notification.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
 #include "src/ui/chat/transcript_cache.hpp"
 #include "src/ui/components/cmd_palette.hpp"
@@ -69,6 +70,51 @@ inline std::vector<std::string> splitDisplayLines(const std::string& text) {
     while (std::getline(in, line)) out.push_back(line);
     if (out.empty()) out.push_back("");
     return out;
+}
+
+// Vet-fix: terminal control bytes (0x00..0x08, 0x0B, 0x0C, 0x0E..0x1F, 0x7F)
+// leak into the chat body when raw streaming surfaces mixed wire bytes or
+// argv-style binary tokens. Replace each with a printable placeholder so
+// the chat transcript never prints Q sym, box-drawing garbage, or worse,
+// injects ANSI escapes mid-render.
+inline std::string sanitizeForDisplay(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    for (unsigned char c : text) {
+        if (c == '\n' || c == '\r' || c == '\t') {
+            out.push_back(static_cast<char>(c));
+        } else if (c < 0x20 || c == 0x7F) {
+            out.push_back(' ');
+        } else {
+            out.push_back(static_cast<char>(c));
+        }
+    }
+    return out;
+}
+
+// Truncate to a width with a unicode-aware ellipsis when needed.
+// Display width is a best-effort byte heuristic here; UTF-8 multi-byte
+// characters are treated as a single cell so we never split mid-codepoint.
+inline std::string safeTruncate(const std::string& text, int maxCells) {
+    if (maxCells <= 0) return {};
+    int cells = 0;
+    size_t i = 0;
+    while (i < text.size() && cells < maxCells) {
+        unsigned char c = static_cast<unsigned char>(text[i]);
+        size_t step = 1;
+        if ((c & 0x80) == 0x80) {
+            // crude UTF-8 lead-byte advance: 2, 3, 4-byte
+            if ((c & 0xE0) == 0xC0) step = 2;
+            else if ((c & 0xF0) == 0xE0) step = 3;
+            else if ((c & 0xF8) == 0xF0) step = 4;
+        }
+        if (i + step > text.size()) step = text.size() - i;
+        i += step;
+        ++cells;
+    }
+    if (i >= text.size()) return text;
+    if (maxCells - cells >= 1) return text + "…";
+    return text.substr(0, i) + "…";
 }
 
 struct TimelineRow {
@@ -270,6 +316,7 @@ inline std::vector<TimelineRow> rowsFromAgent(Agent* agent) {
 }
 
 struct ShellModel {
+    chat::NotificationStack notificationStack;
     // Live root transcript (bridge-fed).
     std::vector<TimelineRow> rootRows;
     std::vector<std::string> eventLog;
@@ -423,6 +470,14 @@ struct ShellModel {
     }
 
     void pushRow(TimelineRow row) {
+        // Vet-fix: sanitize Stream/Error/Log bodies which can carry raw wire
+        // bytes or transient tool stderr that would otherwise render as
+        // symbol noise in the chat transcript.
+        if (!row.body.empty() && row.kind != TimelineKind::User &&
+            row.kind != TimelineKind::Response && row.kind != TimelineKind::Thought &&
+            row.kind != TimelineKind::Action && row.kind != TimelineKind::Result) {
+            row.body = sanitizeForDisplay(row.body);
+        }
         if (!atRoot()) {
             // Live updates always land on root; nested is a focused historical view.
             rootRows.push_back(std::move(row));
@@ -815,11 +870,32 @@ struct ShellModel {
                 timelineState = PageState::Error;
                 pushRow({TimelineKind::Error, "error", e.text, false});
                 break;
+            case UiEventKind::Notification: {
+                // Vet-fix: pipe all retry / hiccup signals through the
+                // Notification stack so the chat TUI can render a uniform
+                // banner instead of leaking text into the transcript or stderr.
+                chat::Notification n;
+                n.id = e.id;
+                n.source = e.source;
+                n.severity = e.severity.empty() ? "info" : e.severity;
+                n.title = e.text;
+                n.attempt = e.attempt;
+                n.maxAttempts = e.maxAttempts;
+                n.lifetimeMs = 0; // sticky until dismissed
+                notificationStack.push(std::move(n));
+                break;
+            }
             case UiEventKind::Token:
                 raw += e.text;
                 tokenBytes += static_cast<int>(e.text.size());
                 if (showRaw) {
-                    for (auto& line : splitDisplayLines(e.text))
+                    // Vet-fix: model bytes can carry non-printable noise
+                    // when the wire stream straddles tool transitions or
+                    // carries embedded escapes. Strip the noise so the chat
+                    // body never produces gibberish likesymbol rows in the
+                    // transcript.
+                    std::string sanitized = sanitizeForDisplay(e.text);
+                    for (auto& line : splitDisplayLines(sanitized))
                         pushRow({TimelineKind::Stream, "raw", line, true});
                 }
                 // If the operator manually drilled into a sub-agent, keep its

@@ -155,6 +155,14 @@ class Agent {
         askToolHandler_ = std::move(handler);
     }
 
+    // Vet-fix: forward a retry observer through the provider AND through the
+    // empty-response loop in prompt(). Wire one callback at the bridge
+    // boundary (runAgentTurn) and both retry flavors get the same hook.
+    void setRetryHandler(RetryCallback handler) {
+        retryHandler_ = std::move(handler);
+        if (provider_) provider_->setRetryCallback(retryHandler_);
+    }
+
     // ---- Context management (pin / peek / unpin) ----
     // A pinned file lives in the system prompt indefinitely until unpin.
     // A peek file lives in the system prompt for `cycles` iterations, then evicts.
@@ -189,6 +197,7 @@ class Agent {
             names.push_back(name);
         return names;
     }
+    LlmProviderPtr provider() const { return provider_; }
 
     // ---- Sandbox ----
     void setSandboxPolicy(const sandbox::SandboxPolicy& policy) {
@@ -300,6 +309,7 @@ class Agent {
     std::map<std::string, std::string> env_;
     sandbox::SandboxPolicy sandboxPolicy_;
     std::function<Json::Value(const Json::Value& params)> askToolHandler_;
+    RetryCallback retryHandler_;
 
     // ── Cached harness text (loaded once in constructor) ──
     mutable std::string harnessText_;

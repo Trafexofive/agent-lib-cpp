@@ -14,6 +14,7 @@
 #include "inkcell/text.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
 #include "src/ui/chat/chat_blocks.hpp"
+#include "src/ui/chat/notification.hpp"
 #include "src/ui/chat/transcript_cache.hpp"
 #include "src/ui/theme/cortex_theme.hpp"
 
