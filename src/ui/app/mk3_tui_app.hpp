@@ -160,6 +160,11 @@ inline inkcell::App makeInkcellApp(const InkcellAppConfig& cfg, AgentBridge& bri
     return app;
 }
 
+// Vet-fix: explicit session flush on every TUI exit path. Defined later
+// in the header; forward-declared so callers can clean up before the
+// definition symbol is laid out.
+inline void flushAgentSession(Agent& agent, const std::string& sessionId, bool ephemeral);
+
 inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& prompt,
                          const std::string& sessionId, bool ephemeral, std::atomic<bool>& done) {
     try {
@@ -306,7 +311,22 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     if (!done.load(std::memory_order_acquire)) g_running = false;
     if (worker.joinable()) worker.join();
     g_running = true;
+    // Vet-fix: capture — Ctrl-C + cancel-pending quit must still persist
+    // whatever the agent had captured.
+    flushAgentSession(agent, sessionId, noSession);
+    flushAgentSession(agent, model->activeSessionId, false);
     return rc;
+}
+
+// Vet-fix: explicit session flush on every TUI exit path. prompt() already
+// calls saveSession at TurnDone — but Ctrl-C, signal, ESC backspace-to-main,
+// hub route changes, and snapshot mode don't always reach TurnDone. This
+// helper is the canonical "make sure anything captured lands on disk" path
+// invoked from every TUI run-loop teardown. saveSession itself gates on
+// history/contextFeeds content; an empty run writes nothing — no orphans.
+inline void flushAgentSession(Agent& agent, const std::string& sessionId, bool ephemeral) {
+    if (ephemeral || sessionId.empty()) return;
+    agent.saveSession(sessionId);
 }
 
 // Live agent slot — starts as external ref from main(); hub launch may replace
@@ -516,6 +536,11 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     joinWfWorker();
     chat::savePromptHistory(model->promptHistory);
     g_running = true;
+    // Vet-fix: TUI exit (Ctrl-C, ESC, hub-route, snapshot mode) — persist
+    // whichever id the agent has captured to, so sessions don't silently
+    // vanish on quit. saveSession is content-gated; empty runs write
+    // nothing.
+    flushAgentSession(agent, model->activeSessionId, false);
     return rc;
 }
 

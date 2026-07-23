@@ -357,6 +357,13 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
             curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, abortCheckCb);
             curl_easy_setopt(curl, CURLOPT_XFERINFODATA, nullptr);
             curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+            // Vet-fix: Ctrl-C speed. CURLOPT_XFERINFO only fires during data
+            // movement, so a stalled stream (server hangs after headers)
+            // would otherwise wait the full CURLOPT_TIMEOUT. Configure
+            // low-speed abort to fail in 4s if <200B/s arrives, which
+            // catches genuine hangs but keeps slow tokens alive.
+            curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 4L);
+            curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 200L);
         } else {
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCb);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBuffer);

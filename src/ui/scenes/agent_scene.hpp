@@ -73,13 +73,15 @@ class AgentScene final : public BaseScene {
             // No ladder rung consumed — fall through to existing Esc chain.
         }
 
-        // Vet-fix: Backspace = 'back to dashboard' from anywhere outside
-        // the composer (so a typed backspace still deletes). Operator said
-        // "what's the point?" of having backspace tied to composer only —
-        // this gives them a left-handed, no-shift, OS-native nav chord.
-        if (event.code == KeyCode::Backspace && !model_->composer.focused &&
-            !model_->askActive && !model_->helpVisible &&
-            !model_->cmdPalette.open) {
+        // Vet-fix: Backspace = 'back to dashboard' from anywhere EXCEPT
+        // a composer that still has unsent content. The previous guard
+        // required fully unfocusing the composer (two Esc presses) before
+        // nav worked — the operator's complaint was "backspace should
+        // navigate, full stop". Now Backspace navigates unless there's
+        // actually typed text waiting to be sent.
+        if (event.code == KeyCode::Backspace && !model_->askActive &&
+            !model_->helpVisible && !model_->cmdPalette.open &&
+            (!model_->composer.focused || model_->composer.value.empty())) {
             model_->pendingRoute = "main";
             return true;
         }

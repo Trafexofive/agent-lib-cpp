@@ -209,22 +209,16 @@ void Agent::saveSession(const std::string& id) {
     // AC04 — preserve `created` timestamp across saves by loading-then-merging
     //        instead of unconditionally calling create().
     // AC14 — use the agent's actual provider rather than hardcoded "deepseek".
-    // Vet-fix: do NOT auto-save empty sessions. Sessions hub was littered with
-    // zero-record `.json` files because saveSession fired on TurnDone for any
-    // turn, and isolated prompts (--no-session-ish flows, ephemeral runs, or
-    // turns that exited mid-protocol before any user-side content landed) all
-    // created files that meant nothing to resume from. We now skip if the
-    // capture is genuinely empty.
-    bool hasContent = false;
-    for (const auto& h : history_) {
-        if (h.empty()) continue;
-        // Strip prefix but treat empty prefix as empty record anyway.
-        hasContent = true;
-        break;
-    }
-    if (!hasContent && contextFeeds_.empty()) {
-        return;
-    }
+    // Vet-fix: save on every flush, not gated on content. The earlier
+    // "empty session litter" guard was correct for CLI-launch phantom
+    // file creation — but it also caused Ctrl-C and exit-time saves to
+    // silently drop the user's captured text whenever the agent was
+    // cancelled mid-prompt (history_ may have only a "User:" line and
+    // a short cancellation note). Operators expect: anything they typed
+    // lands on disk. We gate on id-only here, and lean on the
+    // persistSessionMetadata() main.cpp gate to prevent file creation
+    // from bare launches.
+    if (id.empty()) return;
 
     Session session;
     if (sessionMgr_.exists(id)) {
@@ -418,6 +412,14 @@ void Agent::loadStateCheckpoint(const std::string& sessionId) {
 
 void Agent::saveStateCheckpoint(const std::string& sessionId) const {
     try {
+        // Vet-fix: never create a standalone checkpoint file. The
+        // `<id>.state.json` shadow needs a sibling records file, or the
+        // listing duplication bug comes back and Sessions shows phantom
+        // checkpoint rows. saveSession creates both atomically; this
+        // function only updates the checkpoint once the records file
+        // exists.
+        if (!sessionMgr_.exists(sessionId))
+            return;
         fs::path path = stateCheckpointPath(sessionId);
         fs::create_directories(path.parent_path());
         std::ofstream f(path.string() + ".tmp");
