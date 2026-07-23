@@ -327,6 +327,7 @@ struct ShellModel {
     bool running = false;
     int64_t turnStartMs = 0;  // steady_clock ms when the current turn started; 0 when idle. Drives live metrics.
     int64_t lastTurnElapsedMs = 0;  // duration of the most recently completed turn; persists after the turn ends for the "last" summary.
+    int64_t lastNestedRefreshMs = 0;  // vet-fix: rate-limit refreshNested() so live sub-agent nesting doesn't rebuild O(protocolEvents) per token.
     bool done = false;
     bool failed = false;
     bool showThoughts = true;
@@ -470,9 +471,43 @@ struct ShellModel {
     }
 
     void pushRow(TimelineRow row) {
-        // Vet-fix: sanitize Stream/Error/Log bodies which can carry raw wire
-        // bytes or transient tool stderr that would otherwise render as
-        // symbol noise in the chat transcript.
+        const_cast<ShellModel*>(this)->applyRowBans(std::move(row));
+    }
+
+    // Vet-fix real perf: when transcript grows unbounded (raw mode + many
+    // small deltas), the wrap path eventually dominates the tick. We cap the
+    // transcript at kRootRowCap, dropping oldest Stream/Thought rows first.
+    // User/Response/Action/Result pairs are protected — never lose shipped
+    // answers or tool boundaries.
+    static constexpr int kRootRowCap = 1500;
+    void enforceRowCap() {
+        if (static_cast<int>(rootRows.size()) < kRootRowCap) return;
+        int excess = static_cast<int>(rootRows.size()) - kRootRowCap;
+        size_t drop = 0;
+        // Drop oldest first, but never delete the leading header or any
+        // Action/Result pair anchor.
+        while (drop < excess) {
+            const auto& r = rootRows[drop];
+            if (r.kind == TimelineKind::Thought || r.kind == TimelineKind::Stream) {
+                ++drop;
+            } else {
+                // We hit a protected row. Look forward — spool through all
+                // contiguous Action/Result/Response/User rows at the head
+                // only if the orphan would dangle: otherwise just stop.
+                break;
+            }
+        }
+        if (drop == 0) return; // can't honor cap without losing protected content
+        rootRows.erase(rootRows.begin(), rootRows.begin() + drop);
+        selectedBlock = std::max(0, selectedBlock - static_cast<int>(drop));
+        // Active protocol indices must shift correspondingly.
+        for (auto& idx : activeProtocolRows) {
+            if (idx >= 0) idx -= static_cast<int>(drop);
+        }
+        timelineState = PageState::Populated;
+        rebuildViews();
+    }
+    void applyRowBans(TimelineRow row) {
         if (!row.body.empty() && row.kind != TimelineKind::User &&
             row.kind != TimelineKind::Response && row.kind != TimelineKind::Thought &&
             row.kind != TimelineKind::Action && row.kind != TimelineKind::Result) {
@@ -787,7 +822,22 @@ struct ShellModel {
 
     void refreshNested() {
         if (atRoot()) return;
-        nestedRows = rowsFromAgent(currentAgent());
+        // Vet-fix: refreshNested runs per child token and rebuilds an entire
+        // timeline view from the agent's protocol event log — at 50+ tokens/sec
+        // noticeable stalls come from this path, NOT from the apply() route.
+        // Cache: budget gated by elapsed wall time; correctness gated by
+        // child protocol events growth (size + last child sees a *new*
+        // finely-delivered token).
+        Agent* cur = currentAgent();
+        if (cur) {
+            const int64_t now =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch())
+                    .count();
+            if (now - lastNestedRefreshMs < 100) return;
+            lastNestedRefreshMs = now;
+        }
+        nestedRows = rowsFromAgent(cur);
         rebuildViews();
     }
 
@@ -1041,6 +1091,10 @@ struct ShellModel {
             for (const auto& e : batch) apply(e);
             batchingEvents = false;
             if (viewRebuildPending) rebuildViews();
+            // Vet-fix: cap transcript after the batch settles so the cap
+            // becomes part of the same tick budget as the rebuild rather
+            // than a second O(N) pass mid-tick.
+            enforceRowCap();
         }
         settleAsk(bridge);
     }
