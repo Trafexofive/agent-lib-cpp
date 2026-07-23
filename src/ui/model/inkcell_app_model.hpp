@@ -88,24 +88,71 @@ inline std::string sanitizeForDisplay(const std::string& text) {
     constexpr std::size_t kCap = 16 * 1024;
     constexpr std::size_t kHead = 8 * 1024;
     constexpr std::size_t kTail = 4 * 1024;
+    constexpr std::size_t kMaxLines = 500;
+
+    // Combined budget: byte cap + line cap. Either trips; we emit a
+    // marker so a giant tool result (grep over the live tree returned
+    // 1000s of matches) doesn't tank the wrap cache nor exhaust the
+    // operator's patience. Lines namespace the byte budget since most
+    // tool output uses single byte chars.
     std::string out;
-    out.reserve(std::min<std::size_t>(text.size(), kCap + 64));
+    out.reserve(std::min<std::size_t>(text.size(), kCap + kMaxLines * 32));
+    std::size_t lineCount = 1;
+    bool lineCut = false;
+    bool byteCut = false;
     for (unsigned char c : text) {
-        if (c == '\n' || c == '\r' || c == '\t') {
-            out.push_back(static_cast<char>(c));
+        if (c == '\n') {
+            ++lineCount;
+            if (lineCount > kMaxLines && !lineCut) {
+                lineCut = true;
+                break;
+            }
+            out.push_back('\n');
+            if (out.size() >= kCap) { byteCut = true; break; }
+            continue;
+        } else if (c == '\r') {
+            continue;  // normalize CRLF
+        } else if (c == '\t') {
+            out.push_back(' ');
         } else if (c < 0x20 || c == 0x7F) {
             out.push_back(' ');
         } else {
             out.push_back(static_cast<char>(c));
         }
-        if (out.size() >= kHead + kTail + 256) break; // start trimming earlier
+        if (out.size() >= kCap) { byteCut = true; break; }
     }
-    if (out.size() <= kCap) return out;
-    // Hard cap: keep head + tail with a marker.
+    if (!lineCut && !byteCut) return out;
+
+    if (lineCut) {
+        // Emit a marker before truncating so the operator knows rows were
+        // dropped. Mark comes from the body, so it's sanitized.
+        std::string marker;
+        marker.reserve(128);
+        marker.append("\n  … [sanitize: line cap reached, dropped ");
+        marker.append(std::to_string(text.size()));
+        marker.append(" bytes total] …\n");
+        // Reserve a bit of room for the marker inside kMaxLines so the
+        // resulting row doesn't exceed line cap again.
+        if (lineCount - 1 > kMaxLines - 4) {
+            // Trim from tail so newer lines stay (preserve the latest).
+            std::size_t cutAt = out.rfind('\n');
+            int trimmed = 0;
+            while (lineCount - trimmed > kMaxLines - 4 && cutAt != std::string::npos) {
+                lineCount--;
+                trimmed++;
+                out.resize(cutAt);
+                cutAt = out.rfind('\n');
+            }
+        }
+        out.append(marker);
+        return out;
+    }
+
+    // Byte cut path. Preserve head + tail.
     const std::size_t dropped = out.size() - kHead - kTail;
     std::string trimmed;
     trimmed.reserve(kCap + 96);
-    trimmed.append(out, 0, kHead);
+    if (kHead < out.size()) trimmed.append(out, 0, kHead);
     trimmed.append("\n  … [sanitize: dropped ");
     trimmed.append(std::to_string(dropped));
     trimmed.append(" bytes] …\n");
@@ -535,9 +582,16 @@ struct ShellModel {
         rebuildViews();
     }
     void applyRowBans(TimelineRow row) {
-        if (!row.body.empty() && row.kind != TimelineKind::User &&
-            row.kind != TimelineKind::Response && row.kind != TimelineKind::Thought &&
-            row.kind != TimelineKind::Action && row.kind != TimelineKind::Result) {
+        // Vet-fix: apply sanitize/cap to EVERY timeline row, including
+        // tool Result bodies. The previous guard excluded Result — that
+        // let a `grep` matching thousands of files dump its full output
+        // straight into the chat body, freezing navigation and surfacing
+        // raw bytes through the transcript. sanitize caps at 16KiB with
+        // a head+tail marker, which is enough for inspection without
+        // poisoning the wrap cache.
+        if (!row.body.empty() &&
+            row.kind != TimelineKind::User &&
+            row.kind != TimelineKind::Response) {
             row.body = sanitizeForDisplay(row.body);
         }
         if (!atRoot()) {
