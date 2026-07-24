@@ -266,6 +266,21 @@ $(UI_TIMELINE_TEST_BIN): $(OBJS) $(UI_TIMELINE_TEST_OBJ)
 test-ui-timeline: $(UI_TIMELINE_TEST_BIN)
 	./$(UI_TIMELINE_TEST_BIN)
 
+# ── Run-epoch stream isolation (no stream-into-stale-event) ──
+RUN_EPOCH_TEST_SRC := src/testing/run_epoch_test.cpp
+RUN_EPOCH_TEST_OBJ := $(BUILD_DIR)/testing/run_epoch_test.o
+RUN_EPOCH_TEST_BIN := run-epoch-test
+
+$(RUN_EPOCH_TEST_OBJ): $(RUN_EPOCH_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(RUN_EPOCH_TEST_BIN): $(OBJS) $(RUN_EPOCH_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(RUN_EPOCH_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-run-epoch: $(RUN_EPOCH_TEST_BIN)
+	./$(RUN_EPOCH_TEST_BIN)
+
 # ── Session-load backfill test (vet-fix) ──
 LOAD_BACKFILL_TEST_SRC := src/testing/load_backfill_test.cpp
 LOAD_BACKFILL_TEST_OBJ := $(BUILD_DIR)/testing/load_backfill_test.o

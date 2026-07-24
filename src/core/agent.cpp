@@ -690,13 +690,20 @@ std::string Agent::runLoop(AgentContext &ctx) {
     iterationPrompts_.clear();
     iterationOutputs_.clear();
     subAgentTraces_.clear();
+    // Vet-fix: bound the "tap back if same kind" merge window. Previously
+    // on a continuation, protocolEvents_ was preserved across turns and
+    // the next prompt's stream-merge logic did
+    // `protocolEvents_.back().text += ev.content` against an event from
+    // the *previous* turn — making thoughts appear to "stream into" an
+    // already-finalized THOUGHT block. Track an epoch so onEvent only
+    // merges with events from THIS runLoop.
+    size_t runEpochStart = continuation ? protocolEvents_.size() : size_t(0);
     if (!continuation) {
         protocolActions_.clear();
         protocolResults_.clear();
         protocolEvents_.clear();
+        runEpochStart = 0;  // re-derive after clear
     }
-    // else: keep protocolEvents_/actions/results so nested TUI + inspect see
-    // the full multi-prompt child timeline.
 
     // Push initiator input once at start (NOT per-iteration). Parent-agent
     // delegates are labeled so the child can distinguish them from the human.
@@ -1469,10 +1476,22 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 // Bare text outside XML tags → ordered thought/protocol stream.
                 thoughtOutput_ += ev.content;
                 if (!ev.content.empty()) {
-                    if (!protocolEvents_.empty() &&
-                        protocolEvents_.back().kind ==
-                            ProtocolEventKind::THOUGHT) {
-                        protocolEvents_.back().text += ev.content;
+                    // Vet-fix: merge with the LAST text/response event ONLY
+                    // if it's from THIS runLoop. On continuation prompts the
+                    // previous turn's last event was a finalized thought;
+                    // tapping onto it caused the new turn's stream to bleed
+                    // into the old block. Search backward from runEpochStart.
+                    auto prevSame = [&](ProtocolEventKind k) {
+                        for (size_t i = protocolEvents_.size(); i > runEpochStart; ) {
+                            --i;
+                            if (protocolEvents_[i].kind == k)
+                                return protocolEvents_.begin() + i;
+                        }
+                        return protocolEvents_.end();
+                    };
+                    if (auto it = prevSame(ProtocolEventKind::THOUGHT);
+                        it != protocolEvents_.end()) {
+                        it->text += ev.content;
                     } else {
                         protocolEvents_.push_back(
                             {ProtocolEventKind::THOUGHT, ev.content, {}, {}});
@@ -1484,10 +1503,17 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 llmOutput += ev.content;
                 responseOutput_ += ev.content;
                 if (!ev.content.empty()) {
-                    if (!protocolEvents_.empty() &&
-                        protocolEvents_.back().kind ==
-                            ProtocolEventKind::RESPONSE) {
-                        protocolEvents_.back().text += ev.content;
+                    auto prevSame = [&](ProtocolEventKind k) {
+                        for (size_t i = protocolEvents_.size(); i > runEpochStart; ) {
+                            --i;
+                            if (protocolEvents_[i].kind == k)
+                                return protocolEvents_.begin() + i;
+                        }
+                        return protocolEvents_.end();
+                    };
+                    if (auto it = prevSame(ProtocolEventKind::RESPONSE);
+                        it != protocolEvents_.end()) {
+                        it->text += ev.content;
                     } else {
                         protocolEvents_.push_back(
                             {ProtocolEventKind::RESPONSE, ev.content, {}, {}});
@@ -1504,10 +1530,17 @@ std::string Agent::runLoop(AgentContext &ctx) {
             case protocol::TokenEvent::THOUGHT:
                 thoughtOutput_ += ev.content;
                 if (!ev.content.empty()) {
-                    if (!protocolEvents_.empty() &&
-                        protocolEvents_.back().kind ==
-                            ProtocolEventKind::THOUGHT) {
-                        protocolEvents_.back().text += ev.content;
+                    auto prevSame = [&](ProtocolEventKind k) {
+                        for (size_t i = protocolEvents_.size(); i > runEpochStart; ) {
+                            --i;
+                            if (protocolEvents_[i].kind == k)
+                                return protocolEvents_.begin() + i;
+                        }
+                        return protocolEvents_.end();
+                    };
+                    if (auto it = prevSame(ProtocolEventKind::THOUGHT);
+                        it != protocolEvents_.end()) {
+                        it->text += ev.content;
                     } else {
                         protocolEvents_.push_back(
                             {ProtocolEventKind::THOUGHT, ev.content, {}, {}});
