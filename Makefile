@@ -205,6 +205,21 @@ $(SESS_TEST_BIN): $(OBJS) $(SESS_TEST_OBJ)
 test-session: $(SESS_TEST_BIN)
 	./$(SESS_TEST_BIN)
 
+# ── Lazy-arm session-id test (vet-fix) ──
+LAZY_SESSION_TEST_SRC := src/testing/lazy_session_test.cpp
+LAZY_SESSION_TEST_OBJ := $(BUILD_DIR)/testing/lazy_session_test.o
+LAZY_SESSION_TEST_BIN := lazy-session-test
+
+$(LAZY_SESSION_TEST_OBJ): $(LAZY_SESSION_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(LAZY_SESSION_TEST_BIN): $(OBJS) $(LAZY_SESSION_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(LAZY_SESSION_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-lazy-session: $(LAZY_SESSION_TEST_BIN)
+	./$(LAZY_SESSION_TEST_BIN)
+
 # ── Completion policy (bare/non-final recover + promote) ──
 COMPLETION_POLICY_TEST_SRC := src/testing/completion_policy_test.cpp
 COMPLETION_POLICY_TEST_OBJ := $(BUILD_DIR)/testing/completion_policy_test.o
