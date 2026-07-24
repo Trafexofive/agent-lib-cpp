@@ -20,6 +20,7 @@
 #include <unordered_set>
 
 #include "../feeds/feed_engine.hpp"
+#include "../protocol/noise.hpp"
 #include "../tools/dispatch.hpp"
 #include "../utils/ansi.hpp"
 #include "dispatch.hpp"
@@ -1472,32 +1473,31 @@ std::string Agent::runLoop(AgentContext &ctx) {
 
         parser.onEvent([&](const protocol::TokenEvent &ev) {
             switch (ev.type) {
-            case protocol::TokenEvent::TEXT:
-                // Bare text outside XML tags → ordered thought/protocol stream.
-                thoughtOutput_ += ev.content;
-                if (!ev.content.empty()) {
-                    // Vet-fix: merge with the LAST text/response event ONLY
-                    // if it's from THIS runLoop. On continuation prompts the
-                    // previous turn's last event was a finalized thought;
-                    // tapping onto it caused the new turn's stream to bleed
-                    // into the old block. Search backward from runEpochStart.
-                    auto prevSame = [&](ProtocolEventKind k) {
-                        for (size_t i = protocolEvents_.size(); i > runEpochStart; ) {
-                            --i;
-                            if (protocolEvents_[i].kind == k)
-                                return protocolEvents_.begin() + i;
-                        }
-                        return protocolEvents_.end();
-                    };
-                    if (auto it = prevSame(ProtocolEventKind::THOUGHT);
-                        it != protocolEvents_.end()) {
-                        it->text += ev.content;
-                    } else {
-                        protocolEvents_.push_back(
-                            {ProtocolEventKind::THOUGHT, ev.content, {}, {}});
+            case protocol::TokenEvent::TEXT: {
+                // Bare text outside XML tags → thought stream, but models often
+                // echo harness scaffolding (orphan closes, injected <result>,
+                // salvage banners). Drop pure protocol noise so the TUI never
+                // paints `</context_feed>` / `<result id=init>` as thoughts.
+                std::string cleaned = protocol::stripProtocolNoise(ev.content);
+                if (cleaned.empty()) break;
+                thoughtOutput_ += cleaned;
+                auto prevSame = [&](ProtocolEventKind k) {
+                    for (size_t i = protocolEvents_.size(); i > runEpochStart; ) {
+                        --i;
+                        if (protocolEvents_[i].kind == k)
+                            return protocolEvents_.begin() + i;
                     }
+                    return protocolEvents_.end();
+                };
+                if (auto it = prevSame(ProtocolEventKind::THOUGHT);
+                    it != protocolEvents_.end()) {
+                    it->text += cleaned;
+                } else {
+                    protocolEvents_.push_back(
+                        {ProtocolEventKind::THOUGHT, cleaned, {}, {}});
                 }
                 break;
+            }
 
             case protocol::TokenEvent::RESPONSE:
                 llmOutput += ev.content;
@@ -1527,26 +1527,29 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 }
                 break;
 
-            case protocol::TokenEvent::THOUGHT:
-                thoughtOutput_ += ev.content;
-                if (!ev.content.empty()) {
-                    auto prevSame = [&](ProtocolEventKind k) {
-                        for (size_t i = protocolEvents_.size(); i > runEpochStart; ) {
-                            --i;
-                            if (protocolEvents_[i].kind == k)
-                                return protocolEvents_.begin() + i;
-                        }
-                        return protocolEvents_.end();
-                    };
-                    if (auto it = prevSame(ProtocolEventKind::THOUGHT);
-                        it != protocolEvents_.end()) {
-                        it->text += ev.content;
-                    } else {
-                        protocolEvents_.push_back(
-                            {ProtocolEventKind::THOUGHT, ev.content, {}, {}});
+            case protocol::TokenEvent::THOUGHT: {
+                // Same noise filter as TEXT — streaming <thought> bodies can
+                // still contain parroted closes / salvage blobs mid-chunk.
+                std::string cleaned = protocol::stripProtocolNoise(ev.content);
+                if (cleaned.empty()) break;
+                thoughtOutput_ += cleaned;
+                auto prevSame = [&](ProtocolEventKind k) {
+                    for (size_t i = protocolEvents_.size(); i > runEpochStart; ) {
+                        --i;
+                        if (protocolEvents_[i].kind == k)
+                            return protocolEvents_.begin() + i;
                     }
+                    return protocolEvents_.end();
+                };
+                if (auto it = prevSame(ProtocolEventKind::THOUGHT);
+                    it != protocolEvents_.end()) {
+                    it->text += cleaned;
+                } else {
+                    protocolEvents_.push_back(
+                        {ProtocolEventKind::THOUGHT, cleaned, {}, {}});
                 }
                 break;
+            }
 
             case protocol::TokenEvent::ACTION_START:
                 if (ev.action) {
@@ -1922,6 +1925,10 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 history_.push_back("System: [EMPTY RESPONSE] " + detail);
                 history_.push_back("Agent: " + visibleError);
                 responseOutput_ = visibleError;
+                // Surface as RESPONSE protocol event so the TUI paints one
+                // clean error row — not a thought soup of orphan tags.
+                protocolEvents_.push_back(
+                    {ProtocolEventKind::RESPONSE, visibleError, {}, {}});
                 taskComplete = true; // runtime failure, not model final
             } else {
                 // Salvage whatever the model produced so the next turn can

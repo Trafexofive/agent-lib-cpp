@@ -15,6 +15,7 @@
 #include "inkcell/widgets/scroll_view.hpp"
 #include "inkcell/widgets/textarea.hpp"
 #include "src/core/agent.hpp"
+#include "src/protocol/noise.hpp"
 #include "src/ui/chat/notification.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
 #include "src/ui/chat/transcript_cache.hpp"
@@ -263,6 +264,16 @@ inline std::vector<TimelineRow> deserializeTimeline(const std::string& json) {
 inline TimelineRow rowFromProtocol(const ProtocolEvent& pe) {
     TimelineRow row;
     if (pe.kind == ProtocolEventKind::THOUGHT) {
+        // Defense-in-depth: never paint pure protocol echo as a thought row
+        // even if an older agent path leaked it into protocolEvents_.
+        if (protocol::isThoughtNoise(pe.text)) {
+            // Empty Log marker — apply() skips painting noise rows.
+            row.kind = TimelineKind::Log;
+            row.title = "noise";
+            row.body.clear();
+            row.ok = true;
+            return row;
+        }
         row.kind = TimelineKind::Thought;
         row.title = "thought";
         row.body = pe.text;
@@ -1116,6 +1127,12 @@ struct ShellModel {
                     break;
                 }
                 TimelineRow row = rowFromProtocol(pe);
+                // Protocol echo filtered at agent + paint: empty Log "noise"
+                // rows must not occupy a protocol-index slot (would leave
+                // holes / blank thoughts in the transcript).
+                if (row.kind == TimelineKind::Log && row.title == "noise") {
+                    break;
+                }
                 if (pe.kind == ProtocolEventKind::ACTION) {
                     if (pendingActionIds.insert(pe.action.id).second) {
                         ++actionCount;

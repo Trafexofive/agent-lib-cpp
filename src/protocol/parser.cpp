@@ -195,18 +195,21 @@ void Parser::processBuffer() {
         // Identify the tag
         std::string tagName = identifyTag(readPos_);
         if (tagName.empty()) {
-            // Unknown tag — check if it's a closing </tag>
+            // Unknown / closing tag path. Orphan closes of known protocol
+            // names (</context_feed>, </response> outside response mode,
+            // </result>, etc.) are pure harness echo — consume silently,
+            // never emit as TEXT/THOUGHT. Models parrot these constantly.
             size_t nameStart = readPos_ + 1;
-            // Skip leading '/' for closing tags
+            bool isClose = false;
             if (nameStart < buffer_.size() && buffer_[nameStart] == '/') {
                 nameStart++;
+                isClose = true;
             }
             size_t nameEnd = buffer_.find_first_of(" >/", nameStart);
             if (nameEnd != std::string::npos) {
                 std::string raw = buffer_.substr(nameStart, nameEnd - nameStart);
                 if (raw == "response" && inResponse_) {
                     inResponse_ = false;
-                    // Remap raw attrs to metadata keys (matching handleResponse)
                     TokenEvent ev{TokenEvent::RESPONSE, "", {}, {}};
                     auto fit = responseAttrs_.find("final");
                     if (fit != responseAttrs_.end()) {
@@ -214,9 +217,18 @@ void Parser::processBuffer() {
                     }
                     emit(ev);
                     responseAttrs_.clear();
+                } else if (isClose &&
+                           (raw == "response" || raw == "thought" ||
+                            raw == "think" || raw == "thinking" ||
+                            raw == "action" || raw == "result" ||
+                            raw == "context_feed" || raw == "system" ||
+                            raw == "user")) {
+                    // Orphan close outside its stream mode — skip, no emit.
                 }
+                // else: truly unknown open/close — still skip the tag bytes
+                // (do not paint as thought). Body text around it still emits.
             }
-            // Skip past the entire closing tag
+            // Skip past the entire tag (open or close)
             readPos_ = gt + 1;
             continue;
         }

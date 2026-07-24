@@ -296,6 +296,21 @@ $(LIVE_RESUME_TEST_BIN): $(OBJS) $(LIVE_RESUME_TEST_OBJ)
 test-live-resume-parity: $(LIVE_RESUME_TEST_BIN)
 	./$(LIVE_RESUME_TEST_BIN)
 
+# ── Protocol noise filter (orphan closes / result echo) ──
+PROTOCOL_NOISE_TEST_SRC := src/testing/protocol_noise_test.cpp
+PROTOCOL_NOISE_TEST_OBJ := $(BUILD_DIR)/testing/protocol_noise_test.o
+PROTOCOL_NOISE_TEST_BIN := protocol-noise-test
+
+$(PROTOCOL_NOISE_TEST_OBJ): $(PROTOCOL_NOISE_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(PROTOCOL_NOISE_TEST_BIN): $(PROTOCOL_NOISE_TEST_OBJ)
+	$(CXX) $(PROTOCOL_NOISE_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-protocol-noise: $(PROTOCOL_NOISE_TEST_BIN)
+	./$(PROTOCOL_NOISE_TEST_BIN)
+
 # ── Session-load backfill test (vet-fix) ──
 LOAD_BACKFILL_TEST_SRC := src/testing/load_backfill_test.cpp
 LOAD_BACKFILL_TEST_OBJ := $(BUILD_DIR)/testing/load_backfill_test.o
