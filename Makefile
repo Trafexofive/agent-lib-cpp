@@ -281,6 +281,21 @@ $(RUN_EPOCH_TEST_BIN): $(OBJS) $(RUN_EPOCH_TEST_OBJ)
 test-run-epoch: $(RUN_EPOCH_TEST_BIN)
 	./$(RUN_EPOCH_TEST_BIN)
 
+# ── Live ↔ resume parity (ui_timeline) ──
+LIVE_RESUME_TEST_SRC := src/testing/live_resume_parity_test.cpp
+LIVE_RESUME_TEST_OBJ := $(BUILD_DIR)/testing/live_resume_parity_test.o
+LIVE_RESUME_TEST_BIN := live-resume-parity-test
+
+$(LIVE_RESUME_TEST_OBJ): $(LIVE_RESUME_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(LIVE_RESUME_TEST_BIN): $(OBJS) $(LIVE_RESUME_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(LIVE_RESUME_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-live-resume-parity: $(LIVE_RESUME_TEST_BIN)
+	./$(LIVE_RESUME_TEST_BIN)
+
 # ── Session-load backfill test (vet-fix) ──
 LOAD_BACKFILL_TEST_SRC := src/testing/load_backfill_test.cpp
 LOAD_BACKFILL_TEST_OBJ := $(BUILD_DIR)/testing/load_backfill_test.o
