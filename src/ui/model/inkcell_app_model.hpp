@@ -553,7 +553,12 @@ struct ShellModel {
     // transcript at kRootRowCap, dropping oldest Stream/Thought rows first.
     // User/Response/Action/Result pairs are protected — never lose shipped
     // answers or tool boundaries.
-    static constexpr int kRootRowCap = 1500;
+    // Vet-fix: tighter cap. 1500 rows × full chat wrap per tick froze Esc
+    // navigation on real workloads — each row pays O(width) of wrap work
+    // and the cache walks every visible line on every frame. Drop the
+    // ceiling to a more pragmatic cap that protects navigation without
+    // hiding the last few turns.
+    static constexpr int kRootRowCap = 600;
     void enforceRowCap() {
         if (static_cast<int>(rootRows.size()) < kRootRowCap) return;
         int excess = static_cast<int>(rootRows.size()) - kRootRowCap;

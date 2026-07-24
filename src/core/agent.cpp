@@ -95,6 +95,31 @@ static std::string findHarnessPath(const std::string& fromManifest,
         std::string cand = appendIf(root, "manifests/harness/default.md");
         return tryOpen(cand, looked);
     };
+    // Compute the FHS-install prefix path exactly once and cache; called
+    // in two places (specific + default.md fallback). Each call returns
+    // either the resolved path or empty; populates `looked` so the
+    // error message below tells the operator where we looked. Static
+    // helper — no IIFE recursion, no self-capture UB path.
+    auto tryFhsInstall = [&](const std::string& suffix) -> std::string {
+        std::error_code ec;
+        auto self = std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (ec || self.empty()) return {};
+        std::string p = self.string();
+        size_t slash = p.find_last_of('/');
+        if (slash == std::string::npos) return {};
+        std::string bindir = p.substr(0, slash);
+        size_t last = bindir.find_last_of('/');
+        if (last == std::string::npos) return {};
+        std::string prefix = bindir.substr(0, last);
+        std::string cand = prefix + "/share/cortex-mk3/" + suffix;
+        looked.push_back(cand);
+        std::ifstream f(cand);
+        if (f.good()) return cand;
+        return {};
+    };
+    auto suffixFor = [&](const std::string& relOrDefault) -> std::string {
+        return std::string("manifests/harness/") + relOrDefault;
+    };
     // 1. Exactly what the manifest loader provided first.
     if (!fromManifest.empty() && fromManifest.find("default.md") == std::string::npos) {
         if (auto r = tryOpen(fromManifest, looked); !r.empty()) return r;
@@ -120,6 +145,9 @@ static std::string findHarnessPath(const std::string& fromManifest,
         }
     } catch (...) {
     }
+    // 2''. FHS-style install root: <prefix>/share/cortex-mk3/manifests/...
+    // for binaries installed via pacman / apt / a future install script.
+    if (auto r = tryFhsInstall(suffixFor(hintRel)); !r.empty()) return r;
     // 3. cwd-relative (any cwd, not hardcoded developer box)
     tryRoot(std::filesystem::current_path().string());
     // 4. ~/.config/cortex-mk3 (installed layout)
@@ -131,6 +159,8 @@ static std::string findHarnessPath(const std::string& fromManifest,
         if (const char* home = std::getenv("CORTEX_HOME"); home && *home) {
             if (auto r = tryRootDefault(home); !r.empty()) return r;
         }
+        // Same FHS install sibling fallback for default.md.
+        if (auto r = tryFhsInstall(suffixFor("default.md")); !r.empty()) return r;
         // Same exe-dir fallback as above for default.md.
         try {
             std::error_code ec;
