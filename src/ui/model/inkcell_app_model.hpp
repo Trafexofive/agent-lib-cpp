@@ -539,6 +539,30 @@ struct ShellModel {
         rebuildViews();
     }
     void applyRowBans(TimelineRow row) {
+        // Vet-fix: cap every row body hard before it lands. The 16KiB
+        // sanitize ceiling has been reliable UNTIL a subagent's
+        // `<context_feed>` packs an entire manifest YAML (hundreds of
+        // lines × 200 cells = a 60KB body) into one row, which the
+        // wrap cache and rebuild loop both walk in O(n). Fail-soft
+        // here: clamp the body to 8KiB before further processing.
+        constexpr std::size_t kBodyCap = 8 * 1024;
+        if (row.body.size() > kBodyCap) {
+            std::string head = row.body.substr(0, kBodyCap - 80);
+            std::string tail;
+            if (row.body.size() > kBodyCap + 256) {
+                tail = row.body.substr(row.body.size() - 256, 256);
+            } else {
+                tail = row.body.substr(kBodyCap - 80);
+            }
+            std::string body;
+            body.reserve(kBodyCap);
+            body.append(head);
+            body.append("\n\n  … [truncated for chat — row was ");
+            body.append(std::to_string(row.body.size()));
+            body.append(" bytes] …\n\n");
+            body.append(tail);
+            row.body = std::move(body);
+        }
         // Vet-fix: apply sanitize/cap to EVERY timeline row, including
         // tool Result bodies. The previous guard excluded Result — that
         // let a `grep` matching thousands of files dump its full output
