@@ -1,0 +1,8 @@
+{
+  "id": "art-retry-oob-heap-fix-2026-07-24",
+  "slug": "session-handoff-retry-oob-heap-fix",
+  "name": "session-handoff-retry-oob-heap-fix",
+  "type": "document",
+  "tags": ["handoff", "heap", "retry", "protocol", "p0"],
+  "created": "2026-07-24"
+}

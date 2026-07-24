@@ -220,6 +220,22 @@ $(LAZY_SESSION_TEST_BIN): $(OBJS) $(LAZY_SESSION_TEST_OBJ)
 test-lazy-session: $(LAZY_SESSION_TEST_BIN)
 	./$(LAZY_SESSION_TEST_BIN)
 
+# ── Protocol event diff (RETRY OOB regression) ──
+# Header-only under test; no Agent/libcurl objects required.
+PROTOCOL_DIFF_TEST_SRC := src/testing/protocol_event_diff_test.cpp
+PROTOCOL_DIFF_TEST_OBJ := $(BUILD_DIR)/testing/protocol_event_diff_test.o
+PROTOCOL_DIFF_TEST_BIN := protocol-event-diff-test
+
+$(PROTOCOL_DIFF_TEST_OBJ): $(PROTOCOL_DIFF_TEST_SRC) src/ui/model/protocol_event_diff.hpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(PROTOCOL_DIFF_TEST_BIN): $(PROTOCOL_DIFF_TEST_OBJ)
+	$(CXX) $(PROTOCOL_DIFF_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-protocol-event-diff: $(PROTOCOL_DIFF_TEST_BIN)
+	./$(PROTOCOL_DIFF_TEST_BIN)
+
 # ── Session-load backfill test (vet-fix) ──
 LOAD_BACKFILL_TEST_SRC := src/testing/load_backfill_test.cpp
 LOAD_BACKFILL_TEST_OBJ := $(BUILD_DIR)/testing/load_backfill_test.o

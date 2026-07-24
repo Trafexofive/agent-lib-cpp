@@ -20,81 +20,13 @@
 #include "src/ui/bridge/agent_bridge.hpp"
 #include "src/ui/chat/prompt_history.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
+#include "src/ui/model/protocol_event_diff.hpp"
 #include "src/ui/model/ui_prefs.hpp"
 #include "src/ui/model/workflow_runner.hpp"
 #include "src/ui/scenes/agent_scene.hpp"
 #include "src/ui/scenes/main_scene.hpp"
 
 namespace cortex::mk3::ui {
-
-inline bool sameProtocolEvent(const ProtocolEvent& a, const ProtocolEvent& b) {
-    if (a.kind != b.kind || a.text != b.text) return false;
-    if (a.kind == ProtocolEventKind::ACTION) {
-        return a.action.type == b.action.type && a.action.name == b.action.name &&
-               a.action.id == b.action.id && a.action.body == b.action.body &&
-               a.action.mode == b.action.mode && a.action.modifiers == b.action.modifiers;
-    }
-    if (a.kind == ProtocolEventKind::RESULT) {
-        return a.result.id == b.result.id && a.result.ok == b.result.ok &&
-               a.result.summary == b.result.summary && a.result.toolName == b.result.toolName &&
-               a.result.exitCode == b.result.exitCode && a.result.elapsedMs == b.result.elapsedMs &&
-               a.result.outputBytes == b.result.outputBytes;
-    }
-    return true;
-}
-
-inline void collectProtocolChanges(std::vector<UiEvent>& out,
-                                   const std::vector<ProtocolEvent>& current,
-                                   std::vector<ProtocolEvent>& previous) {
-    // Vet-fix retry isolation + heap fix.
-    //
-    // The agent's retry loop clears `protocolEvents_` and pushes a single
-    // ProtocolEventKind::RETRY marker. After that, the retry attempt's real
-    // events stream in from index 1 onward. If we naively compared
-    // `current[i]` against the leftover-attempt-N prototype in `previous`,
-    // every post-retry event would compare dirty and double-render.
-    //
-    // CRITICAL BUG (operator crash: tcache_thread_shutdown / unaligned
-    // tcache / SEGV after "retry N / M"):
-    //   Old code padded previous to current.size(), THEN cleared previous
-    //   on RETRY rotation, THEN wrote previous[i] = current[i] with i up
-    //   to current.size()-1 while previous.size() was 0. That is a pure
-    //   out-of-bounds vector write — heap corruption that only fires on
-    //   the empty-response retry path the operator keeps hitting with
-    //   "ping a subagent".
-    //
-    // Correct sequence:
-    //   1. Detect RETRY rotation BEFORE any resize.
-    //   2. On rotation: clear previous entirely.
-    //   3. Truncate previous if it is longer than current (never pad
-    //      before the comparison loop).
-    //   4. For each current[i]: if i is past previous.size() OR dirty,
-    //      emit and then push_back / assign safely.
-
-    // Detect the retry transition against the PRE-resize previous so we
-    // don't compare against default-constructed padding.
-    bool rotatedAtZero = !current.empty() && current[0].kind == ProtocolEventKind::RETRY &&
-                         (previous.empty() ||
-                          previous[0].kind != ProtocolEventKind::RETRY ||
-                          !sameProtocolEvent(current[0], previous[0]));
-    if (rotatedAtZero) previous.clear();
-
-    // Truncate only — never pad. Padding before the loop made previousSize
-    // look full and hid OOB after a clear; push_back below grows safely.
-    if (previous.size() > current.size()) previous.resize(current.size());
-
-    for (size_t i = 0; i < current.size(); ++i) {
-        if (i >= previous.size() || !sameProtocolEvent(current[i], previous[i])) {
-            out.push_back(UiEvent::protocolEvent(current[i], i));
-            if (i < previous.size()) {
-                previous[i] = current[i];
-            } else {
-                // Grow exactly one slot at a time so size stays == i+1.
-                previous.push_back(current[i]);
-            }
-        }
-    }
-}
 
 inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
                                const InkcellAppConfig& cfg) {
