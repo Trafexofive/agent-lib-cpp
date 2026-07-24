@@ -177,6 +177,89 @@ inline const char* kindGlyph(TimelineKind k, bool ok = true) {
     return " ";
 }
 
+// ── UI timeline persistence (live ↔ resume parity) ─────────────────────
+inline const char* timelineKindName(TimelineKind k) {
+    switch (k) {
+        case TimelineKind::User: return "user";
+        case TimelineKind::Status: return "status";
+        case TimelineKind::Stream: return "stream";
+        case TimelineKind::Thought: return "thought";
+        case TimelineKind::Action: return "action";
+        case TimelineKind::Result: return "result";
+        case TimelineKind::Response: return "response";
+        case TimelineKind::Final: return "final";
+        case TimelineKind::Error: return "error";
+        case TimelineKind::Log: return "log";
+    }
+    return "log";
+}
+
+inline TimelineKind timelineKindFromName(const std::string& s) {
+    if (s == "user") return TimelineKind::User;
+    if (s == "status") return TimelineKind::Status;
+    if (s == "stream") return TimelineKind::Stream;
+    if (s == "thought") return TimelineKind::Thought;
+    if (s == "action") return TimelineKind::Action;
+    if (s == "result") return TimelineKind::Result;
+    if (s == "response") return TimelineKind::Response;
+    if (s == "final") return TimelineKind::Final;
+    if (s == "error") return TimelineKind::Error;
+    return TimelineKind::Log;
+}
+
+// Skip ephemeral chrome when snapshotting for resume.
+inline bool timelineRowPersistable(const TimelineRow& row) {
+    if (row.kind == TimelineKind::Stream) return false;
+    if (row.kind == TimelineKind::Status) return false;
+    if (row.body.empty() && row.kind != TimelineKind::Action) return false;
+    return true;
+}
+
+inline std::string serializeTimeline(const std::vector<TimelineRow>& rows) {
+    Json::Value arr(Json::arrayValue);
+    for (const auto& row : rows) {
+        if (!timelineRowPersistable(row)) continue;
+        Json::Value o;
+        o["kind"] = timelineKindName(row.kind);
+        o["title"] = row.title;
+        o["body"] = row.body;
+        o["ok"] = row.ok;
+        if (!row.actionType.empty()) o["actionType"] = row.actionType;
+        if (!row.actionName.empty()) o["actionName"] = row.actionName;
+        if (!row.actionId.empty()) o["actionId"] = row.actionId;
+        if (row.drillable) o["drillable"] = true;
+        arr.append(o);
+    }
+    Json::StreamWriterBuilder w;
+    w["indentation"] = "";
+    return Json::writeString(w, arr);
+}
+
+inline std::vector<TimelineRow> deserializeTimeline(const std::string& json) {
+    std::vector<TimelineRow> out;
+    if (json.empty()) return out;
+    Json::Value root;
+    Json::CharReaderBuilder rb;
+    std::string errs;
+    std::istringstream iss(json);
+    if (!Json::parseFromStream(rb, iss, &root, &errs) || !root.isArray()) return out;
+    out.reserve(root.size());
+    for (const auto& o : root) {
+        if (!o.isObject()) continue;
+        TimelineRow row;
+        row.kind = timelineKindFromName(o.get("kind", "log").asString());
+        row.title = o.get("title", "").asString();
+        row.body = o.get("body", "").asString();
+        row.ok = o.get("ok", true).asBool();
+        row.actionType = o.get("actionType", "").asString();
+        row.actionName = o.get("actionName", "").asString();
+        row.actionId = o.get("actionId", "").asString();
+        row.drillable = o.get("drillable", false).asBool();
+        out.push_back(std::move(row));
+    }
+    return out;
+}
+
 inline TimelineRow rowFromProtocol(const ProtocolEvent& pe) {
     TimelineRow row;
     if (pe.kind == ProtocolEventKind::THOUGHT) {
@@ -1122,6 +1205,10 @@ struct ShellModel {
                         }
                     }
                 }
+                // Snapshot the exact live transcript so resume paints the
+                // same blocks (thoughts/actions/results/response), not a
+                // thin User/Agent record projection.
+                persistUiTimeline();
                 if (atRoot()) rebuildViews();
                 else refreshNested();
                 break;
@@ -1210,6 +1297,55 @@ struct ShellModel {
         timelineState = rootRows.empty() ? PageState::Empty : PageState::Populated;
         selectedBlock = 0;
         rebuildViews();
+    }
+
+    // Prefer structured ui_timeline when present (exact live parity).
+    // Fall back to records projection when older sessions lack the field.
+    void loadSessionUi(const Session& session) {
+        activeProtocolRows.clear();
+        pendingActionIds.clear();
+        completedResultIds.clear();
+        pendingOps = 0;
+        if (!session.uiTimelineJson.empty()) {
+            auto rows = deserializeTimeline(session.uiTimelineJson);
+            if (!rows.empty()) {
+                rootRows = std::move(rows);
+                timelineState = PageState::Populated;
+                selectedBlock = 0;
+                rebuildViews();
+                return;
+            }
+        }
+        loadSessionRecords(session.records);
+    }
+
+    // Snapshot live rootRows onto the session file so resume == live.
+    // Merges into existing session JSON (records/agent identity untouched
+    // except updated stamp). No-op if no session id or empty transcript.
+    void persistUiTimeline() {
+        if (activeSessionId.empty() || !rootAgent) return;
+        std::string json = serializeTimeline(rootRows);
+        if (json.empty() || json == "[]") return;
+        try {
+            auto& sm = rootAgent->sessionMgr();
+            Session s;
+            if (sm.exists(activeSessionId)) {
+                s = sm.load(activeSessionId);
+            } else {
+                s.id = activeSessionId;
+                s.agentName = agentName;
+                s.model = agentModel;
+                s.provider = agentProvider;
+                s.created = session::SessionManager::iso8601();
+            }
+            s.uiTimelineJson = std::move(json);
+            s.updated = session::SessionManager::iso8601();
+            if (s.agentName.empty()) s.agentName = agentName;
+            if (s.model.empty()) s.model = agentModel;
+            if (s.provider.empty()) s.provider = agentProvider;
+            sm.save(s);
+        } catch (...) {
+        }
     }
 
     void clearTranscript() {

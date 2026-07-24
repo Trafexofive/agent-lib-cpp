@@ -251,6 +251,21 @@ $(SESSION_ROUNDTRIP_TEST_BIN): $(OBJS) $(SESSION_ROUNDTRIP_TEST_OBJ)
 test-session-roundtrip: $(SESSION_ROUNDTRIP_TEST_BIN)
 	./$(SESSION_ROUNDTRIP_TEST_BIN)
 
+# ── UI timeline serialize/deserialize (live ↔ resume parity) ──
+UI_TIMELINE_TEST_SRC := src/testing/ui_timeline_test.cpp
+UI_TIMELINE_TEST_OBJ := $(BUILD_DIR)/testing/ui_timeline_test.o
+UI_TIMELINE_TEST_BIN := ui-timeline-test
+
+$(UI_TIMELINE_TEST_OBJ): $(UI_TIMELINE_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(UI_TIMELINE_TEST_BIN): $(OBJS) $(UI_TIMELINE_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(UI_TIMELINE_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-ui-timeline: $(UI_TIMELINE_TEST_BIN)
+	./$(UI_TIMELINE_TEST_BIN)
+
 # ── Session-load backfill test (vet-fix) ──
 LOAD_BACKFILL_TEST_SRC := src/testing/load_backfill_test.cpp
 LOAD_BACKFILL_TEST_OBJ := $(BUILD_DIR)/testing/load_backfill_test.o

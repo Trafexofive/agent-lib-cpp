@@ -74,9 +74,11 @@ inline void installAppTick(inkcell::App& app, AgentBridge& bridge, const std::sh
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"scene.agent"});
         } else if (model->pendingRoute == "main") {
+            model->persistUiTimeline();
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"scene.main"});
         } else if (model->pendingRoute == "quit") {
+            model->persistUiTimeline();
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"app.quit"});
         }
@@ -524,9 +526,11 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"scene.agent"});
         } else if (model->pendingRoute == "main") {
+            model->persistUiTimeline();
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"scene.main"});
         } else if (model->pendingRoute == "quit") {
+            model->persistUiTimeline();
             model->pendingRoute.clear();
             app.engine().post_action(inkcell::Action{"app.quit"});
         }
@@ -569,9 +573,12 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     joinWfWorker();
     chat::savePromptHistory(model->promptHistory);
     g_running = true;
-    // Vet-fix: flush the LIVE agent (hub hot-swap may have replaced the
-    // CLI-constructed Agent with slot->owned). Flushing `agent` (external)
-    // after launching brainstormer wrote records:[] over the real session.
+    // Vet-fix: snapshot UI timeline BEFORE agent history flush so the
+    // on-disk session carries the exact live blocks (thoughts/actions/
+    // results), not only User/Agent records. Then flush agent history_
+    // for LLM continuity. Order matters: timeline first (UI truth),
+    // history second (agent memory).
+    model->persistUiTimeline();
     if (!model->activeSessionId.empty())
         flushAgentSession(slot->get(), model->activeSessionId, false);
     cortex::mk3::flush::disarm();

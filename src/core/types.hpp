@@ -278,6 +278,10 @@ struct Session {
     // replay these into historyLines so the user sees exactly what they
     // saw before exiting — no parser, no protocol reconstruction needed.
     std::vector<std::string> renderedHistory;
+    // Structured chat timeline (JSON array of {kind,title,body,ok,...}).
+    // Written by the TUI from rootRows so resume paints the same blocks
+    // the operator saw live — not a thin User/Agent record projection.
+    std::string uiTimelineJson;
 };
 
 }  // namespace cortex::mk3

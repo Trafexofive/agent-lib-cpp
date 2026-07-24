@@ -109,6 +109,16 @@ Session SessionManager::load(const std::string& id) const {
             for (auto& v : root["rendered_history"])
                 s.renderedHistory.push_back(v.asString());
         }
+        if (root.isMember("ui_timeline")) {
+            // Accept array (preferred) or pre-stringified blob.
+            if (root["ui_timeline"].isString())
+                s.uiTimelineJson = root["ui_timeline"].asString();
+            else {
+                Json::StreamWriterBuilder w;
+                w["indentation"] = "";
+                s.uiTimelineJson = Json::writeString(w, root["ui_timeline"]);
+            }
+        }
         return s;
     } catch (...) {
         return s;
@@ -147,6 +157,16 @@ void SessionManager::save(const Session& s) const {
     for (auto& l : s.renderedHistory)
         rh.append(l);
     root["rendered_history"] = rh;
+    if (!s.uiTimelineJson.empty()) {
+        Json::Value tl;
+        Json::CharReaderBuilder rb;
+        std::string errs;
+        std::istringstream iss(s.uiTimelineJson);
+        if (Json::parseFromStream(rb, iss, &tl, &errs))
+            root["ui_timeline"] = tl;
+        else
+            root["ui_timeline"] = s.uiTimelineJson;  // raw fallback
+    }
     std::string path = sessionPath(s.id);
     std::ofstream f(path + ".tmp");
     f << cortex::mk3::json::stringify(root, /*pretty=*/true);

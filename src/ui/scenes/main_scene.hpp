@@ -1628,10 +1628,15 @@ class MainScene final : public BaseScene {
             } catch (...) {
             }
         }
-        if (records.empty() && model_->rootAgent) {
-            // Last resort: synthesize User/Agent rows from agent.history_
-            // so the operator never lands in an empty chat when state
-            // recovered in-memory but session JSON is still empty.
+        // Prefer full session (ui_timeline) so resume matches live chat.
+        Session full;
+        try {
+            if (sessions.exists(result.sessionId))
+                full = sessions.load(result.sessionId);
+        } catch (...) {
+        }
+        if (full.records.empty() && !records.empty()) full.records = records;
+        if (full.records.empty() && model_->rootAgent) {
             for (const auto& h : model_->rootAgent->history()) {
                 SessionRecord rec;
                 if (h.rfind("User: ", 0) == 0) {
@@ -1644,12 +1649,12 @@ class MainScene final : public BaseScene {
                     rec.role = SessionRecord::SYSTEM;
                     rec.content = h.substr(8);
                 } else {
-                    continue;  // skip Parent(...) noise in UI unless useful
+                    continue;
                 }
-                records.push_back(std::move(rec));
+                full.records.push_back(std::move(rec));
             }
         }
-        model_->loadSessionRecords(records);
+        model_->loadSessionUi(full);
         model_->activeSessionId = result.sessionId;
         model_->pendingRoute = "agent";
     }
