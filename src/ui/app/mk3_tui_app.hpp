@@ -46,42 +46,54 @@ inline bool sameProtocolEvent(const ProtocolEvent& a, const ProtocolEvent& b) {
 inline void collectProtocolChanges(std::vector<UiEvent>& out,
                                    const std::vector<ProtocolEvent>& current,
                                    std::vector<ProtocolEvent>& previous) {
-    // Vet-fix retry isolation.
+    // Vet-fix retry isolation + heap fix.
     //
     // The agent's retry loop clears `protocolEvents_` and pushes a single
     // ProtocolEventKind::RETRY marker. After that, the retry attempt's real
     // events stream in from index 1 onward. If we naively compared
     // `current[i]` against the leftover-attempt-N prototype in `previous`,
-    // every post-retry event would compare dirty and double-render. So:
+    // every post-retry event would compare dirty and double-render.
     //
-    //   1. If current.size() < previous.size(), truncate previous
-    //      first (this happens at the start of every retry attempt).
-    //   2. If the FIRST new current event is RETRY, drop everything we
-    //      know about from previous and start fresh. The RETRY marker
-    //      itself is forwarded so apply() can react if needed (it does
-    //      already — upsertProtocolRow handles unknown kinds).
-    if (previous.size() > current.size()) previous.resize(current.size());
-    if (previous.size() < current.size()) previous.resize(current.size());  // pad to same length
+    // CRITICAL BUG (operator crash: tcache_thread_shutdown / unaligned
+    // tcache / SEGV after "retry N / M"):
+    //   Old code padded previous to current.size(), THEN cleared previous
+    //   on RETRY rotation, THEN wrote previous[i] = current[i] with i up
+    //   to current.size()-1 while previous.size() was 0. That is a pure
+    //   out-of-bounds vector write — heap corruption that only fires on
+    //   the empty-response retry path the operator keeps hitting with
+    //   "ping a subagent".
+    //
+    // Correct sequence:
+    //   1. Detect RETRY rotation BEFORE any resize.
+    //   2. On rotation: clear previous entirely.
+    //   3. Truncate previous if it is longer than current (never pad
+    //      before the comparison loop).
+    //   4. For each current[i]: if i is past previous.size() OR dirty,
+    //      emit and then push_back / assign safely.
 
-    // Detect the retry transition: current[0] is RETRY where previous[0] is
-    // something else (or out of range). That means the agent rotated its
-    // protocol state; previous is stale w.r.t. the marker.
+    // Detect the retry transition against the PRE-resize previous so we
+    // don't compare against default-constructed padding.
     bool rotatedAtZero = !current.empty() && current[0].kind == ProtocolEventKind::RETRY &&
                          (previous.empty() ||
                           previous[0].kind != ProtocolEventKind::RETRY ||
                           !sameProtocolEvent(current[0], previous[0]));
     if (rotatedAtZero) previous.clear();
 
-    size_t previousSize = previous.size();
+    // Truncate only — never pad. Padding before the loop made previousSize
+    // look full and hid OOB after a clear; push_back below grows safely.
+    if (previous.size() > current.size()) previous.resize(current.size());
+
     for (size_t i = 0; i < current.size(); ++i) {
-        if (i >= previousSize || !sameProtocolEvent(current[i], previous[i])) {
+        if (i >= previous.size() || !sameProtocolEvent(current[i], previous[i])) {
             out.push_back(UiEvent::protocolEvent(current[i], i));
-            previous[i] = current[i];
+            if (i < previous.size()) {
+                previous[i] = current[i];
+            } else {
+                // Grow exactly one slot at a time so size stays == i+1.
+                previous.push_back(current[i]);
+            }
         }
     }
-    // If current shrank below what we already know (additional safety net),
-    // never pad without seeing new events. previous stays accurate because we
-    // dropped everything pre-marker on rotate.
 }
 
 inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
