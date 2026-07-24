@@ -10,6 +10,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <mutex>
 #include <thread>
 
 #include "inkcell/app.hpp"
@@ -165,6 +166,62 @@ inline inkcell::App makeInkcellApp(const InkcellAppConfig& cfg, AgentBridge& bri
 // definition symbol is laid out.
 inline void flushAgentSession(Agent& agent, const std::string& sessionId, bool ephemeral);
 
+// atexit-backed safety net: invoked when the program exits via any path,
+// including an inkcell Engine SIGINT unwinding through on_exit_ on a path
+// that does NOT return to the runInkcell* caller. We capture the active
+// Agent pointer + the model's sessionId so a SIGINT/SIGTERM-killed chat
+// still lands whatever the agent had captured onto disk. Single-shot,
+// guarded by a flag so consecutive `runInkcell*` calls cannot double-flush.
+namespace cortex::mk3::flush {
+struct State {
+    std::mutex mtx;
+    Agent* agent = nullptr;
+    std::string sessionId;
+    std::string cfgSessionId;
+    bool active = false;
+};
+inline State& state() { static State s; return s; }
+inline void activate(Agent& agent, const std::string& cfgSessionId) {
+    std::lock_guard<std::mutex> g(state().mtx);
+    state().agent = &agent;
+    state().cfgSessionId = cfgSessionId;
+    state().active = true;
+}
+inline void setActiveSession(const std::string& sessionId) {
+    std::lock_guard<std::mutex> g(state().mtx);
+    state().sessionId = sessionId;
+}
+inline void disarm() {
+    std::lock_guard<std::mutex> g(state().mtx);
+    state().active = false;
+}
+inline void runOnce() {
+    Agent* a = nullptr;
+    std::string sid;
+    std::string cfgSid;
+    bool wasActive = false;
+    {
+        std::lock_guard<std::mutex> g(state().mtx);
+        wasActive = state().active;
+        a = state().agent;
+        sid = state().sessionId;
+        cfgSid = state().cfgSessionId;
+        state().active = false;
+    }
+    if (!wasActive || a == nullptr) return;
+    flushAgentSession(*a, cfgSid, false);
+    flushAgentSession(*a, sid, false);
+}
+}
+
+// Register the atexit handler exactly once per process.
+namespace cortex::mk3::flush {
+inline void installAtexit() {
+    static std::once_flag once;
+    std::call_once(once, []() { std::atexit(&runOnce); });
+}
+}
+
 inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& prompt,
                          const std::string& sessionId, bool ephemeral, std::atomic<bool>& done) {
     try {
@@ -256,6 +313,8 @@ inline int runInkcellShell(const InkcellAppConfig& cfg, Agent& agent) {
     initializeChatModel(model, cfg);
     auto app = makeInkcellApp(cfg, bridge, model, true);
     installAppTick(app, bridge, model);
+    cortex::mk3::flush::installAtexit();
+    cortex::mk3::flush::activate(agent, cfg.sessionId);
     if (snapshotMode()) {
         app.render_to(std::cout, "main", {120, 34});
         return 0;
@@ -269,7 +328,9 @@ inline int runInkcellShell(const InkcellAppConfig& cfg, Agent& agent) {
     // the process tears down. saveSession is id-only gated; empty runs
     // write nothing — no phantom files.
     flushAgentSession(agent, cfg.sessionId, false);
+    cortex::mk3::flush::setActiveSession(model->activeSessionId);
     flushAgentSession(agent, model->activeSessionId, false);
+    cortex::mk3::flush::disarm();
     (void)bridge;  // bridge still required to outlive App::run's worker observers
     return rc;
 }
@@ -292,6 +353,12 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     agent.setAskToolHandler([&bridge](const Json::Value& params) { return bridge.requestAsk(params); });
     std::atomic<bool> done{false};
     std::thread worker([&]() { runAgentTurn(bridge, agent, prompt, sessionId, noSession, done); });
+    // Vet-fix: install the atexit safety net for this run so even a
+    // SIGINT that unwinds through inkcell's on_exit_ without returning
+    // to this function still lands the captured session on disk.
+    cortex::mk3::flush::installAtexit();
+    cortex::mk3::flush::activate(agent, sessionId);
+    cortex::mk3::flush::setActiveSession(sessionId);
 
     auto app = makeInkcellApp(cfg, bridge, model, false);
     std::atomic<bool> quitPosted{false};
@@ -326,6 +393,7 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     // whatever the agent had captured.
     flushAgentSession(agent, sessionId, noSession);
     flushAgentSession(agent, model->activeSessionId, false);
+    cortex::mk3::flush::disarm();
     return rc;
 }
 
@@ -392,6 +460,9 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     model->setRootAgent(slot->ptr());
     initializeChatModel(model, cfg);
     agent.setAskToolHandler([&bridge](const Json::Value& params) { return bridge.requestAsk(params); });
+    // Vet-fix: atexit safety net for repl too.
+    cortex::mk3::flush::installAtexit();
+    cortex::mk3::flush::activate(agent, /*sessionId*/ "");
     std::atomic<bool> workerBusy{false};
     std::atomic<bool> wfBusy{false};
     std::atomic<bool> quitPosted{false};
@@ -552,6 +623,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     // vanish on quit. saveSession is content-gated; empty runs write
     // nothing.
     flushAgentSession(agent, model->activeSessionId, false);
+    cortex::mk3::flush::disarm();
     return rc;
 }
 
