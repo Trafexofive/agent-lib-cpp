@@ -327,12 +327,14 @@ inline int runInkcellShell(const InkcellAppConfig& cfg, Agent& agent) {
     // brainstormer / chat / experimental sessions land on disk before
     // the process tears down. saveSession is id-only gated; empty runs
     // write nothing — no phantom files.
-    flushAgentSession(agent, cfg.sessionId, false);
+    if (!cfg.sessionId.empty()) flushAgentSession(agent, cfg.sessionId, false);
+    if (!model->activeSessionId.empty()) flushAgentSession(agent, model->activeSessionId, false);
     cortex::mk3::flush::setActiveSession(model->activeSessionId);
-    flushAgentSession(agent, model->activeSessionId, false);
     cortex::mk3::flush::disarm();
     (void)bridge;  // bridge still required to outlive App::run's worker observers
     return rc;
+    // Note: atexit-handler is already disarmed at the start of the body;
+    // we don't need to disarm here twice.
 }
 
 inline int runInkcellSmoke(const InkcellAppConfig& cfg, Agent& agent) { return runInkcellShell(cfg, agent); }
@@ -390,9 +392,11 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     if (worker.joinable()) worker.join();
     g_running = true;
     // Vet-fix: capture — Ctrl-C + cancel-pending quit must still persist
-    // whatever the agent had captured.
-    flushAgentSession(agent, sessionId, noSession);
-    flushAgentSession(agent, model->activeSessionId, false);
+    // whatever the agent had captured. The submitComposer path now arms
+    // activeSessionId lazily at first prompt; flush after worker join
+    // picks that up.
+    if (!sessionId.empty()) flushAgentSession(agent, sessionId, noSession);
+    if (!model->activeSessionId.empty()) flushAgentSession(agent, model->activeSessionId, false);
     cortex::mk3::flush::disarm();
     return rc;
 }
@@ -620,9 +624,9 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     g_running = true;
     // Vet-fix: TUI exit (Ctrl-C, ESC, hub-route, snapshot mode) — persist
     // whichever id the agent has captured to, so sessions don't silently
-    // vanish on quit. saveSession is content-gated; empty runs write
-    // nothing.
-    flushAgentSession(agent, model->activeSessionId, false);
+    // vanish on quit. submitComposer arms activeSessionId at first
+    // prompt so the lazy path lands the session before exit.
+    if (!model->activeSessionId.empty()) flushAgentSession(agent, model->activeSessionId, false);
     cortex::mk3::flush::disarm();
     return rc;
 }

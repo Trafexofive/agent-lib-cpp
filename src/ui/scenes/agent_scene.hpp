@@ -61,28 +61,35 @@ class AgentScene final : public BaseScene {
                 return true;
             }
             if (model_->timelineFocus) {
-                // Vet-fix: third rung in the Esc ladder — return to the
-                // dashboard. Pairs with `i` to refocus composer, and the
-                // operator's "backspace/Esc → main" UX now works as
-                // advertised (backspace is handled below, separate chord).
+                // Vet-fix: third rung. Drilldown-aware: in a subagent
+                // pop, fall back only on a root timeline. Same chord
+                // pattern as Backspace so the operator can use either.
                 model_->timelineFocus = false;
                 model_->composer.focused = false;
-                model_->pendingRoute = "main";
+                if (!model_->atRoot()) {
+                    model_->goBack();
+                } else {
+                    model_->pendingRoute = "main";
+                }
                 return true;
             }
             // No ladder rung consumed — fall through to existing Esc chain.
         }
 
-        // Vet-fix: Backspace = 'back to dashboard' from anywhere EXCEPT
-        // a composer that still has unsent content. The previous guard
-        // required fully unfocusing the composer (two Esc presses) before
-        // nav worked — the operator's complaint was "backspace should
-        // navigate, full stop". Now Backspace navigates unless there's
-        // actually typed text waiting to be sent.
+        // Vet-fix: Backspace navigates. Drilldown-aware:
+        //   - in a subagent drilldown: pop one level (don't fall through
+        //     to main — operator said "what the fuck are we doing?" when
+        //     a single key nuked the whole stack)
+        //   - at chat root: route to dashboard
+        //   - composer has untyped text: leave alone (delete-letter path)
         if (event.code == KeyCode::Backspace && !model_->askActive &&
             !model_->helpVisible && !model_->cmdPalette.open &&
             (!model_->composer.focused || model_->composer.value.empty())) {
-            model_->pendingRoute = "main";
+            if (!model_->atRoot()) {
+                model_->goBack();
+            } else {
+                model_->pendingRoute = "main";
+            }
             return true;
         }
 
@@ -171,6 +178,17 @@ class AgentScene final : public BaseScene {
                 return true;
             }
             // j/k select transcript blocks (drilldown navigation); Enter drills in.
+            // Plain j/k = step-by-step; Ctrl-J/Ctrl-K = jump to start/end.
+            if (event.code == KeyCode::Character && event.ctrl() &&
+                (event.ch == 'j' || event.ch == 'J')) {
+                model_->transcriptView.scroll_to_start();
+                return true;
+            }
+            if (event.code == KeyCode::Character && event.ctrl() &&
+                (event.ch == 'k' || event.ch == 'K')) {
+                model_->transcriptView.scroll_to_end();
+                return true;
+            }
             if (event.code == KeyCode::Character && (event.ch == 'k' || event.ch == 'K')) {
                 model_->selectDelta(-1);
                 return true;

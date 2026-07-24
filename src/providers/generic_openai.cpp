@@ -361,9 +361,12 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
             // movement, so a stalled stream (server hangs after headers)
             // would otherwise wait the full CURLOPT_TIMEOUT. Configure
             // low-speed abort to fail in 4s if <200B/s arrives, which
-            // catches genuine hangs but keeps slow tokens alive.
+            // catches genuine hangs but keeps slow tokens alive. We also
+            // hard-cap streaming transfers at 30s total — Ctrl-C must
+            // unwind within the operator's patience.
             curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 4L);
             curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 200L);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 30000L);
         } else {
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCb);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBuffer);

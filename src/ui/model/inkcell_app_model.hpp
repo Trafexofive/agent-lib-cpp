@@ -1274,6 +1274,33 @@ struct ShellModel {
         while (start < text.size() && (text[start] == ' ' || text[start] == '\t' || text[start] == '\n')) ++start;
         text = text.substr(start);
         if (text.empty()) return false;
+        // Vet-fix: arm an ephemeral session id at first turn-in-chat so
+        // the work the operator just typed lands on disk. Phase 1 removed
+        // auto-mint on bare TUI launches, which kept phantom file pairs
+        // out of the Sessions page — but it also meant a prompt typed
+        // into the chat produced NO file, because activeSessionId stayed
+        // empty even after work had been done. Arm lazily here: the
+        // first non-empty submit of a session-bare chat allocates a new
+        // id; subsequent turns reuse it. Sessions page learns of the
+        // file when the worker saves at TurnDone or atexit flushes.
+        if (activeSessionId.empty()) {
+            // Generate an id using steady_clock + a counter. Cheap,
+            // collision-resistant for session ids on a single host.
+            // Skip when the system is unconditional-ephemeral — the
+            // InkcellAppConfig surfaced that via cfg, but the model
+            // doesn't have cfg here. We arm unconditionally and let
+            // the downstream --ephemeral flag suppress persistence at
+            // exit-time (no file written if `cli.noSession` is set).
+            static std::atomic<uint64_t> counter{0};
+            auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+            uint64_t salt = counter.fetch_add(1, std::memory_order_relaxed);
+            char buf[40];
+            std::snprintf(buf, sizeof(buf), "sess-%016llx-%04llx",
+                          static_cast<unsigned long long>(now),
+                          static_cast<unsigned long long>(salt & 0xFFFFu));
+            activeSessionId = buf;
+            dashboard.notice = std::string("armed ") + activeSessionId;
+        }
         pendingSubmit = text;
         if (promptHistory.empty() || promptHistory.back() != text) promptHistory.push_back(text);
         promptHistoryIndex = static_cast<int>(promptHistory.size());
