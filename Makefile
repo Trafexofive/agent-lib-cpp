@@ -236,6 +236,21 @@ $(PROTOCOL_DIFF_TEST_BIN): $(PROTOCOL_DIFF_TEST_OBJ)
 test-protocol-event-diff: $(PROTOCOL_DIFF_TEST_BIN)
 	./$(PROTOCOL_DIFF_TEST_BIN)
 
+# ── Session seed + final-response round-trip ──
+SESSION_ROUNDTRIP_TEST_SRC := src/testing/session_roundtrip_test.cpp
+SESSION_ROUNDTRIP_TEST_OBJ := $(BUILD_DIR)/testing/session_roundtrip_test.o
+SESSION_ROUNDTRIP_TEST_BIN := session-roundtrip-test
+
+$(SESSION_ROUNDTRIP_TEST_OBJ): $(SESSION_ROUNDTRIP_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(SESSION_ROUNDTRIP_TEST_BIN): $(OBJS) $(SESSION_ROUNDTRIP_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(SESSION_ROUNDTRIP_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-session-roundtrip: $(SESSION_ROUNDTRIP_TEST_BIN)
+	./$(SESSION_ROUNDTRIP_TEST_BIN)
+
 # ── Session-load backfill test (vet-fix) ──
 LOAD_BACKFILL_TEST_SRC := src/testing/load_backfill_test.cpp
 LOAD_BACKFILL_TEST_OBJ := $(BUILD_DIR)/testing/load_backfill_test.o

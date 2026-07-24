@@ -76,15 +76,15 @@ class AgentScene final : public BaseScene {
             // No ladder rung consumed — fall through to existing Esc chain.
         }
 
-        // Vet-fix: Backspace navigates. Drilldown-aware:
-        //   - in a subagent drilldown: pop one level (don't fall through
-        //     to main — operator said "what the fuck are we doing?" when
-        //     a single key nuked the whole stack)
-        //   - at chat root: route to dashboard
-        //   - composer has untyped text: leave alone (delete-letter path)
+        // Vet-fix: Backspace is NEVER navigation while composer is focused
+        // (`i` / interactive type mode). Operator hard rule after repeated
+        // UX breakage: in type mode Backspace deletes glyphs only (handled
+        // later by composer.handle_key). Navigation Backspace only when
+        // composer is unfocused (timeline / selection mode).
+        // Drilldown-aware when navigating: pop one level, else main.
         if (event.code == KeyCode::Backspace && !model_->askActive &&
             !model_->helpVisible && !model_->cmdPalette.open &&
-            (!model_->composer.focused || model_->composer.value.empty())) {
+            !model_->composer.focused) {
             if (!model_->atRoot()) {
                 model_->goBack();
             } else {

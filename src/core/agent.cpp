@@ -310,12 +310,29 @@ std::string Agent::prompt(const std::string &input, StreamCallback onToken,
     ctx.debug =
         (env_.count("__DEBUG_MODE__") && env_["__DEBUG_MODE__"] == "true") ||
         devMode_;
-    lastSessionId_ = sessionId;
-
+    // Vet-fix: do NOT loadSession when history_ already holds this turn's
+    // seed (submitComposer → seedUserPrompt + saveSession). Reloading from
+    // disk cleared in-memory history_ back to User-only, then the final
+    // save often never rewrote Agent lines (taskComplete broke without
+    // pushing Agent:), so resume showed only the prompt.
+    //
+    // Rules:
+    //   - history empty → cold load from disk + checkpoint
+    //   - history live + same or first session id → keep memory (seed)
+    //   - history live + different lastSessionId_ → switch sessions
     if (!ephemeral && !sessionId.empty()) {
-        loadSession(sessionId);
-        loadStateCheckpoint(sessionId);
+        if (history_.empty()) {
+            loadSession(sessionId);
+            loadStateCheckpoint(sessionId);
+        } else if (!lastSessionId_.empty() && lastSessionId_ != sessionId) {
+            history_.clear();
+            contextFeeds_.clear();
+            loadSession(sessionId);
+            loadStateCheckpoint(sessionId);
+        }
+        // else: keep seeded / continuing history_
     }
+    lastSessionId_ = sessionId;
 
     std::string result = runLoop(ctx);
 
@@ -1965,6 +1982,21 @@ std::string Agent::runLoop(AgentContext &ctx) {
             fullResponse = expandedResponse.isString()
                                ? expandedResponse.asString()
                                : responseOutput_;
+            // Vet-fix: final-turn used to `break` without appending the
+            // Agent line. history_ then stayed User-only (plus any mid-turn
+            // tool System lines), saveSession wrote records:[user], and
+            // resume showed only the prompt. Always persist the final
+            // answer (or the last action transcript if response is empty).
+            {
+                std::string finalHist = !fullResponse.empty()
+                                            ? fullResponse
+                                            : historyOutput;
+                if (!finalHist.empty()) {
+                    const std::string needle = "Agent: " + finalHist;
+                    if (history_.empty() || history_.back() != needle)
+                        history_.push_back(needle);
+                }
+            }
             break;
         }
 
@@ -2007,6 +2039,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
             responseOutput_ = lastSalvage;
             protocolEvents_.push_back(
                 {ProtocolEventKind::RESPONSE, lastSalvage, {}, {}});
+            history_.push_back("Agent: " + lastSalvage);
         } else {
             fullResponse =
                 "⚠ Agent stopped without emitting <response final=\"true\">. "
@@ -2015,6 +2048,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 (lastSalvage.empty() ? std::string(".")
                                      : " (salvage was available but "
                                        "completion_policy=strict).");
+            history_.push_back("Agent: " + fullResponse);
         }
     }
 
