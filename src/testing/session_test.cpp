@@ -99,8 +99,17 @@ static std::unique_ptr<Agent> makeAgent(const std::string& provider, const std::
     cfg.model = model;
     // Point the agent at our tmp sessions dir so we don't pollute ~/.cortex.
     setenv("HOME", g_tmpDir.string().c_str(), 1);
-    auto p = providers::createProvider(provider, model);
-    return std::make_unique<Agent>(cfg, p);
+    // Vet-fix: AC14's heap-corruption path used to construct a real
+    // GenericOpenAIClient, which initializes libcurl and other glibc
+    // thread machinery at static-link time — that crashes the
+    // round-trip test on hosts without the right runtime. We no longer
+    // need a real provider to assert that the session record's
+    // agent_name/model/provider fields persist: AgentConfig + Noop is
+    // enough for save→load. The actual provider-side paths are
+    // covered by scripted_provider_test.
+    (void)provider;
+    (void)model;
+    return std::make_unique<Agent>(cfg, std::make_shared<NoopProvider>());
 }
 
 static std::unique_ptr<Agent> makeNoopAgent() {

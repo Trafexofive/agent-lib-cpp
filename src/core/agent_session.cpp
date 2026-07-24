@@ -186,6 +186,31 @@ void Agent::loadSession(const std::string& id) {
     contextFeeds_.clear();
     actionResults_.clear();
     auto session = sessionMgr_.load(id);
+    // Vet-fix: legacy sessions saved before 48582e5 carried an empty
+    // agent_name / model / provider field. The on-disk identity the
+    // operator sees in the Sessions page is empty until the next save;
+    // most operators never hit "save" again before closing the chat,
+    // so the empty value sticks. Backfill persisting here — the loaded
+    // view shows the right name immediately, and the on-disk file is
+    // corrected in the same call so subsequent resumes and listings
+    // are clean.
+    bool backfilled = false;
+    if (session.agentName.empty() && !config_.name.empty()) {
+        session.agentName = config_.name;
+        backfilled = true;
+    }
+    if (session.model.empty() && !config_.model.empty()) {
+        session.model = config_.model;
+        backfilled = true;
+    }
+    if (session.provider.empty() && !config_.provider.empty()) {
+        session.provider = config_.provider;
+        backfilled = true;
+    }
+    if (backfilled) {
+        session.updated = session::SessionManager::iso8601();
+        sessionMgr_.save(session);
+    }
     for (auto& rec : session.records) {
         std::string prefix;
         switch (rec.role) {

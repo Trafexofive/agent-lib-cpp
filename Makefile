@@ -220,6 +220,21 @@ $(LAZY_SESSION_TEST_BIN): $(OBJS) $(LAZY_SESSION_TEST_OBJ)
 test-lazy-session: $(LAZY_SESSION_TEST_BIN)
 	./$(LAZY_SESSION_TEST_BIN)
 
+# ── Session-load backfill test (vet-fix) ──
+LOAD_BACKFILL_TEST_SRC := src/testing/load_backfill_test.cpp
+LOAD_BACKFILL_TEST_OBJ := $(BUILD_DIR)/testing/load_backfill_test.o
+LOAD_BACKFILL_TEST_BIN := load-backfill-test
+
+$(LOAD_BACKFILL_TEST_OBJ): $(LOAD_BACKFILL_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(LOAD_BACKFILL_TEST_BIN): $(OBJS) $(LOAD_BACKFILL_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(LOAD_BACKFILL_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-load-backfill: $(LOAD_BACKFILL_TEST_BIN)
+	./$(LOAD_BACKFILL_TEST_BIN)
+
 # ── Completion policy (bare/non-final recover + promote) ──
 COMPLETION_POLICY_TEST_SRC := src/testing/completion_policy_test.cpp
 COMPLETION_POLICY_TEST_OBJ := $(BUILD_DIR)/testing/completion_policy_test.o
