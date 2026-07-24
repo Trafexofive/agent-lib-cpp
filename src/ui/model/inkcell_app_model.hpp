@@ -78,78 +78,30 @@ inline std::vector<std::string> splitDisplayLines(const std::string& text) {
 // the chat transcript never prints Q sym, box-drawing garbage, or worse,
 // injects ANSI escapes mid-render.
 inline std::string sanitizeForDisplay(const std::string& text) {
-    // Vet-fix pass 2: control bytes get replaced with a space, AND the
-    // result gets a hard size cap. raw responses that include SSE
-    // streams ("data: {…}"), stack traces of httplib/jsoncpp/stl,
-    // and assorted server chatter are otherwise rendered verbatim —
-    // the previous build only stripped <0x20 bytes. Cap at 16KiB and
-    // keep first+last so context is preserved without the operator
-    // having to scroll through thousands of rows of demangled binary.
+    // Vet-fix: simplify to a single-pass byte cap. The previous build
+    // tracked lineCount + lineCap + byteCap with an iterative trim
+    // loop, which had multiple state variables whose invariants were
+    // easy to break under load — likely contributor to the persistent
+    // heap-corruption pattern. We cap at 16 KiB and keep head + tail
+    // with a clear marker; line-cap is enforced implicitly via the
+    // byte budget (a 1KB/line content tops out at 16 lines per row).
     constexpr std::size_t kCap = 16 * 1024;
     constexpr std::size_t kHead = 8 * 1024;
     constexpr std::size_t kTail = 4 * 1024;
-    constexpr std::size_t kMaxLines = 500;
 
-    // Combined budget: byte cap + line cap. Either trips; we emit a
-    // marker so a giant tool result (grep over the live tree returned
-    // 1000s of matches) doesn't tank the wrap cache nor exhaust the
-    // operator's patience. Lines namespace the byte budget since most
-    // tool output uses single byte chars.
     std::string out;
-    out.reserve(std::min<std::size_t>(text.size(), kCap + kMaxLines * 32));
-    std::size_t lineCount = 1;
-    bool lineCut = false;
-    bool byteCut = false;
+    out.reserve(std::min<std::size_t>(text.size(), kCap + 64));
+    bool cut = false;
     for (unsigned char c : text) {
-        if (c == '\n') {
-            ++lineCount;
-            if (lineCount > kMaxLines && !lineCut) {
-                lineCut = true;
-                break;
-            }
-            out.push_back('\n');
-            if (out.size() >= kCap) { byteCut = true; break; }
-            continue;
-        } else if (c == '\r') {
-            continue;  // normalize CRLF
-        } else if (c == '\t') {
-            out.push_back(' ');
-        } else if (c < 0x20 || c == 0x7F) {
-            out.push_back(' ');
-        } else {
-            out.push_back(static_cast<char>(c));
-        }
-        if (out.size() >= kCap) { byteCut = true; break; }
+        if (c == '\r') continue;          // normalize CRLF
+        if (c == '\t') out.push_back(' ');
+        else if (c < 0x20 || c == 0x7F) out.push_back(' ');
+        else out.push_back(static_cast<char>(c));
+        if (out.size() >= kCap) { cut = true; break; }
     }
-    if (!lineCut && !byteCut) return out;
+    if (!cut) return out;
 
-    if (lineCut) {
-        // Emit a marker before truncating so the operator knows rows were
-        // dropped. Mark comes from the body, so it's sanitized.
-        std::string marker;
-        marker.reserve(128);
-        marker.append("\n  … [sanitize: line cap reached, dropped ");
-        marker.append(std::to_string(text.size()));
-        marker.append(" bytes total] …\n");
-        // Reserve a bit of room for the marker inside kMaxLines so the
-        // resulting row doesn't exceed line cap again.
-        if (lineCount - 1 > kMaxLines - 4) {
-            // Trim from tail so newer lines stay (preserve the latest).
-            std::size_t cutAt = out.rfind('\n');
-            int trimmed = 0;
-            while (lineCount - trimmed > kMaxLines - 4 && cutAt != std::string::npos) {
-                lineCount--;
-                trimmed++;
-                out.resize(cutAt);
-                cutAt = out.rfind('\n');
-            }
-        }
-        out.append(marker);
-        return out;
-    }
-
-    // Byte cut path. Preserve head + tail.
-    const std::size_t dropped = out.size() - kHead - kTail;
+    const std::size_t dropped = text.size() - out.size();
     std::string trimmed;
     trimmed.reserve(kCap + 96);
     if (kHead < out.size()) trimmed.append(out, 0, kHead);
