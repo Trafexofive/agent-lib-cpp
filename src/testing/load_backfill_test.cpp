@@ -1,14 +1,14 @@
-// Vet-fix: session-load backfill test. Verifies that Agent::loadSession
-// wears the legacy empty agent_name / model / provider with a copy from
-// the current Agent's config_, persisting the correction so the
-// Sessions page shows the right name without operator intervention.
+// Session load repair tests:
+//   1) empty agent_name/model/provider backfilled from Agent config_
+//   2) non-empty identity not clobbered
+//   3) records:[] + full .state.json history → loadSession repairs both
 
 #include <unistd.h>
 
 #include <cassert>
-#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -19,7 +19,7 @@
 using namespace cortex::mk3;
 namespace fs = std::filesystem;
 
-static fs::path g_tmpDir;
+static int g_fail = 0;
 
 class NoopProvider : public ILlmProvider {
    public:
@@ -38,6 +38,7 @@ class NoopProvider : public ILlmProvider {
     int getMaxTokens() const override { return maxTokens_; }
     std::vector<ModelInfo> listModels() override { return {}; }
     std::string providerName() const override { return "noop-test"; }
+
    private:
     std::string model_ = "noop-1";
     double temperature_ = 0.7;
@@ -45,100 +46,147 @@ class NoopProvider : public ILlmProvider {
     double topP_ = 0.95;
 };
 
-#define CHECK_OK(cond, msg)                                          \
-    do {                                                             \
-        if (!(cond)) {                                               \
-            std::cerr << "\n  FAIL: " << msg << " at "               \
-                      << __FILE__ << ":" << __LINE__ << "\n";        \
-            return 1;                                                \
-        }                                                            \
-        std::cout << "PASS " << msg << "\n";                         \
+#define CHECK_OK(cond, msg)                                                    \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            std::cerr << "  FAIL: " << msg << " at " << __FILE__ << ":"        \
+                      << __LINE__ << "\n";                                     \
+            ++g_fail;                                                          \
+        } else {                                                               \
+            std::cout << "PASS " << msg << "\n";                               \
+        }                                                                      \
     } while (0)
 
-int main() {
-    std::cout << "load-session backfill test...\n";
-
-    char tmpl[] = "/tmp/cortexmk3-bfXXXXXX";
+static fs::path makeTmpCwd() {
+    char tmpl[] = "/tmp/cortexmk3-sessXXXXXX";
     char* dir = ::mkdtemp(tmpl);
     assert(dir);
-    g_tmpDir = dir;
-    ::setenv("CORTEX_HOME", dir, 1);
+    return fs::path(dir);
+}
+
+static void test_identity_backfill(const fs::path& tmp) {
+    std::cout << "identity backfill…\n";
+    auto prev = fs::current_path();
+    fs::current_path(tmp);
 
     AgentConfig acfg;
     acfg.name = "brainstormer-001";
     acfg.provider = "noop-test";
     acfg.model = "no-op-moap-1";
-    auto provider = std::make_shared<NoopProvider>();
-    Agent agent(acfg, provider);
+    Agent agent(acfg, std::make_shared<NoopProvider>());
 
-    // Step 1: write a session "as the legacy code path would have" — an
-    // empty agent_name + empty model + empty provider.
-    Session legacyWritten;
-    legacyWritten.id = "legacy-empty";
-    legacyWritten.agentName = "";
-    legacyWritten.model = "";
-    legacyWritten.provider = "";
-    legacyWritten.created = session::SessionManager::iso8601();
-    legacyWritten.updated = legacyWritten.created;
-    legacyWritten.records.push_back({SessionRecord::USER,
-                                     "preserved legacy prompt",
-                                     legacyWritten.created,
-                                     ""});
-    {
-        session::SessionManager sm;
-        sm.save(legacyWritten);
-    }
+    Session legacy;
+    legacy.id = "legacy-empty";
+    legacy.agentName = "";
+    legacy.model = "";
+    legacy.provider = "";
+    legacy.created = session::SessionManager::iso8601();
+    legacy.updated = legacy.created;
+    legacy.records.push_back(
+        {SessionRecord::USER, "preserved legacy prompt", legacy.created, ""});
+    session::SessionManager sm;
+    sm.save(legacy);
 
-    // Step 2: load it back through the Agent with empty fields. After
-    // the vet-fix, agent.loadSession should backfill from config_ and
-    // re-save the file with the corrected identity.
     agent.loadSession("legacy-empty");
-
-    // Verify on-disk persisted state is corrected.
     {
-        session::SessionManager sm;
         auto loaded = sm.load("legacy-empty");
         CHECK_OK(loaded.agentName == "brainstormer-001",
-                 "loaded agentName corrected to config_.name");
-        CHECK_OK(loaded.model == "no-op-moap-1",
-                 "loaded model corrected to config_.model");
-        CHECK_OK(loaded.provider == "noop-test",
-                 "loaded provider corrected to config_.provider");
-        // Existing records preserved across the backfill pass
-        CHECK_OK(loaded.records.size() == 1,
-                 "records preserved (no data loss)");
+                 "agentName corrected to config_.name");
+        CHECK_OK(loaded.model == "no-op-moap-1", "model corrected");
+        CHECK_OK(loaded.provider == "noop-test", "provider corrected");
+        CHECK_OK(loaded.records.size() == 1, "records preserved");
     }
 
-    // Step 3: load a session that already has identity. Backfill must
-    // not clobber persisted identity. This is the AC1 invariant from
-    // 48582e5.
-    Session identitySet;
-    identitySet.id = "with-identity";
-    identitySet.agentName = "persisted-writer";
-    identitySet.model = "persisted-moap";
-    identitySet.provider = "persisted-provider";
-    identitySet.created = session::SessionManager::iso8601();
-    identitySet.updated = identitySet.created;
-    {
-        session::SessionManager sm;
-        sm.save(identitySet);
-    }
+    Session identity;
+    identity.id = "with-identity";
+    identity.agentName = "persisted-writer";
+    identity.model = "persisted-moap";
+    identity.provider = "persisted-provider";
+    identity.created = session::SessionManager::iso8601();
+    identity.updated = identity.created;
+    sm.save(identity);
     agent.loadSession("with-identity");
     {
-        session::SessionManager sm;
         auto loaded = sm.load("with-identity");
         CHECK_OK(loaded.agentName == "persisted-writer",
-                 "persisted agent_name NOT clobbered on reload");
-        CHECK_OK(loaded.model == "persisted-moap",
-                 "persisted model NOT clobbered");
+                 "persisted agent_name NOT clobbered");
+        CHECK_OK(loaded.model == "persisted-moap", "persisted model NOT clobbered");
         CHECK_OK(loaded.provider == "persisted-provider",
                  "persisted provider NOT clobbered");
     }
 
-    std::cout << "\n────── ok ──────\n";
-    std::cout << "load-session backfill test: PASS\n";
-    std::cout << "────────────────\n";
+    fs::current_path(prev);
+}
 
-    fs::remove_all(g_tmpDir);
-    return 0;
+static void test_checkpoint_repairs_empty_records(const fs::path& tmp) {
+    std::cout << "checkpoint repairs empty records…\n";
+    auto prev = fs::current_path();
+    fs::current_path(tmp);
+
+    AgentConfig acfg;
+    acfg.name = "brainstormer";
+    acfg.provider = "opencode";
+    acfg.model = "deepseek-v4-flash-free";
+    Agent agent(acfg, std::make_shared<NoopProvider>());
+
+    // Session file with empty records (wipe-bug shape).
+    Session empty;
+    empty.id = "wiped-sess";
+    empty.agentName = "brainstormer";
+    empty.model = acfg.model;
+    empty.provider = acfg.provider;
+    empty.created = session::SessionManager::iso8601();
+    empty.updated = empty.created;
+    session::SessionManager sm;
+    sm.save(empty);
+
+    // Sibling state checkpoint still has full history.
+    fs::create_directories(tmp / ".cortex" / "state");
+    {
+        std::ofstream f((tmp / ".cortex" / "state" / "wiped-sess.json").string());
+        f << R"({
+  "format": "cortex-agent-state",
+  "version": 1,
+  "agent_name": "brainstormer",
+  "history": [
+    "User: ping a subagent",
+    "Agent: alive — /tmp"
+  ],
+  "context_feeds": []
+})";
+    }
+
+    agent.loadSession("wiped-sess");
+    CHECK_OK(!agent.history().empty(), "history recovered from state checkpoint");
+    CHECK_OK(agent.history().front().find("User: ping") != std::string::npos,
+             "first history line is typed User prompt");
+
+    auto repaired = sm.load("wiped-sess");
+    CHECK_OK(!repaired.records.empty(), "session.records re-saved non-empty");
+    CHECK_OK(repaired.records[0].role == SessionRecord::USER,
+             "first repaired record is USER");
+    CHECK_OK(repaired.records[0].content.find("ping") != std::string::npos,
+             "repaired USER content preserved");
+
+    // Empty-history save must not wipe repaired records.
+    Agent emptyAgent(acfg, std::make_shared<NoopProvider>());
+    emptyAgent.saveSession("wiped-sess");
+    auto still = sm.load("wiped-sess");
+    CHECK_OK(!still.records.empty(),
+             "empty-history saveSession does not wipe existing records");
+
+    fs::current_path(prev);
+}
+
+int main() {
+    auto tmp = makeTmpCwd();
+    test_identity_backfill(tmp);
+    // fresh subdir for checkpoint test so state/sessions don't collide
+    auto tmp2 = makeTmpCwd();
+    test_checkpoint_repairs_empty_records(tmp2);
+
+    std::cout << "\n────── " << (g_fail ? "FAIL" : "ok") << " ──────\n";
+    fs::remove_all(tmp);
+    fs::remove_all(tmp2);
+    return g_fail ? 1 : 0;
 }

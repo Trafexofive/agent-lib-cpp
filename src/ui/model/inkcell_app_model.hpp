@@ -1016,6 +1016,22 @@ struct ShellModel {
                 break;
             case UiEventKind::Protocol: {
                 const auto& pe = e.protocol;
+                // Vet-fix: RETRY is a baseline-reset signal, not a transcript
+                // block. If we upsert it at protocolIndex 0 (and every later
+                // index from a cleared protocolEvents_), we OVERWRITE the
+                // still-visible rows from the failed attempt — thoughts
+                // "refresh", streams re-inject from the top, chat stops
+                // being contiguous. Clear the mapping epoch and do not paint.
+                if (pe.kind == ProtocolEventKind::RETRY) {
+                    activeProtocolRows.clear();
+                    pendingActionIds.clear();
+                    completedResultIds.clear();
+                    pendingOps = 0;
+                    // Keep rootRows (prior User/Response/Action/Result).
+                    // Only the *next* protocol stream remaps into new slots
+                    // via upsertProtocolRow append path (mapped < 0).
+                    break;
+                }
                 TimelineRow row = rowFromProtocol(pe);
                 if (pe.kind == ProtocolEventKind::ACTION) {
                     if (pendingActionIds.insert(pe.action.id).second) {

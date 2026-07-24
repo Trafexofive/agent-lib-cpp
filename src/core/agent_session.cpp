@@ -228,6 +228,41 @@ void Agent::loadSession(const std::string& id) {
     }
     // AC18 — restore LLM-injected feeds so resumed sessions don't lose context.
     contextFeeds_ = session.contextFeeds;
+
+    // Vet-fix: session JSON can have records:[] while the sibling
+    // `.state.json` still holds full history_ (exit flush used to wipe
+    // records via the wrong Agent). Prefer checkpoint history when the
+    // session file has nothing usable, then re-save session so resume
+    // paths that only read session.records also see content.
+    if (history_.empty()) {
+        loadStateCheckpoint(id);
+        if (!history_.empty()) {
+            // Rebuild session.records from recovered history_ without
+            // going through the empty-history early-return path.
+            session.records.clear();
+            for (const auto& h : history_) {
+                SessionRecord rec;
+                rec.timestamp = session::SessionManager::iso8601();
+                if (h.rfind("User: ", 0) == 0) {
+                    rec.role = SessionRecord::USER;
+                    rec.content = h.substr(6);
+                } else if (h.rfind("Agent: ", 0) == 0) {
+                    rec.role = SessionRecord::AGENT;
+                    rec.content = h.substr(7);
+                } else if (h.rfind("System: ", 0) == 0) {
+                    rec.role = SessionRecord::SYSTEM;
+                    rec.content = h.substr(8);
+                } else {
+                    rec.role = SessionRecord::SYSTEM;
+                    rec.content = h;
+                }
+                session.records.push_back(std::move(rec));
+            }
+            session.contextFeeds = contextFeeds_;
+            session.updated = session::SessionManager::iso8601();
+            sessionMgr_.save(session);
+        }
+    }
 }
 
 void Agent::saveSession(const std::string& id) {
@@ -258,8 +293,21 @@ void Agent::saveSession(const std::string& id) {
         if (session.model.empty())     session.model     = config_.model;
         if (session.provider.empty())  session.provider  = config_.provider;
         session.updated = session::SessionManager::iso8601();
+        // Vet-fix: never replace a non-empty on-disk transcript with an
+        // empty in-memory history_. Exit flush used to call saveSession on
+        // the *CLI* Agent after a hub hot-swap to brainstormer — that
+        // agent's history_ was empty, so records:[] wiped the real chat.
+        // State checkpoint still had the full history; session file did not.
+        if (history_.empty() && !session.records.empty()) {
+            sessionMgr_.save(session);  // metadata/touch only
+            return;
+        }
         session.records.clear();
     } else {
+        // No file yet — refuse to create a zero-record orphan. Caller that
+        // has real content (seedUserPrompt / end of prompt) will have
+        // history_ non-empty and fall through below.
+        if (history_.empty() && contextFeeds_.empty()) return;
         session = sessionMgr_.create(id, config_.name, config_.model, config_.provider);
     }
     for (auto& h : history_) {

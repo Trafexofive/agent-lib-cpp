@@ -512,6 +512,9 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
                     AgentConfig loaded = next->config();
                     slot->owned = std::move(next);
                     applyLiveIdentity(loaded, path);
+                    // Keep atexit/exit flush pointed at the live agent, not
+                    // the dead CLI default that no longer owns the history.
+                    cortex::mk3::flush::activate(slot->get(), model->activeSessionId);
                     model->pendingRoute = "agent";
                 }
             }
@@ -566,11 +569,11 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     joinWfWorker();
     chat::savePromptHistory(model->promptHistory);
     g_running = true;
-    // Vet-fix: TUI exit (Ctrl-C, ESC, hub-route, snapshot mode) — persist
-    // whichever id the agent has captured to, so sessions don't silently
-    // vanish on quit. submitComposer arms activeSessionId at first
-    // prompt so the lazy path lands the session before exit.
-    if (!model->activeSessionId.empty()) flushAgentSession(agent, model->activeSessionId, false);
+    // Vet-fix: flush the LIVE agent (hub hot-swap may have replaced the
+    // CLI-constructed Agent with slot->owned). Flushing `agent` (external)
+    // after launching brainstormer wrote records:[] over the real session.
+    if (!model->activeSessionId.empty())
+        flushAgentSession(slot->get(), model->activeSessionId, false);
     cortex::mk3::flush::disarm();
     return rc;
 }

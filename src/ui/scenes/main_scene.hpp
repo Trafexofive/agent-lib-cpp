@@ -1617,7 +1617,39 @@ class MainScene final : public BaseScene {
             model_->dashboard, sessions,
             [&](const std::string& id) { model_->rootAgent->loadSession(id); });
         if (!result.ok) return;
-        model_->loadSessionRecords(result.records);
+        // loadSession may have repaired records:[] from the state
+        // checkpoint into agent.history_ + re-saved the session file.
+        // Prefer re-reading the session so the chat UI gets the same
+        // rows the agent will use for the next turn.
+        std::vector<SessionRecord> records = std::move(result.records);
+        if (records.empty() && sessions.exists(result.sessionId)) {
+            try {
+                records = sessions.load(result.sessionId).records;
+            } catch (...) {
+            }
+        }
+        if (records.empty() && model_->rootAgent) {
+            // Last resort: synthesize User/Agent rows from agent.history_
+            // so the operator never lands in an empty chat when state
+            // recovered in-memory but session JSON is still empty.
+            for (const auto& h : model_->rootAgent->history()) {
+                SessionRecord rec;
+                if (h.rfind("User: ", 0) == 0) {
+                    rec.role = SessionRecord::USER;
+                    rec.content = h.substr(6);
+                } else if (h.rfind("Agent: ", 0) == 0) {
+                    rec.role = SessionRecord::AGENT;
+                    rec.content = h.substr(7);
+                } else if (h.rfind("System: ", 0) == 0) {
+                    rec.role = SessionRecord::SYSTEM;
+                    rec.content = h.substr(8);
+                } else {
+                    continue;  // skip Parent(...) noise in UI unless useful
+                }
+                records.push_back(std::move(rec));
+            }
+        }
+        model_->loadSessionRecords(records);
         model_->activeSessionId = result.sessionId;
         model_->pendingRoute = "agent";
     }
