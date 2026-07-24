@@ -1300,6 +1300,17 @@ struct ShellModel {
                           static_cast<unsigned long long>(salt & 0xFFFFu));
             activeSessionId = buf;
             dashboard.notice = std::string("armed ") + activeSessionId;
+            // Vet-fix: seed the typed prompt into the agent's history_
+            // and persist immediately. Otherwise the operator's typed
+            // prompt disappears when the TUI exits between submit and
+            // prompt() landing a record — and `recover session` shows
+            // an empty chat. seedUserPrompt is idempotent with prompt()'s
+            // own push (it dedupes by trailing-equality), so the worker's
+            // subsequent save still produces a clean record set.
+            if (rootAgent) {
+                rootAgent->seedUserPrompt(text);
+                rootAgent->saveSession(activeSessionId);
+            }
         }
         pendingSubmit = text;
         if (promptHistory.empty() || promptHistory.back() != text) promptHistory.push_back(text);

@@ -683,13 +683,26 @@ std::string Agent::runLoop(AgentContext &ctx) {
 
     // Push initiator input once at start (NOT per-iteration). Parent-agent
     // delegates are labeled so the child can distinguish them from the human.
+    // Vet-fix: skip when the submitter pre-seeded history_ with the same
+    // text — submitComposer can write a saveSession immediately on first
+    // non-empty turn (so a TUI that crashes before prompt() runs still has
+    // something on disk), but that gives the prompt path a duplicate User:
+    // entry. Detect the trailing-equal-or-prefix and skip the second push.
     if (ctx.source == PromptSource::ParentAgent) {
         std::string from = ctx.sourceName.empty() ? "parent" : ctx.sourceName;
         history_.push_back("Parent(" + from + "): " + ctx.userInput);
     } else if (ctx.source == PromptSource::Internal) {
         history_.push_back("System: " + ctx.userInput);
     } else {
-        history_.push_back("User: " + ctx.userInput);
+        // Vet-fix: submitComposer pre-seeds history_ with the same user
+        // text so a TUI exit before this method runs still lands the
+        // typed prompt on disk. Skip a trailing-equal User: line to
+        // avoid duplicating records on the next prompt.
+        const std::string needle = "User: " + ctx.userInput;
+        bool alreadyLast = !history_.empty() && history_.back() == needle;
+        if (!alreadyLast) {
+            history_.push_back(needle);
+        }
     }
 
     // Parser lives across iterations — usedActionIds_ and finalResponseSeen_

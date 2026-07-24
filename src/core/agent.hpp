@@ -122,6 +122,15 @@ class Agent {
     // Survives across prompt() calls so sub-agent continuity is inspectable.
     const std::vector<std::string>& history() const { return history_; }
 
+    // Vet-fix: pre-seed history_ with a user prompt so the next saveSession
+    // call lands at least one record. submitComposer invokes this so a TUI
+    // that aborts between the user's keystroke and runAgentTurn's first
+    // iteration still backs the typed text to disk. Idempotent: prompt()
+    // detects the trailing-equal User: line and skips its own push.
+    void seedUserPrompt(const std::string& text) {
+        history_.push_back("User: " + text);
+    }
+
     const std::vector<ProtocolEvent>& protocolEvents() const {
         return protocolEvents_;
     }

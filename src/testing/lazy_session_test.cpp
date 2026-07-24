@@ -99,6 +99,22 @@ int main() {
     CHECK_OK(sm.exists(model->activeSessionId),
              "saveSession wrote the session file under tmp base");
 
+    // Vet-fix: Operator-reported scenario — bare TUI exit between submit
+    // and runAgentTurn's first iteration. The session file must contain
+    // at least the typed User record so `recover` shows the chat.
+    auto loaded = sm.load(model->activeSessionId);
+    CHECK_OK(!loaded.records.empty(),
+             "saved session has at least one record (typed user prompt)");
+    bool foundUser = false;
+    for (const auto& rec : loaded.records) {
+        if (rec.role == SessionRecord::USER && rec.content == "hello world") {
+            foundUser = true;
+            break;
+        }
+    }
+    CHECK_OK(foundUser,
+             "saved session carries the typed User record");
+
     std::cout << "\n────── ok ──────\n";
     std::cout << "lazy-arm session test: PASS\n";
     std::cout << "────────────────\n";
