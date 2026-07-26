@@ -72,6 +72,7 @@ std::string SessionManager::sessionPath(const std::string& id) const {
 }
 
 Session SessionManager::load(const std::string& id) const {
+    std::lock_guard<std::recursive_mutex> lock(ioMutex());
     std::string path = sessionPath(id);
     Session s;
     s.id = id;
@@ -125,7 +126,8 @@ Session SessionManager::load(const std::string& id) const {
     }
 }
 
-void SessionManager::save(const Session& s) const {
+void SessionManager::save(const Session& s, bool pretty) const {
+    std::lock_guard<std::recursive_mutex> lock(ioMutex());
     std::filesystem::create_directories(baseDir_);
     Json::Value root;
     root["id"] = s.id;
@@ -169,16 +171,18 @@ void SessionManager::save(const Session& s) const {
     }
     std::string path = sessionPath(s.id);
     std::ofstream f(path + ".tmp");
-    f << cortex::mk3::json::stringify(root, /*pretty=*/true);
+    f << cortex::mk3::json::stringify(root, pretty);
     f.close();
     std::filesystem::rename(path + ".tmp", path);
 }
 
 void SessionManager::remove(const std::string& id) const {
+    std::lock_guard<std::recursive_mutex> lock(ioMutex());
     std::filesystem::remove(sessionPath(id));
 }
 
 bool SessionManager::exists(const std::string& id) const {
+    std::lock_guard<std::recursive_mutex> lock(ioMutex());
     return std::filesystem::exists(sessionPath(id));
 }
 
@@ -202,6 +206,7 @@ void SessionManager::appendRecord(const std::string& id, const SessionRecord& r)
 }
 
 std::vector<SessionManager::SessionInfo> SessionManager::list() const {
+    std::lock_guard<std::recursive_mutex> lock(ioMutex());
     std::vector<SessionInfo> result;
     if (!std::filesystem::exists(baseDir_))
         return result;
@@ -229,11 +234,24 @@ std::vector<SessionManager::SessionInfo> SessionManager::list() const {
             info.model = root.get("model", "").asString();
             info.updated = root.get("updated", "").asString();
             info.turnCount = root.isMember("records") ? root["records"].size() : 0;
-            // Prefer an operator-set display name over the ambiguous
-            // agent_name field, so a session can be tagged cleanly.
+            info.hasUiTimeline = root.isMember("ui_timeline") && !root["ui_timeline"].isNull();
+            // Operator display title: metadata.name, else first user record snippet.
             if (root.isMember("metadata") && root["metadata"].isObject() &&
                 root["metadata"].isMember("name") && root["metadata"]["name"].isString()) {
-                info.agentName = root["metadata"]["name"].asString();
+                info.title = root["metadata"]["name"].asString();
+            }
+            if (info.title.empty() && root.isMember("records") && root["records"].isArray()) {
+                for (const auto& rv : root["records"]) {
+                    if (rv.get("role", "").asString() == "user") {
+                        std::string body = rv.get("content", "").asString();
+                        // First line, capped for list scan.
+                        auto nl = body.find('\n');
+                        if (nl != std::string::npos) body = body.substr(0, nl);
+                        if (body.size() > 48) body = body.substr(0, 45) + "...";
+                        info.title = body;
+                        break;
+                    }
+                }
             }
             result.push_back(info);
         } catch (...) {

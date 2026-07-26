@@ -37,6 +37,7 @@
 #include "src/providers/factory.hpp"
 #include "src/sandbox/policy.hpp"
 #include "src/session/manager.hpp"
+#include "src/session/controller.hpp"
 #include "src/tui/dialog.hpp"
 #include "src/tui/manifest_manager.hpp"
 #include "src/tui/repl_session.hpp"
@@ -100,7 +101,9 @@ struct CliConfig {
     bool raw = false;
     bool toolAnsi = true;
     bool replMode = false;
-    std::string tuiMode;  // legacy | inkcell | experimental (default from MK3_TUI or legacy)
+    std::string tuiMode;  // legacy | inkcell | experimental
+                          // inkcell is an alias of experimental (native inkcell App).
+                          // legacy = ReplSession oracle. Default: experimental (MK3_TUI / config).
     std::string tuiDebugDumpPath;
     std::string sessionName;    // --name <name>: human-readable session label
     std::string forkFrom;       // --fork <id>: copy an existing session and continue
@@ -232,8 +235,9 @@ Global flags:
   --no-session         Don't load/save a session record
   --ephemeral          Exit when the agent turn finishes
   --tui <legacy|inkcell|experimental>
-                       Select TUI backend. legacy/inkcell use ReplSession oracle;
-                       experimental uses the inkcell-native chat port (env: MK3_TUI)
+                       TUI backend (env: MK3_TUI). Default: experimental.
+                       inkcell|experimental = native inkcell App (product surface).
+                       legacy = ReplSession oracle (ANSI 1:1 chat path).
   --tui-debug-dump <path> Auto-write TUI render/debug state (env: MK3_TUI_DEBUG_DUMP)
   --dry-run            Validate config + prompt without calling LLM
   --help               Show this help
@@ -263,7 +267,7 @@ void printHelpRun() {
 
 Flags:
   -p, --prompt <text>    Seed/run this prompt (orthogonal to session/lifecycle flags).
-                         With experimental TUI: stays interactive unless --ephemeral.
+                         With inkcell/experimental TUI: stays interactive unless --ephemeral.
                          Headless/legacy path: runs once and returns.
   -f, --file <path>      Read prompt from file
   -m, --manifest [name|path]  Agent name (catalog) or path; bare -m opens manager
@@ -279,7 +283,7 @@ Flags:
   --truncate / --no-truncate   Cap long bodies pi-style (default: on)
   --no-tool-ansi         Strip ANSI/color escapes from tool result rendering
   --repl                 Force interactive mode even with --prompt
-  --tui <legacy|inkcell|experimental> Select TUI backend
+  --tui <legacy|inkcell|experimental>  inkcell≡experimental (native); legacy=oracle
   --tui-debug-dump <path> Auto-write TUI render/debug state
 )";
 }
@@ -381,8 +385,11 @@ static void applyConfig(CliConfig& cli, const std::map<std::string, std::string>
         cli.manifestDir = get("manifest_dir", cli.manifestDir);
     if (cli.tuiMode.empty()) {
         const char* envTui = std::getenv("MK3_TUI");
-        cli.tuiMode = (envTui && envTui[0]) ? std::string(envTui) : get("tui", "legacy");
+        cli.tuiMode = (envTui && envTui[0]) ? std::string(envTui) : get("tui", "experimental");
     }
+    // Honest alias: --tui inkcell is the native inkcell App (not ReplSession).
+    if (cli.tuiMode == "inkcell")
+        cli.tuiMode = "experimental";
     if (cli.configPath.empty())
         cli.configPath = get("config_path", defaultConfigPath());
 }
@@ -1951,17 +1958,9 @@ static int cmdRun(CliConfig& cli) {
             std::cerr << "Error: --fork target session not found: " << cli.forkFrom << "\n";
             return 1;
         }
-        Session src = sm.load(cli.forkFrom);
+        // Deep-copy including ui_timeline (session audit S0.4).
         std::string newId = newSessionId();
-        Session fork = sm.create(newId, src.agentName, src.model, src.provider);
-        fork.records = src.records;
-        fork.contextFeeds = src.contextFeeds;
-        fork.metadata = src.metadata;
-        if (!cli.sessionName.empty())
-            fork.metadata["name"] = cli.sessionName;
-        fork.metadata["forked_from"] = cli.forkFrom;
-        fork.updated = session::SessionManager::iso8601();
-        sm.save(fork);
+        Session fork = session::forkSession(sm, cli.forkFrom, newId, cli.sessionName);
         forkedFrom = cli.forkFrom;
         cli.sessionId = newId;
         cli.forkFrom.clear();
@@ -2141,7 +2140,8 @@ static int cmdRun(CliConfig& cli) {
         catalog::fixDefaultPromptPaths(acfg, cli.manifestDir);
     }
 
-    if (cli.tuiMode != "legacy" && cli.tuiMode != "inkcell" && cli.tuiMode != "experimental") {
+    // Note: inkcell already normalized to experimental above.
+    if (cli.tuiMode != "legacy" && cli.tuiMode != "experimental") {
         std::cerr << "Error: unknown TUI backend '" << cli.tuiMode
                   << "' (expected legacy|inkcell|experimental)\n";
         return 1;
@@ -2245,6 +2245,7 @@ static int cmdRun(CliConfig& cli) {
         if (!cli.noSession && !promptSessionId.empty())
             persistSessionMetadata(promptSessionId, cli, acfg);
 
+        // Native inkcell App (experimental; inkcell alias already normalized).
         if (cli.tuiMode == "experimental") {
             ui::InkcellAppConfig icfg;
             icfg.agentName = acfg.name;
@@ -2294,14 +2295,10 @@ static int cmdRun(CliConfig& cli) {
         return 0;
     }
 
-    // ── Interactive experimental inkcell app ──
-    // Supports both the dashboard (no -m: startAtDashboard = true) and direct
-    // chat (-m: startAtDashboard = false). It is now the default landing
-    // surface for a bare `cortex-mk3` (no prompt, no manifest) so the operator
-    // opens into the control surface instead of the legacy REPL. Explicit
-    // `--tui experimental` continues to route here. With a -m manifest, the
-    // app goes straight to the agent scene; with a -p prompt in one-shot mode,
-    // runInkcellOneShot (above) is used instead.
+    // ── Interactive native inkcell app (product surface) ──
+    // Default for --tui experimental|inkcell and for bare `cortex-mk3`
+    // (no prompt, no manifest). Dashboard when no -m; agent scene with -m.
+    // Legacy ReplSession is opt-in via --tui legacy only.
     if (cli.tuiMode == "experimental" ||
         (cli.prompt.empty() && cli.manifestPath.empty())) {
         std::string experimentalSessionId =
@@ -2332,7 +2329,7 @@ static int cmdRun(CliConfig& cli) {
     }
 
     // ── Interactive REPL TUI / chat oracle ──
-    // legacy and inkcell still route through ReplSession.
+    // --tui legacy only. inkcell is no longer a ReplSession alias.
     std::string replSessionId =
         cli.noSession
             ? ""

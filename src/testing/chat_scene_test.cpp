@@ -214,12 +214,40 @@ void test_ctrl_c_state() {
     AgentBridge bridge;
     auto model = std::make_shared<ShellModel>();
     scenes::AgentScene scene(cfg, bridge, model);
+    // 1st Ctrl-C while running → cancel (pi UX), not quit.
     model->running = true;
     g_running = true;
     scene.on_key(key(inkcell::KeyCode::CtrlC));
     check(!g_running && model->status.find("cancelling") == 0,
           "Ctrl-C requests active turn cancellation");
+    check(model->pendingRoute != "quit", "1st Ctrl-C while running does not quit");
+    // 2nd Ctrl-C when idle → quit.
+    model->running = false;
+    model->askActive = false;
+    model->status = "idle";
     g_running = true;
+    model->pendingRoute.clear();
+    scene.on_key(key(inkcell::KeyCode::CtrlC));
+    check(model->pendingRoute == "quit", "2nd Ctrl-C when idle requests quit");
+    g_running = true;
+}
+
+void test_esc_never_routes_main_or_quit() {
+    InkcellAppConfig cfg;
+    AgentBridge bridge;
+    auto model = std::make_shared<ShellModel>();
+    scenes::AgentScene scene(cfg, bridge, model);
+    model->composer.focused = true;
+    model->timelineFocus = false;
+    scene.on_key(key(inkcell::KeyCode::Escape));
+    check(model->timelineFocus && !model->composer.focused,
+          "Esc from composer focuses timeline");
+    check(model->pendingRoute.empty(), "Esc does not route to main");
+    check(model->pendingRoute != "quit", "Esc does not quit");
+    scene.on_key(key(inkcell::KeyCode::Escape));
+    check(model->composer.focused && !model->timelineFocus,
+          "Esc from timeline returns to composer");
+    check(model->pendingRoute.empty(), "Esc still does not route to main");
 }
 void test_chat_scroll_keys() {
     // Regression for the "no way to actually scroll the history" complaint.
@@ -287,6 +315,7 @@ int main() {
     test_ask_notes_only_auto_completes();
     test_slash_and_completion();
     test_ctrl_c_state();
+    test_esc_never_routes_main_or_quit();
     test_chat_scroll_keys();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;

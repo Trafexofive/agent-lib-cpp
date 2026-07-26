@@ -46,13 +46,16 @@ class AgentScene final : public BaseScene {
             return true;
         }
 
-        // Vet-fix: Esc ladder. Operator priority is "newest by default, `i` is
-        // composer key, backspace/Esc back to main". Esc first dismisses the
-        // top notification (if any), then drops focus timeline <-> composer
-        // without stomp-scrolling. We do not auto-scroll to newest on Esc.
+        // Esc ladder (pi-like): never quit, never route to dashboard, never
+        // drill-back. Esc only dismisses overlays / toggles focus rungs.
+        // Navigation: `m` → main, Backspace/h → goBack (when not typing).
         if (event.code == KeyCode::Escape) {
             if (!model_->notificationStack.empty()) {
                 model_->notificationStack.dismissTop();
+                return true;
+            }
+            if (model_->cmdPalette.open && !model_->cmdPalette.closing) {
+                model_->cmdPalette.requestClose();
                 return true;
             }
             if (model_->composer.focused) {
@@ -61,19 +64,12 @@ class AgentScene final : public BaseScene {
                 return true;
             }
             if (model_->timelineFocus) {
-                // Vet-fix: third rung. Drilldown-aware: in a subagent
-                // pop, fall back only on a root timeline. Same chord
-                // pattern as Backspace so the operator can use either.
-                model_->timelineFocus = false;
-                model_->composer.focused = false;
-                if (!model_->atRoot()) {
-                    model_->goBack();
-                } else {
-                    model_->pendingRoute = "main";
-                }
+                // Return focus to composer; stay on this scene/agent path.
+                model_->focusComposer();
                 return true;
             }
-            // No ladder rung consumed — fall through to existing Esc chain.
+            // Idle / no rung — still consume so Esc never becomes quit.
+            return true;
         }
 
         // Vet-fix: Backspace is NEVER navigation while composer is focused
@@ -100,13 +96,15 @@ class AgentScene final : public BaseScene {
             return true;
         }
 
+        // Pi UX: 1st Ctrl-C cancels in-flight turn / ask; 2nd (when idle) exits.
+        // Engine no longer hard-quits before the scene sees Ctrl-C.
         if (event.code == KeyCode::CtrlC) {
             if (model_->running || model_->askActive) {
                 stopAgentLoop("ctrl-c");
             } else {
                 model_->pendingRoute = "quit";
             }
-            return true;
+            return true;  // always consume — never fall through to engine hard-quit
         }
         // Ctrl-X always means stop the loop (never quit) — explicit kill switch.
         if (event.code == KeyCode::Character && event.ctrl() &&
@@ -119,18 +117,21 @@ class AgentScene final : public BaseScene {
         if (event.code == KeyCode::Character && event.ctrl()) {
             if (event.ch == 't' || event.ch == 'T') {
                 model_->showThoughts = !model_->showThoughts;
+                model_->markProjFull();
                 model_->rebuildViews();
                 persistUiPrefs(*model_);
                 return true;
             }
             if (event.ch == 'o' || event.ch == 'O') {
                 model_->truncateBodies = !model_->truncateBodies;
+                model_->markProjFull();
                 model_->rebuildViews();
                 persistUiPrefs(*model_);
                 return true;
             }
             if (event.ch == 'r' || event.ch == 'R') {
                 model_->showRaw = !model_->showRaw;
+                model_->markProjFull();
                 model_->rebuildViews();
                 persistUiPrefs(*model_);
                 return true;
@@ -161,11 +162,7 @@ class AgentScene final : public BaseScene {
                 theme::toggle();
                 return true;
             }
-            if (event.code == KeyCode::Escape) {
-                if (model_->goBack()) return true;
-                model_->focusComposer();
-                return true;
-            }
+            // Escape handled in the top ladder (no goBack / no main route).
             // Up/Down scroll the transcript line-by-line (free read scroll through
             // history). This is the intuitive scroll every chat has; the prior
             // binding jumped between block markers instead of scrolling.
@@ -381,18 +378,21 @@ class AgentScene final : public BaseScene {
         }
         if (id == "chat.thoughts") {
             model_->showThoughts = !model_->showThoughts;
+            model_->markProjFull();
             model_->rebuildViews();
             persistUiPrefs(*model_);
             return;
         }
         if (id == "chat.truncate") {
             model_->truncateBodies = !model_->truncateBodies;
+            model_->markProjFull();
             model_->rebuildViews();
             persistUiPrefs(*model_);
             return;
         }
         if (id == "chat.raw") {
             model_->showRaw = !model_->showRaw;
+            model_->markProjFull();
             model_->rebuildViews();
             persistUiPrefs(*model_);
             return;
@@ -559,11 +559,13 @@ class AgentScene final : public BaseScene {
         bool prefsDirty = false;
         if (result.toggleThoughts) {
             model_->showThoughts = !model_->showThoughts;
+            model_->markProjFull();
             model_->rebuildViews();
             prefsDirty = true;
         }
         if (result.toggleTruncate) {
             model_->truncateBodies = !model_->truncateBodies;
+            model_->markProjFull();
             model_->rebuildViews();
             prefsDirty = true;
         }
@@ -713,9 +715,11 @@ class AgentScene final : public BaseScene {
         else if (action.is("shell.focus_timeline")) model_->focusTimeline();
         else if (action.is("shell.toggle_raw")) {
             model_->showRaw = !model_->showRaw;
+            model_->markProjFull();
             model_->rebuildViews();
         } else if (action.is("shell.toggle_thoughts")) {
             model_->showThoughts = !model_->showThoughts;
+            model_->markProjFull();
             model_->rebuildViews();
         } else if (action.is("scroll.up")) model_->selectDelta(-1);
         else if (action.is("scroll.down")) model_->selectDelta(1);

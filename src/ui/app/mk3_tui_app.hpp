@@ -17,6 +17,7 @@
 #include "src/core/manifest_loader.hpp"
 #include "src/providers/factory.hpp"
 #include "src/session/manager.hpp"
+#include "src/session/controller.hpp"
 #include "src/ui/bridge/agent_bridge.hpp"
 #include "src/ui/chat/prompt_history.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
@@ -39,6 +40,9 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
     }
     applyUiPrefsToModel(*model);
     model->activeSessionId = cfg.sessionId;
+    // Single active id: seed process-wide SessionRef (kills dual-flush).
+    // only --no-session suppresses disk; --ephemeral is exit-on-done (orthogonal).
+    session::activeSession().set(cfg.sessionId, cfg.noSession);
     // Wire the agent display identity so the chat transcript labels the
     // assistant's own turns with the real agent name + model/provider (not the
     // generic "CORTEX" sentinel) and subagent turns with the subagent name.
@@ -53,9 +57,11 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
     model->dashboard.refreshAll();
     model->promptHistory = chat::loadPromptHistory();
     model->promptHistoryIndex = static_cast<int>(model->promptHistory.size());
+    // Unified resume: prefer ui_timeline, fall back to records (session audit S0.3).
     if (!cfg.sessionId.empty()) {
         session::SessionManager sessions;
-        if (sessions.exists(cfg.sessionId)) model->loadSessionRecords(sessions.load(cfg.sessionId).records);
+        if (sessions.exists(cfg.sessionId))
+            model->loadSessionUi(sessions.load(cfg.sessionId));
     }
 }
 
@@ -143,20 +149,23 @@ inline void disarm() {
 }
 inline void runOnce() {
     Agent* a = nullptr;
-    std::string sid;
-    std::string cfgSid;
     bool wasActive = false;
     {
         std::lock_guard<std::mutex> g(state().mtx);
         wasActive = state().active;
         a = state().agent;
-        sid = state().sessionId;
-        cfgSid = state().cfgSessionId;
         state().active = false;
     }
     if (!wasActive || a == nullptr) return;
-    flushAgentSession(*a, cfgSid, false);
-    flushAgentSession(*a, sid, false);
+    // Single id from SessionRef (plus model sync via setActiveSession).
+    std::string sid = session::activeSession().get();
+    if (sid.empty()) {
+        std::lock_guard<std::mutex> g(state().mtx);
+        sid = state().sessionId.empty() ? state().cfgSessionId : state().sessionId;
+    }
+    flushAgentSession(*a, sid, session::activeSession().isEphemeral());
+    // Drain any coalesced async ui_timeline write before process death.
+    session::AsyncUiTimelineWriter::instance().flush();
 }
 }
 
@@ -273,9 +282,14 @@ inline int runInkcellShell(const InkcellAppConfig& cfg, Agent& agent) {
     // brainstormer / chat / experimental sessions land on disk before
     // the process tears down. saveSession is id-only gated; empty runs
     // write nothing — no phantom files.
-    if (!cfg.sessionId.empty()) flushAgentSession(agent, cfg.sessionId, false);
-    if (!model->activeSessionId.empty()) flushAgentSession(agent, model->activeSessionId, false);
-    cortex::mk3::flush::setActiveSession(model->activeSessionId);
+    // Single active id: model wins (lazy arm may have advanced past cfg).
+    if (!model->activeSessionId.empty())
+        session::activeSession().set(model->activeSessionId, cfg.noSession);
+    std::string sid = session::activeSession().get();
+    if (sid.empty()) sid = model->activeSessionId.empty() ? cfg.sessionId : model->activeSessionId;
+    flushAgentSession(agent, sid, cfg.noSession || session::activeSession().isEphemeral());
+    model->persistUiTimelineFlush();
+    cortex::mk3::flush::setActiveSession(sid);
     cortex::mk3::flush::disarm();
     (void)bridge;  // bridge still required to outlive App::run's worker observers
     return rc;
@@ -341,8 +355,12 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     // whatever the agent had captured. The submitComposer path now arms
     // activeSessionId lazily at first prompt; flush after worker join
     // picks that up.
-    if (!sessionId.empty()) flushAgentSession(agent, sessionId, noSession);
-    if (!model->activeSessionId.empty()) flushAgentSession(agent, model->activeSessionId, false);
+    if (!model->activeSessionId.empty())
+        session::activeSession().set(model->activeSessionId, noSession);
+    std::string sid = session::activeSession().get();
+    if (sid.empty()) sid = model->activeSessionId.empty() ? sessionId : model->activeSessionId;
+    flushAgentSession(agent, sid, noSession || session::activeSession().isEphemeral());
+    model->persistUiTimelineFlush();
     cortex::mk3::flush::disarm();
     return rc;
 }
@@ -355,7 +373,9 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
 // history/contextFeeds content; an empty run writes nothing — no orphans.
 inline void flushAgentSession(Agent& agent, const std::string& sessionId, bool ephemeral) {
     if (ephemeral || sessionId.empty()) return;
+    if (session::activeSession().isEphemeral()) return;
     agent.saveSession(sessionId);
+    session::AsyncUiTimelineWriter::instance().flush();
 }
 
 // Live agent slot — starts as external ref from main(); hub launch may replace
@@ -580,7 +600,12 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     // history second (agent memory).
     model->persistUiTimeline();
     if (!model->activeSessionId.empty())
-        flushAgentSession(slot->get(), model->activeSessionId, false);
+        session::activeSession().set(model->activeSessionId, noSession);
+    std::string sid = session::activeSession().get();
+    if (sid.empty()) sid = model->activeSessionId;
+    if (!sid.empty())
+        flushAgentSession(slot->get(), sid, noSession || session::activeSession().isEphemeral());
+    model->persistUiTimelineFlush();
     cortex::mk3::flush::disarm();
     return rc;
 }

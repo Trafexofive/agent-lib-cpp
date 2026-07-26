@@ -333,6 +333,56 @@ inline std::vector<std::string> wrapWordsLossless(const std::string& value, int 
     return out;
 }
 
+// Count display lines for one source row without allocating the strings.
+// Must stay semantically aligned with wrapTranscriptRange for scroll math.
+inline int countTranscriptLineSpan(const std::string& original, int width, bool& inCode,
+                                   const std::string& agentName = {}) {
+    width = std::max(1, width);
+    if (original.empty()) return 1;
+    size_t indentSize = 0;
+    while (indentSize < original.size() && original[indentSize] == ' ' && indentSize < 6) ++indentSize;
+    std::string content = original.substr(indentSize);
+    int available = std::max(1, width - static_cast<int>(indentSize));
+    const std::string selectionPrefix = "› ";
+    std::string semanticProbe = content.rfind(selectionPrefix, 0) == 0
+                                    ? content.substr(selectionPrefix.size())
+                                    : content;
+    bool semanticHeader = semanticProbe.rfind("YOU", 0) == 0 ||
+                          (!agentName.empty() && semanticProbe.rfind(agentName, 0) == 0) ||
+                          semanticProbe.rfind("CORTEX", 0) == 0 ||
+                          semanticProbe.rfind("AGENT", 0) == 0 || semanticProbe.rfind("TOOL", 0) == 0 ||
+                          semanticProbe.rfind("FEED", 0) == 0 || semanticProbe.rfind("RELIC", 0) == 0 ||
+                          semanticProbe.rfind("WORKFLOW", 0) == 0 || semanticProbe.rfind("ACTION", 0) == 0 ||
+                          semanticProbe.rfind("✓ RESULT", 0) == 0 || semanticProbe.rfind("✗ RESULT", 0) == 0 ||
+                          semanticProbe.rfind("THOUGHT", 0) == 0 || semanticProbe.rfind("RAW", 0) == 0 ||
+                          semanticProbe.rfind("✗ ERROR", 0) == 0;
+    if (semanticHeader) {
+        return std::max(1, static_cast<int>(hardWrapUtf8(content, available).size()));
+    }
+    if (content.rfind("```", 0) == 0) {
+        inCode = !inCode;
+        return 1;
+    }
+    if (inCode) {
+        return std::max(1, static_cast<int>(hardWrapUtf8(content, std::max(1, available - 2)).size()));
+    }
+    auto wrapped = wrapWordsLossless(content, available);
+    return std::max(1, static_cast<int>(wrapped.size()));
+}
+
+inline void countTranscriptRangeSpans(const std::vector<std::string>& source, size_t begin, size_t end,
+                                      int width, bool inCodeInit, std::vector<int>& spans,
+                                      std::vector<bool>& inCodeAfter,
+                                      const std::string& agentName = {}) {
+    width = std::max(1, width);
+    bool inCode = inCodeInit;
+    for (size_t idx = begin; idx < end; ++idx) {
+        int n = countTranscriptLineSpan(source[idx], width, inCode, agentName);
+        spans.push_back(n);
+        inCodeAfter.push_back(inCode);
+    }
+}
+
 inline void wrapTranscriptRange(const std::vector<std::string>& source, size_t begin, size_t end,
                                 int width, bool inCodeInit,
                                 std::vector<std::string>& out,
@@ -435,73 +485,222 @@ inline void buildBlockMetadata(const std::vector<std::string>& lines,
     }
 }
 
+inline int sumSpans(const std::vector<int>& spans) {
+    int t = 0;
+    for (int s : spans) t += s;
+    return t;
+}
+
+// Map a display-line offset → first source index whose span range covers it.
+// displayStartOut = display line index where that source line begins.
+inline size_t sourceIndexAtDisplayOffset(const std::vector<int>& spans, int displayOffset,
+                                         int& displayStartOut) {
+    int acc = 0;
+    for (size_t i = 0; i < spans.size(); ++i) {
+        int next = acc + spans[i];
+        if (displayOffset < next) {
+            displayStartOut = acc;
+            return i;
+        }
+        acc = next;
+    }
+    displayStartOut = acc;
+    return spans.size();
+}
+
+// Ensure span map (+ optional full materialization) matches source/version/width.
+// virtualize=true → only update spans/snapshot; leave cache.lines empty/unused.
+inline void syncTranscriptWrapCache(TranscriptWrapCache& cache,
+                                    const std::vector<std::string>& source, int wrapWidth,
+                                    uint64_t version, const std::string& agentName,
+                                    bool virtualize) {
+    if (cache.sourceVersion == version && cache.width == wrapWidth &&
+        cache.sourceSnapshot.size() == source.size() &&
+        cache.sourceLineSpans.size() == source.size()) {
+        // Still valid. For non-virtualized path, lines must exist.
+        if (!virtualize && cache.lines.empty() && !source.empty()) {
+            // Fall through to rebuild materialization.
+        } else {
+            return;
+        }
+    }
+
+    const bool sameWidth = cache.width == wrapWidth;
+    if (!sameWidth || cache.sourceSnapshot.empty() || cache.sourceLineSpans.empty()) {
+        cache.sourceLineSpans.clear();
+        cache.inCodeAfter.clear();
+        cache.lines.clear();
+        if (virtualize) {
+            countTranscriptRangeSpans(source, 0, source.size(), wrapWidth, false,
+                                      cache.sourceLineSpans, cache.inCodeAfter, agentName);
+        } else {
+            wrapTranscriptRange(source, 0, source.size(), wrapWidth, false, cache.lines,
+                                cache.sourceLineSpans, cache.inCodeAfter, agentName);
+        }
+        cache.sourceSnapshot = source;
+    } else {
+        // Incremental dirty-tail update of spans (and lines if not virtualizing).
+        size_t d = 0;
+        const auto& snap = cache.sourceSnapshot;
+        while (d < source.size() && d < snap.size() && source[d] == snap[d]) ++d;
+        int stableEnd = 0;
+        for (size_t i = 0; i < d && i < cache.sourceLineSpans.size(); ++i)
+            stableEnd += cache.sourceLineSpans[i];
+        cache.sourceLineSpans.resize(d);
+        cache.inCodeAfter.resize(d);
+        bool inCode = d > 0 ? cache.inCodeAfter[d - 1] : false;
+        if (virtualize) {
+            countTranscriptRangeSpans(source, d, source.size(), wrapWidth, inCode,
+                                      cache.sourceLineSpans, cache.inCodeAfter, agentName);
+            cache.lines.clear();  // invalidate full materialization
+        } else {
+            cache.lines.resize(static_cast<size_t>(stableEnd));
+            wrapTranscriptRange(source, d, source.size(), wrapWidth, inCode, cache.lines,
+                                cache.sourceLineSpans, cache.inCodeAfter, agentName);
+        }
+        cache.sourceSnapshot = source;
+    }
+    cache.blockKinds.clear();
+    cache.blockHeaders.clear();
+    cache.blockSelected.clear();
+    cache.viewportOffset = -1;
+    cache.viewportH = -1;
+    cache.viewportLines.clear();
+    cache.totalDisplayLines = sumSpans(cache.sourceLineSpans);
+    cache.sourceVersion = version;
+    cache.width = wrapWidth;
+}
+
+// Materialize display lines covering [displayOffset, displayOffset+height).
+inline void materializeViewport(TranscriptWrapCache& cache, const std::vector<std::string>& source,
+                                int wrapWidth, int displayOffset, int height,
+                                const std::string& agentName) {
+    if (height <= 0) {
+        cache.viewportLines.clear();
+        cache.viewportOffset = displayOffset;
+        cache.viewportH = 0;
+        return;
+    }
+    // Reuse if same window already painted.
+    if (cache.viewportOffset == displayOffset && cache.viewportH == height &&
+        !cache.viewportLines.empty()) {
+        return;
+    }
+    int overscan = std::max(4, height / 2);
+    int winStart = std::max(0, displayOffset - overscan);
+    int winEnd = displayOffset + height + overscan;
+
+    int srcDisplayStart = 0;
+    size_t srcBegin =
+        sourceIndexAtDisplayOffset(cache.sourceLineSpans, winStart, srcDisplayStart);
+    // Expand srcEnd until we cover winEnd display lines.
+    size_t srcEnd = srcBegin;
+    int covered = srcDisplayStart;
+    while (srcEnd < cache.sourceLineSpans.size() && covered < winEnd) {
+        covered += cache.sourceLineSpans[srcEnd];
+        ++srcEnd;
+    }
+    if (srcBegin > source.size()) srcBegin = source.size();
+    if (srcEnd > source.size()) srcEnd = source.size();
+
+    bool inCode = srcBegin > 0 && srcBegin - 1 < cache.inCodeAfter.size()
+                      ? cache.inCodeAfter[srcBegin - 1]
+                      : false;
+    cache.viewportLines.clear();
+    std::vector<int> localSpans;
+    std::vector<bool> localInCode;
+    wrapTranscriptRange(source, srcBegin, srcEnd, wrapWidth, inCode, cache.viewportLines,
+                        localSpans, localInCode, agentName);
+    // viewportLines[0] corresponds to display line srcDisplayStart.
+    // Trim leading lines if winStart > srcDisplayStart.
+    int lead = winStart - srcDisplayStart;
+    if (lead > 0 && lead < static_cast<int>(cache.viewportLines.size())) {
+        cache.viewportLines.erase(cache.viewportLines.begin(),
+                                  cache.viewportLines.begin() + lead);
+        // winStart is now the base of viewportLines[0]
+    } else if (lead >= static_cast<int>(cache.viewportLines.size())) {
+        cache.viewportLines.clear();
+    }
+    // Now viewportLines[0] is display line winStart (or empty).
+    // We need lines starting at displayOffset.
+    int skip = displayOffset - winStart;
+    if (skip > 0 && skip < static_cast<int>(cache.viewportLines.size())) {
+        cache.viewportLines.erase(cache.viewportLines.begin(),
+                                  cache.viewportLines.begin() + skip);
+    } else if (skip >= static_cast<int>(cache.viewportLines.size())) {
+        cache.viewportLines.clear();
+    }
+    if (static_cast<int>(cache.viewportLines.size()) > height)
+        cache.viewportLines.resize(static_cast<size_t>(height));
+
+    buildBlockMetadata(cache.viewportLines, cache.viewportKinds, cache.viewportHeaders,
+                       cache.viewportSelected, agentName);
+    cache.viewportOffset = displayOffset;
+    cache.viewportH = height;
+}
+
 inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const ChatSurfaceModel& m) {
     if (body.w <= 0 || body.h <= 0) return;
     const auto& source = m.transcriptSource ? *m.transcriptSource : m.transcript;
     int wrapWidth = std::max(1, body.w - 1);
+    const bool virtualize =
+        m.transcriptCache && source.size() >= kViewportVirtualizeSourceThreshold;
+
     std::vector<std::string> uncachedLines;
     const std::vector<std::string>* displayLinesPtr = nullptr;
+    int total = 0;
+    int offset = 0;
+    bool useViewportWindow = false;
+
     if (m.transcriptCache) {
         auto& cache = *m.transcriptCache;
-        if (cache.sourceVersion != m.transcriptVersion || cache.width != wrapWidth) {
-            const bool sameWidth = cache.width == wrapWidth;
-            if (!sameWidth || cache.sourceSnapshot.empty()) {
-                // Full rewrap: new width or first run.
-                cache.lines.clear();
-                cache.sourceLineSpans.clear();
-                cache.inCodeAfter.clear();
-                wrapTranscriptRange(source, 0, source.size(), wrapWidth, false,
-                                    cache.lines, cache.sourceLineSpans, cache.inCodeAfter,
-                                    m.agentName);
-                cache.sourceSnapshot = source;
-            } else {
-                // Incremental: keep the stable display prefix, re-wrap only the dirty tail.
-                // Find the first source line that differs from the snapshot.
-                size_t d = 0;
-                const auto& snap = cache.sourceSnapshot;
-                while (d < source.size() && d < snap.size() && source[d] == snap[d]) ++d;
-                int stableEnd = 0;
-                for (size_t i = 0; i < d; ++i) stableEnd += cache.sourceLineSpans[i];
-                cache.lines.resize(static_cast<size_t>(stableEnd));
-                cache.sourceLineSpans.resize(d);
-                cache.inCodeAfter.resize(d);
-                bool inCode = d > 0 ? cache.inCodeAfter[d - 1] : false;
-                wrapTranscriptRange(source, d, source.size(), wrapWidth, inCode,
-                                    cache.lines, cache.sourceLineSpans, cache.inCodeAfter,
-                                    m.agentName);
-                cache.sourceSnapshot = source;
+        syncTranscriptWrapCache(cache, source, wrapWidth, m.transcriptVersion, m.agentName,
+                                virtualize);
+        total = cache.totalDisplayLines;
+        if (total <= 0 && source.empty()) {
+            // empty state below
+        } else if (virtualize) {
+            useViewportWindow = true;
+            int maxOffset = std::max(0, total - body.h);
+            offset = m.followBottom ? maxOffset : std::max(0, std::min(m.scrollOffset, maxOffset));
+            // historyFocused: find › in source and estimate — scan source headers cheaply
+            if (m.historyFocused) {
+                int acc = 0;
+                for (size_t i = 0; i < source.size() && i < cache.sourceLineSpans.size(); ++i) {
+                    if (source[i].rfind("› ", 0) == 0) {
+                        offset = std::max(0, std::min(maxOffset, acc - body.h / 3));
+                        break;
+                    }
+                    acc += cache.sourceLineSpans[i];
+                }
             }
-            // Block metadata rebuilds on size mismatch (checked below). Clearing here
-            // forces a fresh pass — cheap (no allocs) and avoids stale tail metadata
-            // when the dirty tail produces the same display-line count.
-            cache.blockKinds.clear();
-            cache.blockHeaders.clear();
-            cache.blockSelected.clear();
-            cache.sourceVersion = m.transcriptVersion;
-            cache.width = wrapWidth;
+            materializeViewport(cache, source, wrapWidth, offset, body.h, m.agentName);
+            displayLinesPtr = &cache.viewportLines;
+        } else {
+            displayLinesPtr = &cache.lines;
+            total = static_cast<int>(cache.lines.size());
+            // Keep totalDisplayLines in sync for non-virtual path.
+            cache.totalDisplayLines = total;
         }
-        displayLinesPtr = &cache.lines;
     } else {
         uncachedLines = wrapTranscript(source, wrapWidth, m.agentName);
         displayLinesPtr = &uncachedLines;
+        total = static_cast<int>(uncachedLines.size());
     }
-    const auto& displayLines = *displayLinesPtr;
-    int total = static_cast<int>(displayLines.size());
+
     if (total <= 0) {
-        // First-run empty state: the body would otherwise be a void between
-        // the header and the status line. Show a centered dim headline + a
-        // tip so a fresh operator knows what this surface is and how to
-        // start. Hidden once any content exists.
         const std::string headline = "No conversation yet";
         const std::string tip = "Type a prompt below and press Enter \xe2\x80\x94 or press ? for help";
         int yHeadline = body.y + std::max(0, body.h / 2 - 1);
         int yTip = yHeadline + 1;
         if (yTip < body.y + body.h) {
-            int xHeadline = body.x + std::max(0, (body.w - inkcell::text::display_width(headline)) / 2);
+            int xHeadline =
+                body.x + std::max(0, (body.w - inkcell::text::display_width(headline)) / 2);
             int xTip = body.x + std::max(0, (body.w - inkcell::text::display_width(tip)) / 2);
             if (yHeadline >= body.y)
                 surface.text({xHeadline, yHeadline},
-                             inkcell::text::truncate(headline, std::max(0, body.w - (xHeadline - body.x))),
+                             inkcell::text::truncate(headline,
+                                                     std::max(0, body.w - (xHeadline - body.x))),
                              theme::dim());
             surface.text({xTip, yTip},
                          inkcell::text::truncate(tip, std::max(0, body.w - (xTip - body.x))),
@@ -509,12 +708,58 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
         }
         return;
     }
+
+    const auto& displayLines = *displayLinesPtr;
     std::vector<uint8_t> localKinds;
     std::vector<bool> localHeaders;
     std::vector<bool> localSelected;
     std::vector<uint8_t>* blockKinds = &localKinds;
     std::vector<bool>* blockHeaders = &localHeaders;
     std::vector<bool>* blockSelected = &localSelected;
+
+    if (useViewportWindow && m.transcriptCache) {
+        blockKinds = &m.transcriptCache->viewportKinds;
+        blockHeaders = &m.transcriptCache->viewportHeaders;
+        blockSelected = &m.transcriptCache->viewportSelected;
+        // displayLines already IS the viewport window starting at `offset`.
+        int visible = std::min(body.h, static_cast<int>(displayLines.size()));
+        int firstY = body.y;
+        int blockWidth = std::max(1, body.w - (total > body.h ? 1 : 0));
+        for (int y = 0; y < visible; ++y) {
+            const auto& line = displayLines[static_cast<size_t>(y)];
+            ChatBlockKind kind =
+                y < static_cast<int>(blockKinds->size())
+                    ? static_cast<ChatBlockKind>((*blockKinds)[static_cast<size_t>(y)])
+                    : ChatBlockKind::None;
+            bool header =
+                y < static_cast<int>(blockHeaders->size()) ? (*blockHeaders)[static_cast<size_t>(y)]
+                                                           : false;
+            bool selected = m.historyFocused && y < static_cast<int>(blockSelected->size()) &&
+                            (*blockSelected)[static_cast<size_t>(y)];
+            if (kind != ChatBlockKind::None) {
+                auto style = blockStyle(kind, header, selected);
+                surface.fill({body.x, firstY + y, blockWidth, 1}, " ", style);
+                surface.text({body.x, firstY + y}, header ? "▎" : " ", style);
+                surface.text({body.x + 1, firstY + y},
+                             inkcell::text::fit_left(line, std::max(1, blockWidth - 1)), style);
+            } else {
+                surface.text({body.x, firstY + y}, inkcell::text::fit_left(line, body.w),
+                             theme::text());
+            }
+        }
+        int maxOffset = std::max(0, total - body.h);
+        if (total > body.h && body.w > 4) {
+            int thumb = std::max(1, body.h * body.h / std::max(1, total));
+            int thumbY = (offset * std::max(1, body.h - thumb)) / std::max(1, maxOffset);
+            for (int y = 0; y < body.h; ++y) {
+                surface.put({body.right() - 1, body.y + y},
+                            (y >= thumbY && y < thumbY + thumb) ? "│" : "┆", theme::dim());
+            }
+        }
+        return;
+    }
+
+    // Non-virtualized: full displayLines vector (small transcripts / tests).
     if (m.transcriptCache) {
         if (m.transcriptCache->blockKinds.size() != displayLines.size())
             buildBlockMetadata(displayLines, m.transcriptCache->blockKinds,
@@ -528,7 +773,7 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
     }
 
     int maxOffset = std::max(0, total - body.h);
-    int offset = m.followBottom ? maxOffset : std::max(0, std::min(m.scrollOffset, maxOffset));
+    offset = m.followBottom ? maxOffset : std::max(0, std::min(m.scrollOffset, maxOffset));
     if (m.historyFocused) {
         for (int i = 0; i < total; ++i) {
             if (displayLines[static_cast<size_t>(i)].rfind("› ", 0) == 0) {
@@ -538,11 +783,6 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
         }
     }
     int visible = std::min(body.h, total - offset);
-    // Top-anchor the visible window within the body: short transcripts start
-    // right below the header and grow downward (contiguous with the header, no
-    // floating void); once the transcript overflows, offset = maxOffset keeps the
-    // newest lines at the bottom of the body (stick-to-bottom). Standard chat
-    // pattern (Slack/Discord): messages start at the top, stick when full.
     int firstY = body.y;
     for (int y = 0; y < visible; ++y) {
         int idx = offset + y;
@@ -565,7 +805,8 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
         int thumb = std::max(1, body.h * body.h / total);
         int thumbY = (offset * std::max(1, body.h - thumb)) / std::max(1, maxOffset);
         for (int y = 0; y < body.h; ++y) {
-            surface.put({body.right() - 1, body.y + y}, (y >= thumbY && y < thumbY + thumb) ? "│" : "┆", theme::dim());
+            surface.put({body.right() - 1, body.y + y},
+                        (y >= thumbY && y < thumbY + thumb) ? "│" : "┆", theme::dim());
         }
     }
 }

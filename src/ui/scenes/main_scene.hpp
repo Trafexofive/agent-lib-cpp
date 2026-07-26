@@ -5,12 +5,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "base_scene.hpp"
+#include "src/session/controller.hpp"
 #include "src/session/manager.hpp"
 #include "src/ui/assets/glyphs.hpp"
 #include "src/ui/chat/chat_view.hpp"
@@ -370,6 +372,10 @@ class MainScene final : public BaseScene {
                     return true;
                 case 'f':
                 case 'F':
+                    if (dash.section == model::DashboardSection::Sessions) {
+                        forkSelectedSession();
+                        return true;
+                    }
                     if (dash.section == model::DashboardSection::Manifests) {
                         if (event.ch == 'F' && workflowSelectionActive()) {
                             dash.wfCanvasExpanded = !dash.wfCanvasExpanded;
@@ -383,6 +389,10 @@ class MainScene final : public BaseScene {
                     }
                     return true;
                 case 't':
+                    if (dash.section == model::DashboardSection::Sessions) {
+                        retitleSelectedSession();
+                        return true;
+                    }
                     if (dash.section == model::DashboardSection::Manifests) {
                         dash.cycleTagFilter();
                         bumpNotice();
@@ -917,28 +927,28 @@ class MainScene final : public BaseScene {
             if (selected)
                 surface.text({frame.x, y}, "▌", theme::cyan().with_bg(rowBg.bg));
 
-            // ID — short suffix for scan-ability
+            // Primary label: title (first prompt / rename) else id suffix.
             std::string idTxt = suffix(s.id);
-            int idW = std::max(2, inkcell::text::display_width(idTxt));
+            std::string label = !s.title.empty() ? s.title : idTxt;
+            int labelW = std::max(2, inkcell::text::display_width(label));
             auto idSt = active ? theme::bright() : theme::muted();
             idSt.bg = rowBg.bg;
             surface.text({frame.x + 1, y},
-                         inkcell::text::truncate(idTxt, std::max(2, frame.w - 3)),
+                         inkcell::text::truncate(label, std::max(2, frame.w - 3)),
                          active ? idSt.strong() : idSt);
 
             if (frame.w >= 64) {
-                // STATE badge
+                // STATE + resume quality badge
                 auto state = active ? theme::green() : theme::dim();
                 state.bg = rowBg.bg;
                 state.bold = active;
-                surface.text({frame.x + idW + 2, y},
-                             active ? "● LIVE" : "◯", state);
+                std::string badge = active ? "● LIVE" : (s.hasUiTimeline ? "◉ UI" : "◯");
+                surface.text({frame.x + labelW + 2, y}, badge, state);
 
                 // AGENT column
                 std::string agentTxt = nonempty(s.agentName, "?");
-                int agW = std::max(8, inkcell::text::display_width(agentTxt));
-                surface.text({frame.x + idW + 9, y},
-                             inkcell::text::truncate(agentTxt, std::max(8, frame.w - idW - 30)),
+                surface.text({frame.x + labelW + 10, y},
+                             inkcell::text::truncate(agentTxt, std::max(8, frame.w - labelW - 32)),
                              (theme::text()).with_bg(rowBg.bg));
 
                 // TURNS
@@ -960,8 +970,8 @@ class MainScene final : public BaseScene {
                 surface.text({frame.x + frame.w - 14, y},
                              inkcell::text::truncate(whenTxt, 14), updSt);
             } else {
-                std::string oneLine = active ? "● " : "  ";
-                oneLine += " " + idTxt + "  " + nonempty(s.agentName, "?") + "  " +
+                std::string oneLine = active ? "● " : (s.hasUiTimeline ? "◉ " : "  ");
+                oneLine += label + "  " + nonempty(s.agentName, "?") + "  " +
                            std::to_string(s.turnCount) + "r  ";
                 if (!s.updated.empty()) oneLine += s.updated;
                 auto st = ((selected ? theme::bright() : theme::text())).with_bg(rowBg.bg);
@@ -974,7 +984,8 @@ class MainScene final : public BaseScene {
 
         // Footer row: error context message + J/K hint
         if (y < frame.bottom()) {
-            std::string hint = "j/k move · enter resume · n new · d delete · e export · x kill-live";
+            std::string hint =
+                "j/k · ↵ resume · n new · f fork · t title · d del · e export · x kill";
             surface.text({frame.x, y}, inkcell::text::truncate(hint, frame.w),
                          theme::italic_dim());
         }
@@ -1720,6 +1731,83 @@ class MainScene final : public BaseScene {
             model_->dashboard.notice = "killed live session " + suffix(id);
         } catch (const std::exception& e) {
             model_->dashboard.notice = std::string("kill failed: ") + e.what();
+        }
+    }
+
+    void forkSelectedSession() {
+        const auto* sel = model_->dashboard.selectedSession();
+        if (!sel) {
+            model_->dashboard.notice = "no session selected";
+            return;
+        }
+        try {
+            session::SessionManager sessions;
+            if (!sessions.exists(sel->id)) {
+                model_->dashboard.notice = "session missing on disk";
+                return;
+            }
+            auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::system_clock::now().time_since_epoch())
+                             .count();
+            std::string newId = "fork-" + std::to_string(stamp);
+            std::string title = sel->title.empty() ? ("fork of " + suffix(sel->id))
+                                                  : (sel->title + " (fork)");
+            Session fork = session::forkSession(sessions, sel->id, newId, title);
+            model_->dashboard.refreshSessions(sessions);
+            // Select the new fork.
+            for (int i = 0; i < static_cast<int>(model_->dashboard.sessions.size()); ++i) {
+                if (model_->dashboard.sessions[static_cast<size_t>(i)].id == fork.id) {
+                    model_->dashboard.sessionIndex = i;
+                    break;
+                }
+            }
+            model_->dashboard.notice =
+                "forked " + suffix(sel->id) + " → " + suffix(fork.id) +
+                (fork.uiTimelineJson.empty() ? " (records only)" : " (ui timeline)");
+        } catch (const std::exception& e) {
+            model_->dashboard.notice = std::string("fork failed: ") + e.what();
+        }
+    }
+
+    void retitleSelectedSession() {
+        const auto* sel = model_->dashboard.selectedSession();
+        if (!sel) {
+            model_->dashboard.notice = "no session selected";
+            return;
+        }
+        try {
+            session::SessionManager sessions;
+            Session s = sessions.load(sel->id);
+            if (s.id.empty()) {
+                model_->dashboard.notice = "session missing on disk";
+                return;
+            }
+            // Prefer first user record as title; if already titled, clear (toggle).
+            std::string next;
+            if (sel->title.empty() || sel->title == suffix(sel->id)) {
+                for (const auto& rec : s.records) {
+                    if (rec.role == SessionRecord::USER && !rec.content.empty()) {
+                        next = rec.content;
+                        auto nl = next.find('\n');
+                        if (nl != std::string::npos) next = next.substr(0, nl);
+                        if (next.size() > 48) next = next.substr(0, 45) + "...";
+                        break;
+                    }
+                }
+                if (next.empty()) next = "session " + suffix(sel->id);
+            } else {
+                next.clear();  // clear custom title → fall back to prompt/id
+            }
+            if (!session::setSessionTitle(sessions, sel->id, next)) {
+                model_->dashboard.notice = "title update failed";
+                return;
+            }
+            model_->dashboard.refreshSessions(sessions);
+            model_->dashboard.notice =
+                next.empty() ? ("cleared title on " + suffix(sel->id))
+                             : ("titled " + suffix(sel->id) + " → " + next);
+        } catch (const std::exception& e) {
+            model_->dashboard.notice = std::string("title failed: ") + e.what();
         }
     }
 

@@ -428,12 +428,17 @@ class ReplSession {
             handleResize(sessionView, transcriptDirty, cachedRendererWidth, frameClock, renderScreen);
             cmd.clear();
             while (cmd.empty() && cortex::mk3::g_running) {
+                handleResize(sessionView, transcriptDirty, cachedRendererWidth, frameClock,
+                             renderScreen);
                 std::string before = input.line();
                 size_t beforeCp = input.cursorPos();
-                input.poll();
+                bool hadInput = input.poll();
                 if (input.line() != before || input.cursorPos() != beforeCp) {
                     frameClock.requestFrame();
                     renderScreen(true, false);
+                } else if (!hadInput) {
+                    // Idle: poll stdin (+ wake_fd) instead of spinning at 100% CPU.
+                    waitForActivity(/*streaming=*/false);
                 }
             }
             if (!cortex::mk3::g_running || cmd.empty())
@@ -736,10 +741,10 @@ class ReplSession {
         fds[1].events = POLLIN;
         fds[1].revents = 0;
         const nfds_t nfds = wakeFd_ >= 0 ? 2 : 1;
-        // Preserve legacy loop timing (previously usleep(2000)) while allowing
-        // agent wake_fd to interrupt immediately when stream snapshots arrive.
-        (void)streaming;
-        int rc = ::poll(fds, nfds, 2);
+        // Streaming: 2ms (legacy usleep cadence) so spinner/status stay lively.
+        // Idle prompt: 50ms — stdin or wake_fd still interrupts immediately.
+        const int timeoutMs = streaming ? 2 : 50;
+        int rc = ::poll(fds, nfds, timeoutMs);
         if (rc > 0 && wakeFd_ >= 0 && (fds[1].revents & POLLIN)) drainWake();
     }
 

@@ -27,14 +27,34 @@ Living document tracking Cortex-Prime MK3 agent-lib status, priorities, decision
 | **Spinner/live typing during LLM** | **Blocked** — `curl_easy_perform` blocks main thread |
 | **LLM protocol compliance** | **~60% baseline (remeasure after CANON)** — contract lies removed 2026-07-10 |
 | **Global agent selection / any-CWD** | **Shipped** — `manifests/` only; bare `-m` manager + ownership trees |
-| **TUI (builtin)** | **POC** — legacy path frozen for strangler migration |
-| **inkcell migration** | **Phase 0 shipped** — tracked plan in `docs/INKCELL_MIGRATION.md` + artifact `art-mrflxfd4-gupoyt` |
-| **inkcell MVP widgets** | **Baseline** — TextArea, ScrollView, engine wake/poll, wcwidth |
+| **TUI (builtin)** | **Oracle** — `--tui legacy` ReplSession; frozen for parity reference |
+| **inkcell migration** | **ACTIVE path C** — native App is default; living plan `docs/INKCELL_MIGRATION.md` |
+| **inkcell product surface** | **Shipped baseline** — MainScene + AgentScene; ask/cancel/scroll tests green |
 | **Persona separation** | **Deployed** — assistant.md + decoupler.md pure behavioral, no protocol leaks |
 
 ---
 
 ## 2. Priority Queue
+
+### Active design track — Manifest `compaction` (brainstorm)
+
+Long-horizon / autonomous jobs need **smart, dynamic compaction** — not just a blunt `history_cap`. Goal: save tokens, protect the context window, keep load-bearing state, drop noise.
+
+**Operator sketch (input):**
+```yaml
+compaction:
+  trigger:
+    context_window: 60k   # tokens | percentage
+  compaction_conf:        # better name TBD
+    tags:                 # keep / clean / truncate policies per tag/kind
+```
+
+**Status:** design only — 5 candidate shapes drafted for denoise/align/filter.  
+**Artifact:** `compaction-manifest-drafts-v0` (`art-mrtruq0y-v877xz`)  
+**Depends on:** context economy / plans builtin (daily-driver bar item e)  
+**Do not implement** until operator picks a shape (or hybrid).
+
+**Post-compact next track (2026-03-27):** askcards + builtins finalize → ship `manifest-expert` → then main-menu redesign. Compaction schema lands with context-economy work.
 
 > **SHORT-TERM HARD GOAL (added 2026-07-17):** Get Cortex-Prime MK3 to **pi-level daily-driver capability** — the threshold where it can be trusted as a primary agent harness for real work, not just demos. Until that threshold clears, use Cortex instances as **sub-agents spawned from pi** (test phase): pi orchestrates, Cortex executes delegated tasks, failures feed back into gap closure. Full gap analysis + integration plan: artifact `cortex-pi-level-gap-analysis`.
 >
@@ -184,4 +204,4 @@ Results append line-by-line. Each `harvestPendingTools()` call pushes new lines 
 
 ---
 
-*Last updated: 2026-07-10 | protocol CANON burn*
+*Last updated: 2026-03-27 | compaction drafts + askcards/manifest-expert next track*

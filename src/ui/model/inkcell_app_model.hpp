@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
+#include <deque>
 #include <set>
 #include <sstream>
 #include <string>
@@ -16,6 +17,7 @@
 #include "inkcell/widgets/textarea.hpp"
 #include "src/core/agent.hpp"
 #include "src/protocol/noise.hpp"
+#include "src/session/controller.hpp"
 #include "src/ui/chat/notification.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
 #include "src/ui/chat/transcript_cache.hpp"
@@ -434,7 +436,8 @@ inline std::vector<TimelineRow> rowsFromAgent(Agent* agent) {
 struct ShellModel {
     chat::NotificationStack notificationStack;
     // Live root transcript (bridge-fed).
-    std::vector<TimelineRow> rootRows;
+    // deque: O(1) pop_front when enforceRowCap drops oldest Stream/Thought rows.
+    std::deque<TimelineRow> rootRows;
     std::vector<std::string> eventLog;
     std::string raw;
     std::string finalText;
@@ -519,7 +522,7 @@ struct ShellModel {
     // Maps visible block index -> rootRows/nested row index
     std::vector<int> blockRowIndex;
     // Nested frame cache (rebuilt on enter/refresh)
-    std::vector<TimelineRow> nestedRows;
+    std::deque<TimelineRow> nestedRows;
 
     // Current-turn protocol reducer. Agent protocol entries mutate in place as
     // response text and progress results grow; map each protocol index to one row.
@@ -529,6 +532,13 @@ struct ShellModel {
     bool viewRebuildPending = false;
     uint64_t viewRebuildCount = 0;
     uint64_t transcriptVersion = 0;
+    // Incremental projection: first rootRows index that must be re-emitted into
+    // transcriptView.lines. SIZE_MAX = full rebuild. Streaming appends/upserts
+    // only dirty the tail so wrap cache keeps a long stable source prefix.
+    size_t projDirtyFrom = 0;
+    // Parallel to rootRows when at root: transcriptView line index where that
+    // root row's projection starts (-1 if the row was filtered out).
+    std::vector<int> rootRowLineStart;
     mutable chat::TranscriptWrapCache transcriptWrapCache;
     std::set<std::string> completedResultIds;
 
@@ -580,7 +590,7 @@ struct ShellModel {
         return cur;
     }
 
-    const std::vector<TimelineRow>& activeRows() const {
+    const std::deque<TimelineRow>& activeRows() const {
         return atRoot() ? rootRows : nestedRows;
     }
 
@@ -623,13 +633,15 @@ struct ShellModel {
             }
         }
         if (drop == 0) return; // can't honor cap without losing protected content
-        rootRows.erase(rootRows.begin(), rootRows.begin() + drop);
+        // O(drop) pop_front — each pop is O(1); avoid vector mid/front erase memmove.
+        for (size_t i = 0; i < drop; ++i) rootRows.pop_front();
         selectedBlock = std::max(0, selectedBlock - static_cast<int>(drop));
         // Active protocol indices must shift correspondingly.
         for (auto& idx : activeProtocolRows) {
             if (idx >= 0) idx -= static_cast<int>(drop);
         }
         timelineState = PageState::Populated;
+        markProjFull();  // indices shifted — invalidate incremental map
         rebuildViews();
     }
     void applyRowBans(TimelineRow row) {
@@ -679,10 +691,12 @@ struct ShellModel {
         timelineState = PageState::Populated;
         // Stick selection to bottom while streaming if already near end.
         if (running) selectedBlock = std::max(0, static_cast<int>(countFocusable(rootRows)) - 1);
+        markProjDirty(rootRows.size() - 1);  // append: only new tail row
         rebuildViews();
     }
 
-    static int countFocusable(const std::vector<TimelineRow>& rows, bool showThoughtsFlag = true) {
+    template <typename RowRange>
+    static int countFocusable(const RowRange& rows, bool showThoughtsFlag = true) {
         int n = 0;
         for (const auto& row : rows) {
             if (row.kind == TimelineKind::Thought && !showThoughtsFlag) continue;
@@ -698,175 +712,144 @@ struct ShellModel {
         if (!rootRows.empty() && rootRows.back().kind == TimelineKind::Stream) {
             rootRows.back().title = "stream";
             rootRows.back().body = std::to_string(bytes) + " bytes received";
+            markProjDirty(rootRows.size() - 1);
         } else {
             rootRows.push_back({TimelineKind::Stream, "stream", std::to_string(bytes) + " bytes received", true});
             timelineState = PageState::Populated;
+            markProjDirty(rootRows.size() - 1);
         }
         rebuildViews();
     }
 
-    void rebuildViews() {
-        if (batchingEvents) {
-            viewRebuildPending = true;
-            return;
-        }
-        viewRebuildPending = false;
-        ++viewRebuildCount;
-        ++transcriptVersion;
-        const auto& rows = activeRows();
-        transcriptView.lines.clear();
-        blockRowIndex.clear();
+    void markProjDirty(size_t rootIndex) {
+        if (rootIndex < projDirtyFrom) projDirtyFrom = rootIndex;
+    }
 
-        if (rows.empty()) {
-            if (atRoot()) timelineState = PageState::Empty;
-        } else {
-            // In a nested sub-agent scope the Response/Final label is the
-            // child agent name (its chat), not the parent root agent.
-            std::string scopeName = agentName;
-            if (!atRoot()) {
-                if (Agent* cur = currentAgent()) scopeName = cur->name();
-                else if (!agentPath.empty()) scopeName = agentPath.back();
+    void markProjFull() {
+        projDirtyFrom = 0;
+        rootRowLineStart.clear();
+    }
+
+    // Emit one root/nested row into transcriptView.lines (+ optional block index).
+    // Returns true if the row produced a focusable block.
+    bool projectOneRow(const TimelineRow& row, int ri, int& focusIdx, const std::string& scopeName,
+                       bool recordRootLineStart) {
+        if (row.kind == TimelineKind::Thought && !showThoughts) {
+            if (recordRootLineStart) rootRowLineStart.push_back(-1);
+            return false;
+        }
+        if (row.kind == TimelineKind::Thought) {
+            bool any = false;
+            for (char c : row.body) {
+                if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+                    any = true;
+                    break;
+                }
             }
-            int focusIdx = 0;
-            for (int ri = 0; ri < static_cast<int>(rows.size()); ++ri) {
-                const auto& row = rows[static_cast<size_t>(ri)];
-                if (row.kind == TimelineKind::Thought && !showThoughts) continue;
-                // Empty/whitespace-only thoughts are parser noise or open-tag
-                // placeholders — never paint a hollow ▎ THOUGHT block.
-                if (row.kind == TimelineKind::Thought) {
-                    bool any = false;
-                    for (char c : row.body) {
-                        if (c != ' ' && c != '\t' && c != '\n' && c != '\r') { any = true; break; }
-                    }
-                    if (!any) continue;
-                }
-                if (row.kind == TimelineKind::Stream && !showRaw) continue;
-
-                bool selected = timelineFocus && (focusIdx == selectedBlock);
-                blockRowIndex.push_back(ri);
-
-                std::string label;
-                switch (row.kind) {
-                    case TimelineKind::User:
-                        // Nested sub-agent chat: parent-agent missions are not the
-                        // human operator — label them PARENT <name>.
-                        if (row.title.rfind("parent:", 0) == 0)
-                            label = "PARENT  " + row.title.substr(7);
-                        else
-                            label = "YOU";
-                        break;
-                    case TimelineKind::Thought:
-                        label = "THOUGHT";
-                        break;
-                    case TimelineKind::Action: {
-                        // Subagent turns: lead with the subagent NAME (actionName) and
-                        // metadata (type, id, drillable), not a generic "AGENT" sentinel.
-                        // For non-agent actions (tools/feeds/relics/workflows) the type is
-                        // the kind label (TOOL/FEED/...) and actionName is the tool name.
-                        std::string type = row.actionType.empty() ? "ACTION" : row.actionType;
-                        std::transform(type.begin(), type.end(), type.begin(),
-                                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-                        if (type == "AGENT" && !row.actionName.empty()) {
-                            // Subagent: "AGENT  <name>  #<id>  ↳" — name is the headline.
-                            label = "AGENT  " + row.actionName;
-                            if (!row.actionId.empty()) label += "  #" + row.actionId;
-                            if (row.drillable) label += "  ↳";
-                        } else {
-                            label = type;
-                            if (!row.actionName.empty()) label += "  " + row.actionName;
-                            if (!row.actionId.empty()) label += "  #" + row.actionId;
-                            if (row.drillable) label += "  ↳";
-                        }
-                        break;
-                    }
-                    case TimelineKind::Result:
-                        label = row.ok ? "✓ RESULT" : "✗ RESULT";
-                        if (!row.actionName.empty()) label += "  " + row.actionName;
-                        if (!row.actionId.empty()) label += "  #" + row.actionId;
-                        if (row.drillable) label += "  ↳";
-                        break;
-                    // The assistant's own turns: label with the real agent name +
-                    // model/provider metadata instead of the generic "CORTEX" sentinel.
-                    // Falls back to "CORTEX" only if the agent identity was never wired
-                    // (e.g. standalone unit tests that don't call initializeChatModel).
-                    case TimelineKind::Response:
-                    case TimelineKind::Final:
-                        // Nested scope uses the child agent name (drop-into-its-chat).
-                        // Root keeps parent identity + model/provider metadata.
-                        label = scopeName.empty() ? "CORTEX" : scopeName;
-                        if (atRoot() && (!agentModel.empty() || !agentProvider.empty())) {
-                            label += "  ";
-                            std::string meta;
-                            if (!agentProvider.empty()) meta = agentProvider;
-                            if (!agentModel.empty()) {
-                                if (!meta.empty()) meta += "/";
-                                meta += agentModel;
-                            }
-                            label += meta;
-                        }
-                        break;
-                    case TimelineKind::Error:
-                        label = "✗ ERROR";
-                        break;
-                    case TimelineKind::Status:
-                        if (row.title == "limit") label = "⚠ LIMIT";
-                        else if (row.title == "finalize") label = "▣ FINALIZE";
-                        else label = "STATUS";
-                        break;
-                    case TimelineKind::Stream:
-                        label = "RAW";
-                        break;
-                    case TimelineKind::Log:
-                        label = row.title.empty() ? "NOTICE" : row.title;
-                        break;
-                }
-                transcriptView.lines.push_back(std::string(selected ? "› " : "  ") + label);
-                // Always emit the row body. For sub-agent Results this is the
-                // child's final response text (summary/output) — not nested
-                // child blocks. Full child timeline is manual ↳ Enter only.
-                // Optional truncation (pi-like): cap body lines when enabled.
-                {
-                    auto bodyLines = splitDisplayLines(row.body);
-                    int shown = 0;
-                    int total = 0;
-                    for (const auto& line : bodyLines) {
-                        if (line.empty() && row.body.empty()) continue;
-                        ++total;
-                    }
-                    for (const auto& line : bodyLines) {
-                        if (line.empty() && row.body.empty()) continue;
-                        if (truncateBodies && shown >= kMaxBodyLines) break;
-                        transcriptView.lines.push_back("    " + line);
-                        ++shown;
-                    }
-                    if (truncateBodies && total > shown) {
-                        transcriptView.lines.push_back(
-                            "    … (" + std::to_string(total - shown) +
-                            " more lines — /truncate off or ↳ drill to expand)");
-                    }
-                }
-                transcriptView.lines.push_back("");
-                ++focusIdx;
+            if (!any) {
+                if (recordRootLineStart) rootRowLineStart.push_back(-1);
+                return false;
             }
-            if (atRoot() && !rows.empty()) timelineState = PageState::Populated;
+        }
+        if (row.kind == TimelineKind::Stream && !showRaw) {
+            if (recordRootLineStart) rootRowLineStart.push_back(-1);
+            return false;
         }
 
-        // Clamp selection.
-        int focusable = static_cast<int>(blockRowIndex.size());
-        if (focusable <= 0) selectedBlock = 0;
-        else selectedBlock = std::max(0, std::min(selectedBlock, focusable - 1));
+        bool selected = timelineFocus && (focusIdx == selectedBlock);
+        if (recordRootLineStart)
+            rootRowLineStart.push_back(static_cast<int>(transcriptView.lines.size()));
+        blockRowIndex.push_back(ri);
 
-        // Keep selected block in view when timeline-focused; stick-bottom while running at root.
-        if (running && atRoot() && !timelineFocus) {
-            transcriptView.stick_bottom = true;
-            transcriptView.scroll_to_end();
-        } else if (timelineFocus && focusable > 0) {
-            transcriptView.stick_bottom = false;
-            ensureSelectionVisible();
-        } else if (transcriptView.stick_bottom) {
-            transcriptView.scroll_to_end();
+        std::string label;
+        switch (row.kind) {
+            case TimelineKind::User:
+                if (row.title.rfind("parent:", 0) == 0)
+                    label = "PARENT  " + row.title.substr(7);
+                else
+                    label = "YOU";
+                break;
+            case TimelineKind::Thought:
+                label = "THOUGHT";
+                break;
+            case TimelineKind::Action: {
+                std::string type = row.actionType.empty() ? "ACTION" : row.actionType;
+                std::transform(type.begin(), type.end(), type.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+                if (type == "AGENT" && !row.actionName.empty()) {
+                    label = "AGENT  " + row.actionName;
+                    if (!row.actionId.empty()) label += "  #" + row.actionId;
+                    if (row.drillable) label += "  ↳";
+                } else {
+                    label = type;
+                    if (!row.actionName.empty()) label += "  " + row.actionName;
+                    if (!row.actionId.empty()) label += "  #" + row.actionId;
+                    if (row.drillable) label += "  ↳";
+                }
+                break;
+            }
+            case TimelineKind::Result:
+                label = row.ok ? "✓ RESULT" : "✗ RESULT";
+                if (!row.actionName.empty()) label += "  " + row.actionName;
+                if (!row.actionId.empty()) label += "  #" + row.actionId;
+                if (row.drillable) label += "  ↳";
+                break;
+            case TimelineKind::Response:
+            case TimelineKind::Final:
+                label = scopeName.empty() ? "CORTEX" : scopeName;
+                if (atRoot() && (!agentModel.empty() || !agentProvider.empty())) {
+                    label += "  ";
+                    std::string meta;
+                    if (!agentProvider.empty()) meta = agentProvider;
+                    if (!agentModel.empty()) {
+                        if (!meta.empty()) meta += "/";
+                        meta += agentModel;
+                    }
+                    label += meta;
+                }
+                break;
+            case TimelineKind::Error:
+                label = "✗ ERROR";
+                break;
+            case TimelineKind::Status:
+                if (row.title == "limit") label = "⚠ LIMIT";
+                else if (row.title == "finalize") label = "▣ FINALIZE";
+                else label = "STATUS";
+                break;
+            case TimelineKind::Stream:
+                label = "RAW";
+                break;
+            case TimelineKind::Log:
+                label = row.title.empty() ? "NOTICE" : row.title;
+                break;
         }
+        transcriptView.lines.push_back(std::string(selected ? "› " : "  ") + label);
+        {
+            auto bodyLines = splitDisplayLines(row.body);
+            int shown = 0;
+            int total = 0;
+            for (const auto& line : bodyLines) {
+                if (line.empty() && row.body.empty()) continue;
+                ++total;
+            }
+            for (const auto& line : bodyLines) {
+                if (line.empty() && row.body.empty()) continue;
+                if (truncateBodies && shown >= kMaxBodyLines) break;
+                transcriptView.lines.push_back("    " + line);
+                ++shown;
+            }
+            if (truncateBodies && total > shown) {
+                transcriptView.lines.push_back(
+                    "    … (" + std::to_string(total - shown) +
+                    " more lines — /truncate off or ↳ drill to expand)");
+            }
+        }
+        transcriptView.lines.push_back("");
+        ++focusIdx;
+        return true;
+    }
 
+    void rebuildInspector() {
         inspectorView.lines.clear();
         inspectorView.lines.push_back("path     " + breadcrumb());
         inspectorView.lines.push_back("status   " + status);
@@ -880,10 +863,134 @@ struct ShellModel {
         if (eventLog.empty()) {
             inspectorView.lines.push_back("No protocol events yet.");
         } else {
-            for (int i = static_cast<int>(eventLog.size()) - 1; i >= 0 && inspectorView.lines.size() < 200; --i)
+            for (int i = static_cast<int>(eventLog.size()) - 1;
+                 i >= 0 && inspectorView.lines.size() < 200; --i)
                 inspectorView.lines.push_back(eventLog[static_cast<size_t>(i)]);
         }
         if (inspectorView.stick_bottom) inspectorView.scroll_to_end();
+    }
+
+    void finishRebuildScroll() {
+        int focusable = static_cast<int>(blockRowIndex.size());
+        if (focusable <= 0) selectedBlock = 0;
+        else selectedBlock = std::max(0, std::min(selectedBlock, focusable - 1));
+
+        if (running && atRoot() && !timelineFocus) {
+            transcriptView.stick_bottom = true;
+            transcriptView.scroll_to_end();
+        } else if (timelineFocus && focusable > 0) {
+            transcriptView.stick_bottom = false;
+            ensureSelectionVisible();
+        } else if (transcriptView.stick_bottom) {
+            transcriptView.scroll_to_end();
+        }
+        rebuildInspector();
+    }
+
+    // Full projection (nested views, filter toggles, selection chrome, load).
+    void rebuildViewsFull() {
+        const auto& rows = activeRows();
+        transcriptView.lines.clear();
+        blockRowIndex.clear();
+        rootRowLineStart.clear();
+        if (rows.empty()) {
+            if (atRoot()) timelineState = PageState::Empty;
+            projDirtyFrom = rows.size();
+            return;
+        }
+        std::string scopeName = agentName;
+        if (!atRoot()) {
+            if (Agent* cur = currentAgent()) scopeName = cur->name();
+            else if (!agentPath.empty()) scopeName = agentPath.back();
+        }
+        int focusIdx = 0;
+        const bool record = atRoot();
+        for (int ri = 0; ri < static_cast<int>(rows.size()); ++ri) {
+            projectOneRow(rows[static_cast<size_t>(ri)], ri, focusIdx, scopeName, record);
+        }
+        if (atRoot() && !rows.empty()) timelineState = PageState::Populated;
+        projDirtyFrom = rows.size();
+    }
+
+    // Streaming fast path: re-project only rootRows[projDirtyFrom..).
+    // Invariants for success:
+    //   - at root, not timeline-focused
+    //   - rootRowLineStart.size() == N where N is the previously projected
+    //     root row count (stable prefix length before this dirty wave)
+    //   - projDirtyFrom in (0, rootRows.size()]  (0 forces full)
+    bool tryRebuildViewsIncremental() {
+        if (!atRoot() || timelineFocus) return false;
+        if (projDirtyFrom == 0) return false;
+        if (projDirtyFrom > rootRows.size()) return false;
+        // Map must describe exactly the stable prefix [0, projDirtyFrom).
+        // After a previous full/inc pass, size == old rootRows.size() which may
+        // be > projDirtyFrom (we dirtied a middle/last row). Accept:
+        //   map.size() >= projDirtyFrom  (prefix valid)
+        if (rootRowLineStart.size() < projDirtyFrom) return false;
+
+        int cutLine = -1;
+        if (projDirtyFrom == rootRowLineStart.size()) {
+            // Pure append past previously projected rows.
+            cutLine = static_cast<int>(transcriptView.lines.size());
+        } else if (rootRowLineStart[projDirtyFrom] >= 0) {
+            cutLine = rootRowLineStart[projDirtyFrom];
+        } else {
+            // Dirty row was filtered last time; find next projected start.
+            cutLine = static_cast<int>(transcriptView.lines.size());
+            for (size_t j = projDirtyFrom + 1; j < rootRowLineStart.size(); ++j) {
+                if (rootRowLineStart[j] >= 0) {
+                    cutLine = rootRowLineStart[j];
+                    break;
+                }
+            }
+        }
+        if (cutLine < 0 || cutLine > static_cast<int>(transcriptView.lines.size()))
+            return false;
+
+        transcriptView.lines.resize(static_cast<size_t>(cutLine));
+
+        // Keep block indices that point only at stable prefix rows.
+        std::vector<int> newBlocks;
+        newBlocks.reserve(blockRowIndex.size());
+        for (int ri : blockRowIndex) {
+            if (ri >= 0 && ri < static_cast<int>(projDirtyFrom)) newBlocks.push_back(ri);
+        }
+        blockRowIndex.swap(newBlocks);
+        rootRowLineStart.resize(projDirtyFrom);
+
+        std::string scopeName = agentName.empty() ? "CORTEX" : agentName;
+        if (!agentModel.empty() || !agentProvider.empty()) {
+            // scopeName for Response labels is just agentName; model meta added in projectOneRow
+        }
+        int focusIdx = static_cast<int>(blockRowIndex.size());
+        for (size_t ri = projDirtyFrom; ri < rootRows.size(); ++ri) {
+            projectOneRow(rootRows[ri], static_cast<int>(ri), focusIdx, scopeName, true);
+        }
+        if (!rootRows.empty()) timelineState = PageState::Populated;
+        projDirtyFrom = rootRows.size();
+        return true;
+    }
+
+    void rebuildViews() {
+        if (batchingEvents) {
+            viewRebuildPending = true;
+            return;
+        }
+        viewRebuildPending = false;
+        ++viewRebuildCount;
+
+        // Cap eviction shifts indices — always full after that.
+        // Nested drill uses nestedRows; keep full path.
+        bool didInc = false;
+        if (atRoot() && !timelineFocus && projDirtyFrom > 0 &&
+            projDirtyFrom <= rootRows.size() && !rootRowLineStart.empty()) {
+            didInc = tryRebuildViewsIncremental();
+        }
+        if (!didInc) {
+            rebuildViewsFull();
+        }
+        ++transcriptVersion;  // wrap cache: dirty-tail rewrap via source snapshot
+        finishRebuildScroll();
     }
 
     void ensureSelectionVisible() {
@@ -909,6 +1016,7 @@ struct ShellModel {
         int n = static_cast<int>(blockRowIndex.size());
         if (n <= 0) return;
         selectedBlock = std::max(0, std::min(n - 1, selectedBlock + delta));
+        markProjFull();  // › marker moves between blocks
         rebuildViews();
     }
 
@@ -942,7 +1050,11 @@ struct ShellModel {
             return true;
         }
         agentPath.push_back(name);
-        nestedRows = rowsFromAgent(parent->getSubAgent(name));
+        {
+            auto rows = rowsFromAgent(parent->getSubAgent(name));
+            nestedRows.assign(std::make_move_iterator(rows.begin()),
+                              std::make_move_iterator(rows.end()));
+        }
         selectedBlock = 0;
         timelineFocus = true;
         composer.focused = false;
@@ -967,7 +1079,9 @@ struct ShellModel {
                 if (!parent) break;
                 parent = parent->getSubAgent(agentPath[i]);
             }
-            nestedRows = rowsFromAgent(parent ? parent->getSubAgent(agentPath.back()) : nullptr);
+            auto rows = rowsFromAgent(parent ? parent->getSubAgent(agentPath.back()) : nullptr);
+            nestedRows.assign(std::make_move_iterator(rows.begin()),
+                              std::make_move_iterator(rows.end()));
         }
         selectedBlock = 0;
         timelineFocus = true;
@@ -993,7 +1107,11 @@ struct ShellModel {
             if (now - lastNestedRefreshMs < 100) return;
             lastNestedRefreshMs = now;
         }
-        nestedRows = rowsFromAgent(cur);
+        {
+            auto rows = rowsFromAgent(cur);
+            nestedRows.assign(std::make_move_iterator(rows.begin()),
+                              std::make_move_iterator(rows.end()));
+        }
         rebuildViews();
     }
 
@@ -1001,6 +1119,7 @@ struct ShellModel {
         timelineFocus = true;
         composer.focused = false;
         if (selectedBlock < 0) selectedBlock = 0;
+        markProjFull();  // › selection markers on all blocks
         rebuildViews();
     }
 
@@ -1008,6 +1127,7 @@ struct ShellModel {
         if (!atRoot()) return;  // nested views are browse-only
         timelineFocus = false;
         composer.focused = true;
+        markProjFull();  // clear › markers
         rebuildViews();
     }
 
@@ -1020,9 +1140,11 @@ struct ShellModel {
         int& mapped = activeProtocolRows[index];
         if (mapped >= 0 && mapped < static_cast<int>(rootRows.size())) {
             rootRows[static_cast<size_t>(mapped)] = std::move(row);
+            markProjDirty(static_cast<size_t>(mapped));
         } else {
             mapped = static_cast<int>(rootRows.size());
             rootRows.push_back(std::move(row));
+            markProjDirty(static_cast<size_t>(mapped));
         }
         timelineState = PageState::Populated;
     }
@@ -1313,6 +1435,7 @@ struct ShellModel {
         }
         timelineState = rootRows.empty() ? PageState::Empty : PageState::Populated;
         selectedBlock = 0;
+        markProjFull();
         rebuildViews();
     }
 
@@ -1326,9 +1449,11 @@ struct ShellModel {
         if (!session.uiTimelineJson.empty()) {
             auto rows = deserializeTimeline(session.uiTimelineJson);
             if (!rows.empty()) {
-                rootRows = std::move(rows);
+                rootRows.assign(std::make_move_iterator(rows.begin()),
+                                std::make_move_iterator(rows.end()));
                 timelineState = PageState::Populated;
                 selectedBlock = 0;
+                markProjFull();
                 rebuildViews();
                 return;
             }
@@ -1337,32 +1462,30 @@ struct ShellModel {
     }
 
     // Snapshot live rootRows onto the session file so resume == live.
-    // Merges into existing session JSON (records/agent identity untouched
-    // except updated stamp). No-op if no session id or empty transcript.
+    // Non-blocking: coalesced async writer (session/perf audit commitAsync).
+    // Call persistUiTimelineFlush() on process exit if hard durability required.
     void persistUiTimeline() {
-        if (activeSessionId.empty() || !rootAgent) return;
-        std::string json = serializeTimeline(rootRows);
+        if (activeSessionId.empty()) return;
+        if (session::activeSession().isEphemeral()) return;
+        // Keep process-wide SessionRef aligned (single active id).
+        session::activeSession().set(activeSessionId, false);
+        std::vector<TimelineRow> snap(rootRows.begin(), rootRows.end());
+        std::string json = serializeTimeline(snap);
         if (json.empty() || json == "[]") return;
-        try {
-            auto& sm = rootAgent->sessionMgr();
-            Session s;
-            if (sm.exists(activeSessionId)) {
-                s = sm.load(activeSessionId);
-            } else {
-                s.id = activeSessionId;
-                s.agentName = agentName;
-                s.model = agentModel;
-                s.provider = agentProvider;
-                s.created = session::SessionManager::iso8601();
-            }
-            s.uiTimelineJson = std::move(json);
-            s.updated = session::SessionManager::iso8601();
-            if (s.agentName.empty()) s.agentName = agentName;
-            if (s.model.empty()) s.model = agentModel;
-            if (s.provider.empty()) s.provider = agentProvider;
-            sm.save(s);
-        } catch (...) {
-        }
+        static std::atomic<uint64_t> gen{1};
+        session::UiTimelineCommit c;
+        c.sessionId = activeSessionId;
+        c.baseDir = rootAgent ? rootAgent->sessionMgr().baseDir() : std::string{};
+        c.uiTimelineJson = std::move(json);
+        c.agentName = agentName;
+        c.model = agentModel;
+        c.provider = agentProvider;
+        c.generation = gen.fetch_add(1, std::memory_order_relaxed);
+        session::AsyncUiTimelineWriter::instance().enqueue(std::move(c));
+    }
+
+    void persistUiTimelineFlush() {
+        session::AsyncUiTimelineWriter::instance().flush();
     }
 
     void clearTranscript() {
@@ -1373,6 +1496,7 @@ struct ShellModel {
         completedResultIds.clear();
         pendingOps = 0;
         selectedBlock = 0;
+        markProjFull();
         rebuildViews();
     }
 
@@ -1444,6 +1568,7 @@ struct ShellModel {
                           static_cast<unsigned long long>(now),
                           static_cast<unsigned long long>(salt & 0xFFFFu));
             activeSessionId = buf;
+            session::activeSession().set(activeSessionId, session::activeSession().isEphemeral());
             dashboard.notice = std::string("armed ") + activeSessionId;
             // Vet-fix: seed the typed prompt into the agent's history_
             // and persist immediately. Otherwise the operator's typed
@@ -1452,7 +1577,7 @@ struct ShellModel {
             // an empty chat. seedUserPrompt is idempotent with prompt()'s
             // own push (it dedupes by trailing-equality), so the worker's
             // subsequent save still produces a clean record set.
-            if (rootAgent) {
+            if (rootAgent && !session::activeSession().isEphemeral()) {
                 rootAgent->seedUserPrompt(text);
                 rootAgent->saveSession(activeSessionId);
             }

@@ -29,9 +29,11 @@ class BaseScene : public inkcell::Scene {
         model_->tickRoute();
         if (action.is("shell.toggle_raw")) {
             model_->showRaw = !model_->showRaw;
+            model_->markProjFull();
             model_->rebuildViews();
         } else if (action.is("shell.toggle_thoughts")) {
             model_->showThoughts = !model_->showThoughts;
+            model_->markProjFull();
             model_->rebuildViews();
         } else if (action.is("shell.focus_composer")) {
             model_->composer.focused = true;

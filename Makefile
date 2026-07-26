@@ -266,6 +266,21 @@ $(UI_TIMELINE_TEST_BIN): $(OBJS) $(UI_TIMELINE_TEST_OBJ)
 test-ui-timeline: $(UI_TIMELINE_TEST_BIN)
 	./$(UI_TIMELINE_TEST_BIN)
 
+# ── SessionController foundation (SessionRef, mutex, async timeline, fork) ──
+SESSION_CTL_TEST_SRC := src/testing/session_controller_test.cpp
+SESSION_CTL_TEST_OBJ := $(BUILD_DIR)/testing/session_controller_test.o
+SESSION_CTL_TEST_BIN := session-controller-test
+
+$(SESSION_CTL_TEST_OBJ): $(SESSION_CTL_TEST_SRC) src/session/controller.hpp src/session/manager.hpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(SESSION_CTL_TEST_BIN): $(OBJS) $(SESSION_CTL_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(SESSION_CTL_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-session-controller: $(SESSION_CTL_TEST_BIN)
+	./$(SESSION_CTL_TEST_BIN)
+
 # ── Run-epoch stream isolation (no stream-into-stale-event) ──
 RUN_EPOCH_TEST_SRC := src/testing/run_epoch_test.cpp
 RUN_EPOCH_TEST_OBJ := $(BUILD_DIR)/testing/run_epoch_test.o
@@ -553,13 +568,18 @@ smoke: $(BIN_CLI)
 	@echo "=== smoke: version ===" && ./$(BIN_CLI) version 2>/dev/null
 	@echo "=== smoke: built ===" && ls -lh $(BIN_CLI)
 
+# Offline UI gate for inkcell product surface (no live LLM).
+.PHONY: ui-smoke test-session-controller
+ui-smoke: test-chat-scene test-ui-model test-session-controller
+	@echo "✓ ui-smoke (chat-scene + ui-model + session-controller) passed"
+
 dev: clean all
 	@$(MAKE) -s smoke
 	@$(MAKE) -s test-parser
 	@$(MAKE) -s test-protocol 2>/dev/null | tail -3
 	@echo "✓ dev build complete"
 
-all-tests: test-yaml test-manifest-classifier test-autoload test-context test-session test-parser test-protocol test-workflows test-feeds test-policy test-subagent
+all-tests: test-yaml test-manifest-classifier test-autoload test-context test-session test-parser test-protocol test-workflows test-feeds test-policy test-subagent ui-smoke
 	@echo "✓ all tests passed"
 
 # ── Sub-agent delegation test ──
