@@ -120,6 +120,13 @@ class MainScene final : public BaseScene {
             {"a", "Manifests"},
             {"?", "Settings"},
         };
+        // Registry-driven key strip (inkcell KeyHints dogfood) in the air above the pill.
+        if (airAbovePill > 0 && dash.notice.empty() && !dash.searchMode) {
+            inkcell::Rect hintRow{page.x, stageBot, page.w, 1};
+            auto hints = hubChromeKeyHints(page.w >= 100 ? 7 : 5);
+            hints.theme(inkcell::Theme::deep_space()).draw(surface, hintRow);
+        }
+
         components::drawPillDock(surface, page.x, page.w, pillBottomY, pills,
                                  dash.navigationIndex, dash.navPrevIndex, dash.navAnimT(),
                                  dash.focus == model::DashboardFocus::Dock);

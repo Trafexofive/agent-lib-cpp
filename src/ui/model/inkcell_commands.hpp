@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "inkcell/command.hpp"
+#include "inkcell/widgets/key_hints.hpp"
 #include "src/ui/components/cmd_palette.hpp"
 
 namespace cortex::mk3::ui {
@@ -36,6 +37,36 @@ inline inkcell::CommandRegistry chatCommandRegistry() {
 
 inline inkcell::CommandRegistry hubCommandRegistry() {
     return registryFromCmdItems(components::hubCommands());
+}
+
+// Build inkcell KeyHints from registry entries that have a default_key.
+// maxHints caps density for narrow footers. optional category filter (empty = all).
+inline inkcell::widgets::KeyHints keyHintsFromRegistry(const inkcell::CommandRegistry& reg,
+                                                       int maxHints = 8,
+                                                       const std::string& category = {}) {
+    inkcell::widgets::KeyHints hints;
+    hints.separator(" · ");
+    int n = 0;
+    for (const auto& c : reg.all()) {
+        if (!c.visible || !c.enabled) continue;
+        if (c.default_key.empty()) continue;
+        if (!category.empty() && c.category != category) continue;
+        hints.hint(c.default_key, c.title);
+        if (++n >= maxHints) break;
+    }
+    return hints;
+}
+
+// Prefer NAV/ACTION for hub chrome; falls back to full registry.
+inline inkcell::widgets::KeyHints hubChromeKeyHints(int maxHints = 6) {
+    auto reg = hubCommandRegistry();
+    auto nav = keyHintsFromRegistry(reg, maxHints, "NAV");
+    // If NAV alone is thin, mix ACTION.
+    int count = 0;
+    for (const auto& c : reg.all())
+        if (c.category == "NAV" && c.visible && c.enabled && !c.default_key.empty()) ++count;
+    if (count >= 3) return nav;
+    return keyHintsFromRegistry(reg, maxHints);
 }
 
 // Categories in stable display order for help overlay.

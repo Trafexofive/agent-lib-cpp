@@ -95,7 +95,7 @@ Product must not invent forever. Library track:
 | inkcell | Product uses for |
 |---------|------------------|
 | COOKBOOK: wake_fd + tick coalesce ✅ | Runtime recipe |
-| CommandRegistry + KeyHints | help + palette (partial) |
+| CommandRegistry + KeyHints ✅ | help overlay + hub key strip |
 | StatusBar segments + fill_background ✅ | footer metrics |
 | Focus stack / modal + FocusScope ✅ | ask + palette |
 | Theme roles | graphite/neon packs |
@@ -121,7 +121,7 @@ Each step: extract → rewire includes → tests green → optional commit.
 | **F6** | `PendingRoute` + FocusManager dogfood + StatusBar footer | ✅ |
 | **F6b** | Modal focus layers palette/help/ask | ✅ |
 | **F7** | Thin ShellModel façade &lt;400 LOC | ✅ ~361 — events/composer peeled |
-| **F8** | inkcell COOKBOOK + StatusBar/Focus dogfood | ✅ (partial; CommandRegistry help next) |
+| **F8** | inkcell CommandRegistry help + KeyHints dogfood | ✅ help overlay + hub key strip |
 
 QoL (Feel/Composer/Nested) only on seams. **markdown-buddy** is inkcell ship proof (parked passable).
 
