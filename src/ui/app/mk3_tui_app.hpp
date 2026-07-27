@@ -372,9 +372,15 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
 // invoked from every TUI run-loop teardown. saveSession itself gates on
 // history/contextFeeds content; an empty run writes nothing — no orphans.
 inline void flushAgentSession(Agent& agent, const std::string& sessionId, bool ephemeral) {
+    // Always drain async ui_timeline first when we have an id — even if this
+    // call later skips agent.saveSession (empty history). F19: SIGINT/quit
+    // must not drop a coalesced timeline that was already enqueued.
+    if (!sessionId.empty() && !ephemeral && !session::activeSession().isEphemeral())
+        session::AsyncUiTimelineWriter::instance().flush();
     if (ephemeral || sessionId.empty()) return;
     if (session::activeSession().isEphemeral()) return;
     agent.saveSession(sessionId);
+    // Second flush: saveSession may have raced with a late TurnDone enqueue.
     session::AsyncUiTimelineWriter::instance().flush();
 }
 

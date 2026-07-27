@@ -972,6 +972,58 @@ void test_chat_subagent_result_shows_final_no_auto_enter() {
     check(model.goBack(), "goBack returns to parent");
     check(model.atRoot(), "back at root after goBack");
 }
+
+void test_sanitize_blocks_binary_and_cleans_response() {
+    // Binary blob (ELF-ish NUL + high non-UTF8 density) must collapse.
+    std::string bin;
+    bin.push_back('\x7f');
+    bin.append("ELF");
+    for (int i = 0; i < 200; ++i) bin.push_back(static_cast<char>(i % 32));
+    for (int i = 0; i < 200; ++i) bin.push_back(static_cast<char>(0x80 + (i % 40)));
+    std::string cleaned = sanitizeForDisplay(bin);
+    check(cleaned.find("binary/non-text") != std::string::npos,
+          "sanitize collapses binary/non-text payload");
+    check(cleaned.find("ELF") == std::string::npos || cleaned.find("binary") != std::string::npos,
+          "sanitize does not paint raw ELF bytes as body");
+
+    // Invalid UTF-8 sequence replaced, not passed through as garbage cells.
+    std::string badUtf8 = "ok ";
+    badUtf8.push_back(static_cast<char>(0xFF));
+    badUtf8.push_back(static_cast<char>(0xFE));
+    badUtf8.append(" end");
+    std::string u = sanitizeForDisplay(badUtf8);
+    check(u.find("ok") != std::string::npos && u.find("end") != std::string::npos,
+          "sanitize keeps surrounding text around bad UTF-8");
+    // Must not contain the raw 0xFF byte.
+    bool hasRaw = false;
+    for (unsigned char c : u)
+        if (c == 0xFF || c == 0xFE) hasRaw = true;
+    check(!hasRaw, "sanitize strips invalid high bytes");
+
+    // Streaming upsert path sanitizes Response bodies (the live bug path).
+    ShellModel model;
+    ProtocolEvent pe;
+    pe.kind = ProtocolEventKind::RESPONSE;
+    pe.text = bin;
+    AgentBridge bridge;
+    bridge.publish(UiEvent::protocolEvent(std::move(pe), 0));
+    model.drain(bridge);
+    bool blocked = false;
+    for (const auto& r : model.rootRows) {
+        if (r.kind == TimelineKind::Response || r.kind == TimelineKind::Final) {
+            blocked = r.body.find("binary/non-text") != std::string::npos ||
+                      r.body.find("not shown") != std::string::npos;
+            // Also accept if body is short marker-like and has no NULs.
+            if (!blocked) {
+                bool nul = false;
+                for (unsigned char c : r.body)
+                    if (c == 0) nul = true;
+                blocked = !nul && r.body.size() < bin.size();
+            }
+        }
+    }
+    check(blocked, "upsertProtocolRow sanitizes binary Response body");
+}
 }  // namespace
 
 int main() {
@@ -1002,6 +1054,7 @@ int main() {
     test_chat_multi_turn_does_not_clobber();
     test_chat_empty_thoughts_not_rendered();
     test_chat_subagent_result_shows_final_no_auto_enter();
+    test_sanitize_blocks_binary_and_cleans_response();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }

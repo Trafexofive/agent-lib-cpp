@@ -7,6 +7,9 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cctype>
+#include <cstdio>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -15,6 +18,65 @@
 #include "manager.hpp"
 
 namespace cortex::mk3::session {
+
+// ── Unified session id mint (session audit F6) ──────────────────────────────
+// One scheme everywhere: CLI, hub create, lazy arm, hub fork.
+// Shape: <cwd-slug>-<unix_ms>[-<salt4hex>]
+// Optional title prefix is NOT in the id; use metadata.name for display titles.
+inline std::string slugPart(std::string s) {
+    for (char& c : s) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc)) c = static_cast<char>(std::tolower(uc));
+        else c = '-';
+    }
+    // Collapse runs of '-'.
+    std::string out;
+    out.reserve(s.size());
+    bool prevDash = false;
+    for (char c : s) {
+        if (c == '-') {
+            if (!prevDash) out.push_back(c);
+            prevDash = true;
+        } else {
+            out.push_back(c);
+            prevDash = false;
+        }
+    }
+    while (!out.empty() && out.front() == '-') out.erase(out.begin());
+    while (!out.empty() && out.back() == '-') out.pop_back();
+    if (out.size() > 32) out.resize(32);
+    return out.empty() ? "project" : out;
+}
+
+// Mint a process-local unique session id. Salt differentiates multi-mint
+// within the same millisecond (hub fork + create + lazy arm).
+inline std::string mintSessionId(const std::string& projectHint = {}) {
+    static std::atomic<uint32_t> salt{0};
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::system_clock::now().time_since_epoch())
+                  .count();
+    std::string project = projectHint;
+    if (project.empty()) {
+        try {
+            project = slugPart(std::filesystem::current_path().filename().string());
+        } catch (...) {
+            project = "project";
+        }
+    } else {
+        project = slugPart(project);
+    }
+    uint32_t s = salt.fetch_add(1, std::memory_order_relaxed) & 0xFFFFu;
+    char buf[96];
+    if (s == 0) {
+        // First mint in this ms window can omit salt for shorter ids (CLI path).
+        std::snprintf(buf, sizeof(buf), "%s-%lld", project.c_str(),
+                      static_cast<long long>(ms));
+    } else {
+        std::snprintf(buf, sizeof(buf), "%s-%lld-%04x", project.c_str(),
+                      static_cast<long long>(ms), s);
+    }
+    return std::string(buf);
+}
 
 // Process-wide active session identity for the experimental inkcell path.
 // Kill dual-id flush: cfg seeds this once; lazy arm updates it; atexit reads it.

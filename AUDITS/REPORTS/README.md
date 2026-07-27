@@ -14,3 +14,9 @@ Supporting discovery artifacts (session):
 `.artifacts/session-perf-crosscut-analysis`,  
 `.artifacts/modularity-audit-evidence-pack`,  
 `.artifacts/modularity-audit-agent-lib-cpp`.
+
+## Dual-repo integration (inkcell + agent-lib)
+
+Living contract: [`docs/INKCELL_INTEGRATION.md`](../../docs/INKCELL_INTEGRATION.md)  
+First-product review: [`docs/tui-qol/00-inkcell-first-product-review.md`](../../docs/tui-qol/00-inkcell-first-product-review.md)  
+Session artifact: `inkcell-agentlib-dual-repo-ledger` (`art-ms307ws7-5adh5b`).

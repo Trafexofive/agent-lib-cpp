@@ -101,6 +101,23 @@ void test_async_ui_timeline_commit() {
     std::filesystem::remove_all(dir);
 }
 
+void test_mint_session_id_unified() {
+    std::string a = mintSessionId();
+    std::string b = mintSessionId();
+    check(!a.empty() && !b.empty(), "mintSessionId non-empty");
+    check(a != b, "mintSessionId unique across calls");
+    // No legacy prefixes.
+    check(a.rfind("sess-", 0) != 0 && a.rfind("chat-", 0) != 0 && a.rfind("fork-", 0) != 0,
+          "mintSessionId has no sess-/chat-/fork- prefix");
+    check(b.rfind("sess-", 0) != 0 && b.rfind("chat-", 0) != 0 && b.rfind("fork-", 0) != 0,
+          "second mint has no legacy prefix");
+    // Shape: slug-ms or slug-ms-salt
+    check(a.find('-') != std::string::npos, "mintSessionId contains hyphen separator");
+    // Explicit project hint is slugified into the id.
+    std::string c = mintSessionId("My Project!");
+    check(c.rfind("my-project-", 0) == 0, "mintSessionId uses project hint slug");
+}
+
 void test_fork_deep_copy_timeline() {
     std::string dir = tmpDir();
     SessionManager sm(dir);
@@ -169,6 +186,7 @@ int main() {
     test_session_ref_single_id();
     test_io_mutex_recursive_load_save();
     test_async_ui_timeline_commit();
+    test_mint_session_id_unified();
     test_fork_deep_copy_timeline();
     test_set_session_title();
     test_compact_save_default();

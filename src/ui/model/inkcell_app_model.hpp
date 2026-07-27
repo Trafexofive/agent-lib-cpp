@@ -80,39 +80,149 @@ inline std::vector<std::string> splitDisplayLines(const std::string& text) {
 // argv-style binary tokens. Replace each with a printable placeholder so
 // the chat transcript never prints Q sym, box-drawing garbage, or worse,
 // injects ANSI escapes mid-render.
+// Terminal-safe display sanitizer.
+// - Strips C0 controls (keeps \n)
+// - Validates UTF-8; replaces invalid / overlong / surrogate sequences with U+FFFD
+// - Caps at 16 KiB head+tail
+// - If >30% of sampled bytes are non-text (NUL/C0/invalid UTF-8), collapse to a
+//   one-line binary marker so ELF/symbol dumps never paint the chat surface.
 inline std::string sanitizeForDisplay(const std::string& text) {
-    // Vet-fix: simplify to a single-pass byte cap. The previous build
-    // tracked lineCount + lineCap + byteCap with an iterative trim
-    // loop, which had multiple state variables whose invariants were
-    // easy to break under load — likely contributor to the persistent
-    // heap-corruption pattern. We cap at 16 KiB and keep head + tail
-    // with a clear marker; line-cap is enforced implicitly via the
-    // byte budget (a 1KB/line content tops out at 16 lines per row).
     constexpr std::size_t kCap = 16 * 1024;
     constexpr std::size_t kHead = 8 * 1024;
     constexpr std::size_t kTail = 4 * 1024;
+    constexpr std::size_t kSample = 4096;
+
+    // Fast binary probe on a prefix (and a few mid samples for large blobs).
+    auto isNonTextByte = [](unsigned char c) -> bool {
+        if (c == 0) return true;
+        if (c < 0x09) return true;           // C0 except tab
+        if (c >= 0x0B && c < 0x20) return true;  // C0 except LF
+        if (c == 0x7F) return true;
+        return false;
+    };
+    std::size_t sampleN = std::min(text.size(), kSample);
+    std::size_t bad = 0;
+    for (std::size_t i = 0; i < sampleN; ++i) {
+        if (isNonTextByte(static_cast<unsigned char>(text[i]))) ++bad;
+    }
+    // Mid-sample for large payloads (tool dumps of binaries).
+    if (text.size() > kSample * 2) {
+        std::size_t mid = text.size() / 2;
+        for (std::size_t i = 0; i < 256 && mid + i < text.size(); ++i) {
+            ++sampleN;
+            if (isNonTextByte(static_cast<unsigned char>(text[mid + i]))) ++bad;
+        }
+    }
+    if (sampleN > 32 && bad * 100 / sampleN > 30) {
+        return "  … [binary/non-text data · " + std::to_string(text.size()) +
+               " bytes · not shown in chat] …";
+    }
 
     std::string out;
     out.reserve(std::min<std::size_t>(text.size(), kCap + 64));
     bool cut = false;
-    for (unsigned char c : text) {
-        if (c == '\r') continue;          // normalize CRLF
-        if (c == '\t') out.push_back(' ');
-        else if (c < 0x20 || c == 0x7F) out.push_back(' ');
-        else out.push_back(static_cast<char>(c));
+    std::size_t invalidUtf8 = 0;
+    for (std::size_t i = 0; i < text.size();) {
+        unsigned char c = static_cast<unsigned char>(text[i]);
+        if (c == '\r') { ++i; continue; }
+        if (c == '\t') {
+            out.push_back(' ');
+            ++i;
+            if (out.size() >= kCap) { cut = true; break; }
+            continue;
+        }
+        if (c == '\n') {
+            out.push_back('\n');
+            ++i;
+            if (out.size() >= kCap) { cut = true; break; }
+            continue;
+        }
+        if (c < 0x20 || c == 0x7F) {
+            out.push_back(' ');
+            ++i;
+            if (out.size() >= kCap) { cut = true; break; }
+            continue;
+        }
+        // ASCII printable
+        if (c < 0x80) {
+            out.push_back(static_cast<char>(c));
+            ++i;
+            if (out.size() >= kCap) { cut = true; break; }
+            continue;
+        }
+        // UTF-8 multi-byte: validate full sequence or replace.
+        int need = 0;
+        uint32_t cp = 0;
+        if ((c & 0xE0) == 0xC0) {
+            need = 2;
+            cp = c & 0x1F;
+        } else if ((c & 0xF0) == 0xE0) {
+            need = 3;
+            cp = c & 0x0F;
+        } else if ((c & 0xF8) == 0xF0) {
+            need = 4;
+            cp = c & 0x07;
+        } else {
+            // Lone continuation / illegal lead.
+            out.append("\xEF\xBF\xBD");  // U+FFFD
+            ++invalidUtf8;
+            ++i;
+            if (out.size() >= kCap) { cut = true; break; }
+            continue;
+        }
+        if (i + static_cast<std::size_t>(need) > text.size()) {
+            out.append("\xEF\xBF\xBD");
+            ++invalidUtf8;
+            break;
+        }
+        bool ok = true;
+        for (int k = 1; k < need; ++k) {
+            unsigned char cc = static_cast<unsigned char>(text[i + static_cast<std::size_t>(k)]);
+            if ((cc & 0xC0) != 0x80) {
+                ok = false;
+                break;
+            }
+            cp = (cp << 6) | (cc & 0x3F);
+        }
+        // Reject overlong, surrogates, > U+10FFFF.
+        if (ok) {
+            if (need == 2 && cp < 0x80) ok = false;
+            if (need == 3 && cp < 0x800) ok = false;
+            if (need == 4 && cp < 0x10000) ok = false;
+            if (cp >= 0xD800 && cp <= 0xDFFF) ok = false;
+            if (cp > 0x10FFFF) ok = false;
+        }
+        if (!ok) {
+            out.append("\xEF\xBF\xBD");
+            ++invalidUtf8;
+            ++i;
+            if (out.size() >= kCap) { cut = true; break; }
+            continue;
+        }
+        out.append(text, i, static_cast<std::size_t>(need));
+        i += static_cast<std::size_t>(need);
         if (out.size() >= kCap) { cut = true; break; }
     }
+
+    // Secondary binary signal: too many replacement chars vs content.
+    if (invalidUtf8 > 32 && invalidUtf8 * 4 > out.size()) {
+        return "  … [binary/non-text data · " + std::to_string(text.size()) +
+               " bytes · not shown in chat] …";
+    }
+
     if (!cut) return out;
 
-    const std::size_t dropped = text.size() - out.size();
+    const std::size_t dropped = text.size() > out.size() ? text.size() - out.size() : 0;
     std::string trimmed;
     trimmed.reserve(kCap + 96);
     if (kHead < out.size()) trimmed.append(out, 0, kHead);
+    else trimmed = out;
     trimmed.append("\n  … [sanitize: dropped ");
     trimmed.append(std::to_string(dropped));
     trimmed.append(" bytes] …\n");
     if (out.size() > kHead) {
-        trimmed.append(out, out.size() - kTail, kTail);
+        std::size_t tailStart = out.size() > kTail ? out.size() - kTail : 0;
+        trimmed.append(out, tailStart, out.size() - tailStart);
     }
     return trimmed;
 }
@@ -253,6 +363,8 @@ inline std::vector<TimelineRow> deserializeTimeline(const std::string& json) {
         row.kind = timelineKindFromName(o.get("kind", "log").asString());
         row.title = o.get("title", "").asString();
         row.body = o.get("body", "").asString();
+        // Disk may hold pre-sanitize binary from older sessions.
+        if (!row.body.empty()) row.body = sanitizeForDisplay(row.body);
         row.ok = o.get("ok", true).asBool();
         row.actionType = o.get("actionType", "").asString();
         row.actionName = o.get("actionName", "").asString();
@@ -669,16 +781,11 @@ struct ShellModel {
             body.append(tail);
             row.body = std::move(body);
         }
-        // Vet-fix: apply sanitize/cap to EVERY timeline row, including
-        // tool Result bodies. The previous guard excluded Result — that
-        // let a `grep` matching thousands of files dump its full output
-        // straight into the chat body, freezing navigation and surfacing
-        // raw bytes through the transcript. sanitize caps at 16KiB with
-        // a head+tail marker, which is enough for inspection without
-        // poisoning the wrap cache.
-        if (!row.body.empty() &&
-            row.kind != TimelineKind::User &&
-            row.kind != TimelineKind::Response) {
+        // Sanitize ALL non-User bodies, including Response. Models and tools
+        // can emit binary / invalid UTF-8 (ELF reads, symbol dumps, bad SSE
+        // framing). User text is still sanitized for controls/UTF-8 so a
+        // paste cannot brick the terminal either.
+        if (!row.body.empty()) {
             row.body = sanitizeForDisplay(row.body);
         }
         if (!atRoot()) {
@@ -1136,6 +1243,9 @@ struct ShellModel {
     }
 
     void upsertProtocolRow(size_t index, TimelineRow row) {
+        // Streaming path bypasses applyRowBans — still must sanitize bodies
+        // (Response/Result/Thought can carry binary or invalid UTF-8).
+        if (!row.body.empty()) row.body = sanitizeForDisplay(row.body);
         if (activeProtocolRows.size() <= index) activeProtocolRows.resize(index + 1, -1);
         int& mapped = activeProtocolRows[index];
         if (mapped >= 0 && mapped < static_cast<int>(rootRows.size())) {
@@ -1553,21 +1663,9 @@ struct ShellModel {
         // id; subsequent turns reuse it. Sessions page learns of the
         // file when the worker saves at TurnDone or atexit flushes.
         if (activeSessionId.empty()) {
-            // Generate an id using steady_clock + a counter. Cheap,
-            // collision-resistant for session ids on a single host.
-            // Skip when the system is unconditional-ephemeral — the
-            // InkcellAppConfig surfaced that via cfg, but the model
-            // doesn't have cfg here. We arm unconditionally and let
-            // the downstream --ephemeral flag suppress persistence at
-            // exit-time (no file written if `cli.noSession` is set).
-            static std::atomic<uint64_t> counter{0};
-            auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-            uint64_t salt = counter.fetch_add(1, std::memory_order_relaxed);
-            char buf[40];
-            std::snprintf(buf, sizeof(buf), "sess-%016llx-%04llx",
-                          static_cast<unsigned long long>(now),
-                          static_cast<unsigned long long>(salt & 0xFFFFu));
-            activeSessionId = buf;
+            // Unified mint (F6): same scheme as CLI / hub create / hub fork.
+            // Arm unconditionally; --no-session suppresses disk at flush time.
+            activeSessionId = session::mintSessionId();
             session::activeSession().set(activeSessionId, session::activeSession().isEphemeral());
             dashboard.notice = std::string("armed ") + activeSessionId;
             // Vet-fix: seed the typed prompt into the agent's history_

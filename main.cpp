@@ -839,6 +839,8 @@ static std::vector<session::SessionManager::SessionInfo> sortedSessions() {
     return sessions;
 }
 
+// Session id mint lives in session::mintSessionId (controller.hpp).
+// Keep local slugPart only if still used by non-session helpers; mint uses session::slugPart.
 static std::string slugPart(std::string s) {
     for (char& c : s) {
         bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
@@ -854,12 +856,8 @@ static std::string slugPart(std::string s) {
 }
 
 static std::string newSessionId() {
-    auto now = std::chrono::system_clock::now().time_since_epoch();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
-    std::string project = slugPart(fs::current_path().filename().string());
-    std::ostringstream id;
-    id << project << "-" << ms;
-    return id.str();
+    // Unified mint (session audit F6) — same scheme as hub lazy-arm / create / fork.
+    return session::mintSessionId();
 }
 
 static std::string humanTime(const std::string& iso);
@@ -1959,12 +1957,14 @@ static int cmdRun(CliConfig& cli) {
             return 1;
         }
         // Deep-copy including ui_timeline (session audit S0.4).
-        std::string newId = newSessionId();
+        std::string newId = session::mintSessionId();
         Session fork = session::forkSession(sm, cli.forkFrom, newId, cli.sessionName);
         forkedFrom = cli.forkFrom;
         cli.sessionId = newId;
         cli.forkFrom.clear();
         didResume = true;  // fork is a form of resume (copied history)
+        // Process-wide single id — inkcell + atexit flush see the fork.
+        session::activeSession().set(newId, cli.noSession);
     }
 
     if (!cli.noSession && (cli.resumePicker || cli.continueSession || !cli.sessionId.empty())) {
@@ -1990,6 +1990,9 @@ static int cmdRun(CliConfig& cli) {
             activeSessionId = resolved;
             cli.sessionId = resolved;
         }
+        // Single process-wide id for inkcell + atexit/SIGINT flush (F1/F19).
+        if (!resolved.empty())
+            session::activeSession().set(resolved, cli.noSession);
         cli.resumePicker = false;
         cli.continueSession = false;
 
@@ -2371,6 +2374,7 @@ static int cmdServe(const CliConfig& cli) {
 // ═══════════════════════════════════════════════════════════════════════
 int main(int argc, char* argv[]) {
     signal(SIGINT, signalHandler);
+    signal(SIGTERM, signalHandler);  // atexit still runs on default-handled SIGTERM if we catch it
     signal(SIGWINCH, signalHandler);
 
     try {

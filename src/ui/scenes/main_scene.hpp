@@ -1720,10 +1720,14 @@ class MainScene final : public BaseScene {
         model_->running = false;
         model_->status = "stopped";
         try {
+            // Drain any coalesced ui_timeline write BEFORE remove — otherwise
+            // AsyncUiTimelineWriter can resurrect the file after delete.
+            session::AsyncUiTimelineWriter::instance().flush();
             session::SessionManager sessions;
             sessions.remove(id);
             // 3. clear in-memory session record of the dead session.
             model_->activeSessionId.clear();
+            session::activeSession().clear();
             model_->pendingSubmit.clear();
             if (model_->rootAgent) model_->rootAgent->clearHistory();
             model_->clearTranscript();
@@ -1746,10 +1750,7 @@ class MainScene final : public BaseScene {
                 model_->dashboard.notice = "session missing on disk";
                 return;
             }
-            auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::system_clock::now().time_since_epoch())
-                             .count();
-            std::string newId = "fork-" + std::to_string(stamp);
+            std::string newId = session::mintSessionId();
             std::string title = sel->title.empty() ? ("fork of " + suffix(sel->id))
                                                   : (sel->title + " (fork)");
             Session fork = session::forkSession(sessions, sel->id, newId, title);

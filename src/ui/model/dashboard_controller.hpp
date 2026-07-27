@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "src/core/types.hpp"
+#include "src/session/controller.hpp"
 #include "src/session/manager.hpp"
 #include "src/ui/model/dashboard_model.hpp"
 
@@ -45,9 +46,8 @@ inline DashboardSessionResult createDashboardSession(
     const std::string& explicitId = {}) {
     std::string id = explicitId;
     if (id.empty()) {
-        auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-                         std::chrono::system_clock::now().time_since_epoch()).count();
-        id = "chat-" + std::to_string(stamp);
+        // Unified mint (F6) — same scheme as CLI / lazy arm / hub fork.
+        id = session::mintSessionId();
     }
     try {
         // Vet-fix: do NOT call sessions.create(). The file is created only
