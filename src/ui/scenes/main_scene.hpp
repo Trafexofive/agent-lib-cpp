@@ -47,6 +47,7 @@ class MainScene final : public BaseScene {
         loadUiPrefs();  // theme + shader + chrome prefs from ui.json
         applyUiPrefsToModel(*model_);
         model_->dashboard.bumpNavActivity();  // pill visible on hub enter
+        model_->dashboard.startHubEntry();    // smooth cold-start slide
         if (!cfg_.manifestDir.empty())
             model_->dashboard.manifestDir = cfg_.manifestDir;
         else if (!activeManifest().empty())
@@ -86,38 +87,67 @@ class MainScene final : public BaseScene {
 
         const auto tier = layout::densityOf(page.w);
         auto& dash = model_->dashboard;
+        dash.tickNotice();  // flash TTL — context notices (bumpNotice) stay
         const float tsec = gfx::nowSeconds();
         const int tvar = gfx::themeVariantIndex();
 
-        // ── Pill visibility (zen auto-hide + master enable) ───────────────
+        // ── Chrome visibility ─────────────────────────────────────────────
+        // Zen: hide app bar + auto-hide pill. Nav activity briefly resurfaces both.
         const bool pillMaster = model_->navPillEnabled;
         const int hideMs = model_->navPillHideMs;
+        const bool zen = model_->zenMode;
+        if (dash.lastNavActivityMs <= 0)
+            dash.lastNavActivityMs = model::DashboardState::nowMs();
+        const int64_t idle =
+            model::DashboardState::nowMs() - dash.lastNavActivityMs;
+        const bool navHot = dash.focus == model::DashboardFocus::Dock ||
+                            dash.navAnimating() ||
+                            (hideMs > 0 ? idle < hideMs : true);
+
+        // App bar: always on when not zen; in zen only while nav is "hot".
+        bool wantBar = !zen || navHot || dash.searchMode || !dash.notice.empty() ||
+                       !model_->launchError.empty();
+        // Pill: master off → never; zen → only when hot (or never-hide=0 → always).
         bool wantPill = pillMaster;
-        if (pillMaster && model_->zenMode && hideMs > 0) {
-            if (dash.lastNavActivityMs <= 0) dash.lastNavActivityMs = model::DashboardState::nowMs();
-            const int64_t idle = model::DashboardState::nowMs() - dash.lastNavActivityMs;
-            wantPill = idle < hideMs || dash.focus == model::DashboardFocus::Dock ||
-                       dash.navAnimating();
-        } else if (pillMaster && model_->zenMode && hideMs <= 0) {
-            wantPill = true;  // zen + never-hide
+        if (pillMaster && zen) {
+            wantPill = (hideMs <= 0) ? true : navHot;
         }
-        // Drive slide animation toward target.
         {
             float target = wantPill ? 1.f : 0.f;
             if (std::fabs(dash.pillRevealTo - target) > 0.01f) dash.requestPillReveal(target);
         }
-        const float reveal = pillMaster ? dash.pillRevealT() : 0.f;
+        const float pillReveal = pillMaster ? dash.pillRevealT() : 0.f;
+
+        // Cold-start entry: whole hub content slides up + fades in via y offset.
+        const float entry = dash.hubEntryT();
+        const int entryLift = static_cast<int>(std::lround((1.f - entry) * 6.f));
 
         gfx::drawFieldBg(surface, full, tvar, tsec);
-        drawAppBar(surface, page, tier);
 
-        // Stage fills the page under the app bar — pill floats over, does not
-        // permanently steal rows (1px page pad remains as bg).
+        // App bar height: 2 rows when shown, 0 in deep zen.
+        const int barH = wantBar ? 2 : 0;
+        if (wantBar) {
+            // Slide bar in from above during entry / zen resurface.
+            inkcell::Rect barPage = page;
+            if (entryLift > 0) barPage.y += entryLift;
+            drawAppBar(surface, barPage, tier);
+        } else if (!dash.notice.empty() || !model_->launchError.empty()) {
+            // Deep zen still needs operator feedback — one dim flash line at top.
+            std::string line = !model_->launchError.empty()
+                                   ? ("error  " + model_->launchError)
+                                   : dash.notice;
+            auto st = !model_->launchError.empty() ? theme::red() : theme::dim();
+            surface.text({page.x, page.y},
+                         inkcell::text::truncate(line, page.w), st);
+        }
+
+        // Stage fills remaining page; pill floats over bottom.
         const int pillBodyH = 3;
-        int stageTop = page.y + 3;
-        int stageBot = page.bottom();  // full page bottom (incl. pad zone)
-        // When pill is fully up, keep content clear of the floating dock.
-        const int reservedForPill = static_cast<int>(std::lround(reveal * (pillBodyH + 1)));
+        int stageTop = page.y + (wantBar ? 3 : (dash.notice.empty() && model_->launchError.empty() ? 0 : 1));
+        if (entryLift > 0) stageTop += entryLift;
+        int stageBot = page.bottom();
+        const int reservedForPill =
+            static_cast<int>(std::lround(pillReveal * (pillBodyH + 1)));
         int contentBot = stageBot - reservedForPill;
         int stageH = std::max(6, contentBot - stageTop);
         inkcell::Rect stage{page.x, stageTop, page.w, stageH};
@@ -136,24 +166,22 @@ class MainScene final : public BaseScene {
             drawContent(surface, content);
         }
 
-        // Hub notice stays in the app-bar subtitle (drawAppBar) — no second surface.
-
         // Floating nav pill — draw last so it sits above the stage.
-        if (pillMaster && reveal > 0.02f) {
+        if (pillMaster && pillReveal > 0.02f) {
             static const std::vector<components::PillItem> pills = {
                 {"g", "Home"},
                 {"s", "Sessions"},
                 {"a", "Manifests"},
                 {"?", "Settings"},
             };
-            // Slide up from below: bottomY moves with reveal.
-            const int restBottomY = page.bottom() - 1;  // seated
-            const int hiddenBottomY = page.bottom() + pillBodyH;  // fully off
-            const int pillBottomY =
-                static_cast<int>(std::lround(hiddenBottomY + (restBottomY - hiddenBottomY) * reveal));
+            const int restBottomY = page.bottom() - 1;
+            const int hiddenBottomY = page.bottom() + pillBodyH;
+            int pillBottomY = static_cast<int>(
+                std::lround(hiddenBottomY + (restBottomY - hiddenBottomY) * pillReveal));
+            // Entry: pill rides up with the hub.
+            if (entryLift > 0) pillBottomY += entryLift;
 
-            // Key hints in the air above the pill when fully revealed.
-            if (reveal > 0.85f && dash.notice.empty() && !dash.searchMode) {
+            if (pillReveal > 0.85f && dash.notice.empty() && !dash.searchMode && wantBar) {
                 int hintY = pillBottomY - pillBodyH;
                 if (hintY >= stageTop) {
                     inkcell::Rect hintRow{page.x, hintY, page.w, 1};
@@ -187,17 +215,24 @@ class MainScene final : public BaseScene {
 
     void runPaletteAction(const std::string& id) {
         auto& dash = model_->dashboard;
-        if (id == "nav.home") dash.select(model::DashboardSection::Home);
-        else if (id == "nav.sessions") dash.select(model::DashboardSection::Sessions);
-        else if (id == "nav.manifests") {
+        if (id == "nav.home") {
+            dash.select(model::DashboardSection::Home);
+            model_->launchError.clear();
+        } else if (id == "nav.sessions") {
+            dash.select(model::DashboardSection::Sessions);
+            model_->launchError.clear();
+        } else if (id == "nav.manifests") {
             dash.select(model::DashboardSection::Manifests);
             dash.refreshManifests();
-        } else if (id == "nav.help" || id == "nav.settings")
+            model_->launchError.clear();
+        } else if (id == "nav.help" || id == "nav.settings") {
             dash.select(model::DashboardSection::Settings);
+            model_->launchError.clear();
+        }
         else if (id == "nav.chat") model_->requestRoute(PendingRoute::Agent);
         else if (id == "act.refresh") {
             dash.refreshAll();
-            dash.notice = "refreshed";
+            dash.flashNotice("refreshed");
         } else if (id == "act.theme") {
             theme::toggle();
             persistUiPrefs(*model_);
@@ -214,21 +249,21 @@ class MainScene final : public BaseScene {
         else if (id == "act.wf_stop") {
             model_->pendingStopWorkflow = true;
             model_->workflowRun.requestCancel();
-            dash.notice = "stopping workflow…";
+            dash.flashNotice("stopping workflow…");
         } else if (id == "act.wf_resume") {
             resumeLastWorkflow();
         } else if (id == "nav.wf_facet") {
             dash.select(model::DashboardSection::Manifests);
             dash.manifestFilter = "workflow";
             dash.refreshManifests();
-            dash.notice = "facet · workflow";
+            dash.flashNotice("facet · workflow");
         } else if (id == "act.wf_canvas") {
             if (workflowSelectionActive()) {
                 dash.wfCanvasExpanded = !dash.wfCanvasExpanded;
                 dash.wfCanvasFocus = true;
-                dash.notice = dash.wfCanvasExpanded ? "infinite canvas" : "canvas docked";
+                dash.flashNotice(dash.wfCanvasExpanded ? "infinite canvas" : "canvas docked");
             } else {
-                dash.notice = "select a workflow first";
+                dash.flashNotice("select a workflow first");
             }
         } else if (id == "sys.quit") model_->requestRoute(PendingRoute::Quit);
         bumpNotice();
@@ -256,6 +291,8 @@ class MainScene final : public BaseScene {
 
     void bumpNotice() {
         auto& dash = model_->dashboard;
+        // Context lines are sticky (no TTL). Ephemeral feedback uses flashNotice.
+        dash.noticeExpireAtMs = 0;
         if (dash.searchMode) {
             dash.notice = "search: " + dash.searchQuery;
             return;
@@ -268,7 +305,7 @@ class MainScene final : public BaseScene {
         } else if (dash.section == model::DashboardSection::Sessions) {
             dash.notice = std::to_string(dash.sessions.size()) + " sessions";
         } else {
-            dash.notice.clear();  // Home/Help — app bar pulse is enough
+            dash.notice.clear();  // Home/Settings — app bar pulse is enough
         }
     }
 
@@ -311,22 +348,21 @@ class MainScene final : public BaseScene {
                 // Vet-fix: independent from hub field on/off; chat-side underlay
                 // persists via ui_prefs alongside theme + chat toggles.
                 model_->chatFieldEnabled = !model_->chatFieldEnabled;
-                dash.notice = model_->chatFieldEnabled
-                                  ? std::string("chat · field bg on — ") +
-                                        gfx::activeFieldName()
-                                  : std::string("chat · field bg off (solid theme)");
+                dash.flashNotice(model_->chatFieldEnabled
+                                     ? std::string("chat · field bg on — ") +
+                                           gfx::activeFieldName()
+                                     : std::string("chat · field bg off"));
                 break;
             case 7:  // zen mode
                 model_->zenMode = !model_->zenMode;
                 dash.bumpNavActivity();  // show pill when enabling zen
-                dash.notice = model_->zenMode
-                                  ? "zen · pill auto-hides after idle nav"
-                                  : "zen off · pill always up";
+                dash.flashNotice(model_->zenMode ? "zen · pill auto-hides"
+                                                 : "zen off · pill always up");
                 break;
             case 8:  // nav pill master
                 model_->navPillEnabled = !model_->navPillEnabled;
                 if (model_->navPillEnabled) dash.bumpNavActivity();
-                dash.notice = model_->navPillEnabled ? "nav pill ON" : "nav pill OFF";
+                dash.flashNotice(model_->navPillEnabled ? "nav pill on" : "nav pill off");
                 break;
             case 9: {  // pill hide delay carousel
                 // 2s · 3s · 5s · 8s · never(0)
@@ -340,17 +376,16 @@ class MainScene final : public BaseScene {
                 idx = (idx + (dir >= 0 ? 1 : 4)) % 5;
                 model_->navPillHideMs = kDelays[idx];
                 dash.bumpNavActivity();
-                dash.notice = model_->navPillHideMs <= 0
-                                  ? "pill hide · never"
-                                  : ("pill hide · " +
-                                     std::to_string(model_->navPillHideMs / 1000) + "s");
+                dash.flashNotice(model_->navPillHideMs <= 0
+                                     ? "pill hide · never"
+                                     : ("pill hide · " +
+                                        std::to_string(model_->navPillHideMs / 1000) + "s"));
                 break;
             }
             default:
                 break;
         }
         persistUiPrefs(*model_);
-        // Keep notice for toast paint this frame; clear on next action via hub_keys.
     }
 
     int dashFocus() const { return model_->dashboard.settingsFocus; }

@@ -366,14 +366,13 @@ class AgentScene final : public BaseScene {
         // No keybind hint spam on the status bar — help overlay owns that.
         vm.hint.clear();
 
-        // Tick expiry before paint; strip is drawn inside drawChatSurface.
+        // Tick expiry before paint; alert folds into status line (right).
         model_->notificationStack.tick();
         vm.notifications = &model_->notificationStack;
 
-        // Reserve transcript height for completion + optional notif strip + footer.
+        // Reserve transcript height for completion menu + footer only.
         int menuH = chat::completionMenuHeight(vm, p.w);
-        int notifH = chat::notificationReserveRows(model_->notificationStack);
-        model_->transcriptView.viewport_h = std::max(1, p.h - 6 - menuH - notifH);
+        model_->transcriptView.viewport_h = std::max(1, p.h - 6 - menuH);
         if (model_->transcriptView.stick_bottom) model_->transcriptView.scroll_to_end();
         else model_->transcriptView.clamp();
 

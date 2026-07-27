@@ -8,7 +8,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include "src/core/agent_catalog.hpp"
@@ -48,7 +50,25 @@ struct DashboardState {
     std::vector<catalog::ManifestEntry> manifests;
     std::vector<catalog::AgentEntry> agents;
     std::string notice;
+    // 0 = sticky context (counts/filters). >0 = flash deadline (steady ms).
+    int64_t noticeExpireAtMs = 0;
+    static constexpr int64_t noticeFlashMs = 2800;
     std::string manifestDir;
+
+    // Ephemeral operator flash — auto-clears. Context lines use bumpNotice().
+    void flashNotice(std::string msg, int64_t ttlMs = noticeFlashMs) {
+        notice = std::move(msg);
+        noticeExpireAtMs = nowMs() + std::max<int64_t>(400, ttlMs);
+    }
+
+    // Call once per frame from hub draw/update.
+    void tickNotice() {
+        if (noticeExpireAtMs <= 0) return;
+        if (nowMs() >= noticeExpireAtMs) {
+            notice.clear();
+            noticeExpireAtMs = 0;
+        }
+    }
 
     // Section pill anim (thumb slide between sections)
     int navPrevIndex = 0;
@@ -66,6 +86,33 @@ struct DashboardState {
     float pillRevealFrom = 1.f;
     float pillRevealTo = 1.f;
     static constexpr int pillRevealAnimMs = 220;
+
+    // Hub cold-start entry: stage/chrome slide up from below (once per enter).
+    int64_t hubEntryStartMs = 0;
+    static constexpr int hubEntryMs = 480;
+
+    void startHubEntry() {
+        // Snapshot / non-TTY (tests, pipes): settle immediately so layout asserts.
+        const char* snap = std::getenv("MK3_TUI_SNAPSHOT");
+        if ((snap && snap[0]) || !isatty(STDOUT_FILENO)) {
+            hubEntryStartMs = 0;
+            return;
+        }
+        hubEntryStartMs = nowMs();
+    }
+
+    float hubEntryT() const {
+        if (hubEntryStartMs <= 0) return 1.f;
+        float t = static_cast<float>(nowMs() - hubEntryStartMs) /
+                  static_cast<float>(hubEntryMs);
+        if (t < 0.f) return 0.f;
+        if (t > 1.f) return 1.f;
+        // ease-out cubic — settles soft
+        float u = 1.f - t;
+        return 1.f - u * u * u;
+    }
+
+    bool hubEntering() const { return hubEntryT() < 1.f; }
 
     // Settings option focus:
     // 0 theme · 1 field · 2 shader · 3 thoughts · 4 truncate · 5 raw · 6 chat field
@@ -181,6 +228,8 @@ struct DashboardState {
         focus = DashboardFocus::Content;
         bumpNavActivity();
     }
+
+    // Host clears sticky launchError when operator moves on (section change).
 
     void toggleFocus() {
         focus = (focus == DashboardFocus::Dock) ? DashboardFocus::Content

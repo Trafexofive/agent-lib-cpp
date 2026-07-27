@@ -142,11 +142,18 @@ inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const C
     auto bg = focusBar ? theme::footer_bg_focus() : theme::footer_bg();
     surface.fill(row, " ", bg);
 
+    // Live alert (retry / protocol) rides the status line — no second row.
+    const chat::Notification* alert =
+        (m.notifications && !m.notifications->empty()) ? m.notifications->top() : nullptr;
+
     // Product accent tick; metrics via inkcell StatusBar segments (fill off).
-    auto accent = m.running   ? theme::footer_accent_live()
+    auto accent = alert && alert->severity == "error" ? theme::red().with_bg(bg.bg)
+                  : alert && alert->severity == "warn"  ? theme::footer_warn()
+                  : m.running   ? theme::footer_accent_live()
                   : m.failed  ? theme::footer_warn()
                   : focusBar  ? theme::footer_accent_focus()
                               : theme::footer_accent_idle();
+    if (alert && (alert->severity == "error" || alert->severity == "warn")) accent.bold = true;
     surface.text({row.x, row.y}, "▌", accent);
 
     std::string glyph = m.running ? liveSpinner(m.nowMs)
@@ -176,6 +183,34 @@ inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const C
         bar.left_seg("res" + std::to_string(m.resultCount), inkcell::Role::TextMuted);
     if (m.tokenBytes > 0)
         bar.left_seg(fmtCompactBytes(m.tokenBytes), inkcell::Role::TextMuted);
+
+    // Alert first on the right (highest priority transient), then mode/theme.
+    if (alert) {
+        std::string a;
+        if (!alert->source.empty()) {
+            a = alert->source;
+            a += " · ";
+        }
+        a += alert->title;
+        if (alert->maxAttempts > 0) {
+            a += " ";
+            a += std::to_string(std::max(1, alert->attempt));
+            a += "/";
+            a += std::to_string(alert->maxAttempts);
+        }
+        // Keep metrics readable — cap alert width roughly.
+        if (a.size() > 42) a = a.substr(0, 39) + "…";
+        inkcell::Role ar = inkcell::Role::Info;
+        bool bold = false;
+        if (alert->severity == "error") {
+            ar = inkcell::Role::Error;
+            bold = true;
+        } else if (alert->severity == "warn") {
+            ar = inkcell::Role::Warning;
+            bold = true;
+        }
+        bar.right_seg(std::move(a), ar, bold);
+    }
     bar.right_seg(m.mode, inkcell::Role::TextMuted);
     bar.right_seg(theme::name(), inkcell::Role::Ghost);
 
@@ -1005,18 +1040,14 @@ inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, cons
     drawHeader(surface, frame, m);
     int promptY = frame.bottom() - 1;
     int statusY = frame.bottom() - 2;
-    const int notifH =
-        (m.notifications && !m.notifications->empty()) ? 1 : 0;
-    int notifY = statusY - notifH;
     int menuH = completionMenuHeight(m, frame.w);
-    int menuY = notifY - menuH;
+    int menuY = statusY - menuH;
     // No separator rule — elevated footer is the visual break.
+    // Alerts fold into the status line (right) — no reserved strip row.
     inkcell::Rect body{frame.x, frame.y + 2, frame.w, std::max(1, menuY - (frame.y + 2))};
     drawTranscript(surface, body, m);
     if (menuH > 0)
         drawCompletionMenu(surface, {frame.x, menuY, frame.w, menuH}, m);
-    if (notifH > 0 && m.notifications)
-        drawNotificationStrip(surface, {frame.x, notifY, frame.w, 1}, *m.notifications);
     drawStatusLine(surface, {frame.x, statusY, frame.w, 1}, m);
     drawPromptLine(surface, {frame.x, promptY, frame.w, 1}, m);
 }

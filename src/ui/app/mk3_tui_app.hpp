@@ -394,7 +394,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
                 auto next = buildAgentFromManifest(path, bridge, err);
                 if (!next) {
                     model.launchError = err.empty() ? "launch failed" : err;
-                    model.dashboard.notice = "launch failed: " + model.launchError;
+                    model.dashboard.flashNotice("launch failed: " + model.launchError);
                 } else {
                     AgentConfig loaded = next->config();
                     slot->owned = std::move(next);

@@ -18,14 +18,14 @@ inline void MainScene::activate() {
     if (dash.section == model::DashboardSection::Manifests) {
         const auto* m = dash.selectedManifest();
         if (!m) {
-            dash.notice = "no selection";
+            dash.flashNotice("no selection");
             return;
         }
         if (m->kind == "agent" && m->launchable) {
             // Real launch — REPL tick hot-swaps Agent then opens chat.
             dash.yankBuffer = "cortex-mk3 -m " + m->path + " --tui experimental";
             model_->pendingLaunchManifest = m->path;
-            dash.notice = "launching " + m->name + "…";
+            dash.flashNotice("launching " + m->name + "…");
             model_->launchError.clear();
             return;
         }
@@ -33,7 +33,7 @@ inline void MainScene::activate() {
             queueWorkflowRun(*m);
             return;
         }
-        dash.notice = m->kind + " · " + m->category + " · inspect only";
+        dash.flashNotice(m->kind + " · " + m->category + " · inspect only");
         return;
     }
 }
@@ -48,17 +48,17 @@ inline bool MainScene::workflowSelectionActive() const {
 inline void MainScene::queueWorkflowRun(const catalog::ManifestEntry& m) {
     auto& dash = model_->dashboard;
     if (!model::workflowRunnablePath(m.path, m.name)) {
-        dash.notice = "workflow spec · not runnable";
+        dash.flashNotice("workflow spec · not runnable");
         return;
     }
     if (model_->workflowRun.isLive()) {
-        dash.notice = "workflow already running · Esc/x stop";
+        dash.flashNotice("workflow already running · Esc/x stop");
         return;
     }
     dash.yankBuffer = "workflow run " + m.path;
     model_->pendingRunWorkflow = m.path;
     dash.wfCanvasFocus = true;
-    dash.notice = "running " + m.name + "…";
+    dash.flashNotice("running " + m.name + "…");
 }
 
 inline void MainScene::resumeLastWorkflow() {
@@ -70,16 +70,16 @@ inline void MainScene::resumeLastWorkflow() {
         if (m && m->kind == "workflow") path = m->path;
     }
     if (path.empty()) {
-        dash.notice = "no workflow to resume";
+        dash.flashNotice("no workflow to resume");
         return;
     }
     if (model_->workflowRun.isLive()) {
-        dash.notice = "already running";
+        dash.flashNotice("already running");
         return;
     }
     model_->pendingRunWorkflow = path;
     dash.wfCanvasFocus = true;
-    dash.notice = "re-running " + (snap.name.empty() ? path : snap.name) + "…";
+    dash.flashNotice("re-running " + (snap.name.empty() ? path : snap.name) + "…");
 }
 
 inline void MainScene::resumeSelectedSession() {

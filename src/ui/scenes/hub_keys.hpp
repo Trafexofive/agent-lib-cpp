@@ -59,8 +59,8 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
         if (dash.section == model::DashboardSection::Manifests && workflowSelectionActive()) {
             dash.wfCanvasFocus = !dash.wfCanvasFocus;
             dash.focus = model::DashboardFocus::Content;
-            dash.notice = dash.wfCanvasFocus ? "canvas focus · hjkl pan · [] node"
-                                             : "list focus";
+            dash.flashNotice(dash.wfCanvasFocus ? "canvas focus · hjkl pan · [] node"
+                                                : "list focus");
             return true;
         }
         dash.toggleFocus();
@@ -100,17 +100,17 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
         if (model_->workflowRun.isLive() || model_->workflowRun.isActive()) {
             model_->pendingStopWorkflow = true;
             model_->workflowRun.requestCancel();
-            dash.notice = "stopping workflow…";
+            dash.flashNotice("stopping workflow…");
             return true;
         }
         if (dash.wfCanvasExpanded) {
             dash.wfCanvasExpanded = false;
-            dash.notice = "canvas docked";
+            dash.flashNotice("canvas docked");
             return true;
         }
         if (dash.wfCanvasFocus) {
             dash.wfCanvasFocus = false;
-            dash.notice = "list focus";
+            dash.flashNotice("list focus");
             return true;
         }
         if (dash.focus == model::DashboardFocus::Dock) {
@@ -120,19 +120,19 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
         if (!dash.searchQuery.empty()) {
             dash.searchQuery.clear();
             dash.refreshManifests();
-            dash.notice = "search cleared";
+            dash.flashNotice("search cleared");
             return true;
         }
         if (!dash.tagFilter.empty()) {
             dash.tagFilter.clear();
             dash.refreshManifests();
-            dash.notice = "tag cleared";
+            dash.flashNotice("tag cleared");
             return true;
         }
         if (!dash.manifestFilter.empty()) {
             dash.manifestFilter.clear();
             dash.refreshManifests();
-            dash.notice = "kind cleared";
+            dash.flashNotice("kind cleared");
             return true;
         }
         return true;
@@ -260,7 +260,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                 if (dash.section == model::DashboardSection::Manifests) {
                     dash.searchMode = true;
                     dash.focus = model::DashboardFocus::Content;
-                    dash.notice = "search: ";
+                    dash.notice = "search: "; dash.noticeExpireAtMs = 0;
                     return true;
                 }
                 break;
@@ -273,7 +273,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                 if (dash.section == model::DashboardSection::Manifests &&
                     workflowSelectionActive()) {
                     dash.wfCamX = 1e9f;  // sentinel → reframe on next draw
-                    dash.notice = "center";
+                    dash.flashNotice("center");
                     return true;
                 }
                 break;
@@ -282,6 +282,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             case 'g':
             case 'G':
                 dash.select(model::DashboardSection::Home);
+                model_->launchError.clear();
                 bumpNotice();
                 return true;
             case 's':
@@ -295,6 +296,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                     return true;
                 }
                 dash.select(model::DashboardSection::Sessions);
+                model_->launchError.clear();
                 bumpNotice();
                 return true;
             case 'a':
@@ -303,6 +305,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             case 'M':
                 dash.select(model::DashboardSection::Manifests);
                 dash.refreshManifests();
+                model_->launchError.clear();
                 bumpNotice();
                 return true;
             case 'f':
@@ -315,8 +318,8 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                     if (event.ch == 'F' && workflowSelectionActive()) {
                         dash.wfCanvasExpanded = !dash.wfCanvasExpanded;
                         dash.wfCanvasFocus = dash.wfCanvasExpanded;
-                        dash.notice = dash.wfCanvasExpanded ? "canvas expanded"
-                                                           : "canvas docked";
+                        dash.flashNotice(dash.wfCanvasExpanded ? "canvas expanded"
+                                                              : "canvas docked");
                         return true;
                     }
                     dash.cycleManifestFilter();
@@ -335,6 +338,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                 return true;
             case '?':
                 dash.select(model::DashboardSection::Settings);
+                model_->launchError.clear();
                 bumpNotice();
                 return true;
             case 'b':
@@ -365,7 +369,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             case 'y':
             case 'Y':
                 if (!dash.yankBuffer.empty()) {
-                    dash.notice = "yank: " + dash.yankBuffer;
+                    dash.flashNotice("yank: " + dash.yankBuffer);
                 }
                 return true;
             case 'r':
@@ -385,7 +389,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                 if (model_->workflowRun.isLive() || model_->workflowRun.isActive()) {
                     model_->pendingStopWorkflow = true;
                     model_->workflowRun.requestCancel();
-                    dash.notice = "stopping workflow…";
+                    dash.flashNotice("stopping workflow…");
                     return true;
                 }
                 break;
@@ -401,21 +405,21 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                     workflowSelectionActive()) {
                     dash.wfCanvasExpanded = !dash.wfCanvasExpanded;
                     dash.wfCanvasFocus = true;
-                    dash.notice =
-                        dash.wfCanvasExpanded ? "infinite canvas" : "canvas docked";
+                    dash.flashNotice(dash.wfCanvasExpanded ? "infinite canvas"
+                                                           : "canvas docked");
                     return true;
                 }
                 model_->zenMode = !model_->zenMode;
                 dash.bumpNavActivity();
                 if (dash.section == model::DashboardSection::Settings)
                     dash.settingsFocus = 7;
-                dash.notice = model_->zenMode ? "zen on · pill auto-hides"
-                                              : "zen off · pill always up";
+                dash.flashNotice(model_->zenMode ? "zen on · pill auto-hides"
+                                                 : "zen off · pill always up");
                 persistUiPrefs(*model_);
                 return true;
             case 'R':
                 dash.refreshAll();
-                dash.notice = "refreshed";
+                dash.flashNotice("refreshed");
                 return true;
             case 'T':
                 theme::toggle();
