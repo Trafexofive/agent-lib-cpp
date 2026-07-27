@@ -12,6 +12,7 @@
 
 #include "inkcell/surface.hpp"
 #include "inkcell/text.hpp"
+#include "inkcell/widgets/status_bar.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
 #include "src/ui/chat/chat_blocks.hpp"
 #include "src/ui/chat/notification.hpp"
@@ -137,54 +138,45 @@ inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const C
     auto bg = focusBar ? theme::footer_bg_focus() : theme::footer_bg();
     surface.fill(row, " ", bg);
 
-    // Left accent tick (reads as elevation / focus without a full box).
+    // Product accent tick; metrics via inkcell StatusBar segments (fill off).
     auto accent = m.running   ? theme::footer_accent_live()
                   : m.failed  ? theme::footer_warn()
                   : focusBar  ? theme::footer_accent_focus()
                               : theme::footer_accent_idle();
     surface.text({row.x, row.y}, "▌", accent);
 
-    auto stateStyle = m.failed ? theme::footer_warn()
-                      : m.running ? theme::footer_live()
-                                  : theme::footer_dim();
     std::string glyph = m.running ? liveSpinner(m.nowMs)
                         : m.failed ? "✗"
                                    : "○";
     std::string state = m.status.empty() || m.status == "idle" ? "ready" : m.status;
-    // Drop noisy "cancelling (...)" tails in the tight left cluster.
     if (state.rfind("cancelling", 0) == 0) state = "cancelling";
-
-    // Build one dense left cluster so narrow terminals still show live signal.
-    // Prefer: spinner · state · elapsed · scope · pend/act/res/bytes
-    std::string left = glyph + " " + state;
     int64_t elapsed = m.running ? m.turnElapsedMs : m.lastTurnElapsedMs;
+
+    inkcell::widgets::StatusBar bar;
+    const auto& deep = inkcell::Theme::deep_space();
+    bar.theme(deep).separator(" ").fill_background(false);
+    bar.left_seg(glyph + " " + state,
+                 m.failed ? inkcell::Role::Error
+                 : m.running ? inkcell::Role::Success
+                             : inkcell::Role::TextMuted,
+                 m.running || m.failed);
     if (m.running || elapsed > 0)
-        left += " " + fmtCompactElapsed(elapsed);
+        bar.left_seg(fmtCompactElapsed(elapsed), inkcell::Role::Info);
     if (!m.scopeName.empty())
-        left += " ◀" + m.scopeName;
-    if (m.pendingOps > 0) left += " pend" + std::to_string(m.pendingOps);
-    if (m.actionCount > 0) left += " act" + std::to_string(m.actionCount);
-    if (m.resultCount > 0) left += " res" + std::to_string(m.resultCount);
-    if (m.tokenBytes > 0) left += " " + fmtCompactBytes(m.tokenBytes);
+        bar.left_seg("◀" + m.scopeName, inkcell::Role::Accent);
+    if (m.pendingOps > 0)
+        bar.left_seg("pend" + std::to_string(m.pendingOps), inkcell::Role::Warning, true);
+    if (m.actionCount > 0)
+        bar.left_seg("act" + std::to_string(m.actionCount), inkcell::Role::TextMuted);
+    if (m.resultCount > 0)
+        bar.left_seg("res" + std::to_string(m.resultCount), inkcell::Role::TextMuted);
+    if (m.tokenBytes > 0)
+        bar.left_seg(fmtCompactBytes(m.tokenBytes), inkcell::Role::TextMuted);
+    bar.right_seg(m.mode, inkcell::Role::TextMuted);
+    bar.right_seg(theme::name(), inkcell::Role::Ghost);
 
-    // Right: mode pills + theme only. Keybind prose lives in help (?).
-    std::string right = m.mode + " · " + theme::name();
-
-    int x = row.x + 2;
-    int rightW = inkcell::text::display_width(right);
-    int avail = std::max(0, row.w - 2 - rightW - 1);
-    // Prefer metrics over long status prose when squeezed.
-    if (inkcell::text::display_width(left) > avail && m.running) {
-        left = glyph;
-        if (elapsed > 0) left += " " + fmtCompactElapsed(elapsed);
-        if (m.pendingOps > 0) left += " pend" + std::to_string(m.pendingOps);
-        if (m.actionCount > 0) left += " act" + std::to_string(m.actionCount);
-        if (m.resultCount > 0) left += " res" + std::to_string(m.resultCount);
-        if (m.tokenBytes > 0) left += " " + fmtCompactBytes(m.tokenBytes);
-    }
-    surface.text({x, row.y}, inkcell::text::truncate(left, avail), stateStyle);
-    surface.text({std::max(row.x, row.right() - rightW), row.y},
-                 inkcell::text::truncate(right, row.w), theme::footer_dim());
+    inkcell::Rect barRow{row.x + 2, row.y, std::max(0, row.w - 2), row.h};
+    bar.draw(surface, barRow);
 }
 
 inline void drawPromptLine(inkcell::Surface& surface, inkcell::Rect row, const ChatSurfaceModel& m) {

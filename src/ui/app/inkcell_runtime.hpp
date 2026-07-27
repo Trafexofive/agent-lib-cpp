@@ -153,18 +153,12 @@ inline void installCoalescedTick(inkcell::App& app, AgentBridge& bridge,
         model->drain(bridge);
         // Extra first so hub launch/submit can set pendingRoute same frame.
         if (extra) extra(app, *model, bridge);
-        if (model->pendingRoute == "agent") {
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"scene.agent"});
-        } else if (model->pendingRoute == "main") {
-            model->persistUiTimeline();
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"scene.main"});
-        } else if (model->pendingRoute == "quit") {
-            model->persistUiTimeline();
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"app.quit"});
-        }
+        const PendingRoute route = model->pendingRoute;
+        if (route == PendingRoute::None) return;
+        model->clearRoute();
+        if (pendingRoutePersistBefore(route)) model->persistUiTimeline();
+        const char* action = pendingRouteAction(route);
+        if (action && action[0]) app.engine().post_action(inkcell::Action{action});
     });
 }
 

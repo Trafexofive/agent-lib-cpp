@@ -84,7 +84,7 @@ class AgentScene final : public BaseScene {
             if (!model_->atRoot()) {
                 model_->goBack();
             } else {
-                model_->pendingRoute = "main";
+                model_->requestRoute(PendingRoute::Main);
             }
             return true;
         }
@@ -102,7 +102,7 @@ class AgentScene final : public BaseScene {
             if (model_->running || model_->askActive) {
                 stopAgentLoop("ctrl-c");
             } else {
-                model_->pendingRoute = "quit";
+                model_->requestRoute(PendingRoute::Quit);
             }
             return true;  // always consume — never fall through to engine hard-quit
         }
@@ -151,7 +151,7 @@ class AgentScene final : public BaseScene {
                 model_->cmdPalette.clearLeader();
 
             if (event.code == KeyCode::Character && (event.ch == 'm' || event.ch == 'M')) {
-                model_->pendingRoute = "main";
+                model_->requestRoute(PendingRoute::Main);
                 return true;
             }
             if (event.code == KeyCode::Character && event.ch == '?') {
@@ -373,7 +373,7 @@ class AgentScene final : public BaseScene {
    private:
     void runPaletteAction(const std::string& id) {
         if (id == "nav.main") {
-            model_->pendingRoute = "main";
+            model_->requestRoute(PendingRoute::Main);
             return;
         }
         if (id == "chat.thoughts") {
@@ -411,7 +411,7 @@ class AgentScene final : public BaseScene {
             return;
         }
         if (id == "sys.quit") {
-            model_->pendingRoute = "quit";
+            model_->requestRoute(PendingRoute::Quit);
             return;
         }
         if (id.rfind("slash:", 0) == 0) {
@@ -553,7 +553,7 @@ class AgentScene final : public BaseScene {
 
         model_->composer.value.clear();
         model_->composer.cursor = 0;
-        if (result.quit) model_->pendingRoute = "quit";
+        if (result.quit) model_->requestRoute(PendingRoute::Quit);
         if (result.stopLoop) stopAgentLoop("slash");
         if (result.clearTranscript) model_->clearTranscript();
         bool prefsDirty = false;

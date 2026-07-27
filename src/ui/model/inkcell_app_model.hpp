@@ -24,6 +24,8 @@
 #include "src/ui/components/cmd_palette.hpp"
 #include "src/ui/model/dashboard_model.hpp"
 #include "src/ui/model/timeline_codec.hpp"  // TimelineKind/Row + codec (F2)
+#include "src/ui/model/pending_route.hpp"   // PendingRoute (F6)
+#include "inkcell/focus.hpp"
 #include "src/ui/model/timeline_store.hpp"  // TimelineStore (F3)
 #include "src/ui/model/event_reducer.hpp"   // reduceUiEvent (F3)
 #include "src/ui/model/workflow_run_model.hpp"
@@ -207,7 +209,7 @@ struct ShellModel : TimelineStore {
     int routeTicks = 0;
     std::string activePage = "Agent";
     std::string pendingSubmit;
-    std::string pendingRoute;  // "agent" | "main" | "quit"
+    PendingRoute pendingRoute = PendingRoute::None;
     // Hub Enter on a launchable agent sets this path; REPL tick hot-swaps the
     // live Agent then routes to the chat scene. Cleared after attempt.
     std::string pendingLaunchManifest;
@@ -259,6 +261,9 @@ struct ShellModel : TimelineStore {
     std::vector<std::string> agentPath;  // nested sub-agent names from root
     int selectedBlock = 0;               // index into visible focusable blocks
     bool timelineFocus = false;          // false = composer owns keys
+    // inkcell FocusManager dogfood (composer/timeline/palette/ask layers).
+    // timelineFocus remains the product boolean for projection; keep in sync via focus*().
+    inkcell::FocusManager focus;
     // Maps visible block index -> rootRows/nested row index
     std::vector<int> blockRowIndex;
     // nestedRows, activeProtocolRows, pendingActionIds, completedResultIds,
@@ -272,6 +277,9 @@ struct ShellModel : TimelineStore {
     ShellModel() {
         composer.focused = true;
         composer.value.clear();
+        focus.add("composer");
+        focus.add("timeline");
+        focus.focus("composer");
         rebuildViews();
     }
 
@@ -749,6 +757,7 @@ struct ShellModel : TimelineStore {
     void focusTimeline() {
         timelineFocus = true;
         composer.focused = false;
+        focus.focus("timeline");
         if (selectedBlock < 0) selectedBlock = 0;
         markProjFull();  // › selection markers on all blocks
         rebuildViews();
@@ -758,9 +767,13 @@ struct ShellModel : TimelineStore {
         if (!atRoot()) return;  // nested views are browse-only
         timelineFocus = false;
         composer.focused = true;
+        focus.focus("composer");
         markProjFull();  // clear › markers
         rebuildViews();
     }
+
+    void requestRoute(PendingRoute r) { pendingRoute = r; }
+    void clearRoute() { pendingRoute = PendingRoute::None; }
 
     static bool isProgressPlaceholder(const ProtocolResult& result) {
         return cortex::mk3::ui::isProgressPlaceholder(result);

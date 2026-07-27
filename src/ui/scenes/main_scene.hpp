@@ -332,7 +332,7 @@ class MainScene final : public BaseScene {
                 case 'c':
                 case 'C':
                     // Chat route always — canvas center is '.' (no clash).
-                    model_->pendingRoute = "agent";
+                    model_->requestRoute(PendingRoute::Agent);
                     return true;
                 case '.':
                     if (dash.section == model::DashboardSection::Manifests &&
@@ -480,7 +480,7 @@ class MainScene final : public BaseScene {
                     return true;
                 case 'q':
                 case 'Q':
-                    model_->pendingRoute = "quit";
+                    model_->requestRoute(PendingRoute::Quit);
                     return true;
             }
         }
@@ -553,7 +553,7 @@ class MainScene final : public BaseScene {
             dash.refreshManifests();
         } else if (id == "nav.help" || id == "nav.settings")
             dash.select(model::DashboardSection::Settings);
-        else if (id == "nav.chat") model_->pendingRoute = "agent";
+        else if (id == "nav.chat") model_->requestRoute(PendingRoute::Agent);
         else if (id == "act.refresh") {
             dash.refreshAll();
             dash.notice = "refreshed";
@@ -589,7 +589,7 @@ class MainScene final : public BaseScene {
             } else {
                 dash.notice = "select a workflow first";
             }
-        } else if (id == "sys.quit") model_->pendingRoute = "quit";
+        } else if (id == "sys.quit") model_->requestRoute(PendingRoute::Quit);
         bumpNotice();
     }
     std::string activeName() const {
@@ -1429,7 +1429,7 @@ class MainScene final : public BaseScene {
             return;
         }
         if (dash.section == model::DashboardSection::Home) {
-            model_->pendingRoute = "agent";
+            model_->requestRoute(PendingRoute::Agent);
             return;
         }
         if (dash.section == model::DashboardSection::Manifests) {
@@ -1667,7 +1667,7 @@ class MainScene final : public BaseScene {
         }
         model_->loadSessionUi(full);
         model_->activeSessionId = result.sessionId;
-        model_->pendingRoute = "agent";
+        model_->requestRoute(PendingRoute::Agent);
     }
 
     void createSession() {
@@ -1684,7 +1684,7 @@ class MainScene final : public BaseScene {
         if (!result.ok) return;
         model_->clearTranscript();
         model_->activeSessionId = result.sessionId;
-        model_->pendingRoute = "agent";
+        model_->requestRoute(PendingRoute::Agent);
     }
 
     void killLiveSession() {

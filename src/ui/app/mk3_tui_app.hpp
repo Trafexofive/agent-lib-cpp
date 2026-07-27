@@ -376,7 +376,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
             model.pendingLaunchManifest.clear();
             if (!model.activeManifestPath.empty() && path == model.activeManifestPath) {
                 model.dashboard.notice = "already live · " + model.agentName;
-                model.pendingRoute = "agent";
+                model.requestRoute(PendingRoute::Agent);
             } else {
                 joinWorker();
                 std::string err;
@@ -389,7 +389,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
                     slot->owned = std::move(next);
                     applyLiveIdentity(loaded, path);
                     flushGuard.rebind(slot->get(), model.activeSessionId);
-                    model.pendingRoute = "agent";
+                    model.requestRoute(PendingRoute::Agent);
                 }
             }
         }

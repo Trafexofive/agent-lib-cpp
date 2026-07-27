@@ -107,10 +107,10 @@ void test_dashboard_scene() {
     }
     check(wfQueued, "at least one runnable workflow in manifests");
     scene.on_key(key(inkcell::KeyCode::Character, 'c'));
-    check(model->pendingRoute == "agent", "dashboard chat shortcut requests chat route");
-    model->pendingRoute.clear();
+    check(model->pendingRoute == PendingRoute::Agent, "dashboard chat shortcut requests chat route");
+    model->clearRoute();
     scene.on_key(key(inkcell::KeyCode::Character, 'q'));
-    check(model->pendingRoute == "quit", "dashboard quit shortcut requests app exit");
+    check(model->pendingRoute == PendingRoute::Quit, "dashboard quit shortcut requests app exit");
 }
 
 void test_ask_choice_roundtrip() {
@@ -205,8 +205,8 @@ void test_slash_and_completion() {
     check(theme::activeVariant == theme::Variant::Neon, "uppercase T switches theme in transcript focus");
     theme::set(theme::Variant::Graphite);
     scene.on_key(key(inkcell::KeyCode::Character, 'm'));
-    check(model->pendingRoute == "main", "chat transcript shortcut requests dashboard route");
-    model->pendingRoute.clear();
+    check(model->pendingRoute == PendingRoute::Main, "chat transcript shortcut requests dashboard route");
+    model->clearRoute();
 }
 
 void test_ctrl_c_state() {
@@ -220,15 +220,15 @@ void test_ctrl_c_state() {
     scene.on_key(key(inkcell::KeyCode::CtrlC));
     check(!g_running && model->status.find("cancelling") == 0,
           "Ctrl-C requests active turn cancellation");
-    check(model->pendingRoute != "quit", "1st Ctrl-C while running does not quit");
+    check(model->pendingRoute != PendingRoute::Quit, "1st Ctrl-C while running does not quit");
     // 2nd Ctrl-C when idle → quit.
     model->running = false;
     model->askActive = false;
     model->status = "idle";
     g_running = true;
-    model->pendingRoute.clear();
+    model->clearRoute();
     scene.on_key(key(inkcell::KeyCode::CtrlC));
-    check(model->pendingRoute == "quit", "2nd Ctrl-C when idle requests quit");
+    check(model->pendingRoute == PendingRoute::Quit, "2nd Ctrl-C when idle requests quit");
     g_running = true;
 }
 
@@ -242,12 +242,12 @@ void test_esc_never_routes_main_or_quit() {
     scene.on_key(key(inkcell::KeyCode::Escape));
     check(model->timelineFocus && !model->composer.focused,
           "Esc from composer focuses timeline");
-    check(model->pendingRoute.empty(), "Esc does not route to main");
-    check(model->pendingRoute != "quit", "Esc does not quit");
+    check(model->pendingRoute == PendingRoute::None, "Esc does not route to main");
+    check(model->pendingRoute != PendingRoute::Quit, "Esc does not quit");
     scene.on_key(key(inkcell::KeyCode::Escape));
     check(model->composer.focused && !model->timelineFocus,
           "Esc from timeline returns to composer");
-    check(model->pendingRoute.empty(), "Esc still does not route to main");
+    check(model->pendingRoute == PendingRoute::None, "Esc still does not route to main");
 }
 void test_chat_scroll_keys() {
     // Regression for the "no way to actually scroll the history" complaint.
