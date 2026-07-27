@@ -775,6 +775,24 @@ struct ShellModel : TimelineStore {
     void requestRoute(PendingRoute r) { pendingRoute = r; }
     void clearRoute() { pendingRoute = PendingRoute::None; }
 
+    // Modal focus layers (inkcell FocusManager stack). Esc / dismiss pops.
+    void openModalFocus(const std::string& name) {
+        if (focus.in_modal() && focus.layer_name() == name) return;
+        // Nested modal: push on top (ask over palette is fine).
+        focus.push_layer(name, {name}, name);
+    }
+    void closeModalFocus(const std::string& name) {
+        if (focus.layer_name() == name) {
+            focus.pop_layer();
+            return;
+        }
+        // Drop through to named layer if buried.
+        if (focus.in_modal()) focus.pop_to(name);
+    }
+    bool modalFocusIs(const std::string& name) const {
+        return focus.in_modal() && focus.layer_name() == name;
+    }
+
     static bool isProgressPlaceholder(const ProtocolResult& result) {
         return cortex::mk3::ui::isProgressPlaceholder(result);
     }
@@ -828,11 +846,14 @@ struct ShellModel : TimelineStore {
             askInput.focused = true;
             askMultiSelected.clear();
             status = askActive ? "waiting human input" : status;
+            if (askActive) openModalFocus("ask");
+            else closeModalFocus("ask");
         }
         if (fx.hasAskDialogResult) {
             askActive = false;
             askInput.value.clear();
             askMultiSelected.clear();
+            closeModalFocus("ask");
         }
 
         // Inspector event log (best-effort; not part of pure store).

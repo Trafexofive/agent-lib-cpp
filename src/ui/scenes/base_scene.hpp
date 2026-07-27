@@ -24,6 +24,7 @@ class BaseScene : public inkcell::Scene {
             if (model_->askDialog.cancelled) bridge_.cancelAsk();
             else bridge_.completeAsk(model_->askDialog.results);
             model_->askActive = false;
+            model_->closeModalFocus("ask");
             model_->status = model_->running ? "agent running" : model_->status;
         }
         model_->tickRoute();

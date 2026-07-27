@@ -28,6 +28,8 @@ class AgentScene final : public BaseScene {
         if (model_->cmdPalette.open && !model_->cmdPalette.closing) {
             std::string action;
             if (components::handleCmdPaletteKey(model_->cmdPalette, event, &action)) {
+                if (!model_->cmdPalette.open || model_->cmdPalette.closing)
+                    model_->closeModalFocus("palette");
                 if (!action.empty()) runPaletteAction(action);
                 return true;
             }
@@ -35,6 +37,10 @@ class AgentScene final : public BaseScene {
         if (event.code == KeyCode::Character && event.ctrl() &&
             (event.ch == 'p' || event.ch == 'P')) {
             model_->cmdPalette.toggle(components::chatCommands());
+            if (model_->cmdPalette.open && !model_->cmdPalette.closing)
+                model_->openModalFocus("palette");
+            else
+                model_->closeModalFocus("palette");
             return true;
         }
 
@@ -43,6 +49,7 @@ class AgentScene final : public BaseScene {
             (event.code == KeyCode::Escape ||
              (event.code == KeyCode::Character && event.ch == '?'))) {
             model_->helpVisible = false;
+            model_->closeModalFocus("help");
             return true;
         }
 
@@ -56,6 +63,7 @@ class AgentScene final : public BaseScene {
             }
             if (model_->cmdPalette.open && !model_->cmdPalette.closing) {
                 model_->cmdPalette.requestClose();
+                model_->closeModalFocus("palette");
                 return true;
             }
             if (model_->composer.focused) {
@@ -91,8 +99,10 @@ class AgentScene final : public BaseScene {
 
         if (model_->helpVisible) {
             if (event.code == KeyCode::Escape ||
-                (event.code == KeyCode::Character && event.ch == '?'))
+                (event.code == KeyCode::Character && event.ch == '?')) {
                 model_->helpVisible = false;
+                model_->closeModalFocus("help");
+            }
             return true;
         }
 
@@ -143,6 +153,7 @@ class AgentScene final : public BaseScene {
             if (event.code == KeyCode::Character && !event.ctrl() && event.ch == ' ') {
                 if (model_->cmdPalette.noteSpace()) {
                     model_->cmdPalette.show(components::chatCommands());
+                    model_->openModalFocus("palette");
                     return true;
                 }
                 return true;
@@ -156,6 +167,7 @@ class AgentScene final : public BaseScene {
             }
             if (event.code == KeyCode::Character && event.ch == '?') {
                 model_->helpVisible = true;
+                model_->openModalFocus("help");
                 return true;
             }
             if (event.code == KeyCode::Character && event.ch == 'T') {
@@ -432,6 +444,7 @@ class AgentScene final : public BaseScene {
         if (event.code == KeyCode::Escape || event.code == KeyCode::CtrlC) {
             model_->askDialog.cancelled = true;
             model_->askActive = false;
+            model_->closeModalFocus("ask");
             bridge_.cancelAsk();
             return true;
         }
@@ -507,6 +520,7 @@ class AgentScene final : public BaseScene {
         // answers in the TUI (P0).
         if (model_->askDialog.done()) {
             model_->askActive = false;
+            model_->closeModalFocus("ask");
             if (model_->askDialog.cancelled) {
                 bridge_.cancelAsk();
                 model_->appendNotice("ask", {"cancelled"});
@@ -627,6 +641,7 @@ class AgentScene final : public BaseScene {
         if (model_->askActive) {
             model_->askDialog.cancelled = true;
             model_->askActive = false;
+            model_->closeModalFocus("ask");
             bridge_.cancelAsk();
         }
         if (model_->running) {
