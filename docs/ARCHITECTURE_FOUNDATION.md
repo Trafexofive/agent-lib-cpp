@@ -15,7 +15,7 @@ Cross-links: `INKCELL_INTEGRATION.md`, modularity audit `2026-07-26`, dual-repo 
 | `inkcell_app_model.hpp` (ShellModel) | ~1700 → **~361** | F0–F7 peels; thin composition root |
 | `mk3_tui_app.hpp` | ~620 → **~448** | F5 `inkcell_runtime.hpp` owns tick/flush |
 | `main_scene.hpp` | ~1900 | hub still large — next peel target |
-| `agent.cpp` / `agent.hpp` | ~2600 → **~1740** | prompts/helpers/harness peeled; runLoop remains |
+| `agent.cpp` / `agent.hpp` | ~2600 → **~1687** | peels + runLoop methods; runLoop ~759 LOC |
 | `main.cpp` | ~2400 | CLI — after UI pure stack |
 
 **Module map (landed):** `timeline_codec`, `timeline_store`, `event_reducer`, `timeline_projection`, `shell_nav_session`, `pending_route`, `inkcell_runtime`, `sanitize`. ShellModel inherits TimelineStore; apply → reduceUiEvent.
@@ -138,7 +138,10 @@ QoL (Feel/Composer/Nested) only on seams. **markdown-buddy** is inkcell ship pro
 | `agent_harness.hpp` | harness path resolve | ✅ |
 | `agent_session.cpp` | session lifecycle | ✅ prior |
 | `agent_tool_dispatch.cpp` | tool dispatch | ✅ prior |
-| `agent.cpp` `runLoop` | core iteration | still monolithic (~1.4k) |
+| `handleAgentDelegate` / `handleWorkflowDelegate` | action lambdas | ✅ |
+| `handleActionExecute` / `handleProtocolEvent` | setExecutor/onEvent | ✅ |
+| `ProtocolStreamState` | per-iteration stream mutables | ✅ |
+| `agent.cpp` `runLoop` | core iteration | ~759 LOC (was ~1.5k) |
 
 MainScene peels: `hub_draw.hpp`, `hub_keys.hpp`, `hub_session_ops.hpp` → MainScene ~316 LOC.
 
