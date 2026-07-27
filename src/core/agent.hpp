@@ -23,6 +23,7 @@
 #include "../sandbox/policy.hpp"
 #include "../session/manager.hpp"
 #include "../tools/registry.hpp"
+#include "../workflows/workflow.hpp"  // WorkflowResult (handleWorkflowDelegate)
 
 namespace cortex::mk3 {
 
@@ -229,6 +230,8 @@ class Agent {
     Json::Value handleAgentDelegate(AgentContext& ctx,
                                     const protocol::ParsedAction& action,
                                     const std::string& instruction);
+    workflows::WorkflowResult handleWorkflowDelegate(
+        AgentContext& ctx, const std::string& workflowName, const Json::Value& params);
 
     // Prompt building
     ChatMessages buildChatPrompt(const AgentContext& ctx) const;
