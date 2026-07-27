@@ -15,7 +15,7 @@ Cross-links: `INKCELL_INTEGRATION.md`, modularity audit `2026-07-26`, dual-repo 
 | `inkcell_app_model.hpp` (ShellModel) | ~1700 → **~361** | F0–F7 peels; thin composition root |
 | `mk3_tui_app.hpp` | ~620 → **~448** | F5 `inkcell_runtime.hpp` owns tick/flush |
 | `main_scene.hpp` | ~1900 | hub still large — next peel target |
-| `agent.cpp` / `agent.hpp` | ~2600+ | F1 events peeled; loop still fat |
+| `agent.cpp` / `agent.hpp` | ~2600 → **~1740** | prompts/helpers/harness peeled; runLoop remains |
 | `main.cpp` | ~2400 | CLI — after UI pure stack |
 
 **Module map (landed):** `timeline_codec`, `timeline_store`, `event_reducer`, `timeline_projection`, `shell_nav_session`, `pending_route`, `inkcell_runtime`, `sanitize`. ShellModel inherits TimelineStore; apply → reduceUiEvent.
@@ -124,6 +124,25 @@ Each step: extract → rewire includes → tests green → optional commit.
 | **F8** | inkcell CommandRegistry help + KeyHints dogfood | ✅ help overlay + hub key strip |
 
 QoL (Feel/Composer/Nested) only on seams. **markdown-buddy** is inkcell ship proof (parked passable).
+
+---
+
+## 5b. Domain core peels (agent runtime)
+
+| Unit | Role | Status |
+|------|------|--------|
+| `protocol/events.hpp` | ProtocolEvent PODs | ✅ F1 |
+| `agent_xml.hpp` | xmlAttr / indentText | ✅ |
+| `agent_prompts.cpp` | system/user/dynamic prompts + sanitize | ✅ |
+| `agent_run_helpers.hpp` | sub-agent expansion, result tags | ✅ |
+| `agent_harness.hpp` | harness path resolve | ✅ |
+| `agent_session.cpp` | session lifecycle | ✅ prior |
+| `agent_tool_dispatch.cpp` | tool dispatch | ✅ prior |
+| `agent.cpp` `runLoop` | core iteration | still monolithic (~1.4k) |
+
+MainScene peels: `hub_draw.hpp`, `hub_keys.hpp`, `hub_session_ops.hpp` → MainScene ~316 LOC.
+
+markdown-buddy: v0.1 app-standard chrome dogfoods CommandRegistry/StatusBar/KeyHints/themes.
 
 ---
 
