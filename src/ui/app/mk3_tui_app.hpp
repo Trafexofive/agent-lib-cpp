@@ -70,8 +70,13 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
 inline inkcell::App makeInkcellApp(const InkcellAppConfig& cfg, AgentBridge& bridge,
                                    std::shared_ptr<ShellModel> model, bool startAtDashboard) {
     // Dogfood inkcell CommandRegistry: chat + hub inventories (help overlay reads chat).
+    // IMPORTANT: bind hub registry to a named temporary — range-for over
+    // hubCommandRegistry().all() dangles (temporary CommandRegistry dies before loop body).
     inkcell::CommandRegistry commands = chatCommandRegistry();
-    for (const auto& c : hubCommandRegistry().all()) commands.add(c);
+    {
+        inkcell::CommandRegistry hub = hubCommandRegistry();
+        for (const auto& c : hub.all()) commands.add(c);
+    }
 
     inkcell::App app;
     app.tick_ms(33)

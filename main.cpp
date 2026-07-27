@@ -2409,13 +2409,24 @@ int main(int argc, char* argv[]) {
     } catch (const std::exception& e) {
         // Operator-locked fail-soft entry path: a missing harness prompt or
         // a torn config file used to terminate() mid-main with a noisy
-        // SIGABRT. Pretty-print the exception and exit 1 so operators can
+        // SIGABRT. Pretty-print the exception and exit 2 so operators can
         // see the message and continue without a core dump.
         std::cerr << "\033[31mcortex-mk3:\033[0m " << e.what() << "\n";
-        if (const char* hint = std::getenv("CORTEX_HOME"); !hint || !*hint) {
-            std::cerr << "  \033[2mhint\033[0m: configure with "
-                         "`--manifest-dir /path/to/cortex` or "
-                         "`CORTEX_HOME=/path/to/cortex`.\n";
+        // Only nudge CORTEX_HOME when the error looks path/manifest related —
+        // bare std::bad_alloc / stoi noise is not fixed by env vars.
+        const std::string msg = e.what();
+        const bool pathish =
+            msg.find("manifest") != std::string::npos ||
+            msg.find("harness") != std::string::npos ||
+            msg.find("CORTEX_HOME") != std::string::npos ||
+            msg.find("No such file") != std::string::npos ||
+            msg.find("not found") != std::string::npos;
+        if (pathish) {
+            if (const char* hint = std::getenv("CORTEX_HOME"); !hint || !*hint) {
+                std::cerr << "  \033[2mhint\033[0m: configure with "
+                             "`--manifest-dir /path/to/cortex` or "
+                             "`CORTEX_HOME=/path/to/cortex`.\n";
+            }
         }
         return 2;
     }
