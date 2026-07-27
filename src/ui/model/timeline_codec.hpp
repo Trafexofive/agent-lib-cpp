@@ -16,6 +16,8 @@
 
 namespace cortex::mk3::ui {
 
+enum class PageState { Loading, Populated, Empty, Error };
+
 enum class TimelineKind {
     User,
     Status,

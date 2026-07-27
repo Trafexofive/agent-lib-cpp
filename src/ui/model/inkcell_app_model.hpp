@@ -24,6 +24,8 @@
 #include "src/ui/components/cmd_palette.hpp"
 #include "src/ui/model/dashboard_model.hpp"
 #include "src/ui/model/timeline_codec.hpp"  // TimelineKind/Row + codec (F2)
+#include "src/ui/model/timeline_store.hpp"  // TimelineStore (F3)
+#include "src/ui/model/event_reducer.hpp"   // reduceUiEvent (F3)
 #include "src/ui/model/workflow_run_model.hpp"
 #include "src/ui/text/sanitize.hpp"         // sanitizeForDisplay (F2)
 #include "src/ui/bridge/agent_bridge.hpp"
@@ -56,7 +58,6 @@ struct InkcellAppConfig {
     bool truncateBodies = true;
 };
 
-enum class PageState { Loading, Populated, Empty, Error };
 inline bool snapshotMode() {
     const char* s = std::getenv("MK3_TUI_SNAPSHOT");
     return (s && s[0]) || !isatty(STDOUT_FILENO);
@@ -175,16 +176,16 @@ inline std::vector<TimelineRow> rowsFromAgent(Agent* agent) {
     return out;
 }
 
-struct ShellModel {
+// F3: ShellModel is TimelineStore + chrome/turn/session orchestration.
+// Row storage, protocol map, caps, sanitize append live in TimelineStore.
+// apply() delegates pure event reduction to reduceUiEvent().
+struct ShellModel : TimelineStore {
     chat::NotificationStack notificationStack;
-    // Live root transcript (bridge-fed).
-    // deque: O(1) pop_front when enforceRowCap drops oldest Stream/Thought rows.
-    std::deque<TimelineRow> rootRows;
     std::vector<std::string> eventLog;
     std::string raw;
     std::string finalText;
     std::string status = "idle";
-    PageState timelineState = PageState::Empty;
+    // timelineState lives in TimelineStore
     bool running = false;
     int64_t turnStartMs = 0;  // steady_clock ms when the current turn started; 0 when idle. Drives live metrics.
     int64_t lastTurnElapsedMs = 0;  // duration of the most recently completed turn; persists after the turn ends for the "last" summary.
@@ -201,10 +202,7 @@ struct ShellModel {
     // "… N more lines" note. Toggle via /truncate or CLI --[no-]truncate.
     bool truncateBodies = true;
     static constexpr int kMaxBodyLines = 50;
-    int tokenBytes = 0;
-    int actionCount = 0;
-    int resultCount = 0;
-    int pendingOps = 0;
+    // tokenBytes/actionCount/resultCount/pendingOps live in TimelineStore
     int wakeCount = 0;
     int routeTicks = 0;
     std::string activePage = "Agent";
@@ -263,26 +261,13 @@ struct ShellModel {
     bool timelineFocus = false;          // false = composer owns keys
     // Maps visible block index -> rootRows/nested row index
     std::vector<int> blockRowIndex;
-    // Nested frame cache (rebuilt on enter/refresh)
-    std::deque<TimelineRow> nestedRows;
-
-    // Current-turn protocol reducer. Agent protocol entries mutate in place as
-    // response text and progress results grow; map each protocol index to one row.
-    std::vector<int> activeProtocolRows;
-    std::set<std::string> pendingActionIds;
+    // nestedRows, activeProtocolRows, pendingActionIds, completedResultIds,
+    // projDirtyFrom, rootRowLineStart live in TimelineStore
     bool batchingEvents = false;
     bool viewRebuildPending = false;
     uint64_t viewRebuildCount = 0;
     uint64_t transcriptVersion = 0;
-    // Incremental projection: first rootRows index that must be re-emitted into
-    // transcriptView.lines. SIZE_MAX = full rebuild. Streaming appends/upserts
-    // only dirty the tail so wrap cache keeps a long stable source prefix.
-    size_t projDirtyFrom = 0;
-    // Parallel to rootRows when at root: transcriptView line index where that
-    // root row's projection starts (-1 if the row was filtered out).
-    std::vector<int> rootRowLineStart;
     mutable chat::TranscriptWrapCache transcriptWrapCache;
-    std::set<std::string> completedResultIds;
 
     ShellModel() {
         composer.focused = true;
@@ -343,129 +328,38 @@ struct ShellModel {
     }
 
     void pushRow(TimelineRow row) {
-        const_cast<ShellModel*>(this)->applyRowBans(std::move(row));
+        applyRowBans(std::move(row));
     }
 
-    // Vet-fix real perf: when transcript grows unbounded (raw mode + many
-    // small deltas), the wrap path eventually dominates the tick. We cap the
-    // transcript at kRootRowCap, dropping oldest Stream/Thought rows first.
-    // User/Response/Action/Result pairs are protected — never lose shipped
-    // answers or tool boundaries.
-    // Vet-fix: tighter cap. 1500 rows × full chat wrap per tick froze Esc
-    // navigation on real workloads — each row pays O(width) of wrap work
-    // and the cache walks every visible line on every frame. Drop the
-    // ceiling to a more pragmatic cap that protects navigation without
-    // hiding the last few turns.
-    static constexpr int kRootRowCap = 600;
+    // Cap is TimelineStore::kRootRowCap; rebuild when rows drop.
     void enforceRowCap() {
-        if (static_cast<int>(rootRows.size()) < kRootRowCap) return;
-        int excess = static_cast<int>(rootRows.size()) - kRootRowCap;
-        size_t drop = 0;
-        // Drop oldest first, but never delete the leading header or any
-        // Action/Result pair anchor.
-        while (drop < excess) {
-            const auto& r = rootRows[drop];
-            if (r.kind == TimelineKind::Thought || r.kind == TimelineKind::Stream) {
-                ++drop;
-            } else {
-                // We hit a protected row. Look forward — spool through all
-                // contiguous Action/Result/Response/User rows at the head
-                // only if the orphan would dangle: otherwise just stop.
-                break;
-            }
-        }
-        if (drop == 0) return; // can't honor cap without losing protected content
-        // O(drop) pop_front — each pop is O(1); avoid vector mid/front erase memmove.
-        for (size_t i = 0; i < drop; ++i) rootRows.pop_front();
-        selectedBlock = std::max(0, selectedBlock - static_cast<int>(drop));
-        // Active protocol indices must shift correspondingly.
-        for (auto& idx : activeProtocolRows) {
-            if (idx >= 0) idx -= static_cast<int>(drop);
-        }
-        timelineState = PageState::Populated;
-        markProjFull();  // indices shifted — invalidate incremental map
-        rebuildViews();
+        if (TimelineStore::enforceRowCap(selectedBlock) > 0) rebuildViews();
     }
+
     void applyRowBans(TimelineRow row) {
-        // Vet-fix: cap every row body hard before it lands. The 16KiB
-        // sanitize ceiling has been reliable UNTIL a subagent's
-        // `<context_feed>` packs an entire manifest YAML (hundreds of
-        // lines × 200 cells = a 60KB body) into one row, which the
-        // wrap cache and rebuild loop both walk in O(n). Fail-soft
-        // here: clamp the body to 8KiB before further processing.
-        constexpr std::size_t kBodyCap = 8 * 1024;
-        if (row.body.size() > kBodyCap) {
-            std::string head = row.body.substr(0, kBodyCap - 80);
-            std::string tail;
-            if (row.body.size() > kBodyCap + 256) {
-                tail = row.body.substr(row.body.size() - 256, 256);
-            } else {
-                tail = row.body.substr(kBodyCap - 80);
-            }
-            std::string body;
-            body.reserve(kBodyCap);
-            body.append(head);
-            body.append("\n\n  … [truncated for chat — row was ");
-            body.append(std::to_string(row.body.size()));
-            body.append(" bytes] …\n\n");
-            body.append(tail);
-            row.body = std::move(body);
-        }
-        // Sanitize ALL non-User bodies, including Response. Models and tools
-        // can emit binary / invalid UTF-8 (ELF reads, symbol dumps, bad SSE
-        // framing). User text is still sanitized for controls/UTF-8 so a
-        // paste cannot brick the terminal either.
-        if (!row.body.empty()) {
-            row.body = sanitizeForDisplay(row.body);
-        }
-        if (!atRoot()) {
-            // Live updates always land on root; nested is a focused historical view.
-            rootRows.push_back(std::move(row));
-            timelineState = PageState::Populated;
-            return;
-        }
-        rootRows.push_back(std::move(row));
-        timelineState = PageState::Populated;
-        // Stick selection to bottom while streaming if already near end.
-        if (running) selectedBlock = std::max(0, static_cast<int>(countFocusable(rootRows)) - 1);
-        markProjDirty(rootRows.size() - 1);  // append: only new tail row
+        // Nested drill is a historical view; live updates always land on root.
+        appendRoot(std::move(row));
+        if (!atRoot()) return;
+        if (running) selectedBlock = std::max(0, countFocusable(rootRows, showThoughts) - 1);
         rebuildViews();
     }
 
+    // Prefer TimelineStore::countFocusable; keep method for call-site compatibility.
     template <typename RowRange>
     static int countFocusable(const RowRange& rows, bool showThoughtsFlag = true) {
-        int n = 0;
-        for (const auto& row : rows) {
-            if (row.kind == TimelineKind::Thought && !showThoughtsFlag) continue;
-            if (row.kind == TimelineKind::Stream) continue;  // stream is ephemeral status, not a block
-            ++n;
-        }
-        return n;
+        return TimelineStore::countFocusable(rows, showThoughtsFlag);
     }
 
     void setStreamProgress(int bytes) {
-        tokenBytes = bytes;
-        if (!atRoot()) return;
-        if (!rootRows.empty() && rootRows.back().kind == TimelineKind::Stream) {
-            rootRows.back().title = "stream";
-            rootRows.back().body = std::to_string(bytes) + " bytes received";
-            markProjDirty(rootRows.size() - 1);
-        } else {
-            rootRows.push_back({TimelineKind::Stream, "stream", std::to_string(bytes) + " bytes received", true});
-            timelineState = PageState::Populated;
-            markProjDirty(rootRows.size() - 1);
+        if (!atRoot()) {
+            tokenBytes = bytes;
+            return;
         }
+        TimelineStore::setStreamProgress(bytes);
         rebuildViews();
     }
 
-    void markProjDirty(size_t rootIndex) {
-        if (rootIndex < projDirtyFrom) projDirtyFrom = rootIndex;
-    }
-
-    void markProjFull() {
-        projDirtyFrom = 0;
-        rootRowLineStart.clear();
-    }
+    // markProjDirty / markProjFull inherited from TimelineStore
 
     // Emit one root/nested row into transcriptView.lines (+ optional block index).
     // Returns true if the row produced a focusable block.
@@ -869,245 +763,81 @@ struct ShellModel {
     }
 
     static bool isProgressPlaceholder(const ProtocolResult& result) {
-        return result.elapsedMs == 0.0 && result.summary.find(" is running…") != std::string::npos;
+        return cortex::mk3::ui::isProgressPlaceholder(result);
     }
 
     void upsertProtocolRow(size_t index, TimelineRow row) {
-        // Streaming path bypasses applyRowBans — still must sanitize bodies
-        // (Response/Result/Thought can carry binary or invalid UTF-8).
-        if (!row.body.empty()) row.body = sanitizeForDisplay(row.body);
-        if (activeProtocolRows.size() <= index) activeProtocolRows.resize(index + 1, -1);
-        int& mapped = activeProtocolRows[index];
-        if (mapped >= 0 && mapped < static_cast<int>(rootRows.size())) {
-            rootRows[static_cast<size_t>(mapped)] = std::move(row);
-            markProjDirty(static_cast<size_t>(mapped));
-        } else {
-            mapped = static_cast<int>(rootRows.size());
-            rootRows.push_back(std::move(row));
-            markProjDirty(static_cast<size_t>(mapped));
-        }
-        timelineState = PageState::Populated;
+        upsertProtocol(index, std::move(row));
     }
 
+    // F3: pure reduction in reduceUiEvent; this method handles product side-effects.
     void apply(const UiEvent& e) {
-        switch (e.kind) {
-            case UiEventKind::Status: {
-                // A fresh "running" status always opens a new protocol-mapping
-                // epoch. The agent clears protocolEvents_ at runLoop start so
-                // indices restart at 0; if we keep the previous turn's
-                // activeProtocolRows, upsertProtocolRow OVERWRITES the top of
-                // the transcript (second-query clobber bug).
-                //
-                // Do NOT gate this on !running: the REPL may set running=true
-                // before the worker publishes status, which would skip the
-                // reset and corrupt contiguity.
-                bool isRunningStatus = e.text.find("running") != std::string::npos;
-                if (isRunningStatus) {
-                    activeProtocolRows.clear();
-                    pendingActionIds.clear();
-                    completedResultIds.clear();
-                    pendingOps = 0;
-                    actionCount = 0;
-                    resultCount = 0;
-                    tokenBytes = 0;
-                    raw.clear();
-                    done = false;
-                    failed = false;
-                    if (!running) {
-                        turnStartMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                          std::chrono::steady_clock::now().time_since_epoch())
-                                          .count();
-                    }
-                    timelineState = PageState::Loading;
-                }
-                status = e.text;
-                running = isRunningStatus;
-                break;
-            }
-            case UiEventKind::Log:
-                pushRow({TimelineKind::Log, "log", e.text, true});
-                break;
-            case UiEventKind::Error:
-                failed = true;
-                running = false;
-                if (turnStartMs > 0) {
-                    lastTurnElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() - turnStartMs;
-                    turnStartMs = 0;
-                }
-                status = "error";
-                timelineState = PageState::Error;
-                pushRow({TimelineKind::Error, "error", e.text, false});
-                break;
-            case UiEventKind::Notification: {
-                // Vet-fix: pipe all retry / hiccup signals through the
-                // Notification stack so the chat TUI can render a uniform
-                // banner instead of leaking text into the transcript or stderr.
-                chat::Notification n;
-                n.id = e.id;
-                n.source = e.source;
-                n.severity = e.severity.empty() ? "info" : e.severity;
-                n.title = e.text;
-                n.attempt = e.attempt;
-                n.maxAttempts = e.maxAttempts;
-                n.lifetimeMs = 0; // sticky until dismissed
-                notificationStack.push(std::move(n));
-                break;
-            }
-            case UiEventKind::Token:
-                raw += e.text;
-                tokenBytes += static_cast<int>(e.text.size());
-                if (showRaw) {
-                    // Vet-fix: model bytes can carry non-printable noise
-                    // when the wire stream straddles tool transitions or
-                    // carries embedded escapes. Strip the noise so the chat
-                    // body never produces gibberish likesymbol rows in the
-                    // transcript.
-                    std::string sanitized = sanitizeForDisplay(e.text);
-                    for (auto& line : splitDisplayLines(sanitized))
-                        pushRow({TimelineKind::Stream, "raw", line, true});
-                }
-                // If the operator manually drilled into a sub-agent, keep its
-                // timeline live while child tokens stream.
-                if (!atRoot()) refreshNested();
-                break;
-            case UiEventKind::Protocol: {
-                const auto& pe = e.protocol;
-                // Vet-fix: RETRY is a baseline-reset signal, not a transcript
-                // block. If we upsert it at protocolIndex 0 (and every later
-                // index from a cleared protocolEvents_), we OVERWRITE the
-                // still-visible rows from the failed attempt — thoughts
-                // "refresh", streams re-inject from the top, chat stops
-                // being contiguous. Clear the mapping epoch and do not paint.
-                if (pe.kind == ProtocolEventKind::RETRY) {
-                    activeProtocolRows.clear();
-                    pendingActionIds.clear();
-                    completedResultIds.clear();
-                    pendingOps = 0;
-                    // Keep rootRows (prior User/Response/Action/Result).
-                    // Only the *next* protocol stream remaps into new slots
-                    // via upsertProtocolRow append path (mapped < 0).
-                    break;
-                }
-                TimelineRow row = rowFromProtocol(pe);
-                // Protocol echo filtered at agent + paint: empty Log "noise"
-                // rows must not occupy a protocol-index slot (would leave
-                // holes / blank thoughts in the transcript).
-                if (row.kind == TimelineKind::Log && row.title == "noise") {
-                    break;
-                }
-                if (pe.kind == ProtocolEventKind::ACTION) {
-                    if (pendingActionIds.insert(pe.action.id).second) {
-                        ++actionCount;
-                        pendingOps = static_cast<int>(pendingActionIds.size());
-                        eventLog.push_back("action " + row.title);
-                    }
-                    if (row.actionType == "agent" && rootAgent && rootAgent->hasSubAgent(row.actionName)) {
-                        row.drillable = true;
-                        if (row.title.find("↳") == std::string::npos) row.title += "  ↳ enter";
-                    } else if (row.actionType != "agent") {
-                        row.drillable = false;
-                    }
-                    upsertProtocolRow(e.protocolIndex, std::move(row));
-                } else if (pe.kind == ProtocolEventKind::RESULT) {
-                    if (isProgressPlaceholder(pe.result)) {
-                        // Keep progress in the status metrics. Do not render a fake
-                        // completed result such as "reader is running…".
-                        break;
-                    }
-                    if (completedResultIds.insert(pe.result.id).second) {
-                        ++resultCount;
-                        pendingActionIds.erase(pe.result.id);
-                        pendingOps = static_cast<int>(pendingActionIds.size());
-                        eventLog.push_back(std::string("result ") + (row.ok ? "ok " : "err ") + row.actionId);
-                    }
-                    if (rootAgent && rootAgent->hasSubAgent(row.actionName)) {
-                        row.drillable = true;
-                        row.actionType = "agent";
-                        if (row.title.find("↳") == std::string::npos) row.title += "  ↳ enter";
-                        // Prefer the child's final response text when the
-                        // protocol summary is empty/placeholder (e.g. bare name).
-                        // rowFromProtocol may append "\nNms" — strip that before
-                        // comparing against the placeholder summary.
-                        if (Agent* sub = rootAgent->getSubAgent(row.actionName)) {
-                            const std::string& finalOut = sub->responseOutput();
-                            std::string summaryOnly = pe.result.summary;
-                            bool placeholder = summaryOnly.empty() ||
-                                               summaryOnly == row.actionName ||
-                                               summaryOnly == pe.result.toolName;
-                            if (!finalOut.empty() && (row.body.empty() || placeholder)) {
-                                row.body = finalOut;
-                                if (pe.result.elapsedMs > 0)
-                                    row.body += "\n" +
-                                        std::to_string(static_cast<int>(pe.result.elapsedMs)) +
-                                        "ms";
-                            }
-                        }
-                    } else {
-                        row.drillable = false;
-                    }
-                    upsertProtocolRow(e.protocolIndex, std::move(row));
-                } else {
-                    if (pe.kind == ProtocolEventKind::THOUGHT) eventLog.push_back("thought");
-                    else if (pe.kind == ProtocolEventKind::RESPONSE) eventLog.push_back("response");
-                    upsertProtocolRow(e.protocolIndex, std::move(row));
-                }
-                if (atRoot()) rebuildViews();
-                else refreshNested();
-                break;
-            }
-            case UiEventKind::TurnDone: {
-                done = true;
-                running = false;
-                if (turnStartMs > 0) {
-                    lastTurnElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() - turnStartMs;
-                    turnStartMs = 0;
-                }
-                bool cancelled = e.text == "[cancelled]";
-                status = cancelled ? "cancelled" : failed ? "failed" : "done";
-                finalText = e.text;
-                timelineState = e.text.empty() ? PageState::Empty : PageState::Populated;
-                bool hasResponse = false;
-                for (const auto& row : rootRows)
-                    if (row.kind == TimelineKind::Response) hasResponse = true;
-                if (!hasResponse && !e.text.empty()) pushRow({TimelineKind::Final, "final", e.text, !failed});
-                pendingActionIds.clear();
-                pendingOps = 0;
-                // Re-mark drillable agent rows now that children finished.
-                if (rootAgent) {
-                    for (auto& row : rootRows) {
-                        if ((row.kind == TimelineKind::Action && row.actionType == "agent") ||
-                            row.kind == TimelineKind::Result) {
-                            if (rootAgent->hasSubAgent(row.actionName)) {
-                                row.drillable = true;
-                                if (row.title.find("↳") == std::string::npos) row.title += "  ↳ enter";
-                            }
-                        }
-                    }
-                }
-                // Snapshot the exact live transcript so resume paints the
-                // same blocks (thoughts/actions/results/response), not a
-                // thin User/Agent record projection.
-                persistUiTimeline();
-                if (atRoot()) rebuildViews();
-                else refreshNested();
-                break;
-            }
-            case UiEventKind::AskDialog:
-                askDialog = chat::parseDialogState(e.json);
-                chat::completeNonInteractiveCards(askDialog);
-                askActive = !askDialog.done();
-                askInput.value.clear();
-                askInput.cursor = 0;
-                askInput.focused = true;
-                askMultiSelected.clear();
-                status = askActive ? "waiting human input" : status;
-                break;
-            case UiEventKind::AskDialogResult:
-                askActive = false;
-                askInput.value.clear();
-                askMultiSelected.clear();
-                break;
+        TurnState turn;
+        turn.running = running;
+        turn.done = done;
+        turn.failed = failed;
+        turn.showRaw = showRaw;
+        turn.status = status;
+        turn.raw = raw;
+        turn.finalText = finalText;
+        turn.turnStartMs = turnStartMs;
+        turn.lastTurnElapsedMs = lastTurnElapsedMs;
+
+        ReduceEffects fx = reduceUiEvent(*this, turn, e, rootAgent, atRoot(), running, selectedBlock);
+
+        running = turn.running;
+        done = turn.done;
+        failed = turn.failed;
+        status = turn.status;
+        raw = turn.raw;
+        finalText = turn.finalText;
+        turnStartMs = turn.turnStartMs;
+        lastTurnElapsedMs = turn.lastTurnElapsedMs;
+
+        // Product side-effects the pure reducer cannot own.
+        if (fx.hasNotification) {
+            chat::Notification n;
+            n.id = fx.notification.id;
+            n.source = fx.notification.source;
+            n.severity = fx.notification.severity.empty() ? "info" : fx.notification.severity;
+            n.title = fx.notification.text;
+            n.attempt = fx.notification.attempt;
+            n.maxAttempts = fx.notification.maxAttempts;
+            n.lifetimeMs = 0;
+            notificationStack.push(std::move(n));
         }
+        if (fx.hasAskDialog) {
+            askDialog = chat::parseDialogState(fx.askDialog.json);
+            chat::completeNonInteractiveCards(askDialog);
+            askActive = !askDialog.done();
+            askInput.value.clear();
+            askInput.cursor = 0;
+            askInput.focused = true;
+            askMultiSelected.clear();
+            status = askActive ? "waiting human input" : status;
+        }
+        if (fx.hasAskDialogResult) {
+            askActive = false;
+            askInput.value.clear();
+            askMultiSelected.clear();
+        }
+
+        // Inspector event log (best-effort; not part of pure store).
+        if (e.kind == UiEventKind::Protocol) {
+            const auto& pe = e.protocol;
+            if (pe.kind == ProtocolEventKind::ACTION)
+                eventLog.push_back("action " + pe.action.type + ":" + pe.action.name + " #" + pe.action.id);
+            else if (pe.kind == ProtocolEventKind::RESULT && !isProgressPlaceholder(pe.result))
+                eventLog.push_back(std::string("result ") + (pe.result.ok ? "ok " : "err ") + pe.result.id);
+            else if (pe.kind == ProtocolEventKind::THOUGHT)
+                eventLog.push_back("thought");
+            else if (pe.kind == ProtocolEventKind::RESPONSE)
+                eventLog.push_back("response");
+        }
+
+        if (fx.needPersist) persistUiTimeline();
+        if (fx.needRebuild) rebuildViews();
+        if (fx.needRefreshNested) refreshNested();
     }
 
     // If ask_tool opened a dialog that is already finished (all notes/info, or
