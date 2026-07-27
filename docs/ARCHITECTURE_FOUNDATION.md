@@ -12,7 +12,7 @@ Cross-links: `INKCELL_INTEGRATION.md`, modularity audit `2026-07-26`, dual-repo 
 
 | Monolith | LOC then → now | Notes |
 |----------|-------------:|-------|
-| `inkcell_app_model.hpp` (ShellModel) | ~1700 → **~542** | F0–F4b peels; orchestration core |
+| `inkcell_app_model.hpp` (ShellModel) | ~1700 → **~361** | F0–F7 peels; thin composition root |
 | `mk3_tui_app.hpp` | ~620 → **~448** | F5 `inkcell_runtime.hpp` owns tick/flush |
 | `main_scene.hpp` | ~1900 | hub still large — next peel target |
 | `agent.cpp` / `agent.hpp` | ~2600+ | F1 events peeled; loop still fat |
@@ -82,7 +82,7 @@ Cross-links: `INKCELL_INTEGRATION.md`, modularity audit `2026-07-26`, dual-repo 
 | **`ui/app/inkcell_runtime.hpp`** ✅ | coalesced tick + SessionFlushGuard | 3× runInkcell* |
 | **`ui/model/chat_vm.hpp`** | POD for drawHeader/status/transcript | ad-hoc vm fill in scene |
 | **FocusManager dogfood** ✅ | composer/timeline + modal layers | bool soup (timelineFocus remains for projection) |
-| **ShellModel** | composition root **~542 LOC** (target &lt;400) | was god object |
+| **ShellModel** | composition root **~361 LOC** ✅ | was ~1700 god object |
 
 Hub later: `DashboardController` already partial; peel keys from MainScene only after chat stack is clean.
 
@@ -120,7 +120,7 @@ Each step: extract → rewire includes → tests green → optional commit.
 | **F5** | `InkcellRuntime` RAII | ✅ |
 | **F6** | `PendingRoute` + FocusManager dogfood + StatusBar footer | ✅ |
 | **F6b** | Modal focus layers palette/help/ask | ✅ |
-| **F7** | Thin ShellModel façade &lt;400 LOC | 🟡 ~542 — submit/history/apply glue remain |
+| **F7** | Thin ShellModel façade &lt;400 LOC | ✅ ~361 — events/composer peeled |
 | **F8** | inkcell COOKBOOK + StatusBar/Focus dogfood | ✅ (partial; CommandRegistry help next) |
 
 QoL (Feel/Composer/Nested) only on seams. **markdown-buddy** is inkcell ship proof (parked passable).

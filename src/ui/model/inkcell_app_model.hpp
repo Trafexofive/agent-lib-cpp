@@ -331,119 +331,12 @@ struct ShellModel : TimelineStore {
         return focus.in_modal() && focus.layer_name() == name;
     }
 
-    static bool isProgressPlaceholder(const ProtocolResult& result) {
-        return cortex::mk3::ui::isProgressPlaceholder(result);
-    }
-
-    void upsertProtocolRow(size_t index, TimelineRow row) {
-        upsertProtocol(index, std::move(row));
-    }
-
-    // F3: pure reduction in reduceUiEvent; this method handles product side-effects.
-    void apply(const UiEvent& e) {
-        TurnState turn;
-        turn.running = running;
-        turn.done = done;
-        turn.failed = failed;
-        turn.showRaw = showRaw;
-        turn.status = status;
-        turn.raw = raw;
-        turn.finalText = finalText;
-        turn.turnStartMs = turnStartMs;
-        turn.lastTurnElapsedMs = lastTurnElapsedMs;
-
-        ReduceEffects fx = reduceUiEvent(*this, turn, e, rootAgent, atRoot(), running, selectedBlock);
-
-        running = turn.running;
-        done = turn.done;
-        failed = turn.failed;
-        status = turn.status;
-        raw = turn.raw;
-        finalText = turn.finalText;
-        turnStartMs = turn.turnStartMs;
-        lastTurnElapsedMs = turn.lastTurnElapsedMs;
-
-        // Product side-effects the pure reducer cannot own.
-        if (fx.hasNotification) {
-            chat::Notification n;
-            n.id = fx.notification.id;
-            n.source = fx.notification.source;
-            n.severity = fx.notification.severity.empty() ? "info" : fx.notification.severity;
-            n.title = fx.notification.text;
-            n.attempt = fx.notification.attempt;
-            n.maxAttempts = fx.notification.maxAttempts;
-            n.lifetimeMs = 0;
-            notificationStack.push(std::move(n));
-        }
-        if (fx.hasAskDialog) {
-            askDialog = chat::parseDialogState(fx.askDialog.json);
-            chat::completeNonInteractiveCards(askDialog);
-            askActive = !askDialog.done();
-            askInput.value.clear();
-            askInput.cursor = 0;
-            askInput.focused = true;
-            askMultiSelected.clear();
-            status = askActive ? "waiting human input" : status;
-            if (askActive) openModalFocus("ask");
-            else closeModalFocus("ask");
-        }
-        if (fx.hasAskDialogResult) {
-            askActive = false;
-            askInput.value.clear();
-            askMultiSelected.clear();
-            closeModalFocus("ask");
-        }
-
-        // Inspector event log (best-effort; not part of pure store).
-        if (e.kind == UiEventKind::Protocol) {
-            const auto& pe = e.protocol;
-            if (pe.kind == ProtocolEventKind::ACTION)
-                eventLog.push_back("action " + pe.action.type + ":" + pe.action.name + " #" + pe.action.id);
-            else if (pe.kind == ProtocolEventKind::RESULT && !isProgressPlaceholder(pe.result))
-                eventLog.push_back(std::string("result ") + (pe.result.ok ? "ok " : "err ") + pe.result.id);
-            else if (pe.kind == ProtocolEventKind::THOUGHT)
-                eventLog.push_back("thought");
-            else if (pe.kind == ProtocolEventKind::RESPONSE)
-                eventLog.push_back("response");
-        }
-
-        if (fx.needPersist) persistUiTimeline();
-        if (fx.needRebuild) rebuildViews();
-        if (fx.needRefreshNested) refreshNested();
-    }
-
-    // If ask_tool opened a dialog that is already finished (all notes/info, or
-    // scene finished cards without the scene holding the bridge), unblock the
-    // worker waiting on requestAsk(). Safe no-op when no ask is pending.
-    void settleAsk(AgentBridge& bridge) {
-        if (!bridge.askPending()) return;
-        if (askDialog.cancelled) {
-            askActive = false;
-            bridge.cancelAsk();
-            return;
-        }
-        if (askDialog.done()) {
-            askActive = false;
-            bridge.completeAsk(askDialog.results);
-            if (!running && status == "waiting human input") status = "ready";
-        }
-    }
-
-    void drain(AgentBridge& bridge) {
-        auto batch = bridge.drain();
-        if (!batch.empty()) {
-            ++wakeCount;
-            batchingEvents = true;
-            for (const auto& e : batch) apply(e);
-            batchingEvents = false;
-            if (viewRebuildPending) rebuildViews();
-            // Vet-fix: cap transcript after the batch settles so the cap
-            // becomes part of the same tick budget as the rebuild rather
-            // than a second O(N) pass mid-tick.
-            enforceRowCap();
-        }
-        settleAsk(bridge);
-    }
+    // Events — definitions in shell_events.hpp (F7).
+    static bool isProgressPlaceholder(const ProtocolResult& result);
+    void upsertProtocolRow(size_t index, TimelineRow row);
+    void apply(const UiEvent& e);
+    void settleAsk(AgentBridge& bridge);
+    void drain(AgentBridge& bridge);
 
     // Session load/persist — definitions in shell_nav_session.hpp (F4b).
     void loadSessionRecords(const std::vector<SessionRecord>& records);
@@ -452,87 +345,11 @@ struct ShellModel : TimelineStore {
     void persistUiTimelineFlush();
     void clearTranscript();
 
-    void appendNotice(const std::string& title, const std::vector<std::string>& lines) {
-        TimelineRow row;
-        row.kind = TimelineKind::Log;
-        row.title = title;
-        for (size_t i = 0; i < lines.size(); ++i) {
-            if (i) row.body += "\n";
-            row.body += lines[i];
-        }
-        pushRow(std::move(row));
-    }
-
-    bool historyPrevious() {
-        if (promptHistory.empty() || running || !atRoot()) return false;
-        if (promptHistoryIndex >= static_cast<int>(promptHistory.size())) {
-            promptHistoryDraft = composer.value;
-            promptHistoryIndex = static_cast<int>(promptHistory.size());
-        }
-        if (promptHistoryIndex <= 0) return false;
-        --promptHistoryIndex;
-        composer.value = promptHistory[static_cast<size_t>(promptHistoryIndex)];
-        composer.cursor = static_cast<int>(composer.value.size());
-        return true;
-    }
-
-    bool historyNext() {
-        if (promptHistory.empty() || running || !atRoot()) return false;
-        if (promptHistoryIndex >= static_cast<int>(promptHistory.size())) return false;
-        ++promptHistoryIndex;
-        composer.value = promptHistoryIndex == static_cast<int>(promptHistory.size())
-                             ? promptHistoryDraft
-                             : promptHistory[static_cast<size_t>(promptHistoryIndex)];
-        composer.cursor = static_cast<int>(composer.value.size());
-        return true;
-    }
-
-    bool submitComposer() {
-        if (running || !atRoot()) return false;
-        std::string text = composer.value;
-        while (!text.empty() && (text.back() == '\n' || text.back() == ' ' || text.back() == '\t')) text.pop_back();
-        size_t start = 0;
-        while (start < text.size() && (text[start] == ' ' || text[start] == '\t' || text[start] == '\n')) ++start;
-        text = text.substr(start);
-        if (text.empty()) return false;
-        // Vet-fix: arm an ephemeral session id at first turn-in-chat so
-        // the work the operator just typed lands on disk. Phase 1 removed
-        // auto-mint on bare TUI launches, which kept phantom file pairs
-        // out of the Sessions page — but it also meant a prompt typed
-        // into the chat produced NO file, because activeSessionId stayed
-        // empty even after work had been done. Arm lazily here: the
-        // first non-empty submit of a session-bare chat allocates a new
-        // id; subsequent turns reuse it. Sessions page learns of the
-        // file when the worker saves at TurnDone or atexit flushes.
-        if (activeSessionId.empty()) {
-            // Unified mint (F6): same scheme as CLI / hub create / hub fork.
-            // Arm unconditionally; --no-session suppresses disk at flush time.
-            activeSessionId = session::mintSessionId();
-            session::activeSession().set(activeSessionId, session::activeSession().isEphemeral());
-            dashboard.notice = std::string("armed ") + activeSessionId;
-            // Vet-fix: seed the typed prompt into the agent's history_
-            // and persist immediately. Otherwise the operator's typed
-            // prompt disappears when the TUI exits between submit and
-            // prompt() landing a record — and `recover session` shows
-            // an empty chat. seedUserPrompt is idempotent with prompt()'s
-            // own push (it dedupes by trailing-equality), so the worker's
-            // subsequent save still produces a clean record set.
-            if (rootAgent && !session::activeSession().isEphemeral()) {
-                rootAgent->seedUserPrompt(text);
-                rootAgent->saveSession(activeSessionId);
-            }
-        }
-        pendingSubmit = text;
-        if (promptHistory.empty() || promptHistory.back() != text) promptHistory.push_back(text);
-        promptHistoryIndex = static_cast<int>(promptHistory.size());
-        promptHistoryDraft.clear();
-        pushRow({TimelineKind::User, "you", text, true});
-        composer.value.clear();
-        composer.cursor = 0;
-        composer.scroll_row = 0;
-        rebuildViews();
-        return true;
-    }
+    // Composer — definitions in shell_composer.hpp (F7).
+    void appendNotice(const std::string& title, const std::vector<std::string>& lines);
+    bool historyPrevious();
+    bool historyNext();
+    bool submitComposer();
 };
 
 }  // namespace cortex::mk3::ui
@@ -540,3 +357,5 @@ struct ShellModel : TimelineStore {
 // Out-of-line projection methods (ShellModel must be complete).
 #include "src/ui/model/timeline_projection.hpp"
 #include "src/ui/model/shell_nav_session.hpp"
+#include "src/ui/model/shell_events.hpp"
+#include "src/ui/model/shell_composer.hpp"
