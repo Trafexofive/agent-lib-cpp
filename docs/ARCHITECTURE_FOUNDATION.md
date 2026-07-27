@@ -10,15 +10,15 @@ Cross-links: `INKCELL_INTEGRATION.md`, modularity audit `2026-07-26`, dual-repo 
 
 ## 1. Problem (why foundations now)
 
-| Monolith | LOC (approx) | Mixed responsibilities |
-|----------|-------------:|------------------------|
-| `inkcell_app_model.hpp` (ShellModel) | ~1700 | events, rows, projection, session arm, dashboard glue, agent* |
-| `main_scene.hpp` | ~1900 | hub keys, sessions, workflows, draw |
-| `mk3_tui_app.hpp` | ~620 | 3 run paths, tick, atexit, worker |
-| `agent.cpp` / `agent.hpp` | ~2600+ | loop + protocol types + cancel |
-| `main.cpp` | ~2400 | CLI + session + TUI launch |
+| Monolith | LOC then → now | Notes |
+|----------|-------------:|-------|
+| `inkcell_app_model.hpp` (ShellModel) | ~1700 → **~542** | F0–F4b peels; orchestration core |
+| `mk3_tui_app.hpp` | ~620 → **~448** | F5 `inkcell_runtime.hpp` owns tick/flush |
+| `main_scene.hpp` | ~1900 | hub still large — next peel target |
+| `agent.cpp` / `agent.hpp` | ~2600+ | F1 events peeled; loop still fat |
+| `main.cpp` | ~2400 | CLI — after UI pure stack |
 
-Partial extractions exist (`SessionController`, `transcript_cache`, `protocol_event_diff`, chat modules) but **new behavior still lands in the four dumps**.
+**Module map (landed):** `timeline_codec`, `timeline_store`, `event_reducer`, `timeline_projection`, `shell_nav_session`, `pending_route`, `inkcell_runtime`, `sanitize`. ShellModel inherits TimelineStore; apply → reduceUiEvent.
 
 ---
 
@@ -76,13 +76,13 @@ Partial extractions exist (`SessionController`, `transcript_cache`, `protocol_ev
 | **`ui/text/sanitize.hpp`** | terminal-safe text, caps | ShellModel free functions |
 | **`ui/model/timeline_store.hpp`** | rootRows/nestedRows, caps, push, select | ShellModel |
 | **`ui/model/event_reducer.hpp`** | UiEvent → store mutations | `ShellModel::apply/drain` |
-| **`ui/model/projection.hpp`** | rows → transcript lines, dirty/full rebuild | rebuildViews* |
-| **`ui/model/chat_session_policy.hpp`** | lazy arm, persist enqueue (calls SessionController) | submitComposer tail |
+| **`ui/model/timeline_projection.hpp`** ✅ | rows → transcript lines, dirty/full rebuild | rebuildViews* |
+| **`ui/model/shell_nav_session.hpp`** ✅ | nested drill + session load/persist | enterSub/goBack/load* |
+| **`ui/model/pending_route.hpp`** ✅ | typed Agent/Main/Quit | string `pendingRoute` |
+| **`ui/app/inkcell_runtime.hpp`** ✅ | coalesced tick + SessionFlushGuard | 3× runInkcell* |
 | **`ui/model/chat_vm.hpp`** | POD for drawHeader/status/transcript | ad-hoc vm fill in scene |
-| **`ui/app/runtime.hpp`** | one RAII: bridge, tick, wake, atexit, flush | 3× runInkcell* |
-| **`ui/focus.hpp`** | single enum: Composer / Timeline / Modal / Hub* | bool soup |
-| **`ui/routes.hpp`** | enum Route + post_action helpers | `pendingRoute` string |
-| **ShellModel** | thin façade / composition root **&lt;400 LOC** | god object |
+| **FocusManager dogfood** ✅ | composer/timeline + modal layers | bool soup (timelineFocus remains for projection) |
+| **ShellModel** | composition root **~542 LOC** (target &lt;400) | was god object |
 
 Hub later: `DashboardController` already partial; peel keys from MainScene only after chat stack is clean.
 
@@ -94,12 +94,12 @@ Product must not invent forever. Library track:
 
 | inkcell | Product uses for |
 |---------|------------------|
-| COOKBOOK: wake_fd + tick coalesce | Runtime recipe |
-| CommandRegistry + KeyHints | help + palette |
-| StatusBar slots | footer metrics |
-| Focus stack / modal (grow) | ask + palette |
+| COOKBOOK: wake_fd + tick coalesce ✅ | Runtime recipe |
+| CommandRegistry + KeyHints | help + palette (partial) |
+| StatusBar segments + fill_background ✅ | footer metrics |
+| Focus stack / modal + FocusScope ✅ | ask + palette |
 | Theme roles | graphite/neon packs |
-| Typed Action helpers (grow) | routes |
+| Typed Action helpers (`action::join` etc.) ✅ | routes |
 
 **Dogfood or upstream** — every chrome PR answers which.
 
@@ -109,19 +109,21 @@ Product must not invent forever. Library track:
 
 Each step: extract → rewire includes → tests green → optional commit.
 
-| Phase | Deliverable | Exit criteria |
-|------:|-------------|----------------|
-| **F0** | Save dirty S-pack+sanitize+docs (explicit paths) | clean intentional tree for foundation |
-| **F1** | `protocol/events.hpp` | UI can include events without full Agent API; tests compile |
-| **F2** | `sanitize` + timeline serialize in pure headers | unit tests; ShellModel includes them |
-| **F3** | `TimelineStore` + `EventReducer` | drain/apply tests without Surface; ShellModel delegates |
-| **F4** | `Projection` (incremental stays) | rebuildViews tests; perf gates hold |
-| **F5** | `InkcellRuntime` RAII | one run path; OneShot/Repl/Shell share |
-| **F6** | `Focus` enum + `Route` enum | no new string routes; scenes use helpers |
-| **F7** | Thin ShellModel façade | file &lt;400 LOC or split files with clear names |
-| **F8** | inkcell COOKBOOK + command registry dogfood | help/status start using lib |
+| Phase | Deliverable | Status |
+|------:|-------------|--------|
+| **F0** | Save dirty S-pack+sanitize+docs | ✅ |
+| **F1** | `protocol/events.hpp` | ✅ |
+| **F2** | `sanitize` + timeline codec pure headers | ✅ |
+| **F3** | `TimelineStore` + `EventReducer` wired | ✅ |
+| **F4** | Projection peel | ✅ |
+| **F4b** | Nested drill + session load/persist peel | ✅ |
+| **F5** | `InkcellRuntime` RAII | ✅ |
+| **F6** | `PendingRoute` + FocusManager dogfood + StatusBar footer | ✅ |
+| **F6b** | Modal focus layers palette/help/ask | ✅ |
+| **F7** | Thin ShellModel façade &lt;400 LOC | 🟡 ~542 — submit/history/apply glue remain |
+| **F8** | inkcell COOKBOOK + StatusBar/Focus dogfood | ✅ (partial; CommandRegistry help next) |
 
-QoL (Feel/Composer/Nested) **after F3** at earliest — on seams, not into the god object.
+QoL (Feel/Composer/Nested) only on seams. **markdown-buddy** is inkcell ship proof (parked passable).
 
 ---
 
