@@ -144,7 +144,13 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
                         bool placeholder = summaryOnly.empty() || summaryOnly == row.actionName ||
                                            summaryOnly == pe.result.toolName;
                         if (!finalOut.empty() && (row.body.empty() || placeholder)) {
-                            row.body = finalOut;
+                            if (protocol::looksLikeSymbolDump(finalOut)) {
+                                row.body = "[symbol dump · " +
+                                           std::to_string(finalOut.size()) +
+                                           " bytes · collapsed]";
+                            } else {
+                                row.body = finalOut;
+                            }
                             if (pe.result.elapsedMs > 0)
                                 row.body +=
                                     "\n" + std::to_string(static_cast<int>(pe.result.elapsedMs)) + "ms";

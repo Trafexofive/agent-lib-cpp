@@ -76,8 +76,11 @@ inline void ShellModel::apply(const UiEvent& e) {
             eventLog.push_back("action " + pe.action.type + ":" + pe.action.name + " #" + pe.action.id);
         else if (pe.kind == ProtocolEventKind::RESULT && !isProgressPlaceholder(pe.result))
             eventLog.push_back(std::string("result ") + (pe.result.ok ? "ok " : "err ") + pe.result.id);
-        else if (pe.kind == ProtocolEventKind::THOUGHT)
-            eventLog.push_back("thought");
+        else if (pe.kind == ProtocolEventKind::THOUGHT) {
+            // Skip noise/symbol-dump thoughts — they are not operator-facing.
+            if (!protocol::isThoughtNoise(pe.text) && !protocol::looksLikeSymbolDump(pe.text))
+                eventLog.push_back("thought");
+        }
         else if (pe.kind == ProtocolEventKind::RESPONSE)
             eventLog.push_back("response");
     }

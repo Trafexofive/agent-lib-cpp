@@ -78,7 +78,8 @@ struct TimelineStore {
     }
 
     void upsertProtocol(size_t index, TimelineRow row) {
-        if (!row.body.empty()) row.body = sanitizeForDisplay(row.body);
+        // Same body policy as appendRoot (cap + symbol-dump collapse).
+        clampAndSanitize(row);
         if (activeProtocolRows.size() <= index) activeProtocolRows.resize(index + 1, -1);
         int& mapped = activeProtocolRows[index];
         if (mapped >= 0 && mapped < static_cast<int>(rootRows.size())) {

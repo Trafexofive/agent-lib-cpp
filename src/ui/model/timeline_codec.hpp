@@ -164,7 +164,7 @@ inline std::vector<TimelineRow> deserializeTimeline(const std::string& json) {
 inline TimelineRow rowFromProtocol(const ProtocolEvent& pe) {
     TimelineRow row;
     if (pe.kind == ProtocolEventKind::THOUGHT) {
-        if (protocol::isThoughtNoise(pe.text)) {
+        if (protocol::isThoughtNoise(pe.text) || protocol::looksLikeSymbolDump(pe.text)) {
             row.kind = TimelineKind::Log;
             row.title = "noise";
             row.body.clear();
@@ -197,7 +197,14 @@ inline TimelineRow rowFromProtocol(const ProtocolEvent& pe) {
         row.actionName = pe.result.toolName;
         row.drillable = false;
         row.title = "#" + pe.result.id + " " + pe.result.toolName;
-        row.body = pe.result.summary;
+        // Symbol dumps / binary in tool output collapse at sanitize; detect early
+        // so the row body is a short marker instead of a multi-MB string copy.
+        if (protocol::looksLikeSymbolDump(pe.result.summary)) {
+            row.body = "[symbol dump · " + std::to_string(pe.result.summary.size()) +
+                       " bytes · collapsed]";
+        } else {
+            row.body = pe.result.summary;
+        }
         if (pe.result.elapsedMs > 0)
             row.body += "\n" + std::to_string(static_cast<int>(pe.result.elapsedMs)) + "ms";
     } else if (pe.kind == ProtocolEventKind::RESPONSE) {
