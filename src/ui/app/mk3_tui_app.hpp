@@ -22,6 +22,7 @@
 #include "src/ui/chat/prompt_history.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
 #include "src/ui/app/inkcell_runtime.hpp"
+#include "src/ui/model/inkcell_commands.hpp"
 #include "src/ui/model/protocol_event_diff.hpp"
 #include "src/ui/model/ui_prefs.hpp"
 #include "src/ui/model/workflow_runner.hpp"
@@ -68,8 +69,13 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
 
 inline inkcell::App makeInkcellApp(const InkcellAppConfig& cfg, AgentBridge& bridge,
                                    std::shared_ptr<ShellModel> model, bool startAtDashboard) {
+    // Dogfood inkcell CommandRegistry: chat + hub inventories (help overlay reads chat).
+    inkcell::CommandRegistry commands = chatCommandRegistry();
+    for (const auto& c : hubCommandRegistry().all()) commands.add(c);
+
     inkcell::App app;
     app.tick_ms(33)
+        .commands(std::move(commands))
         .bind("q", "app.quit", "Quit")
         .bind("up", "scroll.up", "Up")
         .bind("down", "scroll.down", "Down")

@@ -13,11 +13,13 @@
 #include "inkcell/surface.hpp"
 #include "inkcell/text.hpp"
 #include "inkcell/widgets/status_bar.hpp"
+#include "inkcell/command.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
 #include "src/ui/chat/chat_blocks.hpp"
 #include "src/ui/chat/notification.hpp"
 #include "src/ui/chat/transcript_cache.hpp"
 #include "src/ui/theme/cortex_theme.hpp"
+#include "src/ui/model/inkcell_commands.hpp"
 
 namespace cortex::mk3::ui::chat {
 
@@ -803,8 +805,9 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
     }
 }
 
-inline void drawHelpOverlay(inkcell::Surface& surface, inkcell::Rect page) {
-    // Sectioned, color-keyed help. Keys colored by domain; actions stay quiet.
+inline void drawHelpOverlay(inkcell::Surface& surface, inkcell::Rect page,
+                            const inkcell::CommandRegistry& reg) {
+    // Data-driven help from inkcell CommandRegistry (dogfood F8).
     int width = std::max(48, std::min(page.w - 4, 78));
     int height = std::max(20, std::min(page.h - 2, 28));
     inkcell::Rect frame{page.x + (page.w - width) / 2, page.y + (page.h - height) / 2, width, height};
@@ -817,55 +820,46 @@ inline void drawHelpOverlay(inkcell::Surface& surface, inkcell::Rect page) {
     int inner = frame.w - 4;
     const int keyCol = 14;
 
-    auto section = [&](const char* title, inkcell::Style st) {
-        if (y >= frame.bottom() - 3) return;
-        if (y > frame.y + 2) ++y;
-        surface.text({x, y++}, inkcell::text::truncate(title, inner), st);
-    };
-    auto row = [&](const char* key, const char* desc, inkcell::Style keySt) {
-        if (y >= frame.bottom() - 2) return;
-        std::string k = key;
-        while (inkcell::text::display_width(k) < keyCol) k.push_back(' ');
-        surface.text({x, y}, inkcell::text::truncate(k, keyCol), keySt);
-        surface.text({x + keyCol, y},
-                     inkcell::text::truncate(desc, std::max(0, inner - keyCol)), theme::text());
-        ++y;
+    auto catStyle = [&](const std::string& cat) -> inkcell::Style {
+        if (cat == "CHAT" || cat == "PROMPT") return theme::green();
+        if (cat == "NAV") return theme::amber();
+        if (cat == "ACTION" || cat == "SLASH") return theme::cyan();
+        if (cat == "SYSTEM") return theme::red();
+        return theme::bright();
     };
 
     surface.text({x, y++}, "HELP", theme::bright());
     surface.text({x, y++},
-                 inkcell::text::truncate(std::string("theme ") + theme::name() + "  ·  ? or Esc closes",
+                 inkcell::text::truncate(std::string("theme ") + theme::name() +
+                                             "  ·  " + std::to_string(reg.size()) +
+                                             " commands  ·  ? or Esc closes",
                                          inner),
                  theme::dim());
 
-    section("COMPOSE", theme::green());
-    row("Enter", "send prompt", theme::green());
-    row("↑ / ↓", "prompt history", theme::green());
-    row("Tab", "slash complete (LCP → cycle)", theme::green());
-    row("Shift-Tab", "cycle completions backward", theme::green());
-    row("/…", "slash commands  ·  /help catalog", theme::green());
-
-    section("NAVIGATE", theme::amber());
-    row("Esc", "transcript ↔ composer  ·  back nested", theme::amber());
-    row("PgUp/PgDn", "scroll transcript", theme::amber());
-    row("Home/End", "jump top / bottom", theme::amber());
-    row("j / k", "select blocks (history focus)", theme::amber());
-    row("Enter", "open selected sub-agent", theme::amber());
-    row("i", "focus composer", theme::amber());
-
-    section("VIEW", theme::cyan());
-    row("Ctrl-T", "toggle thoughts", theme::cyan());
-    row("Ctrl-O", "toggle body truncation", theme::cyan());
-    row("Ctrl-R", "toggle raw stream", theme::cyan());
-    row("t / r", "thoughts / raw (history focus)", theme::cyan());
-    row("T", "theme graphite ↔ neon", theme::cyan());
-
-    section("CONTROL", theme::red());
-    row("Ctrl-X", "stop agent loop", theme::red());
-    row("Ctrl-C", "stop if running  ·  quit if idle", theme::red());
-    row("q", "quit (outside composer)", theme::red());
+    for (const auto& cat : registryCategoryOrder(reg)) {
+        if (y >= frame.bottom() - 3) break;
+        if (y > frame.y + 3) ++y;
+        surface.text({x, y++}, inkcell::text::truncate(cat, inner), catStyle(cat));
+        for (const auto& cmd : reg.by_category(cat)) {
+            if (y >= frame.bottom() - 2) break;
+            if (!cmd.visible || !cmd.enabled) continue;
+            std::string k = cmd.default_key.empty() ? "·" : cmd.default_key;
+            while (inkcell::text::display_width(k) < keyCol) k.push_back(' ');
+            surface.text({x, y}, inkcell::text::truncate(k, keyCol), catStyle(cat));
+            std::string desc = cmd.title;
+            if (!cmd.description.empty()) desc += "  ·  " + cmd.description;
+            surface.text({x + keyCol, y},
+                         inkcell::text::truncate(desc, std::max(0, inner - keyCol)), theme::text());
+            ++y;
+        }
+    }
 
     surface.text({x, frame.bottom() - 2}, "?  Esc  close", theme::dim());
+}
+
+// Default: chat command registry (palette + slash inventory).
+inline void drawHelpOverlay(inkcell::Surface& surface, inkcell::Rect page) {
+    drawHelpOverlay(surface, page, chatCommandRegistry());
 }
 
 inline void drawAskDialog(inkcell::Surface& surface, inkcell::Rect page, const DialogState& state,
