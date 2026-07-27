@@ -6,11 +6,14 @@ Full session ledger (post-compaction): artifact `inkcell-agentlib-dual-repo-ledg
 
 ## Repos
 
-| | agent-lib-cpp | inkcell |
-|--|---------------|---------|
-| Path | `../agent-lib-cpp` or this repo | `../inkcell` (`INKCELL_ROOT`) |
-| Branch (typical) | `feat/inkcell-agentshell` | `main` |
-| Role | Product + domain | App-agnostic TUI engine |
+| | agent-lib-cpp | inkcell | markdown-buddy |
+|--|---------------|---------|----------------|
+| Path | this repo | `../inkcell` (`INKCELL_ROOT`) | `../markdown-buddy` |
+| Branch (typical) | `feat/inkcell-agentshell` | `main` | `main` |
+| Role | Agent product (Cortex) | App-agnostic TUI engine | **Ship proof** — glow×50 reader |
+
+`inkcell/examples/markdown-buddy` → symlink to `../../markdown-buddy`.  
+POC demos live under `inkcell/examples/_archive/`.
 
 ## Doctrine
 
