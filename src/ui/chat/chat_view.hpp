@@ -65,6 +65,8 @@ struct ChatSurfaceModel {
     // operator types, submits, or leaves the stem.
     std::vector<std::string> completionMenu;
     int completionSelected = -1;  // index highlighted while cycling; -1 = none
+    // Optional transient feedback strip (above status). Not owned; may be null.
+    const NotificationStack* notifications = nullptr;
 };
 
 inline std::string suffix(const std::string& id) {
@@ -1003,13 +1005,18 @@ inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, cons
     drawHeader(surface, frame, m);
     int promptY = frame.bottom() - 1;
     int statusY = frame.bottom() - 2;
+    const int notifH =
+        (m.notifications && !m.notifications->empty()) ? 1 : 0;
+    int notifY = statusY - notifH;
     int menuH = completionMenuHeight(m, frame.w);
-    int menuY = statusY - menuH;
+    int menuY = notifY - menuH;
     // No separator rule — elevated footer is the visual break.
     inkcell::Rect body{frame.x, frame.y + 2, frame.w, std::max(1, menuY - (frame.y + 2))};
     drawTranscript(surface, body, m);
     if (menuH > 0)
         drawCompletionMenu(surface, {frame.x, menuY, frame.w, menuH}, m);
+    if (notifH > 0 && m.notifications)
+        drawNotificationStrip(surface, {frame.x, notifY, frame.w, 1}, *m.notifications);
     drawStatusLine(surface, {frame.x, statusY, frame.w, 1}, m);
     drawPromptLine(surface, {frame.x, promptY, frame.w, 1}, m);
 }

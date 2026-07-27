@@ -48,7 +48,6 @@ inline void ShellModel::apply(const UiEvent& e) {
         n.maxAttempts = fx.notification.maxAttempts;
         // Transient pops auto-dismiss; retries still collapse by id while live.
         n.lifetimeMs = chat::kDefaultToastLifetimeMs;
-        n.detail = "esc dismiss";
         notificationStack.push(std::move(n));
     }
     if (fx.hasAskDialog) {

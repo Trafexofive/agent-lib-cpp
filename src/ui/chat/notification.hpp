@@ -1,8 +1,8 @@
-// src/ui/chat/notification.hpp — transient operator-facing pop toasts.
+// src/ui/chat/notification.hpp — transient operator-facing feedback.
 //
-// A Notification is a dismissible badge stack (chat) / top toast (hub). Distinct
-// from chat-body rows (Log/Error persist). Same `id` collapses into one banner
-// with ticking counters — a 3-attempt retry reads as one badge, not three.
+// Chat: one elevated line above the composer (same language as the footer).
+// Hub: notice already lives in the app-bar subtitle — no second surface.
+// Same `id` collapses; auto-dismiss; Esc dismisses top.
 
 #pragma once
 
@@ -11,7 +11,6 @@
 #include <cstdint>
 #include <deque>
 #include <string>
-#include <vector>
 
 #include "inkcell/style.hpp"
 #include "inkcell/surface.hpp"
@@ -20,18 +19,17 @@
 
 namespace cortex::mk3::ui::chat {
 
-// Default auto-dismiss for non-sticky toasts (operator can dismiss early with Esc).
-inline constexpr int64_t kDefaultToastLifetimeMs = 4500;
+inline constexpr int64_t kDefaultToastLifetimeMs = 4000;
 
 struct Notification {
-    std::string id;          // dedupe key; "" means "always fresh"
-    std::string source;      // short tag ("empty-response", "curl-28", "rate-limit")
-    std::string severity;    // "info" | "warn" | "error"
-    std::string title;       // bold one-liner
-    std::string detail;      // optional secondary line
+    std::string id;        // dedupe key; "" = always fresh
+    std::string source;    // short tag
+    std::string severity;  // "info" | "warn" | "error"
+    std::string title;     // one-liner
+    std::string detail;    // unused in paint (kept for model/debug)
     int attempt = 0;
     int maxAttempts = 0;
-    int64_t lifetimeMs = kDefaultToastLifetimeMs;  // 0 = sticky until dismissed
+    int64_t lifetimeMs = kDefaultToastLifetimeMs;  // 0 = sticky until Esc
     int64_t createdMs = 0;
 };
 
@@ -40,10 +38,7 @@ class NotificationStack {
     void push(Notification n) {
         n.createdMs = nowMs();
         if (n.lifetimeMs < 0) n.lifetimeMs = kDefaultToastLifetimeMs;
-        if (n.id.empty()) {
-            items_.push_back(std::move(n));
-        } else {
-            // Upsert by id — keeps the retry counter ticking on top.
+        if (!n.id.empty()) {
             for (auto& it : items_) {
                 if (it.id == n.id) {
                     it = std::move(n);
@@ -51,10 +46,9 @@ class NotificationStack {
                     return;
                 }
             }
-            items_.push_back(std::move(n));
         }
-        // Cap stack depth so a retry storm cannot bury the chrome.
-        while (items_.size() > 5) items_.pop_front();
+        items_.push_back(std::move(n));
+        while (items_.size() > 4) items_.pop_front();
         pruneExpired();
     }
 
@@ -72,8 +66,6 @@ class NotificationStack {
     }
 
     void clearAll() { items_.clear(); }
-
-    // Call each frame so lifetime-expired toasts leave without key input.
     void tick() { pruneExpired(); }
 
     const Notification* top() const {
@@ -94,15 +86,7 @@ class NotificationStack {
     std::deque<Notification> items_;
 
     void pruneExpired() {
-        int64_t n = nowMs();
-        // Expire from front (oldest/top first) so auto-dismiss works for sticky-looking retries.
-        while (!items_.empty()) {
-            const auto& front = items_.front();
-            if (front.lifetimeMs <= 0) break;
-            if (n - front.createdMs > front.lifetimeMs) items_.pop_front();
-            else break;
-        }
-        // Also drop expired deeper items.
+        const int64_t n = nowMs();
         for (auto it = items_.begin(); it != items_.end();) {
             if (it->lifetimeMs > 0 && n - it->createdMs > it->lifetimeMs)
                 it = items_.erase(it);
@@ -128,101 +112,71 @@ inline inkcell::Style notificationAccentStyle(const std::string& sev, bool on) {
     return s;
 }
 
-inline inkcell::Color toastBgFor(const std::string& sev) {
-    if (sev == "error") return inkcell::Color::rgb(48, 18, 24);
-    if (sev == "warn") return inkcell::Color::rgb(42, 30, 14);
-    return inkcell::Color::rgb(14, 24, 36);
+// Rows the chat layout should reserve above the status/composer block.
+inline int notificationReserveRows(const NotificationStack& stack) {
+    return stack.empty() ? 0 : 1;
 }
 
-inline inkcell::Color toastBorderFor(const std::string& sev) {
-    if (sev == "error") return inkcell::Color::rgb(255, 107, 122);
-    if (sev == "warn") return inkcell::Color::rgb(245, 180, 90);
-    return inkcell::Color::rgb(90, 200, 220);
-}
+// One-line elevated strip — same language as the chat footer, not a card.
+// Place immediately above the status line.
+inline void drawNotificationStrip(inkcell::Surface& surface, inkcell::Rect row,
+                                  const NotificationStack& stack) {
+    if (stack.empty() || row.w < 8 || row.h < 1) return;
+    const Notification* n = stack.top();
+    if (!n) return;
 
-// Pop toast stack: top-right floating cards. Returns rows used.
-// `popT` in [0,1] slides the stack in from above (0 = hidden, 1 = seated).
-inline int drawNotificationToasts(inkcell::Surface& surface, inkcell::Rect area,
-                                  const NotificationStack& stack, float popT = 1.f) {
-    if (stack.empty() || area.w < 20 || area.h < 2) return 0;
-    popT = std::max(0.f, std::min(1.f, popT));
-    if (popT <= 0.01f) return 0;
+    auto bg = theme::footer_bg();
+    surface.fill(row, " ", bg);
 
-    const int maxCards = std::min(3, static_cast<int>(stack.size()));
-    const int cardW = std::min(area.w - 2, std::max(28, area.w * 2 / 5));
-    const int cardX = area.right() - cardW - 1;
-    int y = area.y;
-    // Slide-in offset from top (cells).
-    const int slide = static_cast<int>(std::lround((1.f - popT) * 3.f));
-    y += slide;
-
-    int drawn = 0;
-    // Newest at top of visual stack = front of deque.
-    for (std::size_t i = 0; i < stack.items().size() && drawn < maxCards; ++i) {
-        const auto& n = stack.items()[i];
-        const bool hasDetail = !n.detail.empty() || (n.maxAttempts > 0);
-        const int cardH = hasDetail ? 3 : 2;
-        if (y + cardH > area.bottom()) break;
-
-        inkcell::Rect box{cardX, y, cardW, cardH};
-        const auto bg = toastBgFor(n.severity);
-        const auto border = toastBorderFor(n.severity);
-        auto shell = inkcell::Style::normal().with_bg(bg).with_fg(border);
-        surface.fill(box, " ", shell);
-        surface.box(box, inkcell::BorderStyle::Rounded, shell);
-
-        // Severity bar on left interior
-        for (int row = box.y + 1; row < box.bottom() - 1; ++row)
-            surface.put({box.x + 1, row}, "▌", shell.with_fg(border));
-
-        std::string head;
-        if (n.severity == "error") head = "ERR";
-        else if (n.severity == "warn") head = "WRN";
-        else head = "INF";
-        if (!n.source.empty()) head += " · " + n.source;
-
-        auto headSt = inkcell::Style::normal().with_bg(bg).with_fg(border);
-        headSt.bold = true;
-        surface.text({box.x + 3, box.y},
-                     inkcell::text::truncate(head, cardW - 5), headSt);
-
-        std::string title = n.title;
-        if (n.maxAttempts > 0) {
-            title += "  " + std::to_string(std::max(1, n.attempt)) + "/" +
-                     std::to_string(n.maxAttempts);
-        }
-        auto titleSt = theme::bright().with_bg(bg);
-        titleSt.bold = true;
-        surface.text({box.x + 3, box.y + 1},
-                     inkcell::text::truncate(title, cardW - 5), titleSt);
-
-        if (hasDetail && cardH >= 3) {
-            std::string det = n.detail.empty() ? std::string("esc dismiss") : n.detail;
-            surface.text({box.x + 3, box.y + 2},
-                         inkcell::text::truncate(det, cardW - 5),
-                         theme::dim().with_bg(bg));
-        }
-
-        y += cardH;
-        // Tiny gap between stacked cards
-        if (drawn + 1 < maxCards) ++y;
-        ++drawn;
+    inkcell::Style accent = theme::footer_accent_idle();
+    inkcell::Style textSt = theme::footer_bright();
+    if (n->severity == "error") {
+        accent = theme::red().with_bg(bg.bg);
+        accent.bold = true;
+        textSt = theme::red().with_bg(bg.bg);
+    } else if (n->severity == "warn") {
+        accent = theme::footer_warn();
+        accent.bold = true;
+        textSt = theme::footer_warn();
+        textSt.bold = true;
     }
-    return y - area.y - slide;
+    surface.text({row.x, row.y}, "▌", accent);
+
+    // source · title  a/m  +N
+    std::string body;
+    body.reserve(96);
+    if (!n->source.empty()) {
+        body += n->source;
+        body += "  ·  ";
+    }
+    body += n->title;
+    if (n->maxAttempts > 0) {
+        body += "  ";
+        body += std::to_string(std::max(1, n->attempt));
+        body += "/";
+        body += std::to_string(n->maxAttempts);
+    }
+    if (stack.size() > 1) {
+        body += "  +";
+        body += std::to_string(static_cast<int>(stack.size()) - 1);
+    }
+
+    surface.text({row.x + 2, row.y},
+                 inkcell::text::truncate(body, std::max(1, row.w - 3)), textSt);
 }
 
-// Simple hub notice → toast (one-shot string, info severity).
-inline void drawNoticeToast(inkcell::Surface& surface, inkcell::Rect area,
-                            const std::string& notice) {
-    if (notice.empty() || area.w < 16) return;
-    NotificationStack tmp;
-    Notification n;
-    n.severity = "info";
-    n.source = "hub";
-    n.title = notice;
-    n.lifetimeMs = 0;
-    tmp.push(std::move(n));
-    drawNotificationToasts(surface, area, tmp, 1.f);
+// Back-compat name used by agent_scene (single strip, ignore popT / multi-card).
+inline int drawNotificationToasts(inkcell::Surface& surface, inkcell::Rect area,
+                                  const NotificationStack& stack, float /*popT*/ = 1.f) {
+    if (stack.empty() || area.h < 1) return 0;
+    // Prefer bottom of the reserved area (just above composer).
+    inkcell::Rect row{area.x, area.bottom() - 1, area.w, 1};
+    drawNotificationStrip(surface, row, stack);
+    return 1;
 }
+
+// Hub must NOT draw a second toast — app bar already shows dash.notice.
+// Kept as no-op so call sites compile until removed.
+inline void drawNoticeToast(inkcell::Surface&, inkcell::Rect, const std::string&) {}
 
 }  // namespace cortex::mk3::ui::chat

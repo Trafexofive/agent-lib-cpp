@@ -17,7 +17,6 @@
 #include "src/session/manager.hpp"
 #include "src/ui/assets/glyphs.hpp"
 #include "src/ui/chat/chat_view.hpp"
-#include "src/ui/chat/notification.hpp"
 #include "src/ui/components/card_swipe.hpp"
 #include "src/ui/components/chips.hpp"
 #include "src/ui/components/chrome.hpp"
@@ -137,11 +136,7 @@ class MainScene final : public BaseScene {
             drawContent(surface, content);
         }
 
-        // Hub notice → top-right pop toast
-        if (!dash.notice.empty()) {
-            inkcell::Rect toastArea{page.x, page.y + 3, page.w, std::min(8, page.h / 3)};
-            chat::drawNoticeToast(surface, toastArea, dash.notice);
-        }
+        // Hub notice stays in the app-bar subtitle (drawAppBar) — no second surface.
 
         // Floating nav pill — draw last so it sits above the stage.
         if (pillMaster && reveal > 0.02f) {
