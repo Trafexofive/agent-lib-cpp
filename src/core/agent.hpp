@@ -27,6 +27,8 @@
 
 namespace cortex::mk3 {
 
+namespace dispatch { class ActionDispatcher; }
+
 extern std::atomic<bool> g_running;
 
 // ProtocolAction / ProtocolResult / ProtocolEventKind / ProtocolEvent:
@@ -232,6 +234,10 @@ class Agent {
                                     const std::string& instruction);
     workflows::WorkflowResult handleWorkflowDelegate(
         AgentContext& ctx, const std::string& workflowName, const Json::Value& params);
+    Json::Value handleActionExecute(AgentContext& ctx, dispatch::ActionDispatcher& d,
+                                    std::string& iterationRuntimeOutput,
+                                    bool finalizationTurn,
+                                    const protocol::ParsedAction& action);
 
     // Prompt building
     ChatMessages buildChatPrompt(const AgentContext& ctx) const;
