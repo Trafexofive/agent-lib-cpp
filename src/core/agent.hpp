@@ -34,6 +34,17 @@ extern std::atomic<bool> g_running;
 // ProtocolAction / ProtocolResult / ProtocolEventKind / ProtocolEvent:
 // defined in protocol/events.hpp (included above). Agent remains the runtime.
 
+// Mutable stream state for one runLoop iteration (onEvent + post-stream).
+struct ProtocolStreamState {
+    std::string llmOutput;
+    std::string actionTranscriptOutput;
+    bool taskComplete = false;
+    bool nonFinalProtocolRetry = false;
+    std::string thoughtRawBuf;
+    size_t thoughtEventIdx = static_cast<size_t>(-1);
+    size_t runEpochStart = 0;
+};
+
 // ── Pending tool execution (threaded popen, streams output live) ──
 class Agent {
    public:
@@ -238,6 +249,9 @@ class Agent {
                                     std::string& iterationRuntimeOutput,
                                     bool finalizationTurn,
                                     const protocol::ParsedAction& action);
+    void publishCleanThought(ProtocolStreamState& st, const std::string& rawAppend);
+    void handleProtocolEvent(AgentContext& ctx, ProtocolStreamState& st,
+                             const protocol::TokenEvent& ev);
 
     // Prompt building
     ChatMessages buildChatPrompt(const AgentContext& ctx) const;

@@ -497,263 +497,14 @@ std::string Agent::runLoop(AgentContext &ctx) {
             });
 
 
-        // Tracking state
-        std::string llmOutput;
-        std::string actionTranscriptOutput; // model actions only, no premature
-                                            // responses
-        bool taskComplete = false;
-        bool nonFinalProtocolRetry = false;
-        // Raw bare-text / thought body for THIS iteration. We strip protocol
-        // noise against the full raw buffer each chunk (not cleaned+raw),
-        // so partial tags across stream boundaries still collapse correctly.
-        std::string thoughtRawBuf;
-        size_t thoughtEventIdx = static_cast<size_t>(-1); // in protocolEvents_
+        // Tracking state for this iteration's protocol stream.
+        ProtocolStreamState st;
+        st.runEpochStart = runEpochStart;
 
-        auto publishCleanThought = [&](const std::string &rawAppend) {
-            if (rawAppend.empty() && thoughtRawBuf.empty())
-                return;
-            thoughtRawBuf += rawAppend;
-            std::string cleaned = protocol::stripProtocolNoise(thoughtRawBuf);
-            if (cleaned.empty()) {
-                if (thoughtEventIdx != static_cast<size_t>(-1) &&
-                    thoughtEventIdx < protocolEvents_.size() &&
-                    protocolEvents_[thoughtEventIdx].kind ==
-                        ProtocolEventKind::THOUGHT) {
-                    protocolEvents_.erase(
-                        protocolEvents_.begin() +
-                        static_cast<std::ptrdiff_t>(thoughtEventIdx));
-                }
-                thoughtEventIdx = static_cast<size_t>(-1);
-                return;
-            }
-            thoughtOutput_ = cleaned; // authoritative cleaned form for this run
-            if (thoughtEventIdx != static_cast<size_t>(-1) &&
-                thoughtEventIdx < protocolEvents_.size() &&
-                protocolEvents_[thoughtEventIdx].kind ==
-                    ProtocolEventKind::THOUGHT) {
-                protocolEvents_[thoughtEventIdx].text = cleaned;
-            } else {
-                thoughtEventIdx = protocolEvents_.size();
-                protocolEvents_.push_back(
-                    {ProtocolEventKind::THOUGHT, cleaned, {}, {}});
-            }
-        };
-
-        parser.onEvent([&](const protocol::TokenEvent &ev) {
-            switch (ev.type) {
-            case protocol::TokenEvent::TEXT: {
-                publishCleanThought(ev.content);
-                break;
-            }
-
-            case protocol::TokenEvent::RESPONSE:
-                // Seal thought segment — next bare text is a new thought.
-                thoughtRawBuf.clear();
-                thoughtEventIdx = static_cast<size_t>(-1);
-                llmOutput += ev.content;
-                responseOutput_ += ev.content;
-                if (!ev.content.empty()) {
-                    // Strip glued harness tags/attrs from the response body
-                    // for display; keep raw if strip would wipe a real answer.
-                    std::string paint =
-                        protocol::stripProtocolNoise(ev.content);
-                    if (paint.empty())
-                        paint = ev.content;
-                    auto prevSame = [&](ProtocolEventKind k) {
-                        for (size_t i = protocolEvents_.size();
-                             i > runEpochStart;) {
-                            --i;
-                            if (protocolEvents_[i].kind == k)
-                                return protocolEvents_.begin() + i;
-                        }
-                        return protocolEvents_.end();
-                    };
-                    if (auto it = prevSame(ProtocolEventKind::RESPONSE);
-                        it != protocolEvents_.end()) {
-                        it->text += paint;
-                    } else {
-                        protocolEvents_.push_back(
-                            {ProtocolEventKind::RESPONSE, paint, {}, {}});
-                    }
-                }
-                if (ctx.onToken)
-                    ctx.onToken(ev.content, false);
-                if (ev.metadata.count("is_final") &&
-                    ev.metadata.at("is_final") == "true") {
-                    taskComplete = true;
-                }
-                break;
-
-            case protocol::TokenEvent::THOUGHT: {
-                publishCleanThought(ev.content);
-                break;
-            }
-
-            case protocol::TokenEvent::ACTION_START:
-                // Seal thought segment before the action card.
-                thoughtRawBuf.clear();
-                thoughtEventIdx = static_cast<size_t>(-1);
-                if (ev.action) {
-                    // Store protocol action for TUI/timeline regardless of
-                    // raw/debug; debug mode must not hide the action/result UI.
-                    std::string typeStr;
-                    switch (ev.action->type) {
-                    case protocol::ActionType::AGENT:
-                        typeStr = "agent";
-                        break;
-                    case protocol::ActionType::RELIC:
-                        typeStr = "relic";
-                        break;
-                    case protocol::ActionType::FEED:
-                        typeStr = "feed";
-                        break;
-                    case protocol::ActionType::WORKFLOW:
-                        typeStr = "workflow";
-                        break;
-                    default:
-                        typeStr = "tool";
-                        break;
-                    }
-                    std::string body = ev.action->content;
-                    if (body.empty() && !ev.action->params.isNull()) {
-                        Json::StreamWriterBuilder wb;
-                        wb["indentation"] = "";
-                        body = Json::writeString(wb, ev.action->params);
-                    }
-                    std::string modeStr;
-                    switch (ev.action->mode) {
-                    case protocol::ExecutionMode::ASYNC:
-                        modeStr = "async";
-                        break;
-                    case protocol::ExecutionMode::FIRE_AND_FORGET:
-                        modeStr = "fire_and_forget";
-                        break;
-                    default:
-                        modeStr = "sync";
-                        break;
-                    }
-                    std::map<std::string, std::string> modifiers;
-                    if (ev.action->params.isObject()) {
-                        static const std::unordered_set<std::string> reserved =
-                            {"type", "name",       "id",
-                             "mode", "depends_on", "timeout"};
-                        for (const auto &key :
-                             ev.action->params.getMemberNames()) {
-                            if (reserved.count(key))
-                                continue;
-                            Json::StreamWriterBuilder aw;
-                            aw["indentation"] = "";
-                            modifiers[key] =
-                                Json::writeString(aw, ev.action->params[key]);
-                        }
-                    }
-                    ProtocolAction protocolAction{
-                        typeStr,           ev.action->name, ev.action->id, body,
-                        modeStr == "sync", modeStr,         modifiers};
-                    // Provisional open-tag then full close share one id —
-                    // update the existing ACTION event/card in place
-                    // (stream-as-fast-as-parse).
-                    bool merged = false;
-                    for (auto it = protocolEvents_.rbegin();
-                         it != protocolEvents_.rend(); ++it) {
-                        if (it->kind == ProtocolEventKind::ACTION &&
-                            it->action.id == protocolAction.id) {
-                            it->action = protocolAction;
-                            merged = true;
-                            break;
-                        }
-                    }
-                    if (!merged) {
-                        protocolActions_.push_back(protocolAction);
-                        protocolEvents_.push_back({ProtocolEventKind::ACTION,
-                                                   "",
-                                                   protocolAction,
-                                                   {}});
-                    } else {
-                        // Keep protocolActions_ tail in sync when present.
-                        for (auto it = protocolActions_.rbegin();
-                             it != protocolActions_.rend(); ++it) {
-                            if (it->id == protocolAction.id) {
-                                *it = protocolAction;
-                                break;
-                            }
-                        }
-                    }
-                    // Notify the TUI immediately on ACTION_START, before
-                    // sync dispatch blocks on tools/sub-agents. The action
-                    // card must render first; results arrive later.
-                    if (ctx.onToken)
-                        ctx.onToken("", false);
-                    std::ostringstream ax;
-                    ax << "<action type=\""
-                       << (ev.action->type == protocol::ActionType::TOOL
-                               ? "tool"
-                           : ev.action->type == protocol::ActionType::AGENT
-                               ? "agent"
-                           : ev.action->type == protocol::ActionType::RELIC
-                               ? "relic"
-                           : ev.action->type == protocol::ActionType::WORKFLOW
-                               ? "workflow"
-                               : "feed")
-                       << "\" name=\"" << ev.action->name << "\" id=\""
-                       << ev.action->id << "\" mode=\""
-                       << (ev.action->mode == protocol::ExecutionMode::SYNC
-                               ? "sync"
-                               : "async")
-                       << "\"";
-                    if (!ev.action->content.empty() &&
-                        ev.action->params.isObject()) {
-                        for (const auto &key :
-                             ev.action->params.getMemberNames()) {
-                            const auto &v = ev.action->params[key];
-                            if (v.isObject() || v.isArray())
-                                continue;
-                            std::string val;
-                            if (v.isString())
-                                val = v.asString();
-                            else {
-                                Json::StreamWriterBuilder aw;
-                                aw["indentation"] = "";
-                                val = Json::writeString(aw, v);
-                            }
-                            ax << " " << key << "=\"" << xmlAttr(val) << "\"";
-                        }
-                    }
-                    ax << ">";
-                    if (!ev.action->content.empty()) {
-                        ax << ev.action->content;
-                    } else if (!ev.action->params.isNull()) {
-                        Json::StreamWriterBuilder w;
-                        w["indentation"] = "";
-                        ax << Json::writeString(w, ev.action->params);
-                    }
-                    ax << "</action>";
-                    llmOutput += ax.str() + "\n";
-                    actionTranscriptOutput += ax.str() + "\n";
-                }
-                break;
-
-            case protocol::TokenEvent::ACTION_RESULT:
-                break;
-
-            case protocol::TokenEvent::ERROR:
-                history_.push_back(
-                    "[ERROR] action=" + (ev.action ? ev.action->name : "?") +
-                    " id=" +
-                    (ev.metadata.count("id") ? ev.metadata.at("id") : "?") +
-                    " reason=" +
-                    (ev.metadata.count("reason") ? ev.metadata.at("reason")
-                                                 : "?") +
-                    ": " + ev.content);
-                break;
-
-            case protocol::TokenEvent::CONTEXT_FEED:
-                break;
-
-            default:
-                break;
-            }
+        parser.onEvent([this, &ctx, &st](const protocol::TokenEvent &ev) {
+            handleProtocolEvent(ctx, st, ev);
         });
+
 
         // Call LLM with exponential-backoff retry on transient empty/filtered
         // responses. Network exceptions are surfaced immediately (existing
@@ -775,8 +526,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
             if (attempt > 0) {
                 // Reset per-iteration state for the retry attempt so the
                 // next stream's tokens don't mix with the prior attempt.
-                llmOutput.clear();
-                actionTranscriptOutput.clear();
+                st.llmOutput.clear();
+                st.actionTranscriptOutput.clear();
                 iterationRawOutput.clear();
                 iterationRuntimeOutput.clear();
                 responseOutput_.clear();
@@ -841,7 +592,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
             try {
                 provider_->generateStream(
                     msgs, [&](const std::string &token, bool isFinal) {
-                        if (taskComplete)
+                        if (st.taskComplete)
                             return;
                         // Route thinking tokens (\x01 prefix) to thought stream
                         // — live dimmed
@@ -934,16 +685,16 @@ std::string Agent::runLoop(AgentContext &ctx) {
 
         if (ctx.debug || ctx.verbose) {
             std::cerr << " | actions=" << results.size()
-                      << " complete=" << taskComplete
+                      << " complete=" << st.taskComplete
                       << " resp=" << responseOutput_.size() << "b"
-                      << " text=" << llmOutput.size() << "b";
-            if (ctx.verbose && !llmOutput.empty()) {
-                std::cerr << " \"" << llmOutput << "\"";
+                      << " text=" << st.llmOutput.size() << "b";
+            if (ctx.verbose && !st.llmOutput.empty()) {
+                std::cerr << " \"" << st.llmOutput << "\"";
             }
             std::cerr << "\n";
         }
 
-        if (results.empty() && !taskComplete) {
+        if (results.empty() && !st.taskComplete) {
             // No parsed actions and no final response. This is NOT completion.
             // Either the upstream returned no content, or the model emitted
             // bare/non-protocol text (or a non-final <response>). Recover
@@ -970,7 +721,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 // clean error row — not a thought soup of orphan tags.
                 protocolEvents_.push_back(
                     {ProtocolEventKind::RESPONSE, visibleError, {}, {}});
-                taskComplete = true; // runtime failure, not model final
+                st.taskComplete = true; // runtime failure, not model final
             } else {
                 // Salvage whatever the model produced so the next turn can
                 // re-emit it inside a proper final response (small-model QoL).
@@ -1003,7 +754,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                         "<response final=\"true\">.");
                     responseOutput_ = lastSalvage;
                     fullResponse = lastSalvage;
-                    taskComplete = true;
+                    st.taskComplete = true;
                     // Surface as a protocol RESPONSE so nested chat / TUI
                     // paint the promoted answer instead of only a stop banner.
                     protocolEvents_.push_back(
@@ -1012,8 +763,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     history_.push_back(
                         "System: " +
                         buildRecoveryCorrection(salvage, hadNonFinalResponse));
-                    nonFinalProtocolRetry = true;
-                    taskComplete = false;
+                    st.nonFinalProtocolRetry = true;
+                    st.taskComplete = false;
                     responseOutput_.clear();
                 }
             }
@@ -1038,14 +789,14 @@ std::string Agent::runLoop(AgentContext &ctx) {
 
         // Never force a follow-up after finalization — that turn is one-shot.
         bool forceResultFollowup =
-            !finalizationTurn && taskComplete && !results.empty() &&
+            !finalizationTurn && st.taskComplete && !results.empty() &&
             iterationRawOutput.find("<action") != std::string::npos;
         // If the model emits action(s) and a final response in the same
         // generation, it cannot have seen the real runtime results yet. Keep
         // only the action transcript for the follow-up prompt; discard
         // premature response text and any model-owned result/prose.
         std::string historyOutput =
-            forceResultFollowup ? actionTranscriptOutput : llmOutput;
+            forceResultFollowup ? st.actionTranscriptOutput : st.llmOutput;
         if (forceResultFollowup) {
             // The model cannot consume a sync action result in the same
             // generation that emitted the action. Force one follow-up turn with
@@ -1053,11 +804,11 @@ std::string Agent::runLoop(AgentContext &ctx) {
             // final. Also drop the premature response from history so the next
             // turn sees only the action it actually took plus the runtime
             // result.
-            taskComplete = false;
+            st.taskComplete = false;
             responseOutput_.clear();
         }
 
-        if (taskComplete) {
+        if (st.taskComplete) {
             Json::Value expandedResponse =
                 expandValueRefs(Json::Value(responseOutput_), actionResults_);
             fullResponse = expandedResponse.isString()
@@ -1083,7 +834,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // Prepare next iteration — push agent output, then system results.
         // Bare/non-final protocol retries already pushed the raw model output
         // plus a strict system correction above; don't add an empty duplicate.
-        if (!nonFinalProtocolRetry)
+        if (!st.nonFinalProtocolRetry)
             history_.push_back("Agent: " + historyOutput);
         if (!results.empty()) {
             for (auto &[id, result] : results) {
@@ -1261,6 +1012,254 @@ Json::Value Agent::handleAgentDelegate(AgentContext &ctx,
         subAgentTraces_.push_back(trace);
     }
     return makeSubAgentResult(result, trace, dumpContext);
+}
+
+
+void Agent::publishCleanThought(ProtocolStreamState &st, const std::string &rawAppend) {
+    if (rawAppend.empty() && st.thoughtRawBuf.empty())
+        return;
+    st.thoughtRawBuf += rawAppend;
+    std::string cleaned = protocol::stripProtocolNoise(st.thoughtRawBuf);
+    if (cleaned.empty()) {
+        if (st.thoughtEventIdx != static_cast<size_t>(-1) &&
+            st.thoughtEventIdx < protocolEvents_.size() &&
+            protocolEvents_[st.thoughtEventIdx].kind ==
+                ProtocolEventKind::THOUGHT) {
+            protocolEvents_.erase(
+                protocolEvents_.begin() +
+                static_cast<std::ptrdiff_t>(st.thoughtEventIdx));
+        }
+        st.thoughtEventIdx = static_cast<size_t>(-1);
+        return;
+    }
+    thoughtOutput_ = cleaned; // authoritative cleaned form for this run
+    if (st.thoughtEventIdx != static_cast<size_t>(-1) &&
+        st.thoughtEventIdx < protocolEvents_.size() &&
+        protocolEvents_[st.thoughtEventIdx].kind ==
+            ProtocolEventKind::THOUGHT) {
+        protocolEvents_[st.thoughtEventIdx].text = cleaned;
+    } else {
+        st.thoughtEventIdx = protocolEvents_.size();
+        protocolEvents_.push_back(
+            {ProtocolEventKind::THOUGHT, cleaned, {}, {}});
+    }
+}
+
+void Agent::handleProtocolEvent(AgentContext &ctx, ProtocolStreamState &st,
+                                const protocol::TokenEvent &ev) {
+    switch (ev.type) {
+    case protocol::TokenEvent::TEXT: {
+    publishCleanThought(st, ev.content);
+    break;
+    }
+
+    case protocol::TokenEvent::RESPONSE:
+    // Seal thought segment — next bare text is a new thought.
+    st.thoughtRawBuf.clear();
+    st.thoughtEventIdx = static_cast<size_t>(-1);
+    st.llmOutput += ev.content;
+    responseOutput_ += ev.content;
+    if (!ev.content.empty()) {
+        // Strip glued harness tags/attrs from the response body
+        // for display; keep raw if strip would wipe a real answer.
+        std::string paint =
+            protocol::stripProtocolNoise(ev.content);
+        if (paint.empty())
+            paint = ev.content;
+        auto prevSame = [&](ProtocolEventKind k) {
+            for (size_t i = protocolEvents_.size();
+                 i > st.runEpochStart;) {
+                --i;
+                if (protocolEvents_[i].kind == k)
+                    return protocolEvents_.begin() + i;
+            }
+            return protocolEvents_.end();
+        };
+        if (auto it = prevSame(ProtocolEventKind::RESPONSE);
+            it != protocolEvents_.end()) {
+            it->text += paint;
+        } else {
+            protocolEvents_.push_back(
+                {ProtocolEventKind::RESPONSE, paint, {}, {}});
+        }
+    }
+    if (ctx.onToken)
+        ctx.onToken(ev.content, false);
+    if (ev.metadata.count("is_final") &&
+        ev.metadata.at("is_final") == "true") {
+        st.taskComplete = true;
+    }
+    break;
+
+    case protocol::TokenEvent::THOUGHT: {
+    publishCleanThought(st, ev.content);
+    break;
+    }
+
+    case protocol::TokenEvent::ACTION_START:
+    // Seal thought segment before the action card.
+    st.thoughtRawBuf.clear();
+    st.thoughtEventIdx = static_cast<size_t>(-1);
+    if (ev.action) {
+        // Store protocol action for TUI/timeline regardless of
+        // raw/debug; debug mode must not hide the action/result UI.
+        std::string typeStr;
+        switch (ev.action->type) {
+        case protocol::ActionType::AGENT:
+            typeStr = "agent";
+            break;
+        case protocol::ActionType::RELIC:
+            typeStr = "relic";
+            break;
+        case protocol::ActionType::FEED:
+            typeStr = "feed";
+            break;
+        case protocol::ActionType::WORKFLOW:
+            typeStr = "workflow";
+            break;
+        default:
+            typeStr = "tool";
+            break;
+        }
+        std::string body = ev.action->content;
+        if (body.empty() && !ev.action->params.isNull()) {
+            Json::StreamWriterBuilder wb;
+            wb["indentation"] = "";
+            body = Json::writeString(wb, ev.action->params);
+        }
+        std::string modeStr;
+        switch (ev.action->mode) {
+        case protocol::ExecutionMode::ASYNC:
+            modeStr = "async";
+            break;
+        case protocol::ExecutionMode::FIRE_AND_FORGET:
+            modeStr = "fire_and_forget";
+            break;
+        default:
+            modeStr = "sync";
+            break;
+        }
+        std::map<std::string, std::string> modifiers;
+        if (ev.action->params.isObject()) {
+            static const std::unordered_set<std::string> reserved =
+                {"type", "name",       "id",
+                 "mode", "depends_on", "timeout"};
+            for (const auto &key :
+                 ev.action->params.getMemberNames()) {
+                if (reserved.count(key))
+                    continue;
+                Json::StreamWriterBuilder aw;
+                aw["indentation"] = "";
+                modifiers[key] =
+                    Json::writeString(aw, ev.action->params[key]);
+            }
+        }
+        ProtocolAction protocolAction{
+            typeStr,           ev.action->name, ev.action->id, body,
+            modeStr == "sync", modeStr,         modifiers};
+        // Provisional open-tag then full close share one id —
+        // update the existing ACTION event/card in place
+        // (stream-as-fast-as-parse).
+        bool merged = false;
+        for (auto it = protocolEvents_.rbegin();
+             it != protocolEvents_.rend(); ++it) {
+            if (it->kind == ProtocolEventKind::ACTION &&
+                it->action.id == protocolAction.id) {
+                it->action = protocolAction;
+                merged = true;
+                break;
+            }
+        }
+        if (!merged) {
+            protocolActions_.push_back(protocolAction);
+            protocolEvents_.push_back({ProtocolEventKind::ACTION,
+                                       "",
+                                       protocolAction,
+                                       {}});
+        } else {
+            // Keep protocolActions_ tail in sync when present.
+            for (auto it = protocolActions_.rbegin();
+                 it != protocolActions_.rend(); ++it) {
+                if (it->id == protocolAction.id) {
+                    *it = protocolAction;
+                    break;
+                }
+            }
+        }
+        // Notify the TUI immediately on ACTION_START, before
+        // sync dispatch blocks on tools/sub-agents. The action
+        // card must render first; results arrive later.
+        if (ctx.onToken)
+            ctx.onToken("", false);
+        std::ostringstream ax;
+        ax << "<action type=\""
+           << (ev.action->type == protocol::ActionType::TOOL
+                   ? "tool"
+               : ev.action->type == protocol::ActionType::AGENT
+                   ? "agent"
+               : ev.action->type == protocol::ActionType::RELIC
+                   ? "relic"
+               : ev.action->type == protocol::ActionType::WORKFLOW
+                   ? "workflow"
+                   : "feed")
+           << "\" name=\"" << ev.action->name << "\" id=\""
+           << ev.action->id << "\" mode=\""
+           << (ev.action->mode == protocol::ExecutionMode::SYNC
+                   ? "sync"
+                   : "async")
+           << "\"";
+        if (!ev.action->content.empty() &&
+            ev.action->params.isObject()) {
+            for (const auto &key :
+                 ev.action->params.getMemberNames()) {
+                const auto &v = ev.action->params[key];
+                if (v.isObject() || v.isArray())
+                    continue;
+                std::string val;
+                if (v.isString())
+                    val = v.asString();
+                else {
+                    Json::StreamWriterBuilder aw;
+                    aw["indentation"] = "";
+                    val = Json::writeString(aw, v);
+                }
+                ax << " " << key << "=\"" << xmlAttr(val) << "\"";
+            }
+        }
+        ax << ">";
+        if (!ev.action->content.empty()) {
+            ax << ev.action->content;
+        } else if (!ev.action->params.isNull()) {
+            Json::StreamWriterBuilder w;
+            w["indentation"] = "";
+            ax << Json::writeString(w, ev.action->params);
+        }
+        ax << "</action>";
+        st.llmOutput += ax.str() + "\n";
+        st.actionTranscriptOutput += ax.str() + "\n";
+    }
+    break;
+
+    case protocol::TokenEvent::ACTION_RESULT:
+    break;
+
+    case protocol::TokenEvent::ERROR:
+    history_.push_back(
+        "[ERROR] action=" + (ev.action ? ev.action->name : "?") +
+        " id=" +
+        (ev.metadata.count("id") ? ev.metadata.at("id") : "?") +
+        " reason=" +
+        (ev.metadata.count("reason") ? ev.metadata.at("reason")
+                                     : "?") +
+        ": " + ev.content);
+    break;
+
+    case protocol::TokenEvent::CONTEXT_FEED:
+    break;
+
+    default:
+    break;
+    }
 }
 
 Json::Value Agent::handleActionExecute(
