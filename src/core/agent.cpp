@@ -1703,34 +1703,6 @@ std::string Agent::runLoop(AgentContext &ctx) {
     return sanitize(fullResponse);
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// Prompt Building
-// ═══════════════════════════════════════════════════════════════════════
-
-ChatMessages Agent::buildChatPrompt(const AgentContext &ctx) const {
-    ChatMessages msgs;
-    msgs.push_back(ChatMessage::system(buildSystemPrompt(ctx)));
-    // First iteration: current user request is a real user message, not
-    // synthetic history inside the system prompt. Later iterations replay the
-    // inline action/result transcript from history, but still need a minimal
-    // provider-level user message; some OpenRouter routes reject system-only
-    // continuation calls as "No user query found".
-    if (ctx.iteration <= 1) {
-        msgs.push_back(ChatMessage::user(buildUserPrompt(ctx)));
-    } else {
-        msgs.push_back(ChatMessage::user("Continue from the inline transcript "
-                                         "above. Use runtime results only; "
-                                         "if enough information is available, "
-                                         "emit <response final=\"true\">."));
-    }
-    std::string dynamicTail = buildDynamicContextPrompt();
-    if (!dynamicTail.empty()) {
-        // Dynamic context is intentionally last for prompt-cache friendliness,
-        // but it is runtime/system context, not another user request.
-        msgs.push_back(ChatMessage::system(dynamicTail));
-    }
-    return msgs;
-}
 
 
 // ── Tool dispatch — see agent_tool_dispatch.cpp
