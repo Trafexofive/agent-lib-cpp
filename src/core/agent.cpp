@@ -1016,9 +1016,34 @@ Json::Value Agent::handleAgentDelegate(AgentContext &ctx,
 
 
 void Agent::publishCleanThought(ProtocolStreamState &st, const std::string &rawAppend) {
+    if (st.thoughtDroppedAsNoise) return;  // rest of segment is dead air
     if (rawAppend.empty() && st.thoughtRawBuf.empty())
         return;
     st.thoughtRawBuf += rawAppend;
+    // Cap raw thought buffer so a tool-echo / nm dump cannot grow without bound
+    // during streaming (UI still rate-limits display; this protects the agent).
+    constexpr size_t kThoughtRawCap = 48 * 1024;
+    if (st.thoughtRawBuf.size() > kThoughtRawCap)
+        st.thoughtRawBuf = st.thoughtRawBuf.substr(st.thoughtRawBuf.size() - kThoughtRawCap);
+
+    // Symbol dumps / pure protocol debris → drop the THOUGHT event entirely.
+    if (protocol::looksLikeSymbolDump(st.thoughtRawBuf) ||
+        protocol::isThoughtNoise(st.thoughtRawBuf)) {
+        if (st.thoughtEventIdx != static_cast<size_t>(-1) &&
+            st.thoughtEventIdx < protocolEvents_.size() &&
+            protocolEvents_[st.thoughtEventIdx].kind ==
+                ProtocolEventKind::THOUGHT) {
+            protocolEvents_.erase(
+                protocolEvents_.begin() +
+                static_cast<std::ptrdiff_t>(st.thoughtEventIdx));
+        }
+        st.thoughtEventIdx = static_cast<size_t>(-1);
+        st.thoughtDroppedAsNoise = true;
+        st.thoughtRawBuf.clear();  // free the dump from RAM
+        thoughtOutput_.clear();
+        return;
+    }
+
     std::string cleaned = protocol::stripProtocolNoise(st.thoughtRawBuf);
     if (cleaned.empty()) {
         if (st.thoughtEventIdx != static_cast<size_t>(-1) &&
@@ -1032,6 +1057,11 @@ void Agent::publishCleanThought(ProtocolStreamState &st, const std::string &rawA
         st.thoughtEventIdx = static_cast<size_t>(-1);
         return;
     }
+    // Soft cap cleaned thought text published to the UI.
+    constexpr size_t kThoughtPubCap = 12 * 1024;
+    if (cleaned.size() > kThoughtPubCap)
+        cleaned = cleaned.substr(0, kThoughtPubCap - 32) +
+                  "\n… [thought truncated for UI]";
     thoughtOutput_ = cleaned; // authoritative cleaned form for this run
     if (st.thoughtEventIdx != static_cast<size_t>(-1) &&
         st.thoughtEventIdx < protocolEvents_.size() &&
@@ -1056,6 +1086,7 @@ void Agent::handleProtocolEvent(AgentContext &ctx, ProtocolStreamState &st,
     case protocol::TokenEvent::RESPONSE:
     // Seal thought segment — next bare text is a new thought.
     st.thoughtRawBuf.clear();
+    st.thoughtDroppedAsNoise = false;
     st.thoughtEventIdx = static_cast<size_t>(-1);
     st.llmOutput += ev.content;
     responseOutput_ += ev.content;
@@ -1099,6 +1130,7 @@ void Agent::handleProtocolEvent(AgentContext &ctx, ProtocolStreamState &st,
     case protocol::TokenEvent::ACTION_START:
     // Seal thought segment before the action card.
     st.thoughtRawBuf.clear();
+    st.thoughtDroppedAsNoise = false;
     st.thoughtEventIdx = static_cast<size_t>(-1);
     if (ev.action) {
         // Store protocol action for TUI/timeline regardless of

@@ -254,15 +254,49 @@ inline bool looksLikeHarnessPhrase(const std::string& s) {
     return false;
 }
 
+// nm / readelf / c++filt dumps: printable ASCII, so binary sanitizer misses them.
+// Floods THOUGHT/RESULT and stalls the chat (wrap + rebuild on every tick).
+inline bool looksLikeSymbolDump(const std::string& s) {
+    if (s.size() < 160) return false;
+    int mangled = 0;
+    int cxx11 = 0;
+    int underscores = 0;
+    int alpha = 0;
+    for (size_t i = 0; i < s.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        if (c == '_') ++underscores;
+        else if (std::isalpha(c)) ++alpha;
+        if (i + 3 < s.size() && s[i] == '_' && s[i + 1] == 'Z' &&
+            (s[i + 2] == 'N' || s[i + 2] == 'K' || s[i + 2] == 'T' || s[i + 2] == 'S' ||
+             s[i + 2] == 'I' || s[i + 2] == 'St'))
+            ++mangled;
+        if (i + 14 <= s.size() && s.compare(i, 14, "std::__cxx11::") == 0) ++cxx11;
+        if (i + 10 <= s.size() && s.compare(i, 10, "basic_string") == 0) ++cxx11;
+    }
+    if (mangled >= 4) return true;
+    if (cxx11 >= 8) return true;
+    if (mangled >= 2 && s.size() > 1500) return true;
+    // Long underscore-heavy blobs (mangled names packed on few lines).
+    if (s.size() > 400 && underscores > 30 && alpha > 0 &&
+        underscores * 100 / (underscores + alpha) > 12)
+        return true;
+    return false;
+}
+
 // Main entry: strip protocol noise; return remaining human prose or empty.
 inline std::string stripProtocolNoise(const std::string& raw) {
     if (raw.empty()) return {};
+
+    // Symbol tables are not protocol markup — kill early before strip work.
+    if (looksLikeSymbolDump(raw)) return {};
 
     std::string s = stripAllProtocolMarkup(raw);
     s = stripAttrDebris(s);
     collapseWs(s);
     trimInPlace(s);
     if (s.empty()) return {};
+
+    if (looksLikeSymbolDump(s)) return {};
 
     // Pure harness phrases (often leftover after stripping tags).
     if (looksLikeHarnessPhrase(s) && s.size() < 500) return {};
@@ -296,6 +330,7 @@ inline bool isProtocolEchoBlob(const std::string& raw) {
 }
 
 inline bool isThoughtNoise(const std::string& raw) {
+    if (looksLikeSymbolDump(raw)) return true;
     return stripProtocolNoise(raw).empty();
 }
 

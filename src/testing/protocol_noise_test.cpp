@@ -87,6 +87,21 @@ int main() {
     CHECK(s6.find("ping discovery") != std::string::npos,
           "real thought kept with trailing close stripped");
 
+
+    // nm / c++filt symbol-table dumps must never paint as thoughts.
+    {
+        std::string dump;
+        for (int i = 0; i < 12; ++i)
+            dump += "_ZNKSt17basic_string_viewIwSt11char_traitsIwEE13find_first_ofES2_m "
+                    "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEpLEPKc "
+                    "std::__cxx11::basic_string ";
+        CHECK(looksLikeSymbolDump(dump), "itanium mangled dump detected");
+        CHECK(isThoughtNoise(dump), "symbol dump is thought noise");
+        CHECK(stripProtocolNoise(dump).empty(), "symbol dump stripped empty");
+    }
+    CHECK(!looksLikeSymbolDump("I should inspect the workflow runtime next."),
+          "normal prose is not a symbol dump");
+
     std::cout << (g_fail ? "\nFAIL\n" : "\nok\n");
-    return g_fail ? 1 : 0;
+        return g_fail ? 1 : 0;
 }

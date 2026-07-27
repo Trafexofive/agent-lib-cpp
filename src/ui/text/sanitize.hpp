@@ -28,11 +28,32 @@ inline std::vector<std::string> splitDisplayLines(const std::string& text) {
 // - Caps at 16 KiB head+tail
 // - If >30% of sampled bytes are non-text (NUL/C0/invalid UTF-8), collapse to a
 //   one-line binary marker so ELF/symbol dumps never paint the chat surface.
+// - Collapses printable nm/c++filt symbol tables (Itanium mangling / libstdc++
+//   dumps) — they pass the binary gate but stall the chat renderer.
 inline std::string sanitizeForDisplay(const std::string& text) {
     constexpr std::size_t kCap = 16 * 1024;
     constexpr std::size_t kHead = 8 * 1024;
     constexpr std::size_t kTail = 4 * 1024;
     constexpr std::size_t kSample = 4096;
+
+    // Printable symbol-table dump (nm / readelf / c++filt). Cheap scan.
+    if (text.size() >= 160) {
+        int mangled = 0;
+        int cxx11 = 0;
+        for (size_t i = 0; i + 3 < text.size(); ++i) {
+            if (text[i] == '_' && text[i + 1] == 'Z' &&
+                (text[i + 2] == 'N' || text[i + 2] == 'K' || text[i + 2] == 'T' ||
+                 text[i + 2] == 'S' || text[i + 2] == 'I'))
+                ++mangled;
+            if (i + 14 <= text.size() && text.compare(i, 14, "std::__cxx11::") == 0)
+                ++cxx11;
+            if (mangled >= 4 || cxx11 >= 8) break;
+        }
+        if (mangled >= 4 || cxx11 >= 8) {
+            return "  … [symbol dump · " + std::to_string(text.size()) +
+                   " bytes · collapsed for chat] …";
+        }
+    }
 
     auto isNonTextByte = [](unsigned char c) -> bool {
         if (c == 0) return true;

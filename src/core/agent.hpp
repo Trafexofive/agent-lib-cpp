@@ -43,6 +43,9 @@ struct ProtocolStreamState {
     std::string thoughtRawBuf;
     size_t thoughtEventIdx = static_cast<size_t>(-1);
     size_t runEpochStart = 0;
+    // Once a thought segment is classified as symbol-dump / pure noise, stop
+    // re-scanning and re-publishing on every token (O(n²) stall under nm floods).
+    bool thoughtDroppedAsNoise = false;
 };
 
 // ── Pending tool execution (threaded popen, streams output live) ──

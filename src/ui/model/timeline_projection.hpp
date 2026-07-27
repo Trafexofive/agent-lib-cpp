@@ -111,9 +111,13 @@ inline bool ShellModel::projectOneRow(const TimelineRow& row, int ri, int& focus
             if (line.empty() && row.body.empty()) continue;
             ++total;
         }
+        // Thoughts are operator-secondary; hard-cap tighter so a runaway
+        // stream cannot paint 50×wide lines every frame and stall input.
+        const int bodyCap =
+            (row.kind == TimelineKind::Thought) ? 12 : kMaxBodyLines;
         for (const auto& line : bodyLines) {
             if (line.empty() && row.body.empty()) continue;
-            if (truncateBodies && shown >= kMaxBodyLines) break;
+            if (truncateBodies && shown >= bodyCap) break;
             transcriptView.lines.push_back("    " + line);
             ++shown;
         }
