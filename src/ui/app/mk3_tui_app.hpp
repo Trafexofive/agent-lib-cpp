@@ -21,6 +21,7 @@
 #include "src/ui/bridge/agent_bridge.hpp"
 #include "src/ui/chat/prompt_history.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
+#include "src/ui/app/inkcell_runtime.hpp"
 #include "src/ui/model/protocol_event_diff.hpp"
 #include "src/ui/model/ui_prefs.hpp"
 #include "src/ui/model/workflow_runner.hpp"
@@ -65,32 +66,6 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
     }
 }
 
-inline void installAppTick(inkcell::App& app, AgentBridge& bridge, const std::shared_ptr<ShellModel>& model) {
-    // on_wake is a no-op: the engine already drains the eventfd (engine.hpp
-    // ~line 300). We do NOT drain the UiEvent queue here — that would run
-    // rebuildViews+redraw on EVERY token (often 50-100/sec), a wake-storm
-    // that made the TUI feel unusably slow. Instead on_tick (30fps, below)
-    // does the single drain+rebuild per frame, coalescing all tokens that
-    // arrived in the last 33ms into one redraw. Input stays responsive
-    // because select still wakes immediately on keypresses.
-    app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([]() {});
-    app.engine().on_tick([model, &bridge, &app](inkcell::Tick) {
-        model->drain(bridge);
-        if (model->pendingRoute == "agent") {
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"scene.agent"});
-        } else if (model->pendingRoute == "main") {
-            model->persistUiTimeline();
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"scene.main"});
-        } else if (model->pendingRoute == "quit") {
-            model->persistUiTimeline();
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"app.quit"});
-        }
-    });
-}
-
 inline inkcell::App makeInkcellApp(const InkcellAppConfig& cfg, AgentBridge& bridge,
                                    std::shared_ptr<ShellModel> model, bool startAtDashboard) {
     inkcell::App app;
@@ -111,70 +86,6 @@ inline inkcell::App makeInkcellApp(const InkcellAppConfig& cfg, AgentBridge& bri
         .scene<scenes::AgentScene>("agent", cfg, bridge, model)
         .initial_scene(startAtDashboard ? "main" : "agent");
     return app;
-}
-
-// Vet-fix: explicit session flush on every TUI exit path. Defined later
-// in the header; forward-declared so callers can clean up before the
-// definition symbol is laid out.
-inline void flushAgentSession(Agent& agent, const std::string& sessionId, bool ephemeral);
-
-// atexit-backed safety net: invoked when the program exits via any path,
-// including an inkcell Engine SIGINT unwinding through on_exit_ on a path
-// that does NOT return to the runInkcell* caller. We capture the active
-// Agent pointer + the model's sessionId so a SIGINT/SIGTERM-killed chat
-// still lands whatever the agent had captured onto disk. Single-shot,
-// guarded by a flag so consecutive `runInkcell*` calls cannot double-flush.
-namespace cortex::mk3::flush {
-struct State {
-    std::mutex mtx;
-    Agent* agent = nullptr;
-    std::string sessionId;
-    std::string cfgSessionId;
-    bool active = false;
-};
-inline State& state() { static State s; return s; }
-inline void activate(Agent& agent, const std::string& cfgSessionId) {
-    std::lock_guard<std::mutex> g(state().mtx);
-    state().agent = &agent;
-    state().cfgSessionId = cfgSessionId;
-    state().active = true;
-}
-inline void setActiveSession(const std::string& sessionId) {
-    std::lock_guard<std::mutex> g(state().mtx);
-    state().sessionId = sessionId;
-}
-inline void disarm() {
-    std::lock_guard<std::mutex> g(state().mtx);
-    state().active = false;
-}
-inline void runOnce() {
-    Agent* a = nullptr;
-    bool wasActive = false;
-    {
-        std::lock_guard<std::mutex> g(state().mtx);
-        wasActive = state().active;
-        a = state().agent;
-        state().active = false;
-    }
-    if (!wasActive || a == nullptr) return;
-    // Single id from SessionRef (plus model sync via setActiveSession).
-    std::string sid = session::activeSession().get();
-    if (sid.empty()) {
-        std::lock_guard<std::mutex> g(state().mtx);
-        sid = state().sessionId.empty() ? state().cfgSessionId : state().sessionId;
-    }
-    flushAgentSession(*a, sid, session::activeSession().isEphemeral());
-    // Drain any coalesced async ui_timeline write before process death.
-    session::AsyncUiTimelineWriter::instance().flush();
-}
-}
-
-// Register the atexit handler exactly once per process.
-namespace cortex::mk3::flush {
-inline void installAtexit() {
-    static std::once_flag once;
-    std::call_once(once, []() { std::atexit(&runOnce); });
-}
 }
 
 inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& prompt,
@@ -267,34 +178,17 @@ inline int runInkcellShell(const InkcellAppConfig& cfg, Agent& agent) {
     model->setRootAgent(&agent);
     initializeChatModel(model, cfg);
     auto app = makeInkcellApp(cfg, bridge, model, true);
-    installAppTick(app, bridge, model);
-    cortex::mk3::flush::installAtexit();
-    cortex::mk3::flush::activate(agent, cfg.sessionId);
+    installCoalescedTick(app, bridge, model);
+    SessionFlushGuard flushGuard(agent, cfg.sessionId, cfg.noSession);
     if (snapshotMode()) {
         app.render_to(std::cout, "main", {120, 34});
+        flushGuard.finish(model);
         return 0;
     }
     int rc = app.run("main");
-    // Vet-fix: if user picked `./cortex-mk3 --tui experimental`, exited
-    // via Ctrl-C or quit, the Agent never reached the prompt() tail
-    // that would have called saveSession. We flush whatever the Agent
-    // captured (history, context feeds) on every TUI exit so
-    // brainstormer / chat / experimental sessions land on disk before
-    // the process tears down. saveSession is id-only gated; empty runs
-    // write nothing — no phantom files.
-    // Single active id: model wins (lazy arm may have advanced past cfg).
-    if (!model->activeSessionId.empty())
-        session::activeSession().set(model->activeSessionId, cfg.noSession);
-    std::string sid = session::activeSession().get();
-    if (sid.empty()) sid = model->activeSessionId.empty() ? cfg.sessionId : model->activeSessionId;
-    flushAgentSession(agent, sid, cfg.noSession || session::activeSession().isEphemeral());
-    model->persistUiTimelineFlush();
-    cortex::mk3::flush::setActiveSession(sid);
-    cortex::mk3::flush::disarm();
-    (void)bridge;  // bridge still required to outlive App::run's worker observers
+    flushGuard.finish(model);
+    (void)bridge;
     return rc;
-    // Note: atexit-handler is already disarmed at the start of the body;
-    // we don't need to disarm here twice.
 }
 
 inline int runInkcellSmoke(const InkcellAppConfig& cfg, Agent& agent) { return runInkcellShell(cfg, agent); }
@@ -315,26 +209,17 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     agent.setAskToolHandler([&bridge](const Json::Value& params) { return bridge.requestAsk(params); });
     std::atomic<bool> done{false};
     std::thread worker([&]() { runAgentTurn(bridge, agent, prompt, sessionId, noSession, done); });
-    // Vet-fix: install the atexit safety net for this run so even a
-    // SIGINT that unwinds through inkcell's on_exit_ without returning
-    // to this function still lands the captured session on disk.
-    cortex::mk3::flush::installAtexit();
-    cortex::mk3::flush::activate(agent, sessionId);
-    cortex::mk3::flush::setActiveSession(sessionId);
+    SessionFlushGuard flushGuard(agent, sessionId, noSession);
+    flushGuard.setSessionId(sessionId);
 
     auto app = makeInkcellApp(cfg, bridge, model, false);
     std::atomic<bool> quitPosted{false};
-    app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([]() {});
-    app.engine().on_tick([model, &bridge, &app, &done, &quitPosted](inkcell::Tick) {
-        model->drain(bridge);
-        if (model->pendingRoute == "quit") {
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"app.quit"});
-        }
-        if (done.load(std::memory_order_acquire) && !quitPosted.exchange(true)) {
-            app.engine().post_action(inkcell::Action{"app.quit"});
-        }
-    });
+    installCoalescedTick(app, bridge, model,
+        [&done, &quitPosted](inkcell::App& app, ShellModel&, AgentBridge&) {
+            if (done.load(std::memory_order_acquire) && !quitPosted.exchange(true)) {
+                app.engine().post_action(inkcell::Action{"app.quit"});
+            }
+        });
     int rc = 0;
     if (snapshotMode()) {
         while (!done.load(std::memory_order_acquire)) {
@@ -351,37 +236,8 @@ inline int runInkcellOneShot(const InkcellAppConfig& cfg, Agent& agent, const st
     if (!done.load(std::memory_order_acquire)) g_running = false;
     if (worker.joinable()) worker.join();
     g_running = true;
-    // Vet-fix: capture — Ctrl-C + cancel-pending quit must still persist
-    // whatever the agent had captured. The submitComposer path now arms
-    // activeSessionId lazily at first prompt; flush after worker join
-    // picks that up.
-    if (!model->activeSessionId.empty())
-        session::activeSession().set(model->activeSessionId, noSession);
-    std::string sid = session::activeSession().get();
-    if (sid.empty()) sid = model->activeSessionId.empty() ? sessionId : model->activeSessionId;
-    flushAgentSession(agent, sid, noSession || session::activeSession().isEphemeral());
-    model->persistUiTimelineFlush();
-    cortex::mk3::flush::disarm();
+    flushGuard.finish(model);
     return rc;
-}
-
-// Vet-fix: explicit session flush on every TUI exit path. prompt() already
-// calls saveSession at TurnDone — but Ctrl-C, signal, ESC backspace-to-main,
-// hub route changes, and snapshot mode don't always reach TurnDone. This
-// helper is the canonical "make sure anything captured lands on disk" path
-// invoked from every TUI run-loop teardown. saveSession itself gates on
-// history/contextFeeds content; an empty run writes nothing — no orphans.
-inline void flushAgentSession(Agent& agent, const std::string& sessionId, bool ephemeral) {
-    // Always drain async ui_timeline first when we have an id — even if this
-    // call later skips agent.saveSession (empty history). F19: SIGINT/quit
-    // must not drop a coalesced timeline that was already enqueued.
-    if (!sessionId.empty() && !ephemeral && !session::activeSession().isEphemeral())
-        session::AsyncUiTimelineWriter::instance().flush();
-    if (ephemeral || sessionId.empty()) return;
-    if (session::activeSession().isEphemeral()) return;
-    agent.saveSession(sessionId);
-    // Second flush: saveSession may have raced with a late TurnDone enqueue.
-    session::AsyncUiTimelineWriter::instance().flush();
 }
 
 // Live agent slot — starts as external ref from main(); hub launch may replace
@@ -436,9 +292,7 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     model->setRootAgent(slot->ptr());
     initializeChatModel(model, cfg);
     agent.setAskToolHandler([&bridge](const Json::Value& params) { return bridge.requestAsk(params); });
-    // Vet-fix: atexit safety net for repl too.
-    cortex::mk3::flush::installAtexit();
-    cortex::mk3::flush::activate(agent, /*sessionId*/ "");
+    SessionFlushGuard flushGuard(agent, /*cfgSessionId*/ "", noSession);
     std::atomic<bool> workerBusy{false};
     std::atomic<bool> wfBusy{false};
     std::atomic<bool> quitPosted{false};
@@ -477,110 +331,91 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     // With a seed prompt go straight to agent; bare launch still opens dashboard.
     bool startAtDashboard = cfg.manifestPath.empty() && cfg.initialPrompt.empty();
     auto app = makeInkcellApp(cfg, bridge, model, startAtDashboard);
-    app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([]() {});
     const bool exitOnDone = cfg.ephemeral;
-    app.engine().on_tick([model, slot, &bridge, &app, &workerBusy, &worker, &joinWorker, &wfBusy,
-                          &wfWorker, &joinWfWorker, &quitPosted, noSession, exitOnDone,
-                          applyLiveIdentity](inkcell::Tick) {
-        model->drain(bridge);
-
-        // Hub workflow stop request (worker polls shouldCancel).
-        if (model->pendingStopWorkflow) {
-            model->pendingStopWorkflow = false;
-            model->workflowRun.requestCancel();
+    // drain + pendingRoute in installCoalescedTick; hub/worker logic in extra (runs first).
+    installCoalescedTick(
+        app, bridge, model,
+        [slot, &workerBusy, &worker, &joinWorker, &wfBusy, &wfWorker, &joinWfWorker, &quitPosted,
+         noSession, exitOnDone, applyLiveIdentity, &flushGuard](inkcell::App& app, ShellModel& model,
+                                                               AgentBridge& bridge) {
+        if (model.pendingStopWorkflow) {
+            model.pendingStopWorkflow = false;
+            model.workflowRun.requestCancel();
         }
 
-        // Hub workflow run: execute on dedicated worker; live rail via WorkflowRunHub.
-        if (!model->pendingRunWorkflow.empty() && !wfBusy.load(std::memory_order_acquire)) {
-            std::string path = model->pendingRunWorkflow;
-            model->pendingRunWorkflow.clear();
+        if (!model.pendingRunWorkflow.empty() && !wfBusy.load(std::memory_order_acquire)) {
+            std::string path = model.pendingRunWorkflow;
+            model.pendingRunWorkflow.clear();
             joinWfWorker();
             wfBusy.store(true, std::memory_order_release);
-            model->dashboard.notice = "workflow running…";
-            wfWorker = std::thread([model, &bridge, path, &wfBusy]() {
+            model.dashboard.notice = "workflow running…";
+            wfWorker = std::thread([&model, &bridge, path, &wfBusy]() {
                 try {
-                    auto result = model::runWorkflowOnHub(path, model->workflowRun, &bridge);
+                    auto result = model::runWorkflowOnHub(path, model.workflowRun, &bridge);
                     if (result.success) {
-                        model->dashboard.notice =
+                        model.dashboard.notice =
                             "workflow ok · " + result.workflowName + " · " +
                             std::to_string(static_cast<int>(result.elapsedMs)) + "ms";
-                    } else if (result.error == "cancelled" ||
-                               model->workflowRun.cancelRequested()) {
-                        model->dashboard.notice = "workflow cancelled";
+                    } else if (result.error == "cancelled" || model.workflowRun.cancelRequested()) {
+                        model.dashboard.notice = "workflow cancelled";
                     } else {
-                        model->dashboard.notice =
+                        model.dashboard.notice =
                             "workflow fail · " +
                             (result.error.empty() ? result.workflowName : result.error);
                     }
                 } catch (const std::exception& e) {
-                    model->workflowRun.fail(e.what());
-                    model->dashboard.notice = std::string("workflow exception · ") + e.what();
+                    model.workflowRun.fail(e.what());
+                    model.dashboard.notice = std::string("workflow exception · ") + e.what();
                 }
                 wfBusy.store(false, std::memory_order_release);
             });
         }
 
-        // Hub launch: hot-swap agent from selected manifest, then open chat.
-        if (!model->pendingLaunchManifest.empty() &&
-            !workerBusy.load(std::memory_order_acquire)) {
-            std::string path = model->pendingLaunchManifest;
-            model->pendingLaunchManifest.clear();
-            // Same manifest already live → just open chat.
-            if (!model->activeManifestPath.empty() && path == model->activeManifestPath) {
-                model->dashboard.notice = "already live · " + model->agentName;
-                model->pendingRoute = "agent";
+        if (!model.pendingLaunchManifest.empty() && !workerBusy.load(std::memory_order_acquire)) {
+            std::string path = model.pendingLaunchManifest;
+            model.pendingLaunchManifest.clear();
+            if (!model.activeManifestPath.empty() && path == model.activeManifestPath) {
+                model.dashboard.notice = "already live · " + model.agentName;
+                model.pendingRoute = "agent";
             } else {
                 joinWorker();
                 std::string err;
                 auto next = buildAgentFromManifest(path, bridge, err);
                 if (!next) {
-                    model->launchError = err.empty() ? "launch failed" : err;
-                    model->dashboard.notice = "launch failed: " + model->launchError;
+                    model.launchError = err.empty() ? "launch failed" : err;
+                    model.dashboard.notice = "launch failed: " + model.launchError;
                 } else {
                     AgentConfig loaded = next->config();
                     slot->owned = std::move(next);
                     applyLiveIdentity(loaded, path);
-                    // Keep atexit/exit flush pointed at the live agent, not
-                    // the dead CLI default that no longer owns the history.
-                    cortex::mk3::flush::activate(slot->get(), model->activeSessionId);
-                    model->pendingRoute = "agent";
+                    flushGuard.rebind(slot->get(), model.activeSessionId);
+                    model.pendingRoute = "agent";
                 }
             }
         }
 
-        if (model->pendingRoute == "agent") {
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"scene.agent"});
-        } else if (model->pendingRoute == "main") {
-            model->persistUiTimeline();
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"scene.main"});
-        } else if (model->pendingRoute == "quit") {
-            model->persistUiTimeline();
-            model->pendingRoute.clear();
-            app.engine().post_action(inkcell::Action{"app.quit"});
-        }
-        if (!model->pendingSubmit.empty() && !workerBusy.load(std::memory_order_acquire)) {
-            std::string prompt = model->pendingSubmit;
-            model->pendingSubmit.clear();
-            chat::savePromptHistory(model->promptHistory);
+        if (!model.pendingSubmit.empty() && !workerBusy.load(std::memory_order_acquire)) {
+            std::string prompt = model.pendingSubmit;
+            model.pendingSubmit.clear();
+            chat::savePromptHistory(model.promptHistory);
             workerBusy.store(true, std::memory_order_release);
-            model->running = true;
-            model->done = false;
-            model->failed = false;
-            model->status = "running";
+            model.running = true;
+            model.done = false;
+            model.failed = false;
+            model.status = "running";
             joinWorker();
-            worker = std::thread([slot, &bridge, model, prompt, noSession, &workerBusy]() {
+            std::string sid = model.activeSessionId;
+            worker = std::thread([slot, &bridge, prompt, sid, noSession, &workerBusy]() {
                 std::atomic<bool> done{false};
-                runAgentTurn(bridge, slot->get(), prompt, model->activeSessionId, noSession, done);
+                runAgentTurn(bridge, slot->get(), prompt, sid, noSession, done);
                 while (!done.load(std::memory_order_acquire))
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 g_running = true;
                 workerBusy.store(false, std::memory_order_release);
             });
         }
-        // --ephemeral: leave once a turn has finished and the worker is idle.
-        if (exitOnDone && model->done && !model->running &&
+
+        if (exitOnDone && model.done && !model.running &&
             !workerBusy.load(std::memory_order_acquire) && !quitPosted.exchange(true)) {
             app.engine().post_action(inkcell::Action{"app.quit"});
         }
@@ -605,14 +440,8 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     // for LLM continuity. Order matters: timeline first (UI truth),
     // history second (agent memory).
     model->persistUiTimeline();
-    if (!model->activeSessionId.empty())
-        session::activeSession().set(model->activeSessionId, noSession);
-    std::string sid = session::activeSession().get();
-    if (sid.empty()) sid = model->activeSessionId;
-    if (!sid.empty())
-        flushAgentSession(slot->get(), sid, noSession || session::activeSession().isEphemeral());
-    model->persistUiTimelineFlush();
-    cortex::mk3::flush::disarm();
+    flushGuard.rebind(slot->get(), model->activeSessionId);
+    flushGuard.finish(model);
     return rc;
 }
 
