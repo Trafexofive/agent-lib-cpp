@@ -14,7 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "../core/agent.hpp"
+#include "../protocol/events.hpp"
 #include "components/markdown.hpp"
 #include "components/protocol.hpp"
 #include "surface.hpp"

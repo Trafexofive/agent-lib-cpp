@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "src/core/agent.hpp"
+#include "src/protocol/events.hpp"
 #include "src/ui/model/timeline_model.hpp"
 
 namespace cortex::mk3::ui::model {

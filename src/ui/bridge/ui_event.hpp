@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "src/core/agent.hpp"
+#include "src/protocol/events.hpp"  // ProtocolEvent — no Agent runtime
 
 namespace cortex::mk3::ui {
 

@@ -18,6 +18,7 @@
 
 #include "../core/provider.hpp"
 #include "../core/types.hpp"
+#include "../protocol/events.hpp"  // ProtocolEvent* PODs (foundation F1)
 #include "../protocol/parser.hpp"
 #include "../sandbox/policy.hpp"
 #include "../session/manager.hpp"
@@ -27,31 +28,8 @@ namespace cortex::mk3 {
 
 extern std::atomic<bool> g_running;
 
-struct ProtocolAction {
-    std::string type, name, id, body;
-    bool sync = true;
-    std::string mode = "sync";
-    std::map<std::string, std::string> modifiers;
-};
-
-struct ProtocolResult {
-    std::string id;
-    bool ok = true;
-    std::string summary;
-    std::string toolName;
-    int exitCode = 0;
-    double elapsedMs = 0;
-    size_t outputBytes = 0;
-};
-
-enum class ProtocolEventKind { THOUGHT, ACTION, RESULT, RESPONSE, STATUS, RETRY };
-
-struct ProtocolEvent {
-    ProtocolEventKind kind = ProtocolEventKind::THOUGHT;
-    std::string text;
-    ProtocolAction action;
-    ProtocolResult result;
-};
+// ProtocolAction / ProtocolResult / ProtocolEventKind / ProtocolEvent:
+// defined in protocol/events.hpp (included above). Agent remains the runtime.
 
 // ── Pending tool execution (threaded popen, streams output live) ──
 class Agent {
