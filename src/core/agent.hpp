@@ -225,6 +225,10 @@ class Agent {
    private:
     // Core loop
     std::string runLoop(AgentContext& ctx);
+    // Sub-agent action path (was inline lambda in runLoop).
+    Json::Value handleAgentDelegate(AgentContext& ctx,
+                                    const protocol::ParsedAction& action,
+                                    const std::string& instruction);
 
     // Prompt building
     ChatMessages buildChatPrompt(const AgentContext& ctx) const;

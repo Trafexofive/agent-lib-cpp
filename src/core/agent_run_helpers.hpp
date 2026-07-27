@@ -290,4 +290,49 @@ inline std::string buildResultTag(const std::string &id,
 }
 
 
+
+inline std::string trimCopy(std::string s) {
+    size_t a = s.find_first_not_of(" \t\n\r");
+    if (a == std::string::npos)
+        return std::string();
+    size_t b = s.find_last_not_of(" \t\n\r");
+    return s.substr(a, b - a + 1);
+}
+
+inline std::string pickSalvage(const std::string &raw, const std::string &responseBody) {
+    // Prefer structured response body (non-final <response>) over raw stream.
+    std::string r = trimCopy(responseBody);
+    if (!r.empty())
+        return r;
+    return trimCopy(raw);
+}
+
+inline std::string buildRecoveryCorrection(const std::string &salvage, bool nonFinalResponse) {
+std::ostringstream os;
+os << "[PROTOCOL RECOVERY] Previous model output had no valid "
+      "<response final=\"true\"> and no executable <action>.\n";
+if (nonFinalResponse)
+    os << "A <response> body was seen without final=\"true\". "
+          "Re-emit it wrapped correctly.\n";
+else
+    os << "Bare / non-protocol text is invisible to the operator as a "
+          "final answer.\n";
+os << "\nSalvaged content — put this inside <response final=\"true\"> "
+      "(edit if needed) OR continue with an <action>:\n"
+      "----- BEGIN SALVAGE -----\n";
+// Cap injection so a huge bare dump cannot blow the next prompt.
+const size_t kMax = 12000;
+if (salvage.size() > kMax) {
+    os << salvage.substr(0, kMax) << "\n…[truncated "
+       << (salvage.size() - kMax) << " bytes]";
+} else {
+    os << salvage;
+}
+os << "\n----- END SALVAGE -----\n\n"
+      "Emit EXACTLY one of:\n"
+      "  <response final=\"true\">…</response>\n"
+      "  <action type=\"tool\" name=\"…\" id=\"…\">…</action>\n";
+return os.str();
+}
+
 }  // namespace cortex::mk3

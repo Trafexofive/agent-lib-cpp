@@ -335,50 +335,6 @@ std::string Agent::runLoop(AgentContext &ctx) {
     int bareRecoveryCount = 0;
     std::string lastSalvage; // best non-final content this turn (for promote)
 
-    auto trimCopy = [](std::string s) {
-        size_t a = s.find_first_not_of(" \t\n\r");
-        if (a == std::string::npos)
-            return std::string();
-        size_t b = s.find_last_not_of(" \t\n\r");
-        return s.substr(a, b - a + 1);
-    };
-    auto pickSalvage = [&](const std::string &raw,
-                           const std::string &responseBody) {
-        // Prefer structured response body (non-final <response>) over raw
-        // stream.
-        std::string r = trimCopy(responseBody);
-        if (!r.empty())
-            return r;
-        return trimCopy(raw);
-    };
-    auto buildRecoveryCorrection = [&](const std::string &salvage,
-                                       bool nonFinalResponse) -> std::string {
-        std::ostringstream os;
-        os << "[PROTOCOL RECOVERY] Previous model output had no valid "
-              "<response final=\"true\"> and no executable <action>.\n";
-        if (nonFinalResponse)
-            os << "A <response> body was seen without final=\"true\". "
-                  "Re-emit it wrapped correctly.\n";
-        else
-            os << "Bare / non-protocol text is invisible to the operator as a "
-                  "final answer.\n";
-        os << "\nSalvaged content — put this inside <response final=\"true\"> "
-              "(edit if needed) OR continue with an <action>:\n"
-              "----- BEGIN SALVAGE -----\n";
-        // Cap injection so a huge bare dump cannot blow the next prompt.
-        const size_t kMax = 12000;
-        if (salvage.size() > kMax) {
-            os << salvage.substr(0, kMax) << "\n…[truncated "
-               << (salvage.size() - kMax) << " bytes]";
-        } else {
-            os << salvage;
-        }
-        os << "\n----- END SALVAGE -----\n\n"
-              "Emit EXACTLY one of:\n"
-              "  <response final=\"true\">…</response>\n"
-              "  <action type=\"tool\" name=\"…\" id=\"…\">…</action>\n";
-        return os.str();
-    };
 
     const int workCap = std::max(1, config_.iterationCap);
     bool finalizationTurn = false;
@@ -517,106 +473,9 @@ std::string Agent::runLoop(AgentContext &ctx) {
         d.agentDelegate =
             [this, &ctx](const protocol::ParsedAction &action,
                          const std::string &instruction) -> Json::Value {
-            const std::string &agentName = action.name;
-            auto it = subAgents_.find(agentName);
-            if (it == subAgents_.end()) {
-                Json::Value err;
-                err["success"] = false;
-                err["error"] = "Unknown sub-agent: " + agentName;
-                return err;
-            }
-
-            // op: prompt (default) | inspect | context | history
-            // XML attrs land in params (parser extra-attr path), e.g.
-            //   <action type="agent" name="reader" op="inspect" last_n="10"/>
-            //   <action type="agent" name="reader" inspect="true"/>
-            std::string op = "prompt";
-            if (action.params.isMember("op") &&
-                action.params["op"].isString() &&
-                !action.params["op"].asString().empty())
-                op = action.params["op"].asString();
-            else if (action.params.isMember("inspect")) {
-                const auto &iv = action.params["inspect"];
-                if ((iv.isBool() && iv.asBool()) ||
-                    (iv.isString() &&
-                     (iv.asString() == "true" || iv.asString() == "1")) ||
-                    (iv.isInt() && iv.asInt() != 0))
-                    op = "inspect";
-            }
-
-            if (op == "inspect" || op == "context" || op == "history") {
-                int lastN = action.params.get("last_n", 20).asInt();
-                if (lastN <= 0)
-                    lastN = 20;
-                Json::Value snap = it->second->inspectContext(lastN);
-                snap["op"] = op;
-                snap["agent"] = agentName;
-                // Compact summary for the RESULT card body.
-                std::ostringstream sum;
-                sum << agentName << " context: history="
-                    << snap.get("history_total", 0).asInt()
-                    << " events=" << snap.get("protocol_events", 0).asInt();
-                if (!snap.get("response_output", "").asString().empty()) {
-                    std::string ro = snap["response_output"].asString();
-                    if (ro.size() > 200)
-                        ro = ro.substr(0, 200) + "…";
-                    sum << "\nlast: " << ro;
-                }
-                snap["output"] = sum.str();
-                snap["success"] = true;
-                return snap;
-            }
-
-            bool forceEphemeral = jsonBool(action.params, "ephemeral", false);
-            bool dumpContext = jsonBool(action.params, "dump_context", false);
-            std::string childSessionId =
-                forceEphemeral
-                    ? ""
-                    : deriveSubAgentSessionId(ctx, config_, agentName);
-            // Ephemeral child calls must not leak prior in-memory history into
-            // this mission (non-ephemeral reuses the same Agent object).
-            if (forceEphemeral) {
-                it->second->clearHistory();
-            }
-            // Stream the child's progress to the parent's UI so it stays alive
-            // (byte counter + spinner) during the synchronous sub-agent call.
-            // Without this, the child runs for seconds with zero UI updates —
-            // the 'freeze after the first thought block ends' symptom. The
-            // child's generateStream calls ctx.onToken("") as a heartbeat but
-            // the actual bytes land in the CHILD's rawLlOutput_, so we forward
-            // the child's raw delta through the parent's onToken. The parent's
-            // onToken publishes non-empty tokens directly (see runAgentTurn).
-            Agent *childPtr = it->second.get();
-            std::shared_ptr<size_t> childSeen = std::make_shared<size_t>(0);
-            StreamCallback childProgress = [childPtr, childSeen,
-                                            &ctx](const std::string &, bool) {
-                if (!ctx.onToken)
-                    return;
-                const std::string &r = childPtr->rawLlOutput();
-                if (r.size() > *childSeen) {
-                    ctx.onToken(r.substr(*childSeen), false);
-                    *childSeen = r.size();
-                }
+                return handleAgentDelegate(ctx, action, instruction);
             };
-            // Further prompts reuse the child session id → continuous history.
-            // Label source as ParentAgent so the child sees who asked.
-            std::string result =
-                childSessionId.empty()
-                    ? it->second->prompt(
-                          instruction, childProgress, "", forceEphemeral,
-                          PromptSource::ParentAgent, config_.name)
-                    : it->second->prompt(
-                          instruction, childProgress, childSessionId, false,
-                          PromptSource::ParentAgent, config_.name);
-            std::string trace;
-            if (dumpContext) {
-                trace = formatDelegatedTrace(agentName, instruction,
-                                             it->second->iterationPrompts(),
-                                             it->second->iterationOutputs());
-                subAgentTraces_.push_back(trace);
-            }
-            return makeSubAgentResult(result, trace, dumpContext);
-        };
+
 
         // Wire workflow execution — creates a WorkflowRuntime with tool + agent
         // callbacks
@@ -1704,6 +1563,110 @@ std::string Agent::runLoop(AgentContext &ctx) {
 }
 
 
+
+Json::Value Agent::handleAgentDelegate(AgentContext &ctx,
+                                       const protocol::ParsedAction &action,
+                                       const std::string &instruction) {
+    const std::string &agentName = action.name;
+    auto it = subAgents_.find(agentName);
+    if (it == subAgents_.end()) {
+        Json::Value err;
+        err["success"] = false;
+        err["error"] = "Unknown sub-agent: " + agentName;
+        return err;
+    }
+
+    // op: prompt (default) | inspect | context | history
+    // XML attrs land in params (parser extra-attr path), e.g.
+    //   <action type="agent" name="reader" op="inspect" last_n="10"/>
+    //   <action type="agent" name="reader" inspect="true"/>
+    std::string op = "prompt";
+    if (action.params.isMember("op") &&
+        action.params["op"].isString() &&
+        !action.params["op"].asString().empty())
+        op = action.params["op"].asString();
+    else if (action.params.isMember("inspect")) {
+        const auto &iv = action.params["inspect"];
+        if ((iv.isBool() && iv.asBool()) ||
+            (iv.isString() &&
+             (iv.asString() == "true" || iv.asString() == "1")) ||
+            (iv.isInt() && iv.asInt() != 0))
+            op = "inspect";
+    }
+
+    if (op == "inspect" || op == "context" || op == "history") {
+        int lastN = action.params.get("last_n", 20).asInt();
+        if (lastN <= 0)
+            lastN = 20;
+        Json::Value snap = it->second->inspectContext(lastN);
+        snap["op"] = op;
+        snap["agent"] = agentName;
+        // Compact summary for the RESULT card body.
+        std::ostringstream sum;
+        sum << agentName << " context: history="
+            << snap.get("history_total", 0).asInt()
+            << " events=" << snap.get("protocol_events", 0).asInt();
+        if (!snap.get("response_output", "").asString().empty()) {
+            std::string ro = snap["response_output"].asString();
+            if (ro.size() > 200)
+                ro = ro.substr(0, 200) + "…";
+            sum << "\nlast: " << ro;
+        }
+        snap["output"] = sum.str();
+        snap["success"] = true;
+        return snap;
+    }
+
+    bool forceEphemeral = jsonBool(action.params, "ephemeral", false);
+    bool dumpContext = jsonBool(action.params, "dump_context", false);
+    std::string childSessionId =
+        forceEphemeral
+            ? ""
+            : deriveSubAgentSessionId(ctx, config_, agentName);
+    // Ephemeral child calls must not leak prior in-memory history into
+    // this mission (non-ephemeral reuses the same Agent object).
+    if (forceEphemeral) {
+        it->second->clearHistory();
+    }
+    // Stream the child's progress to the parent's UI so it stays alive
+    // (byte counter + spinner) during the synchronous sub-agent call.
+    // Without this, the child runs for seconds with zero UI updates —
+    // the 'freeze after the first thought block ends' symptom. The
+    // child's generateStream calls ctx.onToken("") as a heartbeat but
+    // the actual bytes land in the CHILD's rawLlOutput_, so we forward
+    // the child's raw delta through the parent's onToken. The parent's
+    // onToken publishes non-empty tokens directly (see runAgentTurn).
+    Agent *childPtr = it->second.get();
+    std::shared_ptr<size_t> childSeen = std::make_shared<size_t>(0);
+    StreamCallback childProgress = [childPtr, childSeen,
+                                    &ctx](const std::string &, bool) {
+        if (!ctx.onToken)
+            return;
+        const std::string &r = childPtr->rawLlOutput();
+        if (r.size() > *childSeen) {
+            ctx.onToken(r.substr(*childSeen), false);
+            *childSeen = r.size();
+        }
+    };
+    // Further prompts reuse the child session id → continuous history.
+    // Label source as ParentAgent so the child sees who asked.
+    std::string result =
+        childSessionId.empty()
+            ? it->second->prompt(
+                  instruction, childProgress, "", forceEphemeral,
+                  PromptSource::ParentAgent, config_.name)
+            : it->second->prompt(
+                  instruction, childProgress, childSessionId, false,
+                  PromptSource::ParentAgent, config_.name);
+    std::string trace;
+    if (dumpContext) {
+        trace = formatDelegatedTrace(agentName, instruction,
+                                     it->second->iterationPrompts(),
+                                     it->second->iterationOutputs());
+        subAgentTraces_.push_back(trace);
+    }
+    return makeSubAgentResult(result, trace, dumpContext);
+}
 
 // ── Tool dispatch — see agent_tool_dispatch.cpp
 // ── Session lifecycle — see agent_session.cpp
