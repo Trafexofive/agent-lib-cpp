@@ -232,6 +232,16 @@ inline void drawPromptLine(inkcell::Surface& surface, inkcell::Rect row, const C
     auto textSt = focusBar ? theme::footer_bright() : theme::footer_dim();
     const std::string glyph = focusBar ? "› " : "  ";
 
+    // Empty idle placeholder — disappears on first key / while running.
+    if (m.input.empty() && !m.running && focusBar) {
+        auto dim = theme::footer_dim();
+        surface.text({row.x + 2, row.y},
+                     inkcell::text::truncate(glyph + "type to run  ·  / commands  ·  ? help",
+                                             std::max(1, row.w - 4)),
+                     dim);
+        return;
+    }
+
     std::string body = m.input;
     const bool showCursor = cursorVisible(m.nowMs, focusBar);
     if (focusBar) {

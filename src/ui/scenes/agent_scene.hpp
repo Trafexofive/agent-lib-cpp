@@ -19,6 +19,39 @@ class AgentScene final : public BaseScene {
     using BaseScene::BaseScene;
     std::string name() const override { return "Chat"; }
 
+    void on_enter() override {
+        BaseScene::on_enter();
+        // One-shot route-in pulse on the status line (via notification stack).
+        // Resume / fresh / launch all land here; keep it short, no second surface.
+        chat::Notification n;
+        n.id = "route-in";
+        n.source = "chat";
+        n.severity = "info";
+        n.lifetimeMs = 2800;
+        if (!model_->activeSessionId.empty()) {
+            std::string sid = model_->activeSessionId;
+            if (sid.size() > 8) sid = sid.substr(sid.size() - 8);
+            n.title = "session · " + sid;
+        } else if (!model_->agentName.empty()) {
+            n.title = "agent · " + model_->agentName;
+        } else {
+            n.title = "chat ready";
+        }
+        if (model_->failed) {
+            n.severity = "error";
+            n.title = "last turn failed";
+            n.lifetimeMs = 4500;
+        } else if (model_->status == "cancelled") {
+            n.severity = "warn";
+            n.title = "last turn cancelled";
+        }
+        model_->notificationStack.push(std::move(n));
+        // Idle with no sticky fail → ready label (failed/cancelled stay until next run).
+        if (!model_->running && !model_->failed && model_->status != "cancelled" &&
+            (model_->status.empty() || model_->status == "idle" || model_->status == "done"))
+            model_->status = "ready";
+    }
+
     bool on_key(const inkcell::KeyEvent& event) override {
         using inkcell::KeyCode;
 
@@ -57,9 +90,14 @@ class AgentScene final : public BaseScene {
         // drill-back. Esc only dismisses overlays / toggles focus rungs.
         // Navigation: `m` → main, Backspace/h → goBack (when not typing).
         if (event.code == KeyCode::Escape) {
-            if (!model_->notificationStack.empty()) {
-                model_->notificationStack.dismissTop();
-                return true;
+            // Only error/warn/sticky alerts consume Esc. Info pulses (route-in,
+            // "no active turn") auto-expire and must not steal focus rungs.
+            if (const auto* top = model_->notificationStack.top()) {
+                if (top->severity == "error" || top->severity == "warn" ||
+                    top->lifetimeMs <= 0) {
+                    model_->notificationStack.dismissTop();
+                    return true;
+                }
             }
             if (model_->cmdPalette.open && !model_->cmdPalette.closing) {
                 model_->cmdPalette.requestClose();
@@ -648,13 +686,34 @@ class AgentScene final : public BaseScene {
             model_->askActive = false;
             model_->closeModalFocus("ask");
             bridge_.cancelAsk();
+            chat::Notification n;
+            n.id = "cancel";
+            n.source = "cancel";
+            n.severity = "warn";
+            n.title = std::string("ask cancelled · ") + reason;
+            n.lifetimeMs = 2800;
+            model_->notificationStack.push(std::move(n));
         }
         if (model_->running) {
             model_->status = std::string("cancelling (") + reason + ")";
             g_running = false;
-            model_->appendNotice("stop", {std::string("agent loop stop requested via ") + reason});
+            chat::Notification n;
+            n.id = "cancel";
+            n.source = "cancel";
+            n.severity = "warn";
+            n.title = std::string("stopping · ") + reason;
+            n.lifetimeMs = 2800;
+            model_->notificationStack.push(std::move(n));
+            // Keep transcript clean — status line + alert carry the signal.
+            // (appendNotice used to spam a Log row on every ctrl-c.)
         } else if (!model_->askActive) {
-            model_->appendNotice("stop", {"no active turn to stop"});
+            chat::Notification n;
+            n.id = "cancel";
+            n.source = "cancel";
+            n.severity = "info";
+            n.title = "no active turn";
+            n.lifetimeMs = 1800;
+            model_->notificationStack.push(std::move(n));
         }
     }
 

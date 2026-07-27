@@ -42,7 +42,27 @@ inline bool ShellModel::historyNext() {
 }
 
 inline bool ShellModel::submitComposer() {
-    if (running || !atRoot()) return false;
+    // Explicit policy: never queue mid-turn. Operator must stop first.
+    if (running) {
+        chat::Notification n;
+        n.id = "submit-blocked";
+        n.source = "composer";
+        n.severity = "warn";
+        n.title = "turn live · ctrl-x stop";
+        n.lifetimeMs = 2500;
+        notificationStack.push(std::move(n));
+        return false;
+    }
+    if (!atRoot()) {
+        chat::Notification n;
+        n.id = "submit-blocked";
+        n.source = "composer";
+        n.severity = "warn";
+        n.title = "drill out first · esc";
+        n.lifetimeMs = 2500;
+        notificationStack.push(std::move(n));
+        return false;
+    }
     std::string text = composer.value;
     while (!text.empty() && (text.back() == '\n' || text.back() == ' ' || text.back() == '\t')) text.pop_back();
     size_t start = 0;
