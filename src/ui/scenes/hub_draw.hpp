@@ -727,6 +727,18 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
                : "OFF",
            "B / S", true);
 
+    if (y < frame.bottom()) ++y;
+    section("CHROME");
+    option(7, "ZEN MODE", model_->zenMode ? "ON" : "OFF", "Z", false);
+    option(8, "NAV PILL", model_->navPillEnabled ? "ON" : "OFF", "", false);
+    {
+        std::string hide =
+            model_->navPillHideMs <= 0
+                ? "NEVER"
+                : (std::to_string(model_->navPillHideMs / 1000) + "S");
+        option(9, "PILL HIDE", hide, "←→", true);
+    }
+
     // Single footer — path only, no key encyclopedia
     if (y + 1 < frame.bottom()) {
         y = frame.bottom() - 1;

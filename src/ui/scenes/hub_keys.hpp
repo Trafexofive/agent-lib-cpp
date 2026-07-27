@@ -395,6 +395,8 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                 break;
             case 'z':
             case 'Z':
+                // Manifests + workflow selection: Z expands canvas (legacy).
+                // Elsewhere / Settings: Z toggles zen (pill auto-hide).
                 if (dash.section == model::DashboardSection::Manifests &&
                     workflowSelectionActive()) {
                     dash.wfCanvasExpanded = !dash.wfCanvasExpanded;
@@ -403,7 +405,14 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                         dash.wfCanvasExpanded ? "infinite canvas" : "canvas docked";
                     return true;
                 }
-                break;
+                model_->zenMode = !model_->zenMode;
+                dash.bumpNavActivity();
+                if (dash.section == model::DashboardSection::Settings)
+                    dash.settingsFocus = 7;
+                dash.notice = model_->zenMode ? "zen on · pill auto-hides"
+                                              : "zen off · pill always up";
+                persistUiPrefs(*model_);
+                return true;
             case 'R':
                 dash.refreshAll();
                 dash.notice = "refreshed";

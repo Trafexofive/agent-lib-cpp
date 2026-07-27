@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -49,16 +50,28 @@ struct DashboardState {
     std::string notice;
     std::string manifestDir;
 
-    // Section pill anim
+    // Section pill anim (thumb slide between sections)
     int navPrevIndex = 0;
     int navAnimDir = 1;
     int64_t navAnimStartMs = 0;
     static constexpr int navAnimDurationMs = 280;
     static constexpr int sectionCount = 4;
 
-    // Settings option focus (0=theme 1=field 2=shader 3=thoughts 4=truncate 5=raw)
+    // Floating pill visibility (zen auto-hide + master enable live on ShellModel).
+    // lastNavActivityMs bumped on section change / dock focus / nav binds.
+    int64_t lastNavActivityMs = 0;
+    // Slide progress 0=hidden below, 1=fully up. Animated each draw.
+    float pillReveal = 1.f;
+    int64_t pillRevealAnimStartMs = 0;
+    float pillRevealFrom = 1.f;
+    float pillRevealTo = 1.f;
+    static constexpr int pillRevealAnimMs = 220;
+
+    // Settings option focus:
+    // 0 theme · 1 field · 2 shader · 3 thoughts · 4 truncate · 5 raw · 6 chat field
+    // 7 zen · 8 nav pill · 9 pill hide delay
     int settingsFocus = 0;
-    static constexpr int settingsOptionCount = 7;
+    static constexpr int settingsOptionCount = 10;
 
     // Manifest card swipe (j/k) — curved dual-card transition
     int cardPrevIndex = -1;
@@ -125,6 +138,37 @@ struct DashboardState {
         beginNavAnim(from, delta >= 0 ? 1 : -1);
         navigationIndex = next;
         syncSection();
+        bumpNavActivity();
+    }
+
+    void bumpNavActivity() { lastNavActivityMs = nowMs(); }
+
+    void requestPillReveal(float target) {
+        target = target < 0.f ? 0.f : (target > 1.f ? 1.f : target);
+        // Snap current anim position as new from.
+        float cur = pillRevealT();
+        if (std::fabs(cur - target) < 0.01f) {
+            pillReveal = target;
+            pillRevealFrom = target;
+            pillRevealTo = target;
+            pillRevealAnimStartMs = 0;
+            return;
+        }
+        pillRevealFrom = cur;
+        pillRevealTo = target;
+        pillRevealAnimStartMs = nowMs();
+        pillReveal = target;  // logical target; draw uses pillRevealT()
+    }
+
+    float pillRevealT() const {
+        if (pillRevealAnimStartMs <= 0) return pillRevealTo;
+        float t = static_cast<float>(nowMs() - pillRevealAnimStartMs) /
+                  static_cast<float>(pillRevealAnimMs);
+        if (t < 0.f) t = 0.f;
+        if (t > 1.f) t = 1.f;
+        // ease in-out cubic
+        float e = t < 0.5f ? 4.f * t * t * t : 1.f - std::pow(-2.f * t + 2.f, 3.f) / 2.f;
+        return pillRevealFrom + (pillRevealTo - pillRevealFrom) * e;
     }
 
     void select(DashboardSection next) {
@@ -135,11 +179,13 @@ struct DashboardState {
         section = next;
         navigationIndex = idx;
         focus = DashboardFocus::Content;
+        bumpNavActivity();
     }
 
     void toggleFocus() {
         focus = (focus == DashboardFocus::Dock) ? DashboardFocus::Content
                                                 : DashboardFocus::Dock;
+        bumpNavActivity();
     }
 
     void moveSession(int delta) {

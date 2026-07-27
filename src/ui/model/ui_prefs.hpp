@@ -22,6 +22,13 @@ struct UiPrefState {
     // Chat-side field underlay. Inherits shared gfx::activeFieldIndex; this
     // is the on/off gate for the chat surface specifically.
     bool chatFieldEnabled = false;
+    // Hub chrome: zen hides the floating nav pill until nav keys are used.
+    bool zenMode = false;
+    // Master switch — off removes the pill entirely (stage fills the bottom).
+    bool navPillEnabled = true;
+    // How long the pill stays visible after nav activity in zen mode (ms).
+    // 0 = never auto-hide (always up while enabled).
+    int navPillHideMs = 3000;
 };
 
 inline UiPrefState& uiPrefShadow() {
@@ -76,6 +83,24 @@ inline bool jsonGetBool(const std::string& body, const std::string& key, bool fa
     return fallback;
 }
 
+inline int jsonGetInt(const std::string& body, const std::string& key, int fallback) {
+    std::string pat = "\"" + key + "\"";
+    size_t k = body.find(pat);
+    if (k == std::string::npos) return fallback;
+    size_t colon = body.find(':', k + pat.size());
+    if (colon == std::string::npos) return fallback;
+    size_t t = body.find_first_not_of(" \t\r\n", colon + 1);
+    if (t == std::string::npos) return fallback;
+    try {
+        size_t end = 0;
+        int v = std::stoi(body.substr(t), &end);
+        (void)end;
+        return v;
+    } catch (...) {
+        return fallback;
+    }
+}
+
 inline void loadUiPrefs() {
     std::ifstream in(uiPrefsPath());
     if (!in) return;
@@ -105,6 +130,12 @@ inline void loadUiPrefs() {
     shad.truncateBodies = jsonGetBool(body, "truncate_bodies", true);
     shad.showRaw = jsonGetBool(body, "show_raw", false);
     shad.chatFieldEnabled = jsonGetBool(body, "chat_field_enabled", false);
+    shad.zenMode = jsonGetBool(body, "zen_mode", false);
+    shad.navPillEnabled = jsonGetBool(body, "nav_pill_enabled", true);
+    shad.navPillHideMs = jsonGetInt(body, "nav_pill_hide_ms", 3000);
+    // Clamp known carousel values.
+    if (shad.navPillHideMs < 0) shad.navPillHideMs = 0;
+    if (shad.navPillHideMs > 60000) shad.navPillHideMs = 60000;
 }
 
 // Apply shadow → live model (call after model construct / load).
@@ -115,6 +146,9 @@ inline void applyUiPrefsToModel(Model& model) {
     model.truncateBodies = s.truncateBodies;
     model.showRaw = s.showRaw;
     model.chatFieldEnabled = s.chatFieldEnabled;
+    model.zenMode = s.zenMode;
+    model.navPillEnabled = s.navPillEnabled;
+    model.navPillHideMs = s.navPillHideMs;
 }
 
 template <typename Model>
@@ -123,6 +157,10 @@ inline void captureUiPrefsFromModel(const Model& model) {
     s.showThoughts = model.showThoughts;
     s.truncateBodies = model.truncateBodies;
     s.showRaw = model.showRaw;
+    s.chatFieldEnabled = model.chatFieldEnabled;
+    s.zenMode = model.zenMode;
+    s.navPillEnabled = model.navPillEnabled;
+    s.navPillHideMs = model.navPillHideMs;
 }
 
 inline void saveUiPrefs() {
@@ -138,7 +176,10 @@ inline void saveUiPrefs() {
         << "  \"show_thoughts\": " << (s.showThoughts ? "true" : "false") << ",\n"
         << "  \"truncate_bodies\": " << (s.truncateBodies ? "true" : "false") << ",\n"
         << "  \"show_raw\": " << (s.showRaw ? "true" : "false") << ",\n"
-        << "  \"chat_field_enabled\": " << (s.chatFieldEnabled ? "true" : "false") << "\n"
+        << "  \"chat_field_enabled\": " << (s.chatFieldEnabled ? "true" : "false") << ",\n"
+        << "  \"zen_mode\": " << (s.zenMode ? "true" : "false") << ",\n"
+        << "  \"nav_pill_enabled\": " << (s.navPillEnabled ? "true" : "false") << ",\n"
+        << "  \"nav_pill_hide_ms\": " << s.navPillHideMs << "\n"
         << "}\n";
 }
 

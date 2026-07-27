@@ -373,6 +373,14 @@ class AgentScene final : public BaseScene {
         else model_->transcriptView.clamp();
 
         chat::drawChatSurface(surface, p, vm);
+
+        // Pop toasts — above transcript, below modal overlays.
+        model_->notificationStack.tick();
+        if (!model_->notificationStack.empty()) {
+            inkcell::Rect toastArea{p.x, p.y + 2, p.w, std::min(10, p.h / 3)};
+            chat::drawNotificationToasts(surface, toastArea, model_->notificationStack, 1.f);
+        }
+
         if (model_->askActive)
             chat::drawAskDialog(surface, p, model_->askDialog, model_->askInput.value,
                                 model_->askMultiSelected);

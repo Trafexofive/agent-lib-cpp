@@ -91,6 +91,13 @@ struct ShellModel : TimelineStore {
     // surface stays crisp unless the operator opts in. Hub field on/off is
     // shared via gfx:: and this is the chat-side gate.
     bool chatFieldEnabled = false;
+    // Hub chrome prefs (Settings · CHROME).
+    // zenMode: pill auto-hides after navPillHideMs of idle nav; reappears on g/s/a/?/dock.
+    bool zenMode = false;
+    // Master pill switch — false removes the dock (stage uses full bottom padding).
+    bool navPillEnabled = true;
+    // Auto-hide delay in zen mode (ms). 0 = never auto-hide.
+    int navPillHideMs = 3000;
     // When true, long block bodies are capped (pi-like truncation) with a
     // "… N more lines" note. Toggle via /truncate or CLI --[no-]truncate.
     bool truncateBodies = true;

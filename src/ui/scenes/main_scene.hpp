@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <map>
 #include <string>
@@ -16,6 +17,7 @@
 #include "src/session/manager.hpp"
 #include "src/ui/assets/glyphs.hpp"
 #include "src/ui/chat/chat_view.hpp"
+#include "src/ui/chat/notification.hpp"
 #include "src/ui/components/card_swipe.hpp"
 #include "src/ui/components/chips.hpp"
 #include "src/ui/components/chrome.hpp"
@@ -43,7 +45,9 @@ class MainScene final : public BaseScene {
 
     void on_enter() override {
         BaseScene::on_enter();
-        loadUiPrefs();  // theme + shader from ~/.config/cortex-mk3/ui.json
+        loadUiPrefs();  // theme + shader + chrome prefs from ui.json
+        applyUiPrefsToModel(*model_);
+        model_->dashboard.bumpNavActivity();  // pill visible on hub enter
         if (!cfg_.manifestDir.empty())
             model_->dashboard.manifestDir = cfg_.manifestDir;
         else if (!activeManifest().empty())
@@ -76,31 +80,50 @@ class MainScene final : public BaseScene {
         surface.clear(theme::base_bg());
 
         const auto full = surface.bounds();
-        // Horizontal breathing only — bottom is owned by the 3-row textured pill.
+        // Horizontal breathing; bottom keeps 1px page padding. Nav pill floats
+        // above the stage (does not own a permanent chrome strip).
         inkcell::Rect page{full.x + 2, full.y + 1, std::max(1, full.w - 4),
-                           std::max(1, full.h - 1)};
+                           std::max(1, full.h - 2)};  // 1-cell bottom pad
 
         const auto tier = layout::densityOf(page.w);
-        const auto& dash = model_->dashboard;
+        auto& dash = model_->dashboard;
         const float tsec = gfx::nowSeconds();
         const int tvar = gfx::themeVariantIndex();
+
+        // ── Pill visibility (zen auto-hide + master enable) ───────────────
+        const bool pillMaster = model_->navPillEnabled;
+        const int hideMs = model_->navPillHideMs;
+        bool wantPill = pillMaster;
+        if (pillMaster && model_->zenMode && hideMs > 0) {
+            if (dash.lastNavActivityMs <= 0) dash.lastNavActivityMs = model::DashboardState::nowMs();
+            const int64_t idle = model::DashboardState::nowMs() - dash.lastNavActivityMs;
+            wantPill = idle < hideMs || dash.focus == model::DashboardFocus::Dock ||
+                       dash.navAnimating();
+        } else if (pillMaster && model_->zenMode && hideMs <= 0) {
+            wantPill = true;  // zen + never-hide
+        }
+        // Drive slide animation toward target.
+        {
+            float target = wantPill ? 1.f : 0.f;
+            if (std::fabs(dash.pillRevealTo - target) > 0.01f) dash.requestPillReveal(target);
+        }
+        const float reveal = pillMaster ? dash.pillRevealT() : 0.f;
 
         gfx::drawFieldBg(surface, full, tvar, tsec);
         drawAppBar(surface, page, tier);
 
-        // Textured 3-row pill (restored). bottomY = last body row.
-        // Shadow paints one row under body when available — pin body so
-        // shadow lands on full.bottom()-1 (no black dead strip).
+        // Stage fills the page under the app bar — pill floats over, does not
+        // permanently steal rows (1px page pad remains as bg).
         const int pillBodyH = 3;
-        const int airAbovePill = 1;
-        const int pillBottomY = full.bottom() - 2;  // body ends here; shadow on last row
         int stageTop = page.y + 3;
-        int stageBot = pillBottomY - (pillBodyH - 1) - airAbovePill;
-        int stageH = std::max(6, stageBot - stageTop);
+        int stageBot = page.bottom();  // full page bottom (incl. pad zone)
+        // When pill is fully up, keep content clear of the floating dock.
+        const int reservedForPill = static_cast<int>(std::lround(reveal * (pillBodyH + 1)));
+        int contentBot = stageBot - reservedForPill;
+        int stageH = std::max(6, contentBot - stageTop);
         inkcell::Rect stage{page.x, stageTop, page.w, stageH};
         gfx::drawBorderlessPanel(surface, stage, theme::panel_bg());
 
-        // Content has real padding — not cramped
         inkcell::Rect content{stage.x + 3, stage.y + 1, std::max(1, stage.w - 6),
                               std::max(1, stage.h - 2)};
         const int maxSlide = std::max(4, std::min(12, content.h / 3));
@@ -114,22 +137,40 @@ class MainScene final : public BaseScene {
             drawContent(surface, content);
         }
 
-        static const std::vector<components::PillItem> pills = {
-            {"g", "Home"},
-            {"s", "Sessions"},
-            {"a", "Manifests"},
-            {"?", "Settings"},
-        };
-        // Registry-driven key strip (inkcell KeyHints dogfood) in the air above the pill.
-        if (airAbovePill > 0 && dash.notice.empty() && !dash.searchMode) {
-            inkcell::Rect hintRow{page.x, stageBot, page.w, 1};
-            auto hints = hubChromeKeyHints(page.w >= 100 ? 7 : 5);
-            hints.theme(theme::activeInkcellTheme()).draw(surface, hintRow);
+        // Hub notice → top-right pop toast
+        if (!dash.notice.empty()) {
+            inkcell::Rect toastArea{page.x, page.y + 3, page.w, std::min(8, page.h / 3)};
+            chat::drawNoticeToast(surface, toastArea, dash.notice);
         }
 
-        components::drawPillDock(surface, page.x, page.w, pillBottomY, pills,
-                                 dash.navigationIndex, dash.navPrevIndex, dash.navAnimT(),
-                                 dash.focus == model::DashboardFocus::Dock);
+        // Floating nav pill — draw last so it sits above the stage.
+        if (pillMaster && reveal > 0.02f) {
+            static const std::vector<components::PillItem> pills = {
+                {"g", "Home"},
+                {"s", "Sessions"},
+                {"a", "Manifests"},
+                {"?", "Settings"},
+            };
+            // Slide up from below: bottomY moves with reveal.
+            const int restBottomY = page.bottom() - 1;  // seated
+            const int hiddenBottomY = page.bottom() + pillBodyH;  // fully off
+            const int pillBottomY =
+                static_cast<int>(std::lround(hiddenBottomY + (restBottomY - hiddenBottomY) * reveal));
+
+            // Key hints in the air above the pill when fully revealed.
+            if (reveal > 0.85f && dash.notice.empty() && !dash.searchMode) {
+                int hintY = pillBottomY - pillBodyH;
+                if (hintY >= stageTop) {
+                    inkcell::Rect hintRow{page.x, hintY, page.w, 1};
+                    auto hints = hubChromeKeyHints(page.w >= 100 ? 7 : 5);
+                    hints.theme(theme::activeInkcellTheme()).draw(surface, hintRow);
+                }
+            }
+
+            components::drawPillDock(surface, page.x, page.w, pillBottomY, pills,
+                                     dash.navigationIndex, dash.navPrevIndex, dash.navAnimT(),
+                                     dash.focus == model::DashboardFocus::Dock);
+        }
 
         components::drawCmdPalette(surface, full, model_->cmdPalette);
     }
@@ -279,14 +320,42 @@ class MainScene final : public BaseScene {
                                   ? std::string("chat · field bg on — ") +
                                         gfx::activeFieldName()
                                   : std::string("chat · field bg off (solid theme)");
-                persistUiPrefs(*model_);
-                dash.notice.clear();
                 break;
+            case 7:  // zen mode
+                model_->zenMode = !model_->zenMode;
+                dash.bumpNavActivity();  // show pill when enabling zen
+                dash.notice = model_->zenMode
+                                  ? "zen · pill auto-hides after idle nav"
+                                  : "zen off · pill always up";
+                break;
+            case 8:  // nav pill master
+                model_->navPillEnabled = !model_->navPillEnabled;
+                if (model_->navPillEnabled) dash.bumpNavActivity();
+                dash.notice = model_->navPillEnabled ? "nav pill ON" : "nav pill OFF";
+                break;
+            case 9: {  // pill hide delay carousel
+                // 2s · 3s · 5s · 8s · never(0)
+                static const int kDelays[] = {2000, 3000, 5000, 8000, 0};
+                int idx = 1;  // default 3s
+                for (int i = 0; i < 5; ++i)
+                    if (kDelays[i] == model_->navPillHideMs) {
+                        idx = i;
+                        break;
+                    }
+                idx = (idx + (dir >= 0 ? 1 : 4)) % 5;
+                model_->navPillHideMs = kDelays[idx];
+                dash.bumpNavActivity();
+                dash.notice = model_->navPillHideMs <= 0
+                                  ? "pill hide · never"
+                                  : ("pill hide · " +
+                                     std::to_string(model_->navPillHideMs / 1000) + "s");
+                break;
+            }
             default:
                 break;
         }
         persistUiPrefs(*model_);
-        dash.notice.clear();
+        // Keep notice for toast paint this frame; clear on next action via hub_keys.
     }
 
     int dashFocus() const { return model_->dashboard.settingsFocus; }
