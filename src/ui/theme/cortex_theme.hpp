@@ -4,6 +4,7 @@
 // bold / dim / italic hierarchy. Neon is the high-chroma alternate.
 
 #include "inkcell/style.hpp"
+#include "inkcell/theme.hpp"
 
 namespace cortex::mk3::ui::theme {
 
@@ -14,6 +15,12 @@ inline const char* name() { return activeVariant == Variant::Graphite ? "graphit
 inline void set(Variant variant) { activeVariant = variant; }
 inline void toggle() {
     activeVariant = activeVariant == Variant::Graphite ? Variant::Neon : Variant::Graphite;
+}
+
+// Bridge: product variant → inkcell Theme roles (StatusBar, KeyHints, Shell).
+// Prefer this over Theme::deep_space() so chrome tracks graphite/neon toggle.
+inline inkcell::Theme activeInkcellTheme() {
+    return activeVariant == Variant::Neon ? inkcell::Theme::neon() : inkcell::Theme::graphite();
 }
 
 inline inkcell::Color color(inkcell::Color graphite, inkcell::Color neon) {

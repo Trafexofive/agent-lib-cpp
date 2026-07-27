@@ -124,7 +124,7 @@ class MainScene final : public BaseScene {
         if (airAbovePill > 0 && dash.notice.empty() && !dash.searchMode) {
             inkcell::Rect hintRow{page.x, stageBot, page.w, 1};
             auto hints = hubChromeKeyHints(page.w >= 100 ? 7 : 5);
-            hints.theme(inkcell::Theme::deep_space()).draw(surface, hintRow);
+            hints.theme(theme::activeInkcellTheme()).draw(surface, hintRow);
         }
 
         components::drawPillDock(surface, page.x, page.w, pillBottomY, pills,

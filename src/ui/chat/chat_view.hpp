@@ -155,8 +155,8 @@ inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const C
     int64_t elapsed = m.running ? m.turnElapsedMs : m.lastTurnElapsedMs;
 
     inkcell::widgets::StatusBar bar;
-    const auto& deep = inkcell::Theme::deep_space();
-    bar.theme(deep).separator(" ").fill_background(false);
+    auto inkTheme = theme::activeInkcellTheme();
+    bar.theme(inkTheme).separator(" ").fill_background(false);
     bar.left_seg(glyph + " " + state,
                  m.failed ? inkcell::Role::Error
                  : m.running ? inkcell::Role::Success
