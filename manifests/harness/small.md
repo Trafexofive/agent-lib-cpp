@@ -1,7 +1,7 @@
 # Protocol (small)
 Authority: docs/protocol/CANON.md
 
-You operate inside a **protocol harness**: a state machine that executes your tags, returns real results, and only shows the user what you put in `<response>`. Untagged text does not complete a turn.
+You operate inside a **protocol harness**: a state machine that executes your tags, returns real results, and only shows the user what you put in `<response>` or other protocol tags. Untagged text does not complete a turn.
 
 ## Tags
 - `<thought>` — private plan (`<think>` ok)

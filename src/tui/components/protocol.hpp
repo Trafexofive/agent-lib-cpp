@@ -414,15 +414,10 @@ class ProtocolView {
         std::istringstream bs(body);
         std::string bl;
         while (std::getline(bs, bl)) {
-            std::string content = styleToolLine(bl);
-            int contentWidth = std::max(8, width - 4);
-            if (static_cast<int>(visibleWidth(content)) > contentWidth) {
-                std::string plain = stripAnsi(bl);
-                if (static_cast<int>(plain.size()) > contentWidth - 3)
-                    plain = plain.substr(0, std::max(0, contentWidth - 3)) + "...";
-                content = styleToolLine(plain);
-            }
-            lines.push_back(row(content));
+            const int contentWidth = std::max(8, width - 4);
+            auto wrapped = wrapPlainForCard(bl, contentWidth);
+            for (const auto& segment : wrapped)
+                lines.push_back(row(styleToolLine(segment)));
         }
 
         lines.push_back(row());
@@ -465,8 +460,11 @@ class ProtocolView {
                                                            "read", "fs_read", "write", "edit",
                                                            "grep", "search",  "pin",   "ethereal"};
         bool isB = !r.toolName.empty() && bi.count(r.toolName);
-        if (isB)
-            return builtinLines(r, mark, width);
+        if (isB) {
+            auto builtins = builtinLines(r, mark, width);
+            lines.insert(lines.end(), builtins.begin(), builtins.end());
+            return lines;
+        }
 
         // JSON → YAML
         if (!body.empty() && (body[0] == '{' || body[0] == '[')) {
@@ -533,6 +531,39 @@ class ProtocolView {
             first = "(empty)";
         lines.push_back(mark + styleToolLine(first));
         return lines;
+    }
+
+    static std::vector<std::string> wrapPlainForCard(const std::string& line, int width) {
+        std::vector<std::string> out;
+        std::string plain = stripAnsi(line);
+        if (plain.empty()) {
+            out.push_back("");
+            return out;
+        }
+        width = std::max(1, width);
+        std::string cur;
+        cur.reserve(static_cast<size_t>(width));
+        int used = 0;
+        for (size_t i = 0; i < plain.size();) {
+            size_t before = i;
+            uint32_t cp = readUtf8(plain, i);
+            int cw = isWideCodepoint(cp) ? 2 : 1;
+            if (used > 0 && used + cw > width) {
+                out.push_back(cur);
+                cur.clear();
+                used = 0;
+            }
+            cur.append(plain, before, i - before);
+            used += cw;
+            if (used >= width) {
+                out.push_back(cur);
+                cur.clear();
+                used = 0;
+            }
+        }
+        if (!cur.empty())
+            out.push_back(cur);
+        return out;
     }
 
     std::string styleToolLine(const std::string& line) const {

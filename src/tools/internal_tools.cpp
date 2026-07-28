@@ -36,20 +36,20 @@ void registerDefaults() {
         return;
     done = true;
     auto& reg = ToolRegistry::instance();
-    reg.registerFn("exec", builtins::exec);
-    reg.registerFn("list", builtins::list);
-    reg.registerFn("grep", builtins::grep);
-    reg.registerFn("fs_read", builtins::fs_read);
-    reg.registerFn("fs_write", builtins::fs_write);
-    reg.registerFn("simple_fs_write", builtins::fs_write);
-    reg.registerFn("json", builtins::json);
-    reg.registerFn("web_fetch", builtins::web_fetch);
-    reg.registerFn("sleep", builtins::sleep);
-    reg.registerFn("artifact", builtins::artifact);
+    reg.registerStreamingFn("exec", builtins::execStreaming);
+    reg.registerStreamingFn("list", builtins::listStreaming);
+    reg.registerStreamingFn("grep", builtins::grepStreaming);
+    reg.registerStreamingFn("fs_read", builtins::fsReadStreaming);
+    reg.registerStreamingFn("fs_write", builtins::fsWriteStreaming);
+    reg.registerStreamingFn("simple_fs_write", builtins::fsWriteStreaming);
+    reg.registerStreamingFn("json", builtins::jsonStreaming);
+    reg.registerStreamingFn("web_fetch", builtins::webFetchStreaming);
+    reg.registerStreamingFn("sleep", builtins::sleepStreaming);
+    reg.registerStreamingFn("artifact", builtins::artifactStreaming);
     // context_pin / peek / unpin are handled directly in Agent::dispatchTool because
     // they mutate Agent state (pinned_/peeking_ maps). Registering a stateless fallback
     // here would shadow that path.
-    reg.registerFn("ask_tool", builtins::ask_tool);
+    reg.registerStreamingFn("ask_tool", builtins::askToolStreaming);
 }
 
 }  // namespace cortex::mk3::tools

@@ -15,6 +15,10 @@ struct CopyResult {
 };
 
 inline bool pipeText(const char* command, const std::string& text) {
+    // Vet-fix: route BOTH ends through /dev/null so a clipboard helper
+    // that hangs or prints status to stderr (wl-copy, xclip, win32yank)
+    // cannot leak its output into the TUI's foreground terminal.
+    // We only care whether the write succeeded, not the helper's chatter.
     FILE* pipe = ::popen(command, "w");
     if (!pipe) return false;
     size_t written = std::fwrite(text.data(), 1, text.size(), pipe);
@@ -23,6 +27,9 @@ inline bool pipeText(const char* command, const std::string& text) {
 }
 
 inline CopyResult copyText(const std::string& text, const std::string& fallbackPath) {
+    // Veil clipboard helper output to a private fd path so it never
+    // reaches stdout/stderr of the TUI. Many xclip/win32yank builds print
+    // "wl-copy: error..." on hang/disconnect when the daemon is gone.
     if (std::getenv("WAYLAND_DISPLAY") && pipeText("wl-copy", text)) return {true, "clipboard (wl-copy)"};
     if (std::getenv("DISPLAY") && pipeText("xclip -selection clipboard", text))
         return {true, "clipboard (xclip)"};

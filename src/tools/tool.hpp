@@ -24,7 +24,9 @@
 namespace cortex::mk3::tools {
 
 // ── Execution callback ──
+using ToolStreamCallback = std::function<void(const std::string& chunk, bool stderrStream)>;
 using ToolCallback = std::function<std::string(const Json::Value&)>;
+using StreamingToolCallback = std::function<std::string(const Json::Value&, ToolStreamCallback)>;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Tool — sovereign class for one tool definition and execution
@@ -38,6 +40,10 @@ class Tool {
 
     /// Construct from ToolDef + native C++ callback
     Tool(const ToolDef& def, ToolCallback cb) : def_(def), cb_(std::move(cb)) {
+    }
+
+    /// Construct from ToolDef + stream-aware native C++ callback
+    Tool(const ToolDef& def, StreamingToolCallback cb) : def_(def), streamingCb_(std::move(cb)) {
     }
 
     /// Construct from ToolDef + script execution
@@ -109,11 +115,11 @@ class Tool {
     // ── Execution ──
 
     /// Execute the tool with given arguments. Returns JSON string for protocol compat.
-    std::string execute(const Json::Value& args) const {
+    std::string execute(const Json::Value& args, ToolStreamCallback stream = {}) const {
         if (def_.isNative) {
-            return executeNative(args);
+            return executeNative(args, std::move(stream));
         }
-        return executeScript(args);
+        return executeScript(args, std::move(stream));
     }
 
     /// Execute and return a structured result
@@ -195,15 +201,18 @@ class Tool {
    private:
     ToolDef def_;
     ToolCallback cb_;
+    StreamingToolCallback streamingCb_;
     std::string scriptPath_;
     std::string scriptRuntime_;
 
     // ── Native execution ──
-    std::string executeNative(const Json::Value& args) const {
-        if (!cb_) {
+    std::string executeNative(const Json::Value& args, ToolStreamCallback stream) const {
+        if (!cb_ && !streamingCb_) {
             return jsonError("No callback registered for native tool: " + def_.name);
         }
         try {
+            if (streamingCb_)
+                return streamingCb_(args, std::move(stream));
             return cb_(args);
         } catch (const std::exception& e) {
             return jsonError(std::string("Tool '") + def_.name + "' threw: " + e.what());
@@ -213,7 +222,8 @@ class Tool {
     }
 
     // ── Script execution ──
-    std::string executeScript(const Json::Value& args) const {
+    std::string executeScript(const Json::Value& args, ToolStreamCallback stream = {}) const {
+        (void)stream;
         if (scriptPath_.empty()) {
             return jsonError("No script path for: " + def_.name);
         }

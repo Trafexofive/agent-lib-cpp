@@ -7,7 +7,7 @@ namespace cortex::mk3::tui {
 
 class FrameClock {
    public:
-    explicit FrameClock(int minFrameMs = 50, int heartbeatMs = 100, int spinnerFrames = 10)
+    explicit FrameClock(int minFrameMs = 16, int heartbeatMs = 80, int spinnerFrames = 10)
         : minFrameMs_(minFrameMs), heartbeatMs_(heartbeatMs), spinnerFrames_(spinnerFrames) {}
 
     void requestFrame() { dirty_ = true; }

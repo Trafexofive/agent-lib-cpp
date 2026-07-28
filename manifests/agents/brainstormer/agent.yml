@@ -7,10 +7,12 @@ tags: [agent, ideation, creative, coordinator, launchable, prod]
 
 cognitive_engine:
   primary:
-    provider: xai
-    model: grok-4.5
+    # provider: xai
+    # model: grok-4.5
+    provider: opencode
+    model: deepseek-v4-flash-free
     parameters:
-      temperature: 0.9
+      temperature: 0.8
       max_tokens: 32768
   fallback:
     provider: deepseek
@@ -26,8 +28,8 @@ context:
 
 prompt_building:
   runtime_capabilities:
-    return_schemas: false
-    usage_examples: false
+    return_schemas: true
+    usage_examples: true
 
 runtime:
   max_iterations: 12

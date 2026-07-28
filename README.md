@@ -54,17 +54,21 @@ config/
 
 ## Protocol
 
+**Authority:** [`docs/protocol/CANON.md`](docs/protocol/CANON.md). Harness projection: `manifests/harness/default.md`.
+
 Agents communicate via streaming XML tags:
 
 ```xml
 <action type="tool" name="grep" id="g1" mode="sync">{"pattern":"TODO","path":"src/"}</action>
+<!-- runtime --><result id="g1" status="ok" ms="12.3" bytes="80">…</result>
 <response final="true">Found 3 TODOs in src/agent.cpp</response>
 ```
 
-- `<action>` — call a tool, agent, or relic
+- `<action>` — call a tool, agent, relic, feed, or workflow
 - `<response>` — user-visible output (only this reaches the user)
-- `<response final="true">` — final response, conversation ends
-- Untagged text is internal harness chatter — never shown to user
+- `<response final="true">` — final response; never pair with same-generation actions
+- `<result status="ok|error|timeout|protocol_error">` — runtime only; model never emits
+- Bare text does **not** complete the turn (protocol retry)
 
 ## Standard Library
 
@@ -136,8 +140,8 @@ Interactive TUI:
 ## Testing
 
 ```bash
-make test-parser        # 9/9 parser tests
-make test-protocol      # 23/25 protocol tests (2 known expected failures)
+make test-parser        # parser unit tests (piping, id scope, fail-closed JSON)
+make test-protocol      # protocol fixture suite (29+)
 make tune-prompt SUITE=assistant   # prompt tuning harness
 ./tests/sandbox/run.sh assistant   # Docker sandbox test
 ```
@@ -150,3 +154,4 @@ make tune-prompt SUITE=assistant   # prompt tuning harness
 - Built-in relics — no Docker required for core persistence
 - Docker sandbox — multi-stage build, non-root user, read-only mounts
 - Production model: deepseek-chat (was minimax-3/openrouter-free)
+test change

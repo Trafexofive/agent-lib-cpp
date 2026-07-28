@@ -1,4 +1,0 @@
-kind: Tool
-name: my_minimal_tool
-version: "1.0"
-summary: "Smallest valid tool manifest. C++-registered; no entrypoint."

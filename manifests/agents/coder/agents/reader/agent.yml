@@ -23,8 +23,8 @@ prompt_building:
     usage_examples: false
 
 runtime:
-  max_iterations: 6
-  history_cap: 40
+  max_iterations: 60
+  history_cap: 140
   mode: normal
   # After work budget: forced FINALIZATION turn (tools off) + LIMIT status block.
   # dev_mode dumps iterations/raw/history under ~/.cortex/dev/<session>/ + CWD.

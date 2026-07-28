@@ -19,6 +19,17 @@ priorities — not the other way around.
 The list below carries only items the user has explicitly prioritized. Each
 slice gets its own commit so a bisect stays clean.
 
+### Operator UX — global agents + TUI substrate
+
+- **Global agent / manifest selection (any CWD)** — **shipped 2026-07-10/11**.
+  `manifests/` only; bare `-m` manager; ownership trees; binary-adjacent catalog.
+- **Inkcell full migration (started 2026-07-11)** — authoritative plan:
+  `docs/INKCELL_MIGRATION.md` + artifact `art-mrflxfd4-gupoyt`.
+  Phase 0 skeleton + AgentBridge stub shipped. Strangler path `--tui inkcell|legacy`.
+  Next: wire Agent callbacks → bridge → ScrollView. Do not put protocol into inkcell.
+  Gate: adopt / keep-and-rewrite / hybrid. Block further TUI features (select-block,
+  chrome) on this decision.
+
 ### POC / stub cleanup — first batch (in progress)
 
 | Slice | Status | Note |

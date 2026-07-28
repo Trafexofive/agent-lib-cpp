@@ -5,8 +5,8 @@ summary: "Manifest expert orchestrator — coordinates all manifest specialist s
 
 cognitive_engine:
   primary:
-    provider: opencode
-    model: nemotron-3-ultra-free
+    provider: xai
+    model: grok-4.5
     parameters:
       temperature: 0.3
       max_tokens: 32768

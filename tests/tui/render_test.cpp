@@ -9,6 +9,7 @@
 #include "../../src/tui/grid.hpp"
 #include "../../src/tui/renderer.hpp"
 #include "../../src/tui/session_view.hpp"
+#include "../../src/tui/surface.hpp"
 #include "../../src/tui/width.hpp"
 
 using namespace cortex::mk3::tui;
@@ -30,6 +31,14 @@ static bool contains(const std::vector<std::string>& lines, const std::string& n
             return true;
     }
     return false;
+}
+
+static int findLine(const std::vector<std::string>& lines, const std::string& needle) {
+    for (int i = 0; i < static_cast<int>(lines.size()); ++i) {
+        if (lines[static_cast<size_t>(i)].find(needle) != std::string::npos)
+            return i;
+    }
+    return -1;
 }
 
 int main() {
@@ -79,6 +88,20 @@ int main() {
               "markdown code row keeps background styling");
     }
 
+    // 2D surface primitives clamp rows, preserve ANSI spans, and diff changed rows.
+    {
+        TuiSurface surface(10);
+        surface.appendLine(ansi::fg(255, 0, 0) + std::string("hello world"));
+        surface.appendLine("ok");
+        check(surface.rows().size() == 2, "surface appends rows");
+        check(visibleWidth(surface.rows()[0]) == 10, "surface clamps row to width");
+        check(surface.rows()[0].find(ansi::fg(255, 0, 0)) != std::string::npos,
+              "surface preserves ANSI while fitting");
+        std::vector<std::string> previous = {surface.rows()[0], "old"};
+        auto dirty = TuiSurface::dirtyRows(previous, surface.rows());
+        check(dirty.size() == 1 && dirty[0] == 1, "surface dirty diff tracks changed rows");
+    }
+
     // ProtocolView incremental action/result rendering.
     {
         ProtocolView pv;
@@ -113,6 +136,20 @@ int main() {
         check(contains(lines, "✓ 1973ms 21B"), "agent result card includes metadata");
         check(contains(lines, "default agent online."), "agent result card includes reply");
         check(!contains(lines, "╭") && !contains(lines, "╰"), "agent result avoids border glyphs");
+    }
+
+    // Agent result long lines wrap instead of inserting lossy ellipsis truncation.
+    {
+        ProtocolView pv;
+        pv.addAction({ActionType::AGENT, "default", "a1", "ping", true});
+        pv.addResult({"a1", true, std::string(120, 'x'), "default", 0, 1, 120});
+        auto lines = pv.render(40);
+        check(!contains(lines, "..."), "agent result does not ellipsis-truncate long lines");
+        int xRows = 0;
+        for (const auto& line : lines)
+            if (line.find("xxxxxxxx") != std::string::npos)
+                xRows++;
+        check(xRows >= 2, "agent result wraps long streamed lines");
     }
 
     // Agent action icon must not reset the background inside the card.
@@ -185,6 +222,36 @@ int main() {
         check(!contains(lines, "Let me plan"), "full renderer clears thought stream");
     }
 
+    // Transcript renderer must preserve protocol event order; responses are not
+    // hoisted past later thought/action events.
+    {
+        TuiRenderer r(80);
+        std::vector<cortex::mk3::ProtocolEvent> events;
+        cortex::mk3::ProtocolEvent firstThought;
+        firstThought.kind = cortex::mk3::ProtocolEventKind::THOUGHT;
+        firstThought.text = "first thought";
+        events.push_back(firstThought);
+        cortex::mk3::ProtocolEvent response;
+        response.kind = cortex::mk3::ProtocolEventKind::RESPONSE;
+        response.text = "ordered response";
+        events.push_back(response);
+        cortex::mk3::ProtocolEvent secondThought;
+        secondThought.kind = cortex::mk3::ProtocolEventKind::THOUGHT;
+        secondThought.text = "second thought";
+        events.push_back(secondThought);
+        auto lines = r.renderTranscript(events, "ordered response", 80);
+        int first = findLine(lines, "first thought");
+        int resp = findLine(lines, "ordered response");
+        int second = findLine(lines, "second thought");
+        check(first >= 0 && resp > first && second > resp,
+              "renderer preserves thought/response event order");
+        int responseCount = 0;
+        for (const auto& line : lines)
+            if (line.find("ordered response") != std::string::npos)
+                responseCount++;
+        check(responseCount == 1, "renderer does not duplicate response event text");
+    }
+
     // SessionView viewport should stay contiguous and anchored above bottom bars.
     {
         SessionView view(80, 10);
@@ -210,7 +277,7 @@ int main() {
         check(frame.find("prompt") != std::string::npos, "session frame renders prompt line");
     }
 
-    // SessionView full redraw remains deterministic even when viewport changes.
+    // SessionView starts with a deterministic full draw, then emits row diffs.
     {
         SessionView view(80, 10);
         std::vector<std::string> history(3, "old");
@@ -220,8 +287,10 @@ int main() {
         history.insert(history.begin(), "top");
         auto vp2 = view.build(history, {}, {}, false, scroll);
         auto second = view.render(vp2, [](int) { return "status"; }, "prompt");
+        auto forced = view.render(vp2, [](int) { return "status"; }, "prompt", true);
         check(first.find("\033[H\033[J") != std::string::npos, "first session render is full");
-        check(second.find("\033[H\033[J") != std::string::npos, "second render stays full");
+        check(second.find("\033[H\033[J") == std::string::npos, "second session render uses diff");
+        check(forced.find("\033[H\033[J") != std::string::npos, "forced session render is full");
     }
 
     // Renderer mode names include SEMI.

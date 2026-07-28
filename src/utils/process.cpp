@@ -152,15 +152,21 @@ Result run(const Spec& spec) {
         if (ready > 0) {
             if (FD_ISSET(outPipe[0], &readSet)) {
                 ssize_t n;
-                while ((n = read(outPipe[0], buf, sizeof(buf))) > 0)
+                while ((n = read(outPipe[0], buf, sizeof(buf))) > 0) {
                     appendBounded(result.stdoutText, buf, static_cast<size_t>(n), spec.maxStdout,
                                   result.stdoutTruncated);
+                    if (spec.onOutput)
+                        spec.onOutput(buf, static_cast<size_t>(n), false);
+                }
             }
             if (FD_ISSET(errPipe[0], &readSet)) {
                 ssize_t n;
-                while ((n = read(errPipe[0], buf, sizeof(buf))) > 0)
+                while ((n = read(errPipe[0], buf, sizeof(buf))) > 0) {
                     appendBounded(result.stderrText, buf, static_cast<size_t>(n), spec.maxStderr,
                                   result.stderrTruncated);
+                    if (spec.onOutput)
+                        spec.onOutput(buf, static_cast<size_t>(n), true);
+                }
             }
             if (!stdinClosed && FD_ISSET(inPipe[1], &writeSet)) {
                 const std::string& in = spec.stdinText;
@@ -186,12 +192,18 @@ Result run(const Spec& spec) {
     if (!stdinClosed)
         close(inPipe[1]);
     ssize_t n;
-    while ((n = read(outPipe[0], buf, sizeof(buf))) > 0)
+    while ((n = read(outPipe[0], buf, sizeof(buf))) > 0) {
         appendBounded(result.stdoutText, buf, static_cast<size_t>(n), spec.maxStdout,
                       result.stdoutTruncated);
-    while ((n = read(errPipe[0], buf, sizeof(buf))) > 0)
+        if (spec.onOutput)
+            spec.onOutput(buf, static_cast<size_t>(n), false);
+    }
+    while ((n = read(errPipe[0], buf, sizeof(buf))) > 0) {
         appendBounded(result.stderrText, buf, static_cast<size_t>(n), spec.maxStderr,
                       result.stderrTruncated);
+        if (spec.onOutput)
+            spec.onOutput(buf, static_cast<size_t>(n), true);
+    }
     close(outPipe[0]);
     close(errPipe[0]);
 

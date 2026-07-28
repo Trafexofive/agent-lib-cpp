@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -19,6 +20,8 @@ struct Spec {
     int timeoutMs = 30000;
     size_t maxStdout = 512 * 1024;
     size_t maxStderr = 512 * 1024;
+    // Called as output arrives. bool=true means stderr, false means stdout.
+    std::function<void(const char* data, size_t size, bool stderrStream)> onOutput;
 };
 
 struct Result {

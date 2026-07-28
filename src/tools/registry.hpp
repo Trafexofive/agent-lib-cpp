@@ -103,10 +103,35 @@ class ToolRegistry {
         return true;
     }
 
+    /// Register a stream-aware native function. Legacy callers can still execute
+    /// it without a stream callback; Agent dispatch passes one when the TUI is live.
+    bool registerStreamingFunction(const std::string& name, StreamingToolCallback cb,
+                                   const std::string& description = "",
+                                   const std::vector<ToolParam>& params = {}) {
+        ToolDef def;
+        auto it = tools_.find(name);
+        if (it != tools_.end())
+            def = it->second.definition();
+        def.name = name;
+        if (!description.empty())
+            def.description = description;
+        if (!params.empty())
+            def.params = params;
+        def.isNative = true;
+        tools_[name] = Tool(def, std::move(cb));
+        return true;
+    }
+
     /// Legacy alias
     bool registerFn(const std::string& name, ToolCallback cb, const std::string& description = "",
                     const std::vector<ToolParam>& params = {}) {
         return registerFunction(name, std::move(cb), description, params);
+    }
+
+    bool registerStreamingFn(const std::string& name, StreamingToolCallback cb,
+                             const std::string& description = "",
+                             const std::vector<ToolParam>& params = {}) {
+        return registerStreamingFunction(name, std::move(cb), description, params);
     }
 
     // ── Lookup ──

@@ -14,6 +14,13 @@ int main() {
         } else
             std::cout << "  OK: " << msg << "\n";
     };
+    auto contains = [](const std::vector<std::string>& rows, const std::string& needle) {
+        for (const auto& row : rows) {
+            if (row.find(needle) != std::string::npos)
+                return true;
+        }
+        return false;
+    };
 
     std::cout << "═══ TuiRenderer Smoke ═══\n\n";
 
@@ -45,9 +52,9 @@ int main() {
     r.addProtocolAction("tool", "list", "ls1", true);
     r.addProtocolResult("ls1", true, "3 files");
     lines = r.render();
-    check(lines.size() >= 3, "FULL with actions: >= 3 lines");
-    check(lines[0].find("list") != std::string::npos, "FULL: action rendered");
-    check(lines[1].find("3 files") != std::string::npos, "FULL: result rendered");
+    check(lines.size() >= 6, "FULL with actions: card rows rendered");
+    check(contains(lines, "list"), "FULL: action rendered");
+    check(contains(lines, "3 files"), "FULL: result rendered");
 
     // SEMI mode with actions
     r.setMode(RenderMode::SEMI);
@@ -55,9 +62,7 @@ int main() {
     check(lines.size() >= 3, "SEMI with actions: >= 3 lines");
     if (lines.size() >= 3) {
         check(lines[0].find("│") != std::string::npos, "SEMI: line 0 has separator");
-        check(lines[1].find("3 files") != std::string::npos ||
-                  lines[2].find("3 files") != std::string::npos,
-              "SEMI: result visible");
+        check(contains(lines, "3 files"), "SEMI: result visible");
     }
 
     // RAW mode
@@ -94,11 +99,11 @@ int main() {
         ri.setResponse("");
         ri.addProtocolAction("tool", "list", "ls1", true);
         auto r1 = ri.render();
-        check(r1.size() == 1, "incremental: 1 line after action");
+        check(r1.size() >= 3, "incremental: action card rows rendered");
 
         ri.addProtocolResult("ls1", true, "3 files");
         auto r2 = ri.render();
-        check(r2.size() == 2, "incremental: 2 lines after result");
+        check(r2.size() > r1.size(), "incremental: result appends rows");
         check(r2[0] == r1[0], "incremental: first line preserved");
     }
 

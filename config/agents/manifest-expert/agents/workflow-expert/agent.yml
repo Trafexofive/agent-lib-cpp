@@ -5,8 +5,10 @@ summary: "Workflow manifest specialist — designs, implements, and validates Wo
 
 cognitive_engine:
   primary:
-    provider: opencode
-    model: nemotron-3-ultra-free
+    # provider: opencode
+    # model: nemotron-3-ultra-free
+    provider: xai
+    model: grok-4.5
     parameters:
       temperature: 0.2
       max_tokens: 32768

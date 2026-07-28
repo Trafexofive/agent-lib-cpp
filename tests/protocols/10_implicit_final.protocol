@@ -1,6 +1,6 @@
-# Test 10: Implicit Final Response
-# Validates: Plain text without <response> tag emits TEXT events
-# The parser emits TEXT for untagged content — cycle completion is the Agent loop's job.
+# Test 10: Bare text outside tags
+# CANON §2: bare text is NOT a final answer. Parser emits TEXT events.
+# Turn completion is the agent loop's job (protocol retry) — not the parser's.
 
 <thought>
 Simple question, simple answer.

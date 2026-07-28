@@ -10,7 +10,7 @@ cognitive_engine:
     provider: opencode
     model: deepseek-v4-flash-free
     parameters:
-      temperature: 0.4
+      temperature: 0.8
       max_tokens: 24576
   fallback:
     provider: deepseek
@@ -20,18 +20,18 @@ cognitive_engine:
       max_tokens: 24576
 
 context:
-  harness: ../../../../harness/small.md
+  harness: ../../../../harness/big.md
   system: ./system.md
   persona: ./persona.md
 
 prompt_building:
   runtime_capabilities:
-    return_schemas: false
-    usage_examples: false
+    return_schemas: true
+    usage_examples: true
 
 runtime:
-  max_iterations: 8
-  history_cap: 40
+  max_iterations: 18
+  history_cap: 140
   mode: normal
 
 import:
