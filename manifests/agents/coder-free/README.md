@@ -1,7 +1,7 @@
 # coder
 
 > Specialized coding coordinator for Cortex-Prime MK3.
-> **Brain:** `openai-codex/gpt-5.5` · **Specialists:** `deepseek/deepseek-v4-flash`
+> **Brain:** `nvidia` · **Specialists:** `deepseek/deepseek-v4-flash`
 > Inspect → implement → verify. Smallest correct diff.
 
 ## Role in the stack

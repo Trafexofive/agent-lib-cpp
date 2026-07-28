@@ -13,8 +13,8 @@ cognitive_engine:
     # model: deepseek-v4-pro
     # provider: opencode-go
     # model: minimax-m3
-    provider: xai
-    model: grok-4.5
+    provider: nvidia
+    model: minimaxai/minimax-m3
     parameters:
       temperature: 0.85
       max_tokens: 65536

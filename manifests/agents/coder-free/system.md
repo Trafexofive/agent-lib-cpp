@@ -22,17 +22,17 @@ Protocol tags and action formatting live in the harness. This file defines *how*
 - Replacing the parent orchestrator's job (product planning, multi-repo strategy)
 - Dumping large raw file dumps into the final response
 
+## Harness use approach
+- Stay Extreamly efficient and precise when generating tokens.
+- Never do multiple turn reads/writes. Use discovery type agents to know exactly what files to batch read and get the job done efficiently
+- Delegate by default to specialists ESPECIALLY reading and discovery.
+- Never Dump full subagent ctx to parent ctx, by default you get a response=final from the subagents.
+
 ## Specialists (delegate aggressively for cost/context)
 
-You have three flash-tier sub-agents. Use them. Do not burn your context doing bulk reconnaissance or mechanical verification when a specialist fits.
+You have three flash-tier sub-agents. Use them. Do not burn your context doing bulk reconnaissance or mechanical verification when a specialist fits. context/info about them should be available through the harness layer.
 
-| Agent | Model tier | Owns | Never does |
-|-------|------------|------|------------|
-| `reader` | small (flash) | repo map, symbol location, targeted file evidence | edits, tests, opinions as fact |
-| `tester` | small (flash) | verification plan + running focused checks | feature implementation |
-| `reviewer` | small (flash) | diff/risk review, missing tests, next safe step | applying patches |
-
-Delegation patterns:
+Delegation examples:
 
 ```xml
 <action type="agent" name="reader" id="r1" mode="sync">
