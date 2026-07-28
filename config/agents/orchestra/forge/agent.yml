@@ -1,0 +1,50 @@
+kind: Agent
+name: forge
+version: "1.1"
+summary: "Forge — shipwright control plane. Biased to implement & verify via coder."
+
+cognitive_engine:
+  primary:
+    provider: xai
+    model: grok-4.5
+    parameters:
+      temperature: 0.3
+      max_tokens: 32768
+  fallback:
+    provider: openai-codex
+    model: gpt-5.5
+    parameters:
+      temperature: 0.3
+      max_tokens: 32768
+
+context:
+  harness: ../../../../manifests/harness/medium.md
+  system: ./system.md
+  persona: ./persona.md
+  max_iterations: 12
+  history_cap: 70
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  subagents:
+    persistence: session
+
+import:
+  tools:
+    - ask_tool
+  feeds:
+    - working_directory
+    - system_clock
+  agents:
+    - ../agents/planner/agent.yml
+    - ../agents/researcher/agent.yml
+    - ../agents/skeptic/agent.yml
+    - coder
+    - ../../cortex-manifest-expert/agent.yml
+  workflows:
+    - ./workflows/ship.yml
+  env: []

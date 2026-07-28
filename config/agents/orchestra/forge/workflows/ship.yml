@@ -1,0 +1,39 @@
+kind: Workflow
+version: "1.0"
+name: ship
+summary: "Forge spine — optional plan, implement via coder, skeptic the claim."
+
+steps:
+  - id: aim
+    type: agent
+    name: "Aim the strike"
+    agent: planner
+    params:
+      instruction: "Decompose an implementation task into the fewest packages. Prefer coder. Use researcher only if discovery is required first. Task: ${input.task}"
+    on_error: skip
+
+  - id: strike
+    type: agent
+    name: "Strike via coder"
+    agent: coder
+    params:
+      instruction: "Implement with smallest correct diff and verify. Task: ${input.task}. Plan (if any): ${aim.output}"
+    on_error: abort
+
+  - id: quench
+    type: agent
+    name: "Skeptic quench"
+    agent: skeptic
+    params:
+      instruction: "Challenge whether the implementation claim is actually done. Coder report: ${strike.output}"
+    on_error: skip
+
+import:
+  agents:
+    - planner
+    - coder
+    - skeptic
+
+tags:
+  - orchestra
+  - forge

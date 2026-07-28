@@ -1,0 +1,11 @@
+# Test 27: Duplicate action id → protocol error, second action not executed as tool
+# First action runs; second with same id is rejected (CANON §7).
+
+<action type="tool" name="list" id="dup1" mode="sync">{"path":"."}</action>
+<action type="tool" name="list" id="dup1" mode="sync">{"path":"/tmp"}</action>
+<response final="true">done</response>
+---EXPECTATIONS---
+events: ACTION, ERROR, RESPONSE
+actions:
+  - name: list
+complete: true

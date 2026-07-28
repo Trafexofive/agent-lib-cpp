@@ -1,0 +1,18 @@
+kind: Tool
+name: linter
+version: "1.0.0"
+summary: "linter placeholder"
+runtime: python3
+entrypoint: ./src/main.py
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: object
+  properties:
+    success: { type: boolean }
+    data: { type: object }
+    error: { type: string }
+examples:
+  - description: "Run linter"
+    params: {}

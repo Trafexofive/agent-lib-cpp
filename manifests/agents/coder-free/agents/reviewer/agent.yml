@@ -1,0 +1,36 @@
+kind: Agent
+name: reviewer
+version: "1.0"
+summary: Diff/risk reviewer — correctness findings only, severity-tagged.
+
+cognitive_engine:
+  primary:
+    provider: xai
+    model: grok-4.20-0309-non-reasoning
+    parameters:
+      temperature: 0.5
+      max_tokens: 32768
+
+context:
+  system: ./system.md
+  persona: ./persona.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  max_iterations: 6
+  history_cap: 40
+  mode: normal
+
+import:
+  tools:
+    - list
+    - grep
+    - fs_read
+    - exec
+    - context_peek
+  feeds: []
+  env: []

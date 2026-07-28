@@ -1,0 +1,50 @@
+kind: Agent
+name: helmsman
+version: "1.1"
+summary: "Helmsman — pure control plane. Steady hand. Routes cleanly. Never does the work."
+
+cognitive_engine:
+  primary:
+    provider: xai
+    model: grok-4.5
+    parameters:
+      temperature: 0.35
+      max_tokens: 32768
+  fallback:
+    provider: openai-codex
+    model: gpt-5.5
+    parameters:
+      temperature: 0.35
+      max_tokens: 32768
+
+context:
+  harness: ../../../../manifests/harness/small.md
+  system: ./system.md
+  persona: ./persona.md
+  max_iterations: 10
+  history_cap: 60
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  subagents:
+    persistence: session
+
+import:
+  tools:
+    - ask_tool
+  feeds:
+    - working_directory
+    - system_clock
+  agents:
+    # config/ is path-scoped. manifests/ is the only global bare-name surface.
+    - ../agents/planner/agent.yml
+    - ../agents/researcher/agent.yml
+    - ../agents/skeptic/agent.yml
+    - coder
+  workflows:
+    - ./workflows/steady_route.yml
+  env: []

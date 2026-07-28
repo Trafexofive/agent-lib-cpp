@@ -1,0 +1,29 @@
+kind: Agent
+name: planner
+version: "1.1"
+summary: "Roster: pure decomposer — ordered packages, zero tools."
+
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.2
+      max_tokens: 16384
+
+context:
+  harness: ../../../../../manifests/harness/small.md
+  system: ./system.md
+  persona: ./persona.md
+  max_iterations: 3
+  history_cap: 20
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+import:
+  tools: []
+  feeds: []
+  env: []

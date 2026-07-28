@@ -1,0 +1,11 @@
+# Test 28: JSON-looking action body that does not parse → protocol_error, no exec
+# CANON §4 — fail closed, no silent completeJson repair.
+
+<action type="tool" name="exec" id="bad1" mode="sync">
+{"command": "echo hi"
+</action>
+<response final="true">recovered</response>
+---EXPECTATIONS---
+events: ERROR, RESPONSE
+actions: []
+complete: true

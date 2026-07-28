@@ -1,0 +1,24 @@
+kind: Agent
+version: "1.0.0"
+name: planner
+summary: "Task planner — decomposes coding tasks into implementable steps with dependency DAG"
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: nemotron-3-ultra-free
+    parameters:
+      temperature: 0.1
+      max_tokens: 32768
+context:
+  system: ./system-prompts/planner.md
+runtime:
+  max_iterations: 8
+  history_cap: 40
+import:
+  tools:
+    - exec
+    - grep
+    - list
+    - fs_read
+    - json
+  agents: []

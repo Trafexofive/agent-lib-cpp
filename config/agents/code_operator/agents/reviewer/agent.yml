@@ -1,0 +1,26 @@
+kind: Agent
+version: "1.0.0"
+name: reviewer
+summary: "Code reviewer — validates correctness, style, security, and test coverage"
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: nemotron-3-ultra-free
+    parameters:
+      temperature: 0.1
+      max_tokens: 32768
+context:
+  system: ./system-prompts/reviewer.md
+runtime:
+  max_iterations: 8
+  history_cap: 50
+import:
+  tools:
+    - exec
+    - grep
+    - list
+    - fs_read
+    - json
+    - ./tools/linter/tool.yml
+    - ./tools/test_runner/tool.yml
+  agents: []

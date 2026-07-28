@@ -1,0 +1,29 @@
+kind: Agent
+name: skeptic
+version: "1.1"
+summary: "Roster: the doubter — challenges plans and claims. Zero tools."
+
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.35
+      max_tokens: 16384
+
+context:
+  harness: ../../../../../manifests/harness/small.md
+  system: ./system.md
+  persona: ./persona.md
+  max_iterations: 3
+  history_cap: 20
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+import:
+  tools: []
+  feeds: []
+  env: []

@@ -1,0 +1,101 @@
+kind: Tool
+name: cmake_build
+version: "1.2.0"
+summary: "Build CMake project with configurable targets, build types, and parallelism"
+description: |
+  Wrapper around cmake + make/ninja for consistent builds.
+  Supports out-of-source builds, custom toolchains, and artifact collection.
+  
+  **Use cases**: CI/CD pipelines, local development, cross-compilation
+runtime: bash
+entrypoint: ./src/main.sh
+timeout_secs: 600
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "Path to CMake project root (contains CMakeLists.txt)"
+    build_dir:
+      type: string
+      default: "build"
+      description: "Build directory (relative to path)"
+    build_type:
+      type: string
+      enum: [Debug, Release, RelWithDebInfo, MinSizeRel]
+      default: "Release"
+      description: "CMake build type"
+    generator:
+      type: string
+      enum: [Unix Makefiles, Ninja, "Ninja Multi-Config"]
+      default: "Ninja"
+      description: "CMake generator"
+    targets:
+      type: array
+      items: { type: string }
+      default: []
+      description: "Specific targets to build (empty = all)"
+    jobs:
+      type: integer
+      default: 0
+      description: "Parallel jobs (0 = auto-detect CPU cores)"
+    toolchain:
+      type: string
+      description: "Path to CMake toolchain file (for cross-compilation)"
+    cmake_args:
+      type: array
+      items: { type: string }
+      default: []
+      description: "Additional CMake arguments"
+    clean:
+      type: boolean
+      default: false
+      description: "Clean build directory before building"
+output_schema:
+  type: object
+  required: [success]
+  properties:
+    success:
+      type: boolean
+    data:
+      type: object
+      properties:
+        build_dir:
+          type: string
+        artifacts:
+          type: array
+          items:
+            type: object
+            properties:
+              path:
+                type: string
+              size_bytes:
+                type: integer
+              type:
+                type: string
+                enum: [executable, shared_library, static_library, header]
+        compile_commands:
+          type: string
+          description: "Path to compile_commands.json"
+        duration_seconds:
+          type: number
+    error:
+      type: string
+examples:
+  - description: "Standard release build"
+    params:
+      path: "."
+      build_type: "Release"
+      targets: ["cortex-mk3", "libagent-mk3.so"]
+  - description: "Debug build with all targets"
+    params:
+      path: "."
+      build_type: "Debug"
+      jobs: 16
+  - description: "Clean build with custom CMake args"
+    params:
+      path: "."
+      build_type: "RelWithDebInfo"
+      clean: true
+      cmake_args: ["-DENABLE_ASAN=ON", "-DENABLE_TSAN=OFF"]

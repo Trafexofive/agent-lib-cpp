@@ -1,0 +1,26 @@
+kind: Agent
+version: "1.0.0"
+name: implementer
+summary: "Code implementer — writes minimal, correct diffs based on plan"
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: nemotron-3-ultra-free
+    parameters:
+      temperature: 0.15
+      max_tokens: 65536
+context:
+  system: ./system-prompts/implementer.md
+runtime:
+  max_iterations: 12
+  history_cap: 60
+import:
+  tools:
+    - exec
+    - grep
+    - list
+    - fs_read
+    - fs_write
+    - json
+    - ./tools/git_diff/tool.yml
+  agents: []

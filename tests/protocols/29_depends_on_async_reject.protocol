@@ -1,0 +1,11 @@
+# Test 29: depends_on with async mode → protocol_error (CANON §4)
+# Producer runs; consumer with depends_on+async is rejected without executor call for consumer.
+
+<action type="tool" name="list" id="p1" mode="sync">{"path":"."}</action>
+<action type="tool" name="list" id="c1" mode="async" depends_on="p1">{"path":"/tmp"}</action>
+<response final="true">done</response>
+---EXPECTATIONS---
+events: ACTION, ERROR, RESPONSE
+actions:
+  - name: list
+complete: true

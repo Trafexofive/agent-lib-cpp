@@ -1,0 +1,26 @@
+kind: Agent
+version: "1.0.0"
+name: deployer
+summary: "Deployment operator — executes CI/CD workflows and manages production releases"
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: nemotron-3-ultra-free
+    parameters:
+      temperature: 0.1
+      max_tokens: 32768
+context:
+  system: ./system-prompts/deployer.md
+runtime:
+  max_iterations: 10
+  history_cap: 40
+import:
+  tools:
+    - exec
+    - json
+    - web_fetch
+  workflows:
+    - ../../workflows/ci_pipeline.yml
+  relics:
+    - postgres_pgvector
+  agents: []

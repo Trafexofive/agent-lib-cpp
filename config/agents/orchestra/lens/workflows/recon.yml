@@ -1,0 +1,39 @@
+kind: Workflow
+version: "1.0"
+name: recon
+summary: "Lens spine — optional plan, researcher pass, skeptic polish."
+
+steps:
+  - id: frame
+    type: agent
+    name: "Frame the shot"
+    agent: planner
+    params:
+      instruction: "Design a read-only recon plan only (researcher packages). No coder. Question: ${input.task}"
+    on_error: skip
+
+  - id: expose
+    type: agent
+    name: "Expose via researcher"
+    agent: researcher
+    params:
+      instruction: "Read-only recon. Question: ${input.task}. Frame: ${frame.output}"
+    on_error: abort
+
+  - id: sharpen
+    type: agent
+    name: "Skeptic sharpen"
+    agent: skeptic
+    params:
+      instruction: "Attack weak claims and missing evidence. Findings: ${expose.output}"
+    on_error: skip
+
+import:
+  agents:
+    - planner
+    - researcher
+    - skeptic
+
+tags:
+  - orchestra
+  - lens

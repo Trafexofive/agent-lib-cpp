@@ -1,0 +1,18 @@
+# Test 26: Variable shorthand + depends_on same-turn piping
+# ${id} must resolve to producer output after depends_on completes.
+# Resolution is dispatch-time only (CANON §6).
+
+<thought>Read then pipe.</thought>
+<action type="tool" name="fs_read" id="src1" mode="sync">
+{"path": "README.md"}
+</action>
+<action type="tool" name="exec" id="pipe1" mode="sync" depends_on="src1">
+{"command":"echo ${src1}"}
+</action>
+<response final="true">piped</response>
+---EXPECTATIONS---
+events: THOUGHT, ACTION, ACTION, RESPONSE
+actions:
+  - name: fs_read
+  - name: exec
+complete: true

@@ -1,0 +1,121 @@
+kind: Feed
+name: system_metrics
+version: "1.0.0"
+summary: "System resource metrics — CPU, memory, disk, network, load"
+description: |
+  Comprehensive system metrics collector. Polls /proc and /sys for raw data,
+  computes rates and percentages. Designed for alerting and capacity planning.
+  
+  Emits every 15 seconds by default. Consumers: Grafana, alerting rules,
+  capacity planning dashboards, auto-scaling decisions.
+runtime: python3
+entrypoint: ./src/main.py
+interval_secs: 15
+timeout_secs: 5
+output_schema:
+  type: object
+  required: [timestamp, cpu, memory, disk, network, load]
+  properties:
+    timestamp:
+      type: integer
+      description: "Unix epoch seconds"
+    cpu:
+      type: object
+      required: [user_pct, system_pct, idle_pct, iowait_pct, steal_pct, total_cores]
+      properties:
+        user_pct: { type: number, minimum: 0, maximum: 100 }
+        system_pct: { type: number, minimum: 0, maximum: 100 }
+        idle_pct: { type: number, minimum: 0, maximum: 100 }
+        iowait_pct: { type: number, minimum: 0, maximum: 100 }
+        steal_pct: { type: number, minimum: 0, maximum: 100 }
+        total_cores: { type: integer, minimum: 1 }
+    memory:
+      type: object
+      required: [total_mb, used_mb, free_mb, available_mb, used_pct, cached_mb, swap_used_mb]
+      properties:
+        total_mb: { type: integer, minimum: 1 }
+        used_mb: { type: integer, minimum: 0 }
+        free_mb: { type: integer, minimum: 0 }
+        available_mb: { type: integer, minimum: 0 }
+        used_pct: { type: number, minimum: 0, maximum: 100 }
+        cached_mb: { type: integer, minimum: 0 }
+        swap_used_mb: { type: integer, minimum: 0 }
+    disk:
+      type: array
+      minItems: 1
+      items:
+        type: object
+        required: [device, mountpoint, fstype, total_gb, used_gb, free_gb, used_pct, inodes_used_pct]
+        properties:
+          device: { type: string }
+          mountpoint: { type: string }
+          fstype: { type: string }
+          total_gb: { type: number, minimum: 0 }
+          used_gb: { type: number, minimum: 0 }
+          free_gb: { type: number, minimum: 0 }
+          used_pct: { type: number, minimum: 0, maximum: 100 }
+          inodes_used_pct: { type: number, minimum: 0, maximum: 100 }
+    network:
+      type: array
+      items:
+        type: object
+        required: [interface, rx_bytes_sec, tx_bytes_sec, rx_packets_sec, tx_packets_sec, rx_errors_sec, tx_errors_sec]
+        properties:
+          interface: { type: string }
+          rx_bytes_sec: { type: number, minimum: 0 }
+          tx_bytes_sec: { type: number, minimum: 0 }
+          rx_packets_sec: { type: number, minimum: 0 }
+          tx_packets_sec: { type: number, minimum: 0 }
+          rx_errors_sec: { type: number, minimum: 0 }
+          tx_errors_sec: { type: number, minimum: 0 }
+    load:
+      type: object
+      required: [load1, load5, load15, procs_running, procs_total]
+      properties:
+        load1: { type: number, minimum: 0 }
+        load5: { type: number, minimum: 0 }
+        load15: { type: number, minimum: 0 }
+        procs_running: { type: integer, minimum: 0 }
+        procs_total: { type: integer, minimum: 0 }
+examples:
+  - description: "Idle system"
+    output:
+      timestamp: 1700000000
+      cpu:
+        user_pct: 2.5
+        system_pct: 1.0
+        idle_pct: 96.0
+        iowait_pct: 0.3
+        steal_pct: 0.0
+        total_cores: 8
+      memory:
+        total_mb: 32768
+        used_mb: 4096
+        free_mb: 24576
+        available_mb: 28672
+        used_pct: 12.5
+        cached_mb: 4096
+        swap_used_mb: 0
+      disk:
+        - device: "/dev/nvme0n1p2"
+          mountpoint: "/"
+          fstype: "ext4"
+          total_gb: 953.9
+          used_gb: 120.5
+          free_gb: 785.2
+          used_pct: 13.3
+          inodes_used_pct: 8.2
+      network:
+        - interface: "eth0"
+          rx_bytes_sec: 10240
+          tx_bytes_sec: 2048
+          rx_packets_sec: 50
+          tx_packets_sec: 20
+          rx_errors_sec: 0
+          tx_errors_sec: 0
+      load:
+        load1: 0.45
+        load5: 0.38
+        load15: 0.32
+        procs_running: 2
+        procs_total: 320

@@ -1,0 +1,43 @@
+kind: Workflow
+version: "1.0"
+name: steady_route
+summary: "Helmsman default — plan, recon, optional doubt."
+
+description: >
+  Delegation roadmap for inventory/recon style work. Root remains the
+  decision-maker; this workflow is a suggested spine, not a cage.
+
+steps:
+  - id: chart
+    type: agent
+    name: "Chart the course"
+    agent: planner
+    params:
+      instruction: "Decompose for a control-plane run. Prefer researcher for facts, coder only if mutation is required. Task: ${input.task}"
+    on_error: abort
+
+  - id: sound
+    type: agent
+    name: "Sound the depths"
+    agent: researcher
+    params:
+      instruction: "Execute the recon packages from the plan. Read-only. Task: ${input.task}. Plan: ${chart.output}"
+    on_error: abort
+
+  - id: doubt
+    type: agent
+    name: "Optional skeptic pass"
+    agent: skeptic
+    params:
+      instruction: "Challenge the recon findings and whether the route is complete. Findings: ${sound.output}"
+    on_error: skip
+
+import:
+  agents:
+    - planner
+    - researcher
+    - skeptic
+
+tags:
+  - orchestra
+  - helmsman

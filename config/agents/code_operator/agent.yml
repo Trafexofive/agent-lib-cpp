@@ -1,0 +1,80 @@
+kind: Agent
+version: "1.0.0"
+name: code_operator
+summary: "Autonomous code operator — inspects, plans, implements, tests, and deploys changes"
+description: |
+  Sovereign coding agent with specialist sub-agents for each phase.
+  Uses a planner-implementer-reviewer-deployer pattern with gated transitions.
+  
+  Capabilities:
+  - Repository exploration and code understanding
+  - Task decomposition and implementation planning
+  - Code generation with test-first approach
+  - Automated testing and validation
+  - CI/CD pipeline execution
+  - Production deployment with approval gates
+
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: nemotron-3-ultra-free
+    parameters:
+      temperature: 0.2
+      max_tokens: 65536
+      top_p: 0.95
+  fallback:
+    provider: deepseek
+    model: deepseek-v4-pro
+    parameters:
+      temperature: 0.2
+      max_tokens: 65536
+
+context:
+  harness: ../../harness/default.md
+  system: ./system-prompts/code_operator.md
+  persona: ./system-prompts/code_operator.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  max_iterations: 25
+  history_cap: 100
+  subagents:
+    persistence: session
+  action_timeout_sec: 120
+
+import:
+  tools:
+    - exec
+    - grep
+    - list
+    - fs_read
+    - fs_write
+    - json
+    - web_fetch
+    - ask_tool
+    - ./tools/git_diff/tool.yml
+    - ./tools/cm_build/tool.yml
+    - ./tools/test_runner/tool.yml
+    - ./tools/linter/tool.yml
+  feeds:
+    - working_directory
+    - ./feeds/system_metrics/feed.yml
+    - ./feeds/git_status/feed.yml
+  agents:
+    - planner
+    - implementer
+    - reviewer
+    - deployer
+  workflows:
+    - ./workflows/ci_pipeline.yml
+  relics:
+    - postgres_pgvector
+  env:
+    - REPO_ROOT=/home/mlamkadm/repos/active/agent-lib-cpp
+    - CI_PIPELINE=github-actions
+    - STAGING_KUBECONFIG=/etc/kube/staging
+    - PROD_KUBECONFIG=/etc/kube/prod

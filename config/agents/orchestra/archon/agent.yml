@@ -1,0 +1,52 @@
+kind: Agent
+name: archon
+version: "1.1"
+summary: "Archon — strategic control plane. Deliberates, critiques, then commands."
+
+cognitive_engine:
+  primary:
+    provider: xai
+    model: grok-4.5
+    parameters:
+      temperature: 0.45
+      max_tokens: 65536
+  fallback:
+    provider: openai-codex
+    model: gpt-5.5
+    parameters:
+      temperature: 0.4
+      max_tokens: 65536
+
+context:
+  harness: ../../../../manifests/harness/big.md
+  system: ./system.md
+  persona: ./persona.md
+  max_iterations: 14
+  history_cap: 90
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  subagents:
+    persistence: session
+
+import:
+  tools:
+    - ask_tool
+  feeds:
+    - working_directory
+    - system_clock
+    - system_stats
+  agents:
+    - ../agents/planner/agent.yml
+    - ../agents/researcher/agent.yml
+    - ../agents/skeptic/agent.yml
+    - coder
+    - ../../cortex-manifest-expert/agent.yml
+    - default
+  workflows:
+    - ./workflows/deliberate.yml
+  env: []

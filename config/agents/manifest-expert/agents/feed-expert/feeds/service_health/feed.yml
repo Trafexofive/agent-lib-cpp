@@ -1,0 +1,58 @@
+kind: Feed
+name: service_health
+version: "1.0"
+summary: "Polls service health endpoint"
+description: |
+  Polls the service health endpoint at https://api.example.com/health
+  every 30 seconds. Emits service status, latency, and error state.
+  Downstream consumers: alerting, dashboard, auto-scaling.
+runtime: python3
+entrypoint: ./src/main.py
+interval_secs: 30
+output_schema:
+  type: object
+  properties:
+    ok:
+      type: boolean
+    service:
+      type: string
+    latency_ms:
+      type: integer
+    status:
+      type: string
+    error:
+      type: string
+    timestamp:
+      type: integer
+  required:
+    - ok
+    - service
+    - latency_ms
+    - status
+    - error
+    - timestamp
+examples:
+  - description: "Healthy service response"
+    output:
+      ok: true
+      service: "api-gateway"
+      latency_ms: 45
+      status: "healthy"
+      error: ""
+      timestamp: 1704067200
+  - description: "Degraded service"
+    output:
+      ok: false
+      service: "api-gateway"
+      latency_ms: 5000
+      status: "degraded"
+      error: "timeout"
+      timestamp: 1704067200
+  - description: "Service unreachable"
+    output:
+      ok: false
+      service: "api-gateway"
+      latency_ms: 0
+      status: "unreachable"
+      error: "connection_failed"
+      timestamp: 1704067200

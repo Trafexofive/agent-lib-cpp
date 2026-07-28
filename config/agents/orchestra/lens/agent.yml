@@ -1,0 +1,49 @@
+kind: Agent
+name: lens
+version: "1.1"
+summary: "Lens — recon control plane. Evidence first. No coder. No mutations."
+
+cognitive_engine:
+  primary:
+    provider: xai
+    model: grok-4.5
+    parameters:
+      temperature: 0.25
+      max_tokens: 32768
+  fallback:
+    provider: deepseek
+    model: deepseek-v4-pro
+    parameters:
+      temperature: 0.25
+      max_tokens: 32768
+
+context:
+  harness: ../../../../manifests/harness/small.md
+  system: ./system.md
+  persona: ./persona.md
+  max_iterations: 8
+  history_cap: 50
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  subagents:
+    persistence: session
+
+import:
+  tools:
+    - ask_tool
+  feeds:
+    - working_directory
+    - system_clock
+    - system_stats
+  agents:
+    - ../agents/planner/agent.yml
+    - ../agents/researcher/agent.yml
+    - ../agents/skeptic/agent.yml
+  workflows:
+    - ./workflows/recon.yml
+  env: []

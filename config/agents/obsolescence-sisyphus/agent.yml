@@ -1,0 +1,63 @@
+kind: Agent
+name: obsolescence-sisyphus
+version: "1.1"
+summary: Specialized In reading codebases and spotting obsolescence, plan -> get the relevent paths/files to read depending on context [via discovery subagent(s)] -> same with the docs -> diff and check for docs that need updating, wrong schemas, ... -> generate the spec agentically -> handoff to coder subagents then supervise and version control -> quality gatting, reviewing changes and testing [could be Specialized agents for that as well] -> adapt -> ship to user.
+
+cognitive_engine:
+  primary:
+    provider: xai
+    model: grok-4.5
+    parameters:
+      temperature: 0.85
+      max_tokens: 65536
+  fallback:
+    provider: deepseek
+    model: deepseek-v4-pro
+    parameters:
+      temperature: 0.25
+      max_tokens: 65536
+
+context:
+  harness: ../../harness/default.md
+  # harness: ../../harness/big.md
+  system: ./system.md
+  persona: ./persona.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  max_iterations: 16 # normally this should be per cycle, need to remember to check the code
+  history_cap: 180
+  dev_mode: true # dumps iterations.md/raw.md/history.md → ~/.cortex/dev/<session>/ + CWD
+  # (or export CORTEX_DEV_MODE=1 for lazy live tests without editing this file)
+  subagents:
+    persistence: session
+  # Prototyping
+  # autonomous:
+  #   trigger:
+  #     cron: 
+      
+
+import:
+  tools:
+    - exec
+    - grep
+    - list
+    - fs_read
+    - fs_write
+    - json
+    # - context_pin
+    # - context_peek
+    # - context_unpin
+    - ask_tool
+    - web_fetch
+  feeds:
+    - working_directory
+  agents:
+    # - reader
+    # - tester
+    # - reviewer
+  env: []

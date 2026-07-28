@@ -1,0 +1,26 @@
+kind: Feed
+name: git_status
+version: "1.0.0"
+summary: "Git repository status and changes"
+runtime: python3
+entrypoint: ./src/main.py
+interval_secs: 30
+output_schema:
+  type: object
+  properties:
+    repo_path:
+      type: string
+    branch:
+      type: string
+    ahead:
+      type: integer
+    behind:
+      type: integer
+    dirty:
+      type: boolean
+    staged_files:
+      type: array
+      items: { type: string }
+    unstaged_files:
+      type: array
+      items: { type: string }

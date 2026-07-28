@@ -1,0 +1,34 @@
+kind: Workflow
+version: "1.0"
+name: deliberate
+summary: "Archon spine — plan, skeptic the plan, then parent free-routes execution."
+
+description: >
+  Strategic pre-flight. Execution after dissent remains the Archon's live routing
+  (coder / researcher / manifest-expert) so the model can branch on the plan.
+
+steps:
+  - id: cartograph
+    type: agent
+    name: "Cartograph"
+    agent: planner
+    params:
+      instruction: "Full decomposition with agent seats (researcher, coder, skeptic, cortex-manifest-expert, human). Task: ${input.task}"
+    on_error: abort
+
+  - id: cross_examine
+    type: agent
+    name: "Cross-examine the plan"
+    agent: skeptic
+    params:
+      instruction: "Attack this plan's assumptions, missing packages, and weak done criteria. Plan: ${cartograph.output}"
+    on_error: skip
+
+import:
+  agents:
+    - planner
+    - skeptic
+
+tags:
+  - orchestra
+  - archon

@@ -1,0 +1,64 @@
+kind: Agent
+name: coder
+version: "1.1"
+summary: Specialized Discovery Agent
+
+cognitive_engine:
+  primary:
+    # provider: openai-codex
+    # model: gpt-5.5
+    provider: opencode
+    model: deepseek-v4-flash-free
+    # provider: opencode-go
+    # model: minimax-m3
+    # provider: xai
+    # model: grok-4.5
+    parameters:
+      temperature: 0.85
+      max_tokens: 65536
+  fallback:
+    provider: deepseek
+    model: deepseek-v4-pro
+    parameters:
+      temperature: 0.25
+      max_tokens: 65536
+
+context:
+  harness: ../../harness/default.md
+  # harness: ../../harness/big.md
+  system: ./system.md
+  persona: ./persona.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  max_iterations: 300
+  history_cap: 1180
+  dev_mode: true # dumps iterations.md/raw.md/history.md → ~/.cortex/dev/<session>/ + CWD
+  # (or export CORTEX_DEV_MODE=1 for lazy live tests without editing this file)
+  subagents:
+    persistence: session
+
+import:
+  tools:
+    - exec
+    - grep
+    - list
+    - fs_read
+    - fs_write
+    - json
+    # - context_pin
+    - context_peek
+    # - context_unpin
+    - ask_tool
+    - web_fetch
+  feeds:
+    - working_directory
+  agents:
+    - reader
+    - tester
+    - reviewer
+  env: []

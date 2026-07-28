@@ -1,0 +1,49 @@
+kind: Agent
+name: agent-expert
+version: "1.0"
+summary: "Agent manifest specialist — designs, implements, and validates Agent manifests (kind: Agent)"
+
+cognitive_engine:
+  primary:
+    # provider: opencode
+    # model: nemotron-3-ultra-free
+    provider: xai
+    model: grok-4.5
+    parameters:
+      temperature: 0.8
+      max_tokens: 32768
+
+context:
+  system: ./system-prompts/agent-expert.md
+  persona: ./system-prompts/agent-expert.md
+
+sandbox:
+  mode: process
+  allowed_commands: [python3, bash, cat, ls, grep, head, tail, find, yaml, yq]
+  allowed_paths: ["./", "../../harness/", "../../manifests/"]
+  allowed_hosts: []
+  readonly: false
+  network: out
+  # bind: we need to implement something along these lines
+  #   - ./ctx/:home/ctx
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: true
+    usage_examples: true
+
+runtime:
+  max_iterations: 8
+  history_cap: 60
+
+import:
+  tools:
+    - exec
+    - list
+    - fs_read
+    - fs_write
+    - json
+    - grep
+  feeds: []
+  env:
+    - MANIFEST_BASE_URL=file:///home/mlamkadm/repos/active/agent-lib-cpp

@@ -1,0 +1,85 @@
+kind: Tool
+name: git_diff
+version: "1.1.0"
+summary: "Show git diff with options for staged, unstaged, or all changes"
+description: |
+  Produces a unified diff of the working tree. Supports filtering by paths,
+  showing stats only, and limiting context lines. Useful for code review
+  workflows, CI checks, and pre-commit hooks.
+runtime: bash
+entrypoint: ./src/main.sh
+timeout_secs: 10
+input_schema:
+  type: object
+  properties:
+    repo_path:
+      type: string
+      description: "Path to git repository (default: current directory)"
+      default: "."
+    mode:
+      type: string
+      enum: [unstaged, staged, all, cached]
+      default: "unstaged"
+      description: |
+        unstaged = working tree vs index
+        staged = index vs HEAD
+        all = working tree vs HEAD
+        cached = alias for staged
+    paths:
+      type: array
+      items: { type: string }
+      description: "Limit diff to these paths"
+    context_lines:
+      type: integer
+      default: 3
+      minimum: 0
+      maximum: 100
+      description: "Lines of context around changes"
+    stat_only:
+      type: boolean
+      default: false
+      description: "Show only diffstat (files changed, insertions, deletions)"
+    no_color:
+      type: boolean
+      default: false
+      description: "Disable ANSI color output"
+output_schema:
+  type: object
+  required: [success]
+  properties:
+    success:
+      type: boolean
+    data:
+      type: object
+      properties:
+        diff:
+          type: string
+          description: "Unified diff output (empty if stat_only=true)"
+        stats:
+          type: object
+          properties:
+            files_changed:
+              type: integer
+            insertions:
+              type: integer
+            deletions:
+              type: integer
+      required: [files_changed, insertions, deletions]
+    error:
+      type: string
+examples:
+  - description: "Show unstaged changes in current repo"
+    params:
+      mode: unstaged
+  - description: "Show staged changes with 10 lines context"
+    params:
+      mode: staged
+      context_lines: 10
+  - description: "Show diffstat for all changes in subdirectory"
+    params:
+      mode: all
+      paths: ["src/"]
+      stat_only: true
+  - description: "Show diff for specific files"
+    params:
+      paths: ["src/main.cpp", "include/config.h"]

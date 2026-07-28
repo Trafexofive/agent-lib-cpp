@@ -1,0 +1,18 @@
+kind: Tool
+name: test_runner
+version: "1.0.0"
+summary: "test_runner placeholder"
+runtime: python3
+entrypoint: ./src/main.py
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: object
+  properties:
+    success: { type: boolean }
+    data: { type: object }
+    error: { type: string }
+examples:
+  - description: "Run test_runner"
+    params: {}

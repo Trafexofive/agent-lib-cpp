@@ -1,0 +1,35 @@
+kind: Agent
+name: researcher
+version: "1.1"
+summary: "Roster: read-only recon — paths, symbols, docs."
+
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.15
+      max_tokens: 32768
+
+context:
+  harness: ../../../../../manifests/harness/small.md
+  system: ./system.md
+  persona: ./persona.md
+  max_iterations: 6
+  history_cap: 40
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+import:
+  tools:
+    - list
+    - grep
+    - fs_read
+    - context_peek
+    - web_fetch
+  feeds:
+    - working_directory
+  env: []
