@@ -84,3 +84,6 @@ poc/
 # Runtime logs
 *.log
 runs/
+
+# Session handoff / audit artifacts (per-session, never commit)
+.artifacts/
