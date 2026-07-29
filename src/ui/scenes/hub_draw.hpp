@@ -622,6 +622,71 @@ inline void MainScene::drawManifests(inkcell::Surface& surface, inkcell::Rect fr
                        isLive ? "LIVE · enter opens chat" : "ENTER LAUNCHES",
                        ghost ? theme::green_soft() : theme::green());
         }
+
+        // Tool run result — only for the tool that actually ran.
+        if (m.kind == "tool" && !ghost && dy < inner.bottom()) {
+            const auto& r = dash.toolRun;
+            if (r.toolName == m.name && !r.toolName.empty()) {
+                if (dy < inner.bottom()) ++dy;
+                if (dy < inner.bottom()) {
+                    s.text({ix, dy++}, inkcell::text::truncate("RUN · " + r.toolName, iw),
+                           r.success ? theme::green() : theme::red());
+                }
+                if (dy < inner.bottom()) {
+                    char buf[32];
+                    std::snprintf(buf, sizeof(buf), "%ldms", (long)r.elapsedMs);
+                    components::fieldLine(s, ix, dy++, iw, "elapsed", buf);
+                }
+                if (dy < inner.bottom())
+                    components::fieldLine(s, ix, dy++, iw, "status",
+                                          r.success ? "ok" : "fail");
+                if (!r.error.empty() && dy < inner.bottom())
+                    components::fieldLine(s, ix, dy++, iw, "error", r.error);
+                std::string out = r.output;
+                if (out.size() > 800) out = out.substr(0, 800) + "…";
+                for (const auto& line : chat::wrapWordsLossless(out.empty() ? "—" : out, iw)) {
+                    if (dy >= inner.bottom() - 2) break;
+                    s.text({ix, dy++}, line, theme::text());
+                }
+                if (dy < inner.bottom())
+                    s.text({ix, dy++}, "press enter to re-run",
+                           theme::italic_dim());
+            } else if (dy < inner.bottom()) {
+                s.text({ix, dy++}, "↵ run with defaults",
+                       theme::green_soft());
+            }
+        }
+
+        // Relic endpoint inventory — parsed from relic.yml on Enter.
+        if (m.kind == "relic" && !ghost && dy < inner.bottom()) {
+            const auto& r = dash.relicRun;
+            if (r.relicName == m.name && !r.relicName.empty()) {
+                if (dy < inner.bottom()) ++dy;
+                if (dy < inner.bottom()) {
+                    s.text({ix, dy++},
+                           inkcell::text::truncate("RELIC · " + r.relicName, iw),
+                           r.healthy ? theme::green() : theme::amber());
+                }
+                if (dy < inner.bottom()) {
+                    char buf[16];
+                    std::snprintf(buf, sizeof(buf), "%zu", r.endpoints.size());
+                    components::fieldLine(s, ix, dy++, iw, "endpoints", buf);
+                }
+                for (const auto& ep : r.endpoints) {
+                    if (dy >= inner.bottom() - 2) break;
+                    std::string line = "  - " + ep;
+                    if (ep == r.endpoint) line += "  ◀ last";
+                    s.text({ix, dy++}, inkcell::text::truncate(line, iw),
+                           theme::text());
+                }
+                if (dy < inner.bottom())
+                    s.text({ix, dy++}, "press enter to refresh",
+                           theme::italic_dim());
+            } else if (dy < inner.bottom()) {
+                s.text({ix, dy++}, "↵ inspect endpoints",
+                       theme::green_soft());
+            }
+        }
     };
 
     const auto* sel = dash.selectedManifest();

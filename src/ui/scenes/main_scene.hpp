@@ -343,7 +343,6 @@ class MainScene final : public BaseScene {
         }
         if (model_->sessionCwd.empty()) return std::string();
         std::string target = expandHome(model_->sessionCwd);
-        fprintf(stderr, "  target='%s'\n", target.c_str());
         if (::chdir(target.c_str()) != 0) return std::string();
         char resolved[1024] = {0};
         if (::getcwd(resolved, sizeof(resolved) - 1)) return resolved;
@@ -467,6 +466,8 @@ class MainScene final : public BaseScene {
     bool workflowSelectionActive() const;
     void activate();
     void queueWorkflowRun(const catalog::ManifestEntry& m);
+    void queueToolRun(const catalog::ManifestEntry& m);
+    void queueRelicRun(const catalog::ManifestEntry& m);
     void resumeLastWorkflow();
     void resumeSelectedSession();
     void createSession();

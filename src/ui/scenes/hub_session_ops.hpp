@@ -1,9 +1,68 @@
 #pragma once
-// Hub session/workflow actions — out-of-line MainScene methods.
+// Hub session/workflow/tool/relic actions — out-of-line MainScene methods.
 
+#include <chrono>
+#include <fstream>
+#include <sstream>
 #include <string>
+#include <vector>
+
+#include <json/json.h>
+
+#include "src/tools/dispatch.hpp"
 
 namespace cortex::mk3::ui::scenes {
+
+// Smoke-test defaults for the registered builtin tools. We don't try to be
+// clever — just enough params that each builtin can execute and return a
+// real result. Script-based tools (registered via tool.yml at agent boot)
+// aren't covered here; they'd need their manifest loaded.
+inline Json::Value defaultParamsForTool(const std::string& name) {
+    Json::Value p(Json::objectValue);
+    if (name == "exec") p["command"] = "echo hub-tool-smoke";
+    else if (name == "list") p["path"] = ".";
+    else if (name == "grep") { p["pattern"] = "README"; p["path"] = "."; }
+    else if (name == "fs_read") p["path"] = "README.md";
+    else if (name == "fs_write") {
+        p["path"] = "/tmp/mk3-hub-tool-smoke.txt";
+        p["content"] = "hub smoke test";
+    }
+    else if (name == "json") p["data"] = std::string("{\"k\":\"v\"}");
+    else if (name == "web_fetch") p["url"] = "http://example.com/";
+    else if (name == "sleep") p["ms"] = 1;
+    else if (name == "artifact") {
+        p["name"] = "hub-smoke";
+        p["content"] = std::string("smoke");
+    }
+    else if (name == "ask_tool") {
+        p["question"] = "smoke test";
+        p["options"] = Json::Value(Json::arrayValue);
+    }
+    return p;
+}
+
+// Parse endpoints from a relic.yml — minimal line scanner, no full YAML.
+// Looks for `  - name: <endpoint>` lines; everything else is ignored.
+inline std::vector<std::string> parseRelicEndpoints(const std::string& path) {
+    std::vector<std::string> eps;
+    std::ifstream f(path);
+    if (!f) return eps;
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    std::string yaml = ss.str();
+    std::istringstream iss(yaml);
+    std::string line;
+    while (std::getline(iss, line)) {
+        auto pos = line.find("- name:");
+        if (pos == std::string::npos) continue;
+        std::string ep = line.substr(pos + 7);
+        size_t a = ep.find_first_not_of(" \t");
+        size_t b = ep.find_last_not_of(" \t\r\n");
+        if (a == std::string::npos || b == std::string::npos) continue;
+        eps.push_back(ep.substr(a, b - a + 1));
+    }
+    return eps;
+}
 
 inline void MainScene::activate() {
     auto& dash = model_->dashboard;
@@ -33,9 +92,72 @@ inline void MainScene::activate() {
             queueWorkflowRun(*m);
             return;
         }
+        if (m->kind == "tool") {
+            queueToolRun(*m);
+            return;
+        }
+        if (m->kind == "relic") {
+            queueRelicRun(*m);
+            return;
+        }
         dash.flashNotice(m->kind + " · " + m->category + " · inspect only");
         return;
     }
+}
+
+// Run a tool with smoke-test defaults; record outcome in dashboard state.
+// Synchronous (tools fire-and-forget; no need for a worker thread for
+// quick builtins). For long-running tools the caller can re-press Enter.
+inline void MainScene::queueToolRun(const catalog::ManifestEntry& m) {
+    auto& dash = model_->dashboard;
+    const std::string name = m.name;
+    Json::Value params = defaultParamsForTool(name);
+    auto t0 = std::chrono::steady_clock::now();
+    std::string raw;
+    try {
+        tools::registerDefaults();
+        raw = tools::dispatch(name, params);
+    } catch (const std::exception& e) {
+        raw = std::string("{\"success\":false,\"error\":\"") + e.what() + "\"}";
+    }
+    auto t1 = std::chrono::steady_clock::now();
+    int64_t elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
+    auto& r = dash.toolRun;
+    r.toolName = name;
+    r.elapsedMs = elapsed;
+    Json::Value parsed;
+    Json::CharReaderBuilder rb;
+    std::string errs;
+    std::istringstream ss(raw);
+    if (Json::parseFromStream(rb, ss, &parsed, &errs) && parsed.isObject()) {
+        r.success = parsed.get("success", false).asBool();
+        r.output = parsed.get("output", "").asString();
+        r.error = parsed.get("error", "").asString();
+        if (r.output.empty()) r.output = raw;  // surface non-output JSON
+    } else {
+        r.success = false;
+        r.output = raw;
+        r.error = "non-json response";
+    }
+    dash.flashNotice(name + (r.success ? " ok" : " fail") + " · " +
+                     std::to_string(elapsed) + "ms");
+}
+
+// List endpoints from relic.yml; mark relic as healthy when endpoints parse.
+// Actual endpoint invocation (HTTP/managed Docker) lands in a follow-up
+// slice — for now the detail panel shows the endpoint inventory so the
+// operator can see what the relic exposes.
+inline void MainScene::queueRelicRun(const catalog::ManifestEntry& m) {
+    auto& dash = model_->dashboard;
+    auto& r = dash.relicRun;
+    r.relicName = m.name;
+    r.endpoints = parseRelicEndpoints(m.path);
+    r.endpoint = r.endpoints.empty() ? std::string() : r.endpoints.front();
+    r.healthy = !r.endpoints.empty();
+    r.output = std::to_string(r.endpoints.size()) + " endpoint(s) parsed";
+    dash.flashNotice(m.name + (r.healthy ? " · " + std::to_string(r.endpoints.size()) + " endpoints"
+                                         : " · no endpoints"));
 }
 
 inline bool MainScene::workflowSelectionActive() const {

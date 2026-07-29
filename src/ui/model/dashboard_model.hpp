@@ -126,6 +126,28 @@ struct DashboardState {
     bool cwdEditMode = false;
     std::string cwdEditBuffer;
 
+    // Tool-run state — populated when the operator presses Enter on a tool
+    // manifest. Displayed in the manifest detail panel.
+    struct ToolRunResult {
+        std::string toolName;     // empty = no run yet
+        std::string output;        // stdout / result text
+        std::string error;         // error message if any
+        bool success = false;
+        int64_t elapsedMs = 0;
+    };
+    ToolRunResult toolRun;
+
+    // Relic-run state — populated when Enter is pressed on a relic manifest.
+    // Lists endpoints parsed from relic.yml + the last-called endpoint.
+    struct RelicRunResult {
+        std::string relicName;
+        std::vector<std::string> endpoints;
+        std::string endpoint;      // last invoked endpoint
+        std::string output;        // last endpoint response (best-effort)
+        bool healthy = false;
+    };
+    RelicRunResult relicRun;
+
     // Manifest card swipe (j/k) — curved dual-card transition
     int cardPrevIndex = -1;
     int cardAnimDir = 1;  // +1 next (j down list), -1 prev
