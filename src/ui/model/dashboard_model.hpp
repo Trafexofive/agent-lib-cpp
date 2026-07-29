@@ -116,9 +116,9 @@ struct DashboardState {
 
     // Settings option focus:
     // 0 theme · 1 field · 2 shader · 3 thoughts · 4 truncate · 5 raw · 6 chat field
-    // 7 zen · 8 nav pill · 9 pill hide delay · 10 cwd
+    // 7 zen · 8 nav pill · 9 pill hide delay · 10 cwd · 11 remember cwd
     int settingsFocus = 0;
-    static constexpr int settingsOptionCount = 11;
+    static constexpr int settingsOptionCount = 12;
 
     // Inline edit buffer for CWD setting. Entered via `e` on the CWD row.
     // Captures next chars; Backspace deletes; Enter commits (~ expanded);

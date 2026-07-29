@@ -773,6 +773,7 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
         }
         option(10, "CWD", val, cwdDash.cwdEditMode ? "⏎ commit" : "e edit · ←→", false);
     }
+    option(11, "REMEMBER CWD", model_->rememberLastCwd ? "ON" : "OFF", "", false);
 
     // Single footer — path only, no key encyclopedia
     if (y + 1 < frame.bottom()) {

@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "src/ui/gfx/field_raster.hpp"
 #include "src/ui/theme/cortex_theme.hpp"
@@ -32,7 +33,46 @@ struct UiPrefState {
     // Default CWD applied on session create/resume. Empty = process startup CWD.
     // Inline edit via Settings · CWD (e to edit, ←→ to cycle HOME/process CWD).
     std::string sessionCwd;
+    // When ON, the persisted sessionCwd is honored at app launch (the process
+    // chdirs to it before the hub renders). When OFF (default), the launch
+    // dir is used regardless of what was persisted — the CWD setting is
+    // treated as a per-session hint, not a sticky cross-launch state.
+    bool rememberLastCwd = false;
 };
+
+// Expand ~ to $HOME on the given path. Empty / already-absolute / no-~
+// returned unchanged. Invalid $HOME → path returned unchanged.
+inline std::string expandHome(const std::string& path) {
+    if (path.empty() || path[0] != '~') return path;
+    const char* home = std::getenv("HOME");
+    if (!home || !home[0]) return path;
+    if (path.size() == 1) return std::string(home);
+    if (path[1] == '/') return std::string(home) + path.substr(1);
+    return path;
+}
+
+// Launch-time CWD policy. Reads shadow prefs (already loaded), normalizes the
+// model's sessionCwd, and chdirs the process if rememberLastCwd is on.
+// Called once after applyUiPrefsToModel in the boot sequence.
+inline UiPrefState& uiPrefShadow();  // forward decl (defined below)
+template <typename Model>
+inline void applyLaunchCwd(Model& model) {
+    const auto& s = uiPrefShadow();
+    if (s.rememberLastCwd && !model.sessionCwd.empty()) {
+        std::string target = expandHome(model.sessionCwd);
+        if (!target.empty() && ::chdir(target.c_str()) == 0) {
+            char buf[1024] = {0};
+            if (::getcwd(buf, sizeof(buf) - 1)) {
+                // Re-resolve in case chdir normalized a relative path.
+                model.sessionCwd = buf;
+            }
+        }
+    } else {
+        // rememberLastCwd off: drop the persisted value so the Settings row
+        // and Main/Sessions pages match the live process CWD (launch dir).
+        model.sessionCwd.clear();
+    }
+}
 
 inline UiPrefState& uiPrefShadow() {
     static UiPrefState s;
@@ -140,6 +180,7 @@ inline void loadUiPrefs() {
     if (shad.navPillHideMs < 0) shad.navPillHideMs = 0;
     if (shad.navPillHideMs > 60000) shad.navPillHideMs = 60000;
     shad.sessionCwd = jsonGetString(body, "session_cwd");
+    shad.rememberLastCwd = jsonGetBool(body, "remember_last_cwd", false);
 }
 
 // Apply shadow → live model (call after model construct / load).
@@ -154,6 +195,7 @@ inline void applyUiPrefsToModel(Model& model) {
     model.navPillEnabled = s.navPillEnabled;
     model.navPillHideMs = s.navPillHideMs;
     model.sessionCwd = s.sessionCwd;
+    model.rememberLastCwd = s.rememberLastCwd;
 }
 
 template <typename Model>
@@ -167,6 +209,7 @@ inline void captureUiPrefsFromModel(const Model& model) {
     s.navPillEnabled = model.navPillEnabled;
     s.navPillHideMs = model.navPillHideMs;
     s.sessionCwd = model.sessionCwd;
+    s.rememberLastCwd = model.rememberLastCwd;
 }
 
 inline void saveUiPrefs() {
@@ -186,7 +229,8 @@ inline void saveUiPrefs() {
         << "  \"zen_mode\": " << (s.zenMode ? "true" : "false") << ",\n"
         << "  \"nav_pill_enabled\": " << (s.navPillEnabled ? "true" : "false") << ",\n"
         << "  \"nav_pill_hide_ms\": " << s.navPillHideMs << ",\n"
-        << "  \"session_cwd\": \"" << s.sessionCwd << "\"\n"
+        << "  \"session_cwd\": \"" << s.sessionCwd << "\",\n"
+        << "  \"remember_last_cwd\": " << (s.rememberLastCwd ? "true" : "false") << "\n"
         << "}\n";
 }
 

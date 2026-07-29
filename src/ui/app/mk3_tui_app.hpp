@@ -41,6 +41,9 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
         else theme::set(theme::Variant::Graphite);
     }
     applyUiPrefsToModel(*model);
+    // Launch-time CWD policy: rememberLastCwd=ON → chdir to persisted path;
+    // OFF (default) → drop the persisted value, use launch dir as process CWD.
+    applyLaunchCwd(*model);
     model->activeSessionId = cfg.sessionId;
     // Single active id: seed process-wide SessionRef (kills dual-flush).
     // only --no-session suppresses disk; --ephemeral is exit-on-done (orthogonal).

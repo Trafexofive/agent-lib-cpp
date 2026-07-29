@@ -100,6 +100,9 @@ struct ShellModel : TimelineStore {
     int navPillHideMs = 3000;
     // Session CWD applied on create/resume (Settings · CWD). Empty = process CWD.
     std::string sessionCwd;
+    // When ON, persisted sessionCwd is honored at app launch (process chdir).
+    // When OFF (default), launch dir is used; CWD is per-session only.
+    bool rememberLastCwd = false;
     // When true, long block bodies are capped (pi-like truncation) with a
     // "… N more lines" note. Toggle via /truncate or CLI --[no-]truncate.
     bool truncateBodies = true;

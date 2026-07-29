@@ -82,7 +82,13 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                 struct stat st {};
                 if (::stat(resolved.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
                     model_->sessionCwd = resolved;
-                    dash.flashNotice("cwd · " + resolved);
+                    // Actually chdir now so Main/Sessions pages reflect the
+                    // new CWD immediately. applySessionCwd also soft-kills any
+                    // live session before the workspace switch.
+                    std::string actual = applySessionCwd();
+                    dash.flashNotice(actual.empty()
+                                         ? std::string("cwd · invalid: ") + resolved
+                                         : "cwd · " + actual);
                 } else {
                     dash.flashNotice("cwd · invalid: " + resolved);
                 }

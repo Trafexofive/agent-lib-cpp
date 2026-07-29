@@ -323,17 +323,6 @@ class MainScene final : public BaseScene {
         return slash == std::string::npos ? path : path.substr(slash + 1);
     }
 
-    // Resolve ~ to $HOME on the given path. Empty / already-absolute / no-~
-    // returned unchanged. Invalid $HOME → path returned unchanged.
-    static std::string expandHome(const std::string& path) {
-        if (path.empty() || path[0] != '~') return path;
-        const char* home = std::getenv("HOME");
-        if (!home || !home[0]) return path;
-        if (path.size() == 1) return std::string(home);
-        if (path[1] == '/') return std::string(home) + path.substr(1);
-        return path;
-    }
-
     // Apply sessionCwd: stop any live session first (worker must die before
     // process CWD changes — otherwise in-flight tool results would arrive
     // after the chdir and confuse the operator about which workspace ran what).
@@ -433,22 +422,32 @@ class MainScene final : public BaseScene {
                 // For an arbitrary path, press `e` to enter inline edit mode.
                 const char* home = std::getenv("HOME");
                 std::string homeStr = home ? home : "";
-                static const std::string kPresets[] = {"", ""};  // placeholder; logic below
-                (void)kPresets;
                 if (model_->sessionCwd.empty()) {
                     model_->sessionCwd = homeStr;
-                    dash.flashNotice(homeStr.empty() ? "cwd · home (unset)"
-                                                     : "cwd · " + homeStr);
                 } else if (!homeStr.empty() && model_->sessionCwd == homeStr) {
                     model_->sessionCwd.clear();
-                    dash.flashNotice("cwd · process default");
                 } else {
                     // Currently custom — cycle resets to home (operator can
                     // re-edit or press ← again to reach process default).
                     model_->sessionCwd = homeStr;
-                    dash.flashNotice(homeStr.empty() ? "cwd · home (unset)"
-                                                     : "cwd · " + homeStr);
                 }
+                // Always chdir so Main/Sessions pages reflect the live CWD
+                // immediately, not just the configured value.
+                std::string resolved = applySessionCwd();
+                if (!model_->sessionCwd.empty()) {
+                    dash.flashNotice(resolved.empty()
+                                         ? std::string("cwd · invalid path")
+                                         : ("cwd · " + resolved));
+                } else {
+                    dash.flashNotice("cwd · process default");
+                }
+                break;
+            }
+            case 11: {  // remember last CWD across launches
+                model_->rememberLastCwd = !model_->rememberLastCwd;
+                dash.flashNotice(model_->rememberLastCwd
+                                     ? "cwd · remember last (sticky across launches)"
+                                     : "cwd · per-session (launch dir wins)");
                 break;
             }
             default:
