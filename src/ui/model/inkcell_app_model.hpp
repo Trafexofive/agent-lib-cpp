@@ -100,6 +100,9 @@ struct ShellModel : TimelineStore {
     int navPillHideMs = 3000;
     // Session CWD applied on create/resume (Settings · CWD). Empty = process CWD.
     std::string sessionCwd;
+    // CWD the binary was launched from — included in the cycle so the
+    // operator can return to their project after cycling through HOME.
+    std::string launchCwd;
     // When ON, persisted sessionCwd is honored at app launch (process chdir).
     // When OFF (default), launch dir is used; CWD is per-session only.
     bool rememberLastCwd = false;

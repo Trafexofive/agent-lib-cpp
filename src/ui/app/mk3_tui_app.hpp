@@ -44,6 +44,12 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
     // Launch-time CWD policy: rememberLastCwd=ON → chdir to persisted path;
     // OFF (default) → drop the persisted value, use launch dir as process CWD.
     applyLaunchCwd(*model);
+    // Capture launch CWD before any chdir above (or after, if
+    // rememberLastCwd was OFF). Used by the Settings CWD cycle.
+    {
+        char buf[1024] = {0};
+        if (::getcwd(buf, sizeof(buf) - 1)) model->launchCwd = buf;
+    }
     model->activeSessionId = cfg.sessionId;
     // Single active id: seed process-wide SessionRef (kills dual-flush).
     // only --no-session suppresses disk; --ephemeral is exit-on-done (orthogonal).

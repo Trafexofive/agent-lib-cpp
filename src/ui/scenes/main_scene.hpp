@@ -421,14 +421,17 @@ class MainScene final : public BaseScene {
                                         std::to_string(model_->navPillHideMs / 1000) + "s"));
                 break;
             }
-            case 10: {  // session CWD carousel: empty (process) → HOME → last set value
+            case 10: {  // session CWD carousel: empty -> HOME -> launch -> empty
                 const char* home = std::getenv("HOME");
                 std::string homeStr = home ? home : "";
+                std::string launch = model_->launchCwd;
                 char beforeCwd[1024] = {0};
                 std::string before = ::getcwd(beforeCwd, sizeof(beforeCwd) - 1) ? beforeCwd : "";
                 if (model_->sessionCwd.empty()) {
                     model_->sessionCwd = homeStr;
                 } else if (!homeStr.empty() && model_->sessionCwd == homeStr) {
+                    model_->sessionCwd = launch.empty() ? std::string() : launch;
+                } else if (!launch.empty() && model_->sessionCwd == launch) {
                     model_->sessionCwd.clear();
                 } else {
                     model_->sessionCwd = homeStr;
