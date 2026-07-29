@@ -377,8 +377,30 @@ inline void MainScene::drawManifests(inkcell::Surface& surface, inkcell::Rect fr
     const auto& dash = model_->dashboard;
     auto L = layout::manifestLayoutFor(frame.w);
 
-    sectionHead(surface, frame, "Manifests",
-                "↵ run/launch · 1-9 kind · f facet · z canvas · tab focus · / search");
+    // Per-kind legend. Lists the binds that affect the focused manifest kind
+    // (so the operator never has to guess which key is live for what type).
+    // Falls back to the global legend when no selection is focused.
+    std::string legend;
+    const auto* focused = dash.selectedManifest();
+    auto fmt = [](const std::string& k, const char* acts) { return k + " " + acts; };
+    if (!focused) {
+        legend = "↵ run/launch · 1-9 kind · f facet · z canvas · tab focus · / search · R reload";
+    } else if (focused->kind == "agent") {
+        legend = fmt("agent", "· ↵ launch · c clone");
+    } else if (focused->kind == "workflow") {
+        legend = fmt("workflow", "· ↵ run · z canvas · x stop · r resume");
+    } else if (focused->kind == "tool") {
+        legend = fmt("tool", "· ↵ open page");
+    } else if (focused->kind == "relic") {
+        legend = fmt("relic", "· ↵ inspect endpoints");
+    } else if (focused->kind == "feed") {
+        legend = fmt("feed", "· ↵ inspect");
+    } else if (focused->kind == "harness" || focused->kind == "prompt" || focused->kind == "skill") {
+        legend = fmt(focused->kind, "· ↵ inspect");
+    } else {
+        legend = fmt(focused->kind, "· ↵ inspect");
+    }
+    sectionHead(surface, frame, "Manifests", legend);
 
     int y = frame.y + 4;
 
@@ -623,38 +645,14 @@ inline void MainScene::drawManifests(inkcell::Surface& surface, inkcell::Rect fr
                        ghost ? theme::green_soft() : theme::green());
         }
 
-        // Tool run result — only for the tool that actually ran.
+        // Tool affordance — ↵ opens the dedicated ToolScene (full UX).
+        // The legacy sync smoke-test RUN block is gone; the tool page owns
+        // input form + streaming output + run history now.
         if (m.kind == "tool" && !ghost && dy < inner.bottom()) {
-            const auto& r = dash.toolRun;
-            if (r.toolName == m.name && !r.toolName.empty()) {
-                if (dy < inner.bottom()) ++dy;
-                if (dy < inner.bottom()) {
-                    s.text({ix, dy++}, inkcell::text::truncate("RUN · " + r.toolName, iw),
-                           r.success ? theme::green() : theme::red());
-                }
-                if (dy < inner.bottom()) {
-                    char buf[32];
-                    std::snprintf(buf, sizeof(buf), "%ldms", (long)r.elapsedMs);
-                    components::fieldLine(s, ix, dy++, iw, "elapsed", buf);
-                }
-                if (dy < inner.bottom())
-                    components::fieldLine(s, ix, dy++, iw, "status",
-                                          r.success ? "ok" : "fail");
-                if (!r.error.empty() && dy < inner.bottom())
-                    components::fieldLine(s, ix, dy++, iw, "error", r.error);
-                std::string out = r.output;
-                if (out.size() > 800) out = out.substr(0, 800) + "…";
-                for (const auto& line : chat::wrapWordsLossless(out.empty() ? "—" : out, iw)) {
-                    if (dy >= inner.bottom() - 2) break;
-                    s.text({ix, dy++}, line, theme::text());
-                }
-                if (dy < inner.bottom())
-                    s.text({ix, dy++}, "press enter to re-run",
-                           theme::italic_dim());
-            } else if (dy < inner.bottom()) {
-                s.text({ix, dy++}, "↵ run with defaults",
+            if (dy < inner.bottom()) ++dy;
+            if (dy < inner.bottom())
+                s.text({ix, dy++}, inkcell::text::truncate("↵ open tool page", iw),
                        theme::green_soft());
-            }
         }
 
         // Relic endpoint inventory — parsed from relic.yml on Enter.

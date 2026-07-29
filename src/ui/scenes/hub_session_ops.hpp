@@ -93,7 +93,13 @@ inline void MainScene::activate() {
             return;
         }
         if (m->kind == "tool") {
-            queueToolRun(*m);
+            // Route to dedicated ToolScene (full UX: input form, streaming
+            // output, run history). REPL tick performs the kind-dispatch
+            // and opens scenes::ToolScene if the manifest is well-formed.
+            dash.yankBuffer = "tool scene " + m->path;
+            model_->pendingLaunchManifest = m->path;
+            model_->requestRoute(PendingRoute::Tool);
+            dash.flashNotice("opening " + m->name + " tool page");
             return;
         }
         if (m->kind == "relic") {

@@ -730,6 +730,41 @@ class ManifestLoader {
         return loadToolSchema(toolYmlPath);
     }
 
+    // Cheap kind sniff — reads the first "kind:" line of a manifest YAML
+    // without parsing the whole document. Returns lowercased kind value
+    // ("agent", "tool", "relic", "workflow", "feed", "harness", "prompt",
+    // "skill") or "" when the file is missing or has no kind: field.
+    static std::string detectKind(const std::string& manifestPath) {
+        std::ifstream f(manifestPath);
+        if (!f) return "";
+        std::string line;
+        while (std::getline(f, line)) {
+            // Skip leading whitespace / comments.
+            size_t i = 0;
+            while (i < line.size() && (line[i] == ' ' || line[i] == '	')) i++;
+            if (i >= line.size() || line[i] == '#') continue;
+            // Look for top-level "kind:" key.
+            if (line.compare(i, 5, "kind:") == 0) {
+                size_t v = i + 5;
+                while (v < line.size() && (line[v] == ' ' || line[v] == '	' || line[v] == '"'))
+                    v++;
+                size_t end = v;
+                while (end < line.size() && line[end] != '"' && line[end] != '#' &&
+                       line[end] != '\n' && line[end] != '\n')
+                    end++;
+                std::string raw = line.substr(v, end - v);
+                // Lowercase + trim.
+                for (char& c : raw) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                while (!raw.empty() && (raw.back() == ' ' || raw.back() == '	' || raw.back() == '"'))
+                    raw.pop_back();
+                return raw;
+            }
+            // Stop on first non-kind, non-blank, non-comment top-level key.
+            if (!line.empty() && line[0] != ' ' && line[0] != '	' && line[0] != '#') break;
+        }
+        return "";
+    }
+
     struct RelicConfig {
         std::string baseUrl;
     };

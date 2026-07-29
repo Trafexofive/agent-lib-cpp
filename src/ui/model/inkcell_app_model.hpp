@@ -129,6 +129,33 @@ struct ShellModel : TimelineStore {
     bool pendingStopWorkflow = false;
     // Shared live run hub (worker writes, UI snapshots).
     model::WorkflowRunHub workflowRun;
+    // ── Tool scene state ───────────────────────────────────────────────
+    // Hub Enter on kind=tool routes to scenes::ToolScene (full UX: input
+    // form auto-gen from input_schema + streaming output + run history).
+    // Last run = the currently-rendering result. toolHistory = persistent
+    // per-tool log the operator can scroll + copy from. toolRunsBusy guards
+    // the worker thread against re-entrant ↵ presses while a run is live.
+    struct ToolRunRecord {
+        std::string toolName;
+        std::string paramsJson;   // frozen at run-time for reproducibility
+        std::string output;       // streaming output buffer
+        bool success = false;
+        std::string error;
+        int64_t elapsedMs = 0;
+        int64_t timestampMs = 0;  // steady_clock ms at run start
+        bool running = false;     // true while the worker thread is alive
+    };
+    ToolRunRecord lastToolRun;
+    std::vector<ToolRunRecord> toolHistory;  // capped to 32 entries (FIFO)
+    bool toolRunsBusy = false;
+    // The path of the tool manifest currently being inspected (set by
+    // ToolScene::on_enter, used in the topbar + status). Empty when the
+    // tool scene isn't active.
+    std::string activeToolManifestPath;
+    std::string activeToolName;
+    // Live tool worker cancel signal — flipped by the scene on Esc/x,
+    // checked by the worker between output chunks.
+    bool toolCancelRequested = false;
     std::string activeSessionId;
     // Agent display identity for the chat transcript labels. The assistant's own
     // turns (Response/Final) are labeled with agentName + agentModel/agentProvider
