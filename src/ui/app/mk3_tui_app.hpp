@@ -28,6 +28,7 @@
 #include "src/ui/model/workflow_runner.hpp"
 #include "src/ui/scenes/agent_scene.hpp"
 #include "src/ui/scenes/main_scene.hpp"
+#include "src/ui/scenes/tool_scene.hpp"
 
 namespace cortex::mk3::ui {
 
@@ -102,8 +103,10 @@ inline inkcell::App makeInkcellApp(const InkcellAppConfig& cfg, AgentBridge& bri
         .bind("esc", "shell.focus_timeline", "Focus history")
         .route("scene.agent", "agent")
         .route("scene.main", "main")
+        .route("scene.tool", "tool")
         .scene<scenes::MainScene>("main", cfg, bridge, model)
         .scene<scenes::AgentScene>("agent", cfg, bridge, model)
+        .scene<scenes::ToolScene>("tool", cfg, bridge, model)
         .initial_scene(startAtDashboard ? "main" : "agent");
     return app;
 }
@@ -394,6 +397,31 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
         if (!model.pendingLaunchManifest.empty() && !workerBusy.load(std::memory_order_acquire)) {
             std::string path = model.pendingLaunchManifest;
             model.pendingLaunchManifest.clear();
+            // Kind-dispatch: only build an Agent for kind=agent. Other kinds
+            // route to their dedicated scene (tool → scenes::ToolScene) or
+            // show a notice until the matching scene ships (relic/feed/etc).
+            // Workflow has its own path via pendingRunWorkflow above.
+            std::string kind = ManifestLoader::detectKind(path);
+            if (kind != "agent") {
+                if (kind == "tool") {
+                    // Set the active tool state on ShellModel so ToolScene
+                    // on_enter can find it, then route.
+                    ToolSchema ts = ManifestLoader::loadToolManifest(path);
+                    model.activeToolManifestPath = path;
+                    model.activeToolName = ts.name.empty() ? std::filesystem::path(path).parent_path().filename().string() : ts.name;
+                    model.requestRoute(PendingRoute::Tool);
+                } else if (kind == "workflow") {
+                    // Should not normally happen (workflow uses pendingRunWorkflow)
+                    // but harmless: route to main with a notice.
+                    model.dashboard.flashNotice("workflow · use the canvas to run");
+                } else if (!kind.empty()) {
+                    model.dashboard.flashNotice(kind + " page · not implemented yet");
+                } else {
+                    model.dashboard.flashNotice("unrecognized manifest kind");
+                }
+                // Skip the agent build path — handled above per-kind.
+                return;  // tail of the lambda for this tick
+            }
             if (!model.activeManifestPath.empty() && path == model.activeManifestPath) {
                 model.dashboard.notice = "already live · " + model.agentName;
                 model.requestRoute(PendingRoute::Agent);

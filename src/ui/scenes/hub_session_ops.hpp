@@ -94,10 +94,12 @@ inline void MainScene::activate() {
         }
         if (m->kind == "tool") {
             // Route to dedicated ToolScene (full UX: input form, streaming
-            // output, run history). REPL tick performs the kind-dispatch
-            // and opens scenes::ToolScene if the manifest is well-formed.
-            dash.yankBuffer = "tool scene " + m->path;
+            // output, run history). The REPL tick picks up the path,
+            // resolves the kind, and sets activeTool* fields on ShellModel
+            // before routing so scenes::ToolScene::on_enter can find them.
             model_->pendingLaunchManifest = m->path;
+            model_->activeToolManifestPath = m->path;
+            model_->activeToolName = m->name;
             model_->requestRoute(PendingRoute::Tool);
             dash.flashNotice("opening " + m->name + " tool page");
             return;
