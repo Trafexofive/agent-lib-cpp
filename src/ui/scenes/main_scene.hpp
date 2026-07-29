@@ -329,10 +329,6 @@ class MainScene final : public BaseScene {
     // Then expand ~ and chdir. Returns resolved absolute path on success,
     // empty string on failure (path invalid / chdir denied).
     std::string applySessionCwd() {
-        // Stop live worker if any. We deliberately do NOT delete the session
-        // file — the operator may resume it later, just not while a CWD
-        // change is in flight. Soft kill: flip the global running flag,
-        // clear in-memory session, leave persisted records intact.
         if (model_->running && !model_->activeSessionId.empty()) {
             g_running.store(false, std::memory_order_release);
             model_->running = false;
@@ -347,7 +343,7 @@ class MainScene final : public BaseScene {
         }
         if (model_->sessionCwd.empty()) return std::string();
         std::string target = expandHome(model_->sessionCwd);
-        if (target.empty()) return std::string();
+        fprintf(stderr, "  target='%s'\n", target.c_str());
         if (::chdir(target.c_str()) != 0) return std::string();
         char resolved[1024] = {0};
         if (::getcwd(resolved, sizeof(resolved) - 1)) return resolved;
@@ -418,26 +414,29 @@ class MainScene final : public BaseScene {
                 break;
             }
             case 10: {  // session CWD carousel: empty (process) → HOME → last set value
-                // Minimal cycle. Empty = unset (process CWD). HOME = $HOME.
-                // For an arbitrary path, press `e` to enter inline edit mode.
                 const char* home = std::getenv("HOME");
                 std::string homeStr = home ? home : "";
+                char beforeCwd[1024] = {0};
+                std::string before = ::getcwd(beforeCwd, sizeof(beforeCwd) - 1) ? beforeCwd : "";
                 if (model_->sessionCwd.empty()) {
                     model_->sessionCwd = homeStr;
                 } else if (!homeStr.empty() && model_->sessionCwd == homeStr) {
                     model_->sessionCwd.clear();
                 } else {
-                    // Currently custom — cycle resets to home (operator can
-                    // re-edit or press ← again to reach process default).
                     model_->sessionCwd = homeStr;
                 }
-                // Always chdir so Main/Sessions pages reflect the live CWD
-                // immediately, not just the configured value.
                 std::string resolved = applySessionCwd();
                 if (!model_->sessionCwd.empty()) {
-                    dash.flashNotice(resolved.empty()
-                                         ? std::string("cwd · invalid path")
-                                         : ("cwd · " + resolved));
+                    // If the chdir target equals where we already were
+                    // (e.g. launching from HOME, cycling to HOME is a no-op),
+                    // tell the operator to use e instead of guessing.
+                    if (!resolved.empty() && resolved == before) {
+                        dash.flashNotice("cwd · already at " + resolved + " · e to edit");
+                    } else {
+                        dash.flashNotice(resolved.empty()
+                                             ? std::string("cwd · invalid path")
+                                             : ("cwd · " + resolved));
+                    }
                 } else {
                     dash.flashNotice("cwd · process default");
                 }
