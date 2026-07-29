@@ -329,7 +329,11 @@ class MainScene final : public BaseScene {
     // Then expand ~ and chdir. Returns resolved absolute path on success,
     // empty string on failure (path invalid / chdir denied).
     std::string applySessionCwd() {
-        if (model_->running && !model_->activeSessionId.empty()) {
+        // keepLiveOnCwdChange OFF (default): kill live + drop file.
+        // ON: leave the live session alone — chat stays, tools see the new
+        // CWD on their next call, activeSessionId is preserved.
+        if (!model_->keepLiveOnCwdChange &&
+            model_->running && !model_->activeSessionId.empty()) {
             g_running.store(false, std::memory_order_release);
             model_->running = false;
             model_->status = "stopped";
@@ -340,12 +344,17 @@ class MainScene final : public BaseScene {
             model_->activeSessionId.clear();
             model_->dashboard.flashNotice(
                 "killed live " + killedId + " · cwd change");
+        } else if (model_->keepLiveOnCwdChange && !model_->activeSessionId.empty()) {
+            model_->dashboard.flashNotice("cwd · live kept in session");
         }
         if (model_->sessionCwd.empty()) return std::string();
         std::string target = expandHome(model_->sessionCwd);
         if (::chdir(target.c_str()) != 0) return std::string();
         char resolved[1024] = {0};
-        if (::getcwd(resolved, sizeof(resolved) - 1)) return resolved;
+        if (::getcwd(resolved, sizeof(resolved) - 1)) {
+            model_->dashboard.refreshSessions();
+            return resolved;
+        }
         return target;
     }
 
@@ -446,6 +455,13 @@ class MainScene final : public BaseScene {
                 dash.flashNotice(model_->rememberLastCwd
                                      ? "cwd · remember last (sticky across launches)"
                                      : "cwd · per-session (launch dir wins)");
+                break;
+            }
+            case 12: {  // keep live session when CWD changes
+                model_->keepLiveOnCwdChange = !model_->keepLiveOnCwdChange;
+                dash.flashNotice(model_->keepLiveOnCwdChange
+                                     ? "cwd · live kept across CWD change"
+                                     : "cwd · live killed on CWD change");
                 break;
             }
             default:

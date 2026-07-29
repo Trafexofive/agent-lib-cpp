@@ -38,6 +38,9 @@ struct UiPrefState {
     // dir is used regardless of what was persisted — the CWD setting is
     // treated as a per-session hint, not a sticky cross-launch state.
     bool rememberLastCwd = false;
+    // When ON, CWD change skips killing the live session. When OFF
+    // (default), CWD change tears down the live session and its file.
+    bool keepLiveOnCwdChange = false;
 };
 
 // Expand ~ to $HOME on the given path. Empty / already-absolute / no-~
@@ -181,6 +184,7 @@ inline void loadUiPrefs() {
     if (shad.navPillHideMs > 60000) shad.navPillHideMs = 60000;
     shad.sessionCwd = jsonGetString(body, "session_cwd");
     shad.rememberLastCwd = jsonGetBool(body, "remember_last_cwd", false);
+    shad.keepLiveOnCwdChange = jsonGetBool(body, "keep_live_on_cwd_change", false);
 }
 
 // Apply shadow → live model (call after model construct / load).
@@ -196,6 +200,7 @@ inline void applyUiPrefsToModel(Model& model) {
     model.navPillHideMs = s.navPillHideMs;
     model.sessionCwd = s.sessionCwd;
     model.rememberLastCwd = s.rememberLastCwd;
+    model.keepLiveOnCwdChange = s.keepLiveOnCwdChange;
 }
 
 template <typename Model>
@@ -210,6 +215,7 @@ inline void captureUiPrefsFromModel(const Model& model) {
     s.navPillHideMs = model.navPillHideMs;
     s.sessionCwd = model.sessionCwd;
     s.rememberLastCwd = model.rememberLastCwd;
+    s.keepLiveOnCwdChange = model.keepLiveOnCwdChange;
 }
 
 inline void saveUiPrefs() {
@@ -230,7 +236,8 @@ inline void saveUiPrefs() {
         << "  \"nav_pill_enabled\": " << (s.navPillEnabled ? "true" : "false") << ",\n"
         << "  \"nav_pill_hide_ms\": " << s.navPillHideMs << ",\n"
         << "  \"session_cwd\": \"" << s.sessionCwd << "\",\n"
-        << "  \"remember_last_cwd\": " << (s.rememberLastCwd ? "true" : "false") << "\n"
+        << "  \"remember_last_cwd\": " << (s.rememberLastCwd ? "true" : "false") << ",\n"
+        << "  \"keep_live_on_cwd_change\": " << (s.keepLiveOnCwdChange ? "true" : "false") << "\n"
         << "}\n";
 }
 

@@ -103,6 +103,10 @@ struct ShellModel : TimelineStore {
     // When ON, persisted sessionCwd is honored at app launch (process chdir).
     // When OFF (default), launch dir is used; CWD is per-session only.
     bool rememberLastCwd = false;
+    // When ON, CWD change leaves the live worker and session intact —
+    // just chdir the process. When OFF (default), live session is killed
+    // and its file deleted (the historical "exit and reopen" semantics).
+    bool keepLiveOnCwdChange = false;
     // When true, long block bodies are capped (pi-like truncation) with a
     // "… N more lines" note. Toggle via /truncate or CLI --[no-]truncate.
     bool truncateBodies = true;
