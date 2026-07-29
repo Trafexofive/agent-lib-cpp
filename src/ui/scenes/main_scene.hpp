@@ -4,6 +4,7 @@
 // ctrl-j = prev · ctrl-k = next (inverted). Enter on agent = hot-swap launch.
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include "base_scene.hpp"
+#include "src/core/agent.hpp"
 #include "src/session/controller.hpp"
 #include "src/session/manager.hpp"
 #include "src/ui/assets/glyphs.hpp"
@@ -332,10 +334,28 @@ class MainScene final : public BaseScene {
         return path;
     }
 
-    // Apply sessionCwd: expand ~, then chdir. Returns resolved absolute path
-    // on success, empty string on failure (path invalid / chdir denied).
-    // Caller is responsible for surfacing a notice with the result.
+    // Apply sessionCwd: stop any live session first (worker must die before
+    // process CWD changes — otherwise in-flight tool results would arrive
+    // after the chdir and confuse the operator about which workspace ran what).
+    // Then expand ~ and chdir. Returns resolved absolute path on success,
+    // empty string on failure (path invalid / chdir denied).
     std::string applySessionCwd() {
+        // Stop live worker if any. We deliberately do NOT delete the session
+        // file — the operator may resume it later, just not while a CWD
+        // change is in flight. Soft kill: flip the global running flag,
+        // clear in-memory session, leave persisted records intact.
+        if (model_->running && !model_->activeSessionId.empty()) {
+            g_running.store(false, std::memory_order_release);
+            model_->running = false;
+            model_->status = "stopped";
+            session::activeSession().clear();
+            model_->pendingSubmit.clear();
+            if (model_->rootAgent) model_->rootAgent->clearHistory();
+            std::string killedId = suffix(model_->activeSessionId);
+            model_->activeSessionId.clear();
+            model_->dashboard.flashNotice(
+                "killed live " + killedId + " · cwd change");
+        }
         if (model_->sessionCwd.empty()) return std::string();
         std::string target = expandHome(model_->sessionCwd);
         if (target.empty()) return std::string();

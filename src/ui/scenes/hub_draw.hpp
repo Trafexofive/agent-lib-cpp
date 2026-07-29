@@ -161,6 +161,17 @@ inline void MainScene::drawHome(inkcell::Surface& surface, inkcell::Rect frame) 
     row(leftX, yL, colW, "harness", basename(cfg_.harnessPath));
     row(leftX, yL, colW, "system", basename(cfg_.systemPromptPath));
     row(leftX, yL, colW, "persona", basename(cfg_.personaPath));
+    {
+        // Live process CWD (post-chdir). Marker when it differs from the
+        // configured sessionCwd so the operator sees drift between setting
+        // and runtime state.
+        char buf[1024] = {0};
+        std::string live = (::getcwd(buf, sizeof(buf) - 1)) ? buf : "—";
+        if (!model_->sessionCwd.empty() && live != model_->sessionCwd) {
+            live += "  ·cfg≠";
+        }
+        row(leftX, yL, colW, "cwd", live);
+    }
     row(leftX, yL, colW, "turn", live ? "running" : "idle");
 
     if (frame.w >= 70) {
@@ -246,8 +257,11 @@ inline void MainScene::drawSessions(inkcell::Surface& surface, inkcell::Rect fra
                  theme::italic_dim());
     if (frame.h > 1) {
         int liveTurn = model_->running ? 1 : 0;
+        char cwdBuf[1024] = {0};
+        std::string cwdStr = (::getcwd(cwdBuf, sizeof(cwdBuf) - 1)) ? cwdBuf : "—";
         std::string meta = std::string("enter resume · n new · d delete · e export · x kill-live · / search") +
-                            (liveTurn ? std::string("  ·  ● live") : std::string("  ·  ○ idle"));
+                            (liveTurn ? std::string("  ·  ● live") : std::string("  ·  ○ idle")) +
+                            "  ·  cwd " + cwdStr;
         surface.text({frame.x, frame.y + 1},
                      inkcell::text::truncate(meta, frame.w), theme::italic_dim());
     }
