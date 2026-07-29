@@ -29,6 +29,9 @@ struct UiPrefState {
     // How long the pill stays visible after nav activity in zen mode (ms).
     // 0 = never auto-hide (always up while enabled).
     int navPillHideMs = 3000;
+    // Default CWD applied on session create/resume. Empty = process startup CWD.
+    // Inline edit via Settings · CWD (e to edit, ←→ to cycle HOME/process CWD).
+    std::string sessionCwd;
 };
 
 inline UiPrefState& uiPrefShadow() {
@@ -136,6 +139,7 @@ inline void loadUiPrefs() {
     // Clamp known carousel values.
     if (shad.navPillHideMs < 0) shad.navPillHideMs = 0;
     if (shad.navPillHideMs > 60000) shad.navPillHideMs = 60000;
+    shad.sessionCwd = jsonGetString(body, "session_cwd");
 }
 
 // Apply shadow → live model (call after model construct / load).
@@ -149,6 +153,7 @@ inline void applyUiPrefsToModel(Model& model) {
     model.zenMode = s.zenMode;
     model.navPillEnabled = s.navPillEnabled;
     model.navPillHideMs = s.navPillHideMs;
+    model.sessionCwd = s.sessionCwd;
 }
 
 template <typename Model>
@@ -161,6 +166,7 @@ inline void captureUiPrefsFromModel(const Model& model) {
     s.zenMode = model.zenMode;
     s.navPillEnabled = model.navPillEnabled;
     s.navPillHideMs = model.navPillHideMs;
+    s.sessionCwd = model.sessionCwd;
 }
 
 inline void saveUiPrefs() {
@@ -179,7 +185,8 @@ inline void saveUiPrefs() {
         << "  \"chat_field_enabled\": " << (s.chatFieldEnabled ? "true" : "false") << ",\n"
         << "  \"zen_mode\": " << (s.zenMode ? "true" : "false") << ",\n"
         << "  \"nav_pill_enabled\": " << (s.navPillEnabled ? "true" : "false") << ",\n"
-        << "  \"nav_pill_hide_ms\": " << s.navPillHideMs << "\n"
+        << "  \"nav_pill_hide_ms\": " << s.navPillHideMs << ",\n"
+        << "  \"session_cwd\": \"" << s.sessionCwd << "\"\n"
         << "}\n";
 }
 

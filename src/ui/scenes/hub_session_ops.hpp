@@ -87,6 +87,17 @@ inline void MainScene::resumeSelectedSession() {
         model_->dashboard.notice = "agent runtime unavailable";
         return;
     }
+    // Apply session CWD on resume — operator can change CWD setting, hit
+    // resume, and tools in the resumed session inherit the new process CWD.
+    std::string cwd = applySessionCwd();
+    if (!model_->sessionCwd.empty()) {
+        if (cwd.empty()) {
+            model_->dashboard.flashNotice(
+                "cwd · invalid path, resumed in process CWD");
+        } else {
+            model_->dashboard.flashNotice("cwd · " + cwd);
+        }
+    }
     session::SessionManager sessions;
     auto result = model::resumeDashboardSession(
         model_->dashboard, sessions,
@@ -138,6 +149,17 @@ inline void MainScene::createSession() {
     if (!model_->rootAgent) {
         model_->dashboard.notice = "agent runtime unavailable";
         return;
+    }
+    // Apply session CWD before the session is born — every tool it spawns
+    // (exec, fs_*, etc.) inherits the new process CWD.
+    std::string cwd = applySessionCwd();
+    if (!model_->sessionCwd.empty()) {
+        if (cwd.empty()) {
+            model_->dashboard.flashNotice(
+                "cwd · invalid path, session created in " + std::string("process CWD"));
+        } else {
+            model_->dashboard.flashNotice("cwd · " + cwd);
+        }
     }
     session::SessionManager sessions;
     auto result = model::createDashboardSession(

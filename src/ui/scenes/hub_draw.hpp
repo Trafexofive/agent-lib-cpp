@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace cortex::mk3::ui::scenes {
@@ -737,6 +738,26 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
                 ? "NEVER"
                 : (std::to_string(model_->navPillHideMs / 1000) + "S");
         option(9, "PILL HIDE", hide, "←→", true);
+    }
+
+    if (y < frame.bottom()) ++y;
+    section("SESSION");
+    // CWD row — show live value or current process CWD when unset.
+    // Inline edit mode replaces value with the buffer + cursor.
+    {
+        const auto& cwdDash = model_->dashboard;
+        std::string val;
+        if (cwdDash.cwdEditMode) {
+            val = cwdDash.cwdEditBuffer + "█";
+        } else if (!model_->sessionCwd.empty()) {
+            val = model_->sessionCwd;
+        } else {
+            // resolve live process CWD for honest display
+            char buf[1024] = {0};
+            if (getcwd(buf, sizeof(buf) - 1)) val = buf;
+            if (val.empty()) val = "—";
+        }
+        option(10, "CWD", val, cwdDash.cwdEditMode ? "⏎ commit" : "e edit · ←→", false);
     }
 
     // Single footer — path only, no key encyclopedia

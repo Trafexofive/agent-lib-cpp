@@ -116,9 +116,15 @@ struct DashboardState {
 
     // Settings option focus:
     // 0 theme · 1 field · 2 shader · 3 thoughts · 4 truncate · 5 raw · 6 chat field
-    // 7 zen · 8 nav pill · 9 pill hide delay
+    // 7 zen · 8 nav pill · 9 pill hide delay · 10 cwd
     int settingsFocus = 0;
-    static constexpr int settingsOptionCount = 10;
+    static constexpr int settingsOptionCount = 11;
+
+    // Inline edit buffer for CWD setting. Entered via `e` on the CWD row.
+    // Captures next chars; Backspace deletes; Enter commits (~ expanded);
+    // Esc cancels. Mirrors the manifest search-mode pattern.
+    bool cwdEditMode = false;
+    std::string cwdEditBuffer;
 
     // Manifest card swipe (j/k) — curved dual-card transition
     int cardPrevIndex = -1;

@@ -1,6 +1,9 @@
 #pragma once
 // Hub keyboard routing — out-of-line MainScene::on_key.
 
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include "inkcell/key.hpp"
 
 namespace cortex::mk3::ui::scenes {
@@ -49,6 +52,50 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             dash.searchQuery.push_back(static_cast<char>(event.ch));
             dash.refreshManifests();
             bumpNotice();
+            return true;
+        }
+        return true;
+    }
+
+    // ── CWD inline edit mode (Settings · CWD · e) ─────────────────
+    // Mirrors searchMode: char buffer, backspace, enter commits (~ expanded),
+    // esc cancels. Only active when settings page is on the CWD row.
+    if (dash.cwdEditMode) {
+        if (event.code == KeyCode::Escape) {
+            dash.cwdEditMode = false;
+            dash.cwdEditBuffer.clear();
+            bumpNotice();
+            return true;
+        }
+        if (event.code == KeyCode::Enter) {
+            dash.cwdEditMode = false;
+            std::string raw = dash.cwdEditBuffer;
+            dash.cwdEditBuffer.clear();
+            // Empty buffer clears the setting (process CWD).
+            if (raw.empty()) {
+                model_->sessionCwd.clear();
+                dash.flashNotice("cwd · cleared (process default)");
+            } else {
+                std::string resolved = expandHome(raw);
+                // Validate before committing — operator can fix typos without
+                // a surprise chdir to a non-existent path.
+                struct stat st {};
+                if (::stat(resolved.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+                    model_->sessionCwd = resolved;
+                    dash.flashNotice("cwd · " + resolved);
+                } else {
+                    dash.flashNotice("cwd · invalid: " + resolved);
+                }
+            }
+            persistUiPrefs(*model_);
+            return true;
+        }
+        if (event.code == KeyCode::Backspace) {
+            if (!dash.cwdEditBuffer.empty()) dash.cwdEditBuffer.pop_back();
+            return true;
+        }
+        if (event.code == KeyCode::Character && !event.ctrl() && event.ch >= 32) {
+            dash.cwdEditBuffer.push_back(static_cast<char>(event.ch));
             return true;
         }
         return true;
@@ -359,6 +406,13 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                 return true;
             case 'e':
             case 'E':
+                if (dash.section == model::DashboardSection::Settings &&
+                    dash.settingsFocus == 10) {
+                    dash.cwdEditMode = true;
+                    dash.cwdEditBuffer = model_->sessionCwd;
+                    bumpNotice();
+                    return true;
+                }
                 if (dash.section == model::DashboardSection::Sessions)
                     exportSelectedSession();
                 return true;

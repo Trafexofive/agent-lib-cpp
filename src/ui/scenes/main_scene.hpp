@@ -8,8 +8,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include "base_scene.hpp"
@@ -319,6 +321,30 @@ class MainScene final : public BaseScene {
         return slash == std::string::npos ? path : path.substr(slash + 1);
     }
 
+    // Resolve ~ to $HOME on the given path. Empty / already-absolute / no-~
+    // returned unchanged. Invalid $HOME → path returned unchanged.
+    static std::string expandHome(const std::string& path) {
+        if (path.empty() || path[0] != '~') return path;
+        const char* home = std::getenv("HOME");
+        if (!home || !home[0]) return path;
+        if (path.size() == 1) return std::string(home);
+        if (path[1] == '/') return std::string(home) + path.substr(1);
+        return path;
+    }
+
+    // Apply sessionCwd: expand ~, then chdir. Returns resolved absolute path
+    // on success, empty string on failure (path invalid / chdir denied).
+    // Caller is responsible for surfacing a notice with the result.
+    std::string applySessionCwd() {
+        if (model_->sessionCwd.empty()) return std::string();
+        std::string target = expandHome(model_->sessionCwd);
+        if (target.empty()) return std::string();
+        if (::chdir(target.c_str()) != 0) return std::string();
+        char resolved[1024] = {0};
+        if (::getcwd(resolved, sizeof(resolved) - 1)) return resolved;
+        return target;
+    }
+
     void nudgeSetting(int dir) {
         auto& dash = model_->dashboard;
         switch (dash.settingsFocus) {
@@ -380,6 +406,29 @@ class MainScene final : public BaseScene {
                                      ? "pill hide · never"
                                      : ("pill hide · " +
                                         std::to_string(model_->navPillHideMs / 1000) + "s"));
+                break;
+            }
+            case 10: {  // session CWD carousel: empty (process) → HOME → last set value
+                // Minimal cycle. Empty = unset (process CWD). HOME = $HOME.
+                // For an arbitrary path, press `e` to enter inline edit mode.
+                const char* home = std::getenv("HOME");
+                std::string homeStr = home ? home : "";
+                static const std::string kPresets[] = {"", ""};  // placeholder; logic below
+                (void)kPresets;
+                if (model_->sessionCwd.empty()) {
+                    model_->sessionCwd = homeStr;
+                    dash.flashNotice(homeStr.empty() ? "cwd · home (unset)"
+                                                     : "cwd · " + homeStr);
+                } else if (!homeStr.empty() && model_->sessionCwd == homeStr) {
+                    model_->sessionCwd.clear();
+                    dash.flashNotice("cwd · process default");
+                } else {
+                    // Currently custom — cycle resets to home (operator can
+                    // re-edit or press ← again to reach process default).
+                    model_->sessionCwd = homeStr;
+                    dash.flashNotice(homeStr.empty() ? "cwd · home (unset)"
+                                                     : "cwd · " + homeStr);
+                }
                 break;
             }
             default:

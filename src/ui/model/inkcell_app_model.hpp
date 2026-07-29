@@ -98,6 +98,8 @@ struct ShellModel : TimelineStore {
     bool navPillEnabled = true;
     // Auto-hide delay in zen mode (ms). 0 = never auto-hide.
     int navPillHideMs = 3000;
+    // Session CWD applied on create/resume (Settings · CWD). Empty = process CWD.
+    std::string sessionCwd;
     // When true, long block bodies are capped (pi-like truncation) with a
     // "… N more lines" note. Toggle via /truncate or CLI --[no-]truncate.
     bool truncateBodies = true;
