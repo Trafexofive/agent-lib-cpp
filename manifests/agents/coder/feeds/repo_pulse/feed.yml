@@ -3,14 +3,12 @@ name: repo_pulse
 version: "1.0"
 summary: "Branch, HEAD, and dirty pulse for the coding worktree"
 description: |
-  Ambient git pulse injected each turn. Complements built-in working_directory
-  with a compact dirty/branch line so the agent does not re-exec git status.
+  Ambient git pulse. Complements working_directory with branch/dirty/porcelain.
 category: coding
 tags: [git, ambient, coding]
-implementation:
-  runtime: bash
-  entrypoint: poll.sh
-  timeout: 10
+runtime: bash
+entrypoint: poll.sh
+allow_empty: false
 output_schema:
   type: object
   properties:

@@ -7,10 +7,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -585,6 +587,13 @@ class ManifestLoader {
         if (wfList.empty())
             return "";
 
+        // Compact workflow cards by default (name + summary + step spine).
+        // Full step XML drowned parent prompts and duplicated tool guidance.
+        // Set CORTEX_WORKFLOW_FULL=1 to restore legacy full toXml dumps.
+        const bool fullXml = []() {
+            const char* e = std::getenv("CORTEX_WORKFLOW_FULL");
+            return e && e[0] && std::string(e) != "0" && std::string(e) != "false";
+        }();
         std::ostringstream ss;
         for (auto& wfName : wfList) {
             fs::path wfPath = fs::path(manifestPath).parent_path() / wfName;
@@ -595,9 +604,36 @@ class ManifestLoader {
                     continue;
             }
             auto& wf = workflows::WorkflowEngine::instance().load(wfPath.string());
-            if (wf.isValid()) {
-                ss << workflows::WorkflowEngine::instance().toXml(wf.manifest());
+            if (!wf.isValid())
+                continue;
+            const auto& m = wf.manifest();
+            if (fullXml) {
+                ss << workflows::WorkflowEngine::instance().toXml(m);
+                continue;
             }
+            ss << "<workflow name=\"" << m.name << "\" version=\"" << m.version << "\">\n";
+            if (!m.summary.empty())
+                ss << "  <summary>" << m.summary << "</summary>\n";
+            ss << "  <step_count>" << m.steps.size() << "</step_count>\n";
+            if (!m.steps.empty()) {
+                ss << "  <spine>";
+                for (size_t i = 0; i < m.steps.size(); ++i) {
+                    if (i)
+                        ss << " → ";
+                    const auto& st = m.steps[i];
+                    ss << st.id;
+                    if (!st.type.empty())
+                        ss << "(" << st.type;
+                    if (!st.tool.empty())
+                        ss << ":" << st.tool;
+                    else if (!st.agent.empty())
+                        ss << ":" << st.agent;
+                    if (!st.type.empty())
+                        ss << ")";
+                }
+                ss << "</spine>\n";
+            }
+            ss << "</workflow>\n";
         }
         return ss.str();
     }
@@ -812,6 +848,9 @@ class ManifestLoader {
         auto root = ManifestYaml::parse(yaml);
         s.name = ManifestYaml::get(root, "name");
         s.description = ManifestYaml::get(root, "description");
+        // PE: many tools put the skill text in description; some only have summary.
+        if (s.description.empty())
+            s.description = ManifestYaml::get(root, "summary");
 
         // Parse input/output schemas as JSON strings
         auto* inputNode = ManifestYaml::find(root, "input_schema");

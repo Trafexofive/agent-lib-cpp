@@ -5,10 +5,14 @@ summary: "Remove a pinned file from agent context"
 category: context
 tags: [context, unpin, release, memory]
 
-description: "See input_schema for parameters"
-  Removes a previously pinned file from the agent's persistent context.
-  The file content will no longer appear in future iterations.
+description: |
+  Release a sticky pin so the file leaves future system context.
 
+  WHEN: after the task no longer needs a pinned spine file, or context is tight.
+  WHY: reclaim tokens; prevent stale pins from lying about current code.
+  HOW: pass the same path used in context_pin.
+  ANTI: unpin is not required for peeks (they auto-evict). Don't unpin mid-reasoning if you still need the contract.
+  TURN ECONOMY: free; call when done with a pin.
 input_schema:
   type: object
   required: [path]

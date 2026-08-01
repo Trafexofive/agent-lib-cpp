@@ -3,9 +3,13 @@ name: json
 version: "2.0"
 summary: "Parse, query, validate, and inspect JSON"
 description: |
-  Works with JSON strings or already-structured JSON values. Supports dot paths
-  and JSON Pointer paths. Use for deterministic JSON inspection instead of ad-hoc
-  shell parsing.
+  Deterministic JSON parse/query/validate/pretty/minify.
+
+  WHEN: structured data transforms instead of ad-hoc shell/python one-liners.
+  WHY: reliable paths (dot/pointer); less prompt noise than exec.
+  HOW: op + data; use path/query for extraction.
+  ANTI: not for arbitrary code execution; not for huge blobs without need.
+  TURN ECONOMY: prefer json over exec python -c for simple queries.
 category: data
 tags: [json, parse, query, validate]
 input_schema:

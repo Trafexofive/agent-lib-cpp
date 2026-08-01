@@ -3,9 +3,13 @@ name: sleep
 version: "1.0"
 summary: "Pause execution for a bounded duration"
 description: |
-  Sleeps for a requested duration. Use for explicit wait/backoff steps, polling
-  loops, or rate-sensitive workflows. The tool is bounded by max_ms and returns
-  requested/elapsed timing.
+  Bounded wait/backoff.
+
+  WHEN: explicit polling delay or rate-limit backoff between attempts.
+  WHY: controlled sleep with max_ms ceiling.
+  HOW: pass duration/ms/seconds; keep short.
+  ANTI: never as a substitute for fixing a failed command; no long sleeps to "think."
+  TURN ECONOMY: rare; prefer event-driven retries with evidence.
 category: runtime
 tags: [sleep, wait, delay, backoff, polling]
 input_schema:

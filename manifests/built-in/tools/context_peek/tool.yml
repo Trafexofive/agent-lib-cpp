@@ -5,12 +5,14 @@ summary: "Peek at a file in context for N cycles, then auto-evict"
 category: context
 tags: [context, peek, ephemeral, temporary]
 
-description: "See input_schema for parameters"
-  Reads a file into the agent's context for a limited number of cycles.
-  After N cycles, the content is automatically removed from context.
-  Use for: one-off file reads, inspecting outputs, checking intermediate state.
-  Prevents context bloat from stale file reads — the file doesn't linger forever.
+description: |
+  Ephemeral file truth: inject a file into context for N cycles, then auto-evict.
 
+  WHEN: one-off or short-lived reads (headers, logs, dumps, intermediate outputs) you may need for a few turns without sticky bloat.
+  WHY: best lever for high sources-of-truth with low context cost — content dies when TTL expires.
+  HOW: batch multiple peeks in the same generation when you know the paths; set cycles deliberately (1 default for single-shot, 2–3 for a short edit loop). Prefer over context_pin for anything not needed for the whole session.
+  ANTI: do not peek giant binaries; do not use as a substitute for grep when you only need a symbol hit; do not pin and peek the same file.
+  TURN ECONOMY: path is required; batch peeks same turn; avoid one-file-per-turn thrash.
 input_schema:
   type: object
   required: [path]

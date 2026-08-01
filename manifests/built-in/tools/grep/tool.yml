@@ -3,10 +3,13 @@ name: grep
 version: "2.0"
 summary: "Search files with regex or literal matching and structured results"
 description: |
-  Searches a file or directory recursively using native C++ matching. Supports
-  regex or literal search, case-insensitive search, filename glob filtering,
-  bounded max_matches, and context lines. Returns structured match items plus
-  grep-style output.
+  Content search (regex or literal) with structured matches.
+
+  WHEN: find symbols, strings, call sites, TODOs before opening files.
+  WHY: narrows candidate set so fs_read/peek stay targeted.
+  HOW: set path+glob when known; use literal=true for plain strings; bound max_matches; then read only hot hits.
+  ANTI: not a replacement for list (layout) or exec rg with exotic flags unless needed; don't dump unbounded matches into context — tighten pattern.
+  TURN ECONOMY: grep → selective fs_read/peek in the same or next turn; never grep then ignore results.
 category: filesystem
 tags: [grep, search, find, regex]
 input_schema:

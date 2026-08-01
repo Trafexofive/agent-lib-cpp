@@ -3,9 +3,13 @@ name: fs_read
 version: "2.0"
 summary: "Read files with line numbers or intake directory trees"
 description: |
-  Reads a file or directory. File reads include line numbers by default so follow-up
-  edits can target exact ranges. Directory reads return a bounded tree; set
-  include_content=true to intake matching file contents with line numbers.
+  One-shot read of a file (line numbers) or bounded directory intake.
+
+  WHEN: you need the actual body now for edit/reasoning; offset/limit for slices.
+  WHY: precise line targets for fs_write; better than exec cat.
+  HOW: read only the range you need; for multi-turn visibility of the same file prefer context_peek; for permanent spine prefer pin sparingly.
+  ANTI: don't re-read the same full file every turn (peek/pin); don't use for search (grep first).
+  TURN ECONOMY: batch independent reads in one generation when paths are known.
 category: filesystem
 tags: [read, file, directory, line-numbers, context]
 input_schema:

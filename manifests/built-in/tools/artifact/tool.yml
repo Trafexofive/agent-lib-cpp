@@ -3,10 +3,13 @@ name: artifact
 version: "1.0"
 summary: "Project-local versioned artifact store"
 description: |
-  Stores durable artifacts in the current project under .cortex/artifacts.
-  Artifacts are namespace/key addressed and versioned automatically. Use this for
-  plans, reports, tool outputs, generated files, and handoff records that should
-  survive session compaction/reload without requiring a relic service.
+  Project-local versioned artifact store under .cortex/artifacts.
+
+  WHEN: durable plans, reports, handoffs that must survive compaction — not ephemeral peeks.
+  WHY: out-of-context persistence without a relic service.
+  HOW: op put/get/list/search/delete with namespace+key; versioned automatically.
+  ANTI: not a replacement for fs_write of production code; not for huge binaries.
+  TURN ECONOMY: store summaries/plans once; don't dump full tool logs every turn.
 category: storage
 tags: [artifact, storage, persistence, handoff]
 input_schema:

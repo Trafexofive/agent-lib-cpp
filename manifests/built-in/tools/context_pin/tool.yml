@@ -5,12 +5,14 @@ summary: "Pin a file into persistent agent context"
 category: context
 tags: [context, pin, retain, memory]
 
-description: "See input_schema for parameters"
-  Reads a file and pins it into the agent's persistent context.
-  The file content appears in EVERY future iteration until explicitly unpinned.
-  Use for: configuration files, API schemas, reference docs, project structure.
-  Overuse bloats context — pin only what the agent consistently needs.
+description: |
+  Sticky file truth: keep a file in context every turn until unpinned.
 
+  WHEN: durable spine docs you will reference across many turns (API schema, core header, agent contract).
+  WHY: avoids re-reading the same load-bearing file; expensive if overused.
+  HOW: pin only small/medium files that define contracts; unpin when the task moves on.
+  ANTI: never pin huge logs, build outputs, or one-off dumps — use context_peek. Never pin "just in case."
+  TURN ECONOMY: prefer peek with TTL; pin budget should stay tiny (usually 0–3 files).
 input_schema:
   type: object
   required: [path]

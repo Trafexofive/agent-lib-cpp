@@ -3,9 +3,13 @@ name: web_fetch
 version: "2.0"
 summary: "Fetch HTTP(S) resources with bounded output"
 description: |
-  Performs HTTP(S) requests with method/header support, timeouts, redirect limit,
-  and max_bytes response bounding. Use for small deterministic fetches, not broad
-  web research.
+  Bounded HTTP(S) fetch for small deterministic resources.
+
+  WHEN: external docs/API samples the repo does not contain.
+  WHY: controlled size/timeout vs raw curl sprawl.
+  HOW: set url; bound max_bytes; prefer GET; treat non-2xx as failure evidence.
+  ANTI: not broad web research; not a substitute for local sources of truth; don't fetch huge pages into context.
+  TURN ECONOMY: only when local read/grep failed; summarize, don't re-emit entire HTML in finals.
 category: network
 tags: [http, fetch, web, curl]
 input_schema:

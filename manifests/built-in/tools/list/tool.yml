@@ -3,9 +3,13 @@ name: list
 version: "2.0"
 summary: "List files and directories with structured entries"
 description: |
-  Lists a file or directory using native filesystem traversal. Returns both a
-  human-readable results string and structured entries. Supports recursion,
-  filename glob filtering, type filtering, relative paths, and max_entries.
+  Directory/file listing with structured entries (layout, not content).
+
+  WHEN: discover shape of a tree, confirm a path exists, choose what to grep/read next.
+  WHY: cheaper and safer than exec ls/find; structured results.
+  HOW: start non-recursive; add pattern/glob and recursive only when needed; respect max_entries.
+  ANTI: not for reading file bodies (fs_read/peek); not for content search (grep). Don't recursive-list huge monorepos unfiltered.
+  TURN ECONOMY: one well-scoped list beats many blind lists; then grep/read.
 category: filesystem
 tags: [list, ls, files, directory]
 input_schema:

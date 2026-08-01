@@ -1,42 +1,26 @@
 kind: Workflow
 version: "1.0"
 name: fix-failure
-summary: "Localize failure → minimal patch → re-verify"
+summary: "Localize failure evidence (parent patches after)"
 description: |
-  Recovery spine after prove fails. One hypothesis, one patch, re-prove.
-  Avoid shotgun edits.
+  Recovery scout only. Parent applies the patch — never re-enter coder here.
 steps:
   - id: capture
     type: tool
-    name: "Current diff stat"
+    name: "Diff stat"
     tool: git_diff
     params: {stat: true}
     on_error: skip
 
   - id: localize
     type: agent
-    name: "Reader localizes error"
+    name: "Reader localizes"
     agent: reader
     params:
-      instruction: "Localize failure for task ${input.task}. Error/log: ${input.error}. Return file:line hypotheses."
-    on_error: skip
-
-  - id: patch
-    type: agent
-    name: "Parent patches"
-    agent: coder
-    params:
-      instruction: "One root-cause patch for: ${input.task}. Evidence: ${localize.output}. Diff: ${capture.output}"
-    on_error: abort
-
-  - id: reverify
-    type: tool
-    name: "Re-verify"
-    tool: project_test
-    params: {}
+      instruction: "Localize failure for task ${input.task}. Error/log: ${input.error}. Return file:line hypotheses only."
     on_error: skip
 
 import:
   agents: [reader]
-  tools: [git_diff, project_test]
+  tools: [git_diff]
 tags: [coder, recovery]

@@ -1,34 +1,26 @@
 kind: Agent
 name: coder
-version: "1.0"
+version: "1.0.1"
 summary: Daily-driver implementation agent — evidence in, smallest verified change out.
 description: |
-  Production coding module for Cortex-Prime MK3. Owns the write path.
-  Specialists (discovery, reader, tester, reviewer) are sensors and gates.
-  Local tools wrap common git/verify probes. Workflows codify high-ROI loops.
+  Production coding module. Owns writes. Specialists: discovery, reader, tester, reviewer.
+  Local tools: git_status, git_diff, project_test, build_detect. Feed: repo_pulse.
 category: agent
 tags: [agent, launchable, prod, coding, daily-driver]
 
 cognitive_engine:
   primary:
-    # Swap freely for cost/quality — structure does not depend on one vendor.
-    provider: deepseek
-    model: deepseek-v4-pro
-    # provider: opencode
-    # model: deepseek-v4-flash-free
-    # provider: openai-codex
-    # model: gpt-5.5
-    # provider: xai
-    # model: grok-4.5
+    provider: x-ai
+    model: grok-4.5
     parameters:
-      temperature: 0.35
+      temperature: 0.55
       max_tokens: 65536
-  fallback:
-    provider: deepseek
-    model: deepseek-v4-flash
-    parameters:
-      temperature: 0.25
-      max_tokens: 65536
+  # fallback:
+  #   provider: nvidia
+  #   model: minimax-m3
+  #   parameters:
+  #     temperature: 0.25
+  #     max_tokens: 65536
 
 context:
   harness: ../../harness/default.md
@@ -41,13 +33,11 @@ prompt_building:
     usage_examples: false
 
 runtime:
-  max_iterations: 24
-  history_cap: 100
+  max_iterations: 124
+  history_cap: 200
   mode: normal
   subagents:
     persistence: session
-  # dev_mode: true
-  # CORTEX_DEV_MODE=1 for dumps without editing this file
 
 import:
   tools:
@@ -59,6 +49,7 @@ import:
     - json
     - ask_tool
     - web_fetch
+    - context_peek
     - ./tools/git_status/tool.yml
     - ./tools/git_diff/tool.yml
     - ./tools/project_test/tool.yml
@@ -76,11 +67,4 @@ import:
     - ./workflows/fix-failure.yml
     - ./workflows/map-area.yml
     - ./workflows/review-diff.yml
-  # files: mounts for docker sandbox + future context inject
-  files:
-    - ./skills/evidence-first/SKILL.md
-    - ./skills/smallest-diff/SKILL.md
-    - ./skills/verify-before-final/SKILL.md
-    - ./skills/match-local-style/SKILL.md
-    - ./prompts/final-report.md
   env: []

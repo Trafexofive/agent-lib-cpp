@@ -1,9 +1,9 @@
 kind: Workflow
 version: "1.0"
 name: review-diff
-summary: "Diff awareness → reviewer risk pass (no write)"
+summary: "Diff → reviewer risk pass (no write)"
 description: |
-  Gate spine before final on multi-file or risky changes.
+  Gate spine. No parent re-entry.
 steps:
   - id: stat
     type: tool
@@ -24,7 +24,7 @@ steps:
     name: "Reviewer"
     agent: reviewer
     params:
-      instruction: "Severity-tagged risk pass on current diff. Stat: ${stat.output}. Patch: ${patch.output}"
+      instruction: "Severity-tagged risk pass. Stat: ${stat.output}. Patch: ${patch.output}"
     on_error: skip
 
 import:

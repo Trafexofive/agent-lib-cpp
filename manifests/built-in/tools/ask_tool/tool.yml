@@ -1,22 +1,13 @@
 kind: Tool
 name: ask_tool
 version: "1.0"
-summary: >
-  Ask the user one or more structured questions. The call blocks until the user
-  answers or cancels (empty input or EOF). Returns a map of card IDs to user
-  responses under "results". Use this when you lack information needed to
-  complete the user's request — for example, when a request is ambiguous, when
-  you need confirmation before a destructive action, or when the user explicitly
-  asks you to gather structured input. Do NOT use ask_tool for small talk or to
-  ask questions you could answer without user input. If you can respond directly
-  without asking, do that instead. After receiving results, process them and
-  continue — do NOT re-ask the same question. Each card collects one piece of
-  information. Cards are presented to the user one at a time in order. The user
-  types their answer and presses Enter. Empty answers stop the card chain and
-  the remaining cards are skipped with empty values. The "success" field is true
-  if at least the first card was answered, false if the user cancelled
-  immediately. Multiple cards can be chained — for example, first ask a
-  clarification, then ask for confirmation based on that answer.
+summary: "Blocking structured user questions (cards); returns results map"
+description: |
+  WHEN: material ambiguity, destructive confirmation, or operator-requested structured input.
+  WHY: one sharp question beats wrong assumptions or interview spam.
+  HOW: specific title; message with why; minimal cards; process results and continue — do not re-ask the same thing.
+  ANTI: not small talk; not questions tools can answer; not multi-card interrogations when one choice suffices.
+  TURN ECONOMY: at most one ask chain when blocked; otherwise act.
 
 runtime: builtin
 

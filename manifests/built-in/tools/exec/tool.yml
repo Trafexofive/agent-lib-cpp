@@ -3,10 +3,13 @@ name: exec
 version: "3.0"
 summary: "Run shell commands or direct argv processes with bounded I/O"
 description: |
-  Production process runner. Supports shell mode (`/bin/sh -c command`) and
-  direct argv mode (`shell:false`, `argv:[...]`). Captures stdout/stderr
-  separately, supports stdin/env/cwd, enforces timeout, kills the child process
-  group on timeout, and bounds captured output.
+  Bounded process runner (shell or argv) with stdout/stderr caps and timeout.
+
+  WHEN: build/test/git/toolchain operations that no named tool covers.
+  WHY: full power, but easy to misuse and expensive in tokens/time.
+  HOW: prefer argv when no shell features needed; set cwd/timeout; read exit_code and stderr on failure; quote commands clearly.
+  ANTI: do NOT use for list/grep/cat/write when list/grep/fs_read/fs_write exist. Don't run unbounded find/rg without caps. No destructive git unless ordered.
+  TURN ECONOMY: last resort among tools; one purposeful command > fishing expeditions.
 category: runtime
 tags: [exec, shell, command, process, argv]
 input_schema:

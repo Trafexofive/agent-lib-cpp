@@ -3,9 +3,13 @@ name: fs_write
 version: "2.0"
 summary: "Atomic file writer with line-aware edit operations and diff output"
 description: |
-  Writes and edits files atomically. Supports whole-file write/append/prepend,
-  exact text replacement, line-range replacement/deletion, and line insertion.
-  Returns a bounded diff with line numbers so changes can be reviewed like a patch.
+  Atomic create/edit with ops (write/append/replace/line ops) and diff output.
+
+  WHEN: applying the smallest correct change you already planned from evidence.
+  WHY: structured edit + diff beats shell redirection; safer atomicity.
+  HOW: read (or peek) before write; prefer line/range ops over whole-file rewrites when possible; review returned diff.
+  ANTI: don't write without inspect; don't use for git commits; don't shotgun multi-file rewrites without verify plan.
+  TURN ECONOMY: one logical change cluster per write batch; then verify (exec/project_test), don't write-write-write blind.
 category: filesystem
 tags: [write, edit, patch, atomic, line-range]
 

@@ -7,6 +7,7 @@
 #include "manifest_loader.hpp"
 
 #include <filesystem>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -74,16 +75,25 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
           "type=\"tool\">. "
           "Prefer declared JSON params; if a tool declares text input, small "
           "scalar attrs plus a "
-          "text body are allowed.</description>\n";
+          "text body are allowed. Prefer named tools over exec when both "
+          "fit. Read each tool description for WHEN/ANTI/turn economy."
+          "</description>\n";
     auto schemaIt = env_.find("__TOOL_SCHEMAS__");
     bool hasSchemas = (schemaIt != env_.end() && !schemaIt->second.empty());
+    // Dedup by tool name (set) — string find on the schema blob was fragile
+    // and still allowed duplicate git_status / path-tool blocks.
+    std::set<std::string> emittedTools;
     if (hasSchemas) {
         ss << schemaIt->second << "\n";
+        // Record names already emitted in the schema blob.
+        for (const auto &[name, tool] : tools_) {
+            const std::string needle = "name=\"" + name + "\"";
+            if (schemaIt->second.find(needle) != std::string::npos)
+                emittedTools.insert(name);
+        }
     }
     for (const auto &[name, tool] : tools_) {
-        // Only emit tools NOT already covered by manifest-loaded schemas.
-        if (hasSchemas &&
-            schemaIt->second.find("name=\"" + name + "\"") != std::string::npos)
+        if (emittedTools.count(name))
             continue;
 
         // Session-restored script tools keep scriptPath but historically lost
@@ -106,6 +116,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
                     {recovered}, 8, rc.inputSchemas, rc.returnSchemas,
                     rc.usageExamples);
                 emittedRecoveredSchema = true;
+                emittedTools.insert(name);
                 break;
             }
         }
@@ -117,10 +128,11 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
             tool.description() != "See input_schema for parameters")
             ss << " desc=\"" << xmlAttr(tool.description()) << "\"";
         ss << ">\n";
-        ss << "\n            <params unavailable=\"true\">schema not loaded; "
+        ss << "            <params unavailable=\"true\">schema not loaded; "
               "do not guess required "
               "JSON keys</params>\n";
         ss << "        </tool>\n";
+        emittedTools.insert(name);
     }
     ss << "    </tools>\n";
 
@@ -146,57 +158,34 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     }
 
     if (!subAgents_.empty()) {
+        // Slim cards: name + summary only. Nested child tool lists re-paid the
+        // full tool taxonomy inside the parent prompt (major bloat / dup source).
         ss << "    <sub_agents>\n"
-              "        <description>Delegatable agents callable with <action "
-              "type=\"agent\" "
-              "name=\"AGENT_NAME\" id=\"a1\" mode=\"sync\" "
-              "ephemeral=\"true|false\" "
-              "dump_context=\"true|false\">plain text instruction</action>. "
-              "Inputs and outputs are plain text unless the sub-agent says "
-              "otherwise. "
-              "Default result contains only the sub-agent final response. Set "
-              "dump_context=\"true\" "
-              "only when you explicitly need its prompts/runtime "
-              "trace.</description>\n";
+              "        <description>Delegatable agents: <action type=\"agent\" "
+              "name=\"AGENT\" id=\"a1\" mode=\"sync\">instruction</action>. "
+              "Default result = sub-agent final only. dump_context=true only "
+              "when you need its trace. Do not re-list their tools here — "
+              "they own their surface.</description>\n";
         for (const auto &[name, agent] : subAgents_) {
             const auto &cfg = agent->config();
             ss << "        <sub_agent name=\"" << xmlAttr(name) << "\"";
-            if (!cfg.version.empty())
-                ss << " version=\"" << xmlAttr(cfg.version) << "\"";
             if (!cfg.summary.empty())
                 ss << " summary=\"" << xmlAttr(cfg.summary) << "\"";
-            if (!cfg.provider.empty())
-                ss << " provider=\"" << xmlAttr(cfg.provider) << "\"";
+            // Keep model hint short for routing cost awareness; drop
+            // version/manifest_dir noise from the hot prompt.
             if (!cfg.model.empty())
                 ss << " model=\"" << xmlAttr(cfg.model) << "\"";
-            if (!cfg.manifestDir.empty())
-                ss << " manifest_dir=\"" << xmlAttr(cfg.manifestDir) << "\"";
-            ss << ">\n";
-
-            auto names = agent->toolNames();
-            if (!names.empty()) {
-                ss << "            <tools>\n";
-                for (const auto &toolName : names) {
-                    const auto *tool = agent->findTool(toolName);
-                    ss << "                <tool name=\"" << xmlAttr(toolName)
-                       << "\"";
-                    if (tool && !tool->description().empty() &&
-                        tool->description() !=
-                            "See input_schema for parameters")
-                        ss << " desc=\"" << xmlAttr(tool->description())
-                           << "\"";
-                    ss << "/>\n";
-                }
-                ss << "            </tools>\n";
-            }
-            ss << "        </sub_agent>\n";
+            ss << "/>\n";
         }
         ss << "    </sub_agents>\n";
     }
 
     auto wfIt = env_.find("__WORKFLOW_XML__");
     if (wfIt != env_.end() && !wfIt->second.empty()) {
-        ss << "    <workflows>\n";
+        ss << "    <workflows>\n"
+              "        <description>Codified spines (guidance). Prefer as "
+              "rails; adapt. Full step bodies omitted unless "
+              "CORTEX_WORKFLOW_FULL=1.</description>\n";
         ss << indentText(wfIt->second, 8) << "\n";
         ss << "    </workflows>\n";
     }
