@@ -256,6 +256,8 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             if (up) {
                 if (dash.section == model::DashboardSection::Sessions) dash.moveSession(-1);
                 else if (dash.section == model::DashboardSection::Manifests ||
+                         dash.section == model::DashboardSection::Tools ||
+                         dash.section == model::DashboardSection::Relics ||
                          dash.section == model::DashboardSection::Workflows)
                     dash.moveManifest(-1);
                 return true;
@@ -263,6 +265,8 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             if (down) {
                 if (dash.section == model::DashboardSection::Sessions) dash.moveSession(1);
                 else if (dash.section == model::DashboardSection::Manifests ||
+                         dash.section == model::DashboardSection::Tools ||
+                         dash.section == model::DashboardSection::Relics ||
                          dash.section == model::DashboardSection::Workflows)
                     dash.moveManifest(1);
                 return true;
@@ -367,8 +371,13 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             case 'W':
                 // Workflows hub page (canvas lives here, not on manifest cards).
                 dash.select(model::DashboardSection::Workflows);
-                dash.manifestFilter = "workflow";
-                dash.refreshManifests();
+                model_->launchError.clear();
+                bumpNotice();
+                return true;
+            case 'l':
+            case 'L':
+                // Relics hub page (pill key · l for reLic — avoids clobbering R=refresh).
+                dash.select(model::DashboardSection::Relics);
                 model_->launchError.clear();
                 bumpNotice();
                 return true;
@@ -391,14 +400,14 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                 }
                 return true;
             case 't':
+                // Sessions: retitle (legacy). Elsewhere: Tools pill page.
                 if (dash.section == model::DashboardSection::Sessions) {
                     retitleSelectedSession();
                     return true;
                 }
-                if (dash.section == model::DashboardSection::Manifests) {
-                    dash.cycleTagFilter();
-                    bumpNotice();
-                }
+                dash.select(model::DashboardSection::Tools);
+                model_->launchError.clear();
+                bumpNotice();
                 return true;
             case '?':
                 dash.select(model::DashboardSection::Settings);

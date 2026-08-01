@@ -57,6 +57,8 @@ inline void MainScene::drawContent(inkcell::Surface& surface, inkcell::Rect fram
         case model::DashboardSection::Home: drawHome(surface, frame); break;
         case model::DashboardSection::Sessions: drawSessions(surface, frame); break;
         case model::DashboardSection::Manifests: drawManifests(surface, frame); break;
+        case model::DashboardSection::Tools: drawTools(surface, frame); break;
+        case model::DashboardSection::Relics: drawRelics(surface, frame); break;
         case model::DashboardSection::Workflows: drawWorkflows(surface, frame); break;
         case model::DashboardSection::Settings: drawSettings(surface, frame); break;
     }
@@ -758,6 +760,181 @@ inline void MainScene::drawManifests(inkcell::Surface& surface, inkcell::Rect fr
 }
 
 // AAA options: j/k focus · h/l or enter cycle · no redundant dumps
+// Shared list+card registry for Tools / Relics pill pages.
+inline void MainScene::drawKindRegistry(inkcell::Surface& surface, inkcell::Rect frame,
+                                        const char* kind, const char* title,
+                                        const char* legend) const {
+    auto& dash = model_->dashboard;
+    sectionHead(surface, frame, title, legend);
+
+    int y = frame.y + 4;
+    // Ensure facet matches kind so dash.manifests is the right list.
+    // (select path sets filter; redraw is read-only — filter is set on enter.)
+    std::vector<const catalog::ManifestEntry*> items;
+    for (const auto& m : dash.manifests)
+        if (m.kind == kind) items.push_back(&m);
+    if (items.empty()) {
+        // Full discovery fallback if facet cache empty
+        auto all = catalog::discoverManifests(dash.manifestDir);
+        for (const auto& m : all)
+            if (m.kind == kind) items.push_back(&m);
+    }
+
+    if (items.empty()) {
+        surface.text({frame.x, y},
+                     std::string("No ") + kind + " manifests found.", theme::amber());
+        return;
+    }
+
+    int sel = std::max(0, std::min(dash.manifestIndex, (int)items.size() - 1));
+    // Prefer path match against selectedManifest when kinds align
+    if (const auto* cur = dash.selectedManifest()) {
+        if (cur->kind == kind) {
+            for (int i = 0; i < (int)items.size(); ++i)
+                if (items[static_cast<size_t>(i)]->path == cur->path) {
+                    sel = i;
+                    break;
+                }
+        }
+    }
+
+    auto L = layout::manifestLayoutFor(frame.w);
+    int listW = L.listW;
+    int listBottom = frame.bottom();
+    const bool floatingCard = !L.showDetail && frame.h >= 14;
+    if (floatingCard) listBottom = frame.bottom() - std::min(12, frame.h / 3);
+
+    int visible = std::max(1, listBottom - y);
+    int start = std::max(0, std::min(sel - visible / 3,
+                                     std::max(0, (int)items.size() - visible)));
+
+    for (int i = start; i < (int)items.size() && y < listBottom; ++i) {
+        const auto& m = *items[static_cast<size_t>(i)];
+        bool selected = (i == sel);
+        components::drawCardRow(surface, {frame.x, y, listW, 1}, selected, false);
+        components::kindChip(surface, frame.x + 2, y, m.kind, selected);
+        std::string name = std::string(selected ? "› " : "  ") + m.name;
+        if (selected) name += "  ↵ open";
+        // Meta chips on the right of the name when room
+        std::string extra;
+        if (m.kind == "tool" && !m.runtime.empty()) extra = m.runtime;
+        if (m.kind == "relic" && !m.endpoints.empty())
+            extra = std::to_string(m.endpoints.size()) + " ep";
+        int nameCol = frame.x + 8;
+        int nameBudget = listW - 10;
+        if (!extra.empty() && nameBudget > 20) {
+            int ew = inkcell::text::display_width(extra) + 1;
+            nameBudget = std::max(8, nameBudget - ew);
+            surface.text({nameCol + nameBudget + 1, y},
+                         inkcell::text::truncate(extra, ew), theme::dim());
+        }
+        surface.text({nameCol, y},
+                     inkcell::text::truncate(name, nameBudget),
+                     selected ? theme::bright() : theme::text());
+        ++y;
+    }
+
+    // Detail card — reuse paint path via a temporary Manifests-style body.
+    inkcell::Rect det;
+    if (L.showDetail)
+        det = {frame.x + L.detailX, frame.y + 4, L.detailW, frame.h - 5};
+    else if (floatingCard)
+        det = {frame.x, listBottom, frame.w, frame.bottom() - listBottom};
+    else
+        return;
+
+    surface.fill(det, " ", theme::panel_bg());
+    if (sel < 0 || sel >= (int)items.size()) return;
+    const auto& m = *items[static_cast<size_t>(sel)];
+
+    int dy = det.y + 1;
+    int ix = det.x + 1;
+    int iw = det.w - 2;
+    if (iw < 8 || dy >= det.bottom()) return;
+
+    std::string ttl = m.name;
+    if (!m.version.empty()) ttl += "  v" + m.version;
+    surface.text({ix, dy++}, inkcell::text::truncate(ttl, iw), theme::bright());
+    if (dy >= det.bottom()) return;
+
+    std::string meta = std::string(assets::kindLabel(m.kind)) + " · " + m.category;
+    if (m.builtin) meta += " · builtin";
+    surface.text({ix, dy++}, inkcell::text::truncate(meta, iw), theme::kindAccent(m.kind, true));
+
+    if (!m.summary.empty() && dy < det.bottom() - 6) {
+        for (const auto& line : chat::wrapWordsLossless(m.summary, iw)) {
+            if (dy >= det.bottom() - 6) break;
+            surface.text({ix, dy++}, line, theme::text());
+        }
+    }
+    if (dy < det.bottom()) ++dy;
+
+    if (m.kind == "tool") {
+        if (dy < det.bottom() && !m.runtime.empty())
+            components::fieldLine(surface, ix, dy++, iw, "runtime", m.runtime);
+        if (dy < det.bottom() && !m.entrypoint.empty())
+            components::fieldLine(surface, ix, dy++, iw, "entry", m.entrypoint);
+        if (dy < det.bottom() && !m.description.empty() && m.description != m.summary) {
+            std::string pe = m.description;
+            auto nl = pe.find('\n');
+            if (nl != std::string::npos) pe = pe.substr(0, nl);
+            if (pe.size() > 100) pe = pe.substr(0, 97) + "…";
+            if (dy < det.bottom())
+                surface.text({ix, dy++}, inkcell::text::truncate(pe, iw), theme::text());
+        }
+    } else if (m.kind == "relic") {
+        if (dy < det.bottom()) {
+            char buf[24];
+            std::snprintf(buf, sizeof(buf), "%zu", m.endpoints.size());
+            components::fieldLine(surface, ix, dy++, iw, "endpoints", buf);
+        }
+        for (size_t i = 0; i < m.endpoints.size() && dy < det.bottom() - 2; ++i)
+            surface.text({ix, dy++},
+                         inkcell::text::truncate(std::string("  · ") + m.endpoints[i], iw),
+                         theme::text());
+        if (m.endpoints.empty() && dy < det.bottom())
+            surface.text({ix, dy++}, "no endpoints in manifest", theme::italic_dim());
+    }
+
+    if (dy < det.bottom() && !m.relPath.empty())
+        components::fieldLine(surface, ix, dy++, iw, "rel", m.relPath);
+
+    if (dy < det.bottom()) {
+        ++dy;
+        if (dy < det.bottom()) {
+            std::string all;
+            for (const auto& t : m.tags) {
+                if (!all.empty()) all += "  ";
+                all += "#" + t;
+            }
+            surface.text({ix, dy++}, "TAGS", theme::violet_soft());
+            for (const auto& line : chat::wrapWordsLossless(all.empty() ? "—" : all, iw)) {
+                if (dy >= det.bottom() - 1) break;
+                auto tagSt = theme::italic();
+                tagSt.fg = theme::violet_soft().fg;
+                surface.text({ix, dy++}, line, tagSt);
+            }
+        }
+    }
+    if (dy < det.bottom()) {
+        ++dy;
+        if (dy < det.bottom())
+            surface.text({ix, dy},
+                         m.kind == "tool" ? "↵ open tool page" : "↵ open relic page",
+                         theme::green_soft());
+    }
+}
+
+inline void MainScene::drawTools(inkcell::Surface& surface, inkcell::Rect frame) const {
+    drawKindRegistry(surface, frame, "tool", "Tools",
+                     "j/k select · ↵ open tool page · a all manifests · / search");
+}
+
+inline void MainScene::drawRelics(inkcell::Surface& surface, inkcell::Rect frame) const {
+    drawKindRegistry(surface, frame, "relic", "Relics",
+                     "j/k select · ↵ open relic page · a all manifests");
+}
+
 // Dedicated Workflows hub page — list + live canvas stage (not jammed into cards).
 inline void MainScene::drawWorkflows(inkcell::Surface& surface, inkcell::Rect frame) const {
     auto& dash = model_->dashboard;

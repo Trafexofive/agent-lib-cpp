@@ -126,6 +126,31 @@ inline void MainScene::activate() {
         dash.flashNotice(m->kind + " · " + m->category + " · inspect only");
         return;
     }
+    if (dash.section == model::DashboardSection::Tools) {
+        const auto* m = dash.selectedManifest();
+        if (m && m->kind == "tool") {
+            model_->activeToolManifestPath = m->path;
+            model_->activeToolName = m->name;
+            model_->requestRoute(PendingRoute::Tool);
+            dash.flashNotice("tool · " + m->name);
+            return;
+        }
+        dash.flashNotice("no tool selected");
+        return;
+    }
+    if (dash.section == model::DashboardSection::Relics) {
+        const auto* m = dash.selectedManifest();
+        if (m && m->kind == "relic") {
+            model_->activeRelicManifestPath = m->path;
+            model_->activeRelicName = m->name;
+            queueRelicRun(*m);
+            model_->requestRoute(PendingRoute::Relic);
+            dash.flashNotice("relic · " + m->name);
+            return;
+        }
+        dash.flashNotice("no relic selected");
+        return;
+    }
     if (dash.section == model::DashboardSection::Workflows) {
         // On Workflows page, Enter runs the focused workflow (page is the stage).
         const auto* m = dash.selectedManifest();

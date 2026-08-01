@@ -18,13 +18,15 @@
 
 namespace cortex::mk3::ui::model {
 
-// Pill order: Home · Sessions · Manifests · Workflows · Settings
+// Pill order: Home · Sessions · Manifests · Tools · Relics · Workflows · Settings
 enum class DashboardSection {
     Home = 0,
     Sessions = 1,
     Manifests = 2,
-    Workflows = 3,  // dedicated workflow page (canvas lives here, not on cards)
-    Settings = 4
+    Tools = 3,      // tool registry list → ↵ tool page
+    Relics = 4,     // relic registry list → ↵ relic page
+    Workflows = 5,  // canvas + run (not jammed into cards)
+    Settings = 6
 };
 // Alias — older call sites / muscle memory
 constexpr DashboardSection Help = DashboardSection::Settings;
@@ -82,7 +84,7 @@ struct DashboardState {
     int navAnimDir = 1;
     int64_t navAnimStartMs = 0;
     static constexpr int navAnimDurationMs = 280;
-    static constexpr int sectionCount = 5;
+    static constexpr int sectionCount = 7;
 
     // Floating pill visibility (zen auto-hide + master enable live on ShellModel).
     // lastNavActivityMs bumped on section change / dock focus / nav binds.
@@ -211,6 +213,30 @@ struct DashboardState {
 
     void syncSection() { section = static_cast<DashboardSection>(navigationIndex); }
 
+    // Kind-scoped hub pages keep the manifest list filtered to that kind so
+    // j/k + ↵ share the same index space as Manifests.
+    void applySectionFacet() {
+        switch (section) {
+            case DashboardSection::Tools:
+                manifestFilter = "tool";
+                break;
+            case DashboardSection::Relics:
+                manifestFilter = "relic";
+                break;
+            case DashboardSection::Workflows:
+                manifestFilter = "workflow";
+                break;
+            case DashboardSection::Manifests:
+                // Leave filter alone — operator may have set 1-9 / f.
+                break;
+            default:
+                break;
+        }
+        if (section == DashboardSection::Tools || section == DashboardSection::Relics ||
+            section == DashboardSection::Workflows)
+            refreshManifests();
+    }
+
     void moveNavigation(int delta) {
         int from = navigationIndex;
         int next = navigationIndex + delta;
@@ -220,6 +246,7 @@ struct DashboardState {
         beginNavAnim(from, delta >= 0 ? 1 : -1);
         navigationIndex = next;
         syncSection();
+        applySectionFacet();
         bumpNavActivity();
     }
 
@@ -261,6 +288,7 @@ struct DashboardState {
         section = next;
         navigationIndex = idx;
         focus = DashboardFocus::Content;
+        applySectionFacet();
         bumpNavActivity();
     }
 
@@ -463,6 +491,8 @@ inline const char* dashboardSectionName(DashboardSection section) {
         case DashboardSection::Home: return "Home";
         case DashboardSection::Sessions: return "Sessions";
         case DashboardSection::Manifests: return "Manifests";
+        case DashboardSection::Tools: return "Tools";
+        case DashboardSection::Relics: return "Relics";
         case DashboardSection::Workflows: return "Workflows";
         case DashboardSection::Settings: return "Settings";
     }

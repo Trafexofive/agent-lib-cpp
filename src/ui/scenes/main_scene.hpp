@@ -176,6 +176,8 @@ class MainScene final : public BaseScene {
                 {"g", "Home"},
                 {"s", "Sessions"},
                 {"a", "Manifests"},
+                {"t", "Tools"},
+                {"l", "Relics"},
                 {"w", "Workflows"},
                 {"?", "Settings"},
             };
@@ -214,8 +216,13 @@ class MainScene final : public BaseScene {
     void drawHome(inkcell::Surface& surface, inkcell::Rect frame) const;
     void drawSessions(inkcell::Surface& surface, inkcell::Rect frame) const;
     void drawManifests(inkcell::Surface& surface, inkcell::Rect frame) const;
+    void drawTools(inkcell::Surface& surface, inkcell::Rect frame) const;
+    void drawRelics(inkcell::Surface& surface, inkcell::Rect frame) const;
     void drawWorkflows(inkcell::Surface& surface, inkcell::Rect frame) const;
     void drawSettings(inkcell::Surface& surface, inkcell::Rect frame) const;
+    // Shared kind-list helper for Tools / Relics hub pages.
+    void drawKindRegistry(inkcell::Surface& surface, inkcell::Rect frame, const char* kind,
+                          const char* title, const char* legend) const;
     void drawWorkflowStage(inkcell::Surface& surface, inkcell::Rect frame,
                            const catalog::ManifestEntry& m, float tsec) const;
 
@@ -231,9 +238,18 @@ class MainScene final : public BaseScene {
             dash.select(model::DashboardSection::Manifests);
             dash.refreshManifests();
             model_->launchError.clear();
+        } else if (id == "nav.tools") {
+            dash.select(model::DashboardSection::Tools);
+            dash.manifestFilter = "tool";
+            dash.refreshManifests();
+            model_->launchError.clear();
+        } else if (id == "nav.relics") {
+            dash.select(model::DashboardSection::Relics);
+            dash.manifestFilter = "relic";
+            dash.refreshManifests();
+            model_->launchError.clear();
         } else if (id == "nav.workflows") {
             dash.select(model::DashboardSection::Workflows);
-            dash.refreshManifests();
             dash.manifestFilter = "workflow";
             dash.refreshManifests();
             model_->launchError.clear();

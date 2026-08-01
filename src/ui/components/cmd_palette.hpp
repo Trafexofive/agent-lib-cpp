@@ -198,6 +198,8 @@ inline std::vector<CmdItem> hubCommands() {
         {"nav.home", "Home", "operator overview", "NAV", "g"},
         {"nav.sessions", "Sessions", "resume · create · delete", "NAV", "s"},
         {"nav.manifests", "Manifests", "registry · launch agents", "NAV", "a"},
+        {"nav.tools", "Tools", "tool registry · open page", "NAV", "t"},
+        {"nav.relics", "Relics", "relic registry · open page", "NAV", "l"},
         {"nav.workflows", "Workflows", "canvas · run · stop", "NAV", "w"},
         {"nav.settings", "Settings", "theme · shaders · keys", "NAV", "?"},
         {"act.shader", "Next shader", "cycle field background", "ACTION", "S"},
