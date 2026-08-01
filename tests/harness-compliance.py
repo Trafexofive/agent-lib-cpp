@@ -11,7 +11,7 @@ Checks whether models emit correct XML protocol tags when given a harness prompt
 
 Usage:
   python3 tests/harness-compliance.py                          # all models, default harness
-  python3 tests/harness-compliance.py --harness config/harness/default.mini.md
+  python3 tests/harness-compliance.py --harness manifests/harness/default.md
   python3 tests/harness-compliance.py --model llama-4-scout     # single model
   python3 tests/harness-compliance.py --all-harnesses           # test every harness variant
   python3 tests/harness-compliance.py --json                    # machine-readable output
@@ -31,8 +31,9 @@ except ImportError:
     sys.exit(1)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]  # agent-lib-MK3/
-HARNESS_DIR = PROJECT_ROOT / "config" / "harness"
-SYSTEM_PROMPT_TEMPLATE = PROJECT_ROOT / "config" / "harness" / "system-prompt-template.txt"
+# Harnesses live under manifests/ (global surface). Legacy config/harness/ is gone.
+HARNESS_DIR = PROJECT_ROOT / "manifests" / "harness"
+SYSTEM_PROMPT_TEMPLATE = PROJECT_ROOT / "manifests" / "harness" / "system-prompt-template.txt"
 
 # ─── Model definitions ───────────────────────────────────────────────────
 
@@ -299,7 +300,7 @@ def main():
     ap.add_argument("--harness", type=Path, default=None,
                     help="Single harness file to test (default: default.md)")
     ap.add_argument("--all-harnesses", action="store_true",
-                    help="Test all harness variants in config/harness/")
+                    help="Test all harness variants in manifests/harness/")
     ap.add_argument("--model", action="append", dest="models",
                     help="Model key to test (repeatable). Default: all Groq models.")
     ap.add_argument("--all-models", action="store_true",

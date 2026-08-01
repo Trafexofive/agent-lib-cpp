@@ -437,11 +437,16 @@ class ManifestLoader {
             } else {
                 // Bare name (incl. legacy "builtin/exec" prefix) → built-in tool.
                 std::string bareName = stripBuiltinPrefix(name);
+                // Ensure backend registry is populated before grant. Agent ctor
+                // already calls this, but loadTools can run in other paths.
+                tools::registerDefaults();
                 auto schema = loadBuiltinToolSchema(bareName);
                 if (!schema.name.empty()) {
                     schemas.push_back(schema);
-                    // If the backend registry has an executable Tool, grant that
-                    // object directly so dispatch goes through the sovereign Tool.
+                    // Prefer the executable Tool from the registry so dispatch
+                    // has a real callback. Schema-only grants (no cb) are a
+                    // last resort — Agent::dispatchTool also falls back to
+                    // tools::dispatch for those.
                     const tools::Tool* reg = tools::ToolRegistry::instance().findTool(bareName);
                     if (reg) {
                         agent.addTool(*reg);
@@ -451,11 +456,13 @@ class ManifestLoader {
                         td.description = schema.description;
                         td.inputType = schema.inputType.empty() ? "json" : schema.inputType;
                         td.textParam = schema.textParam;
+                        td.isNative = true;
                         agent.addTool(tools::Tool(td));
                     }
                 } else {
                     ToolDef td;
                     td.name = bareName;
+                    td.isNative = true;
                     agent.addTool(tools::Tool(td));
                 }
             }

@@ -199,9 +199,12 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
         return executeScriptTool(it->second, normalized.params);
     }
 
-    // Native tools: execute through the sovereign Tool object.
-    if (it != tools_.end()) {
-        std::string raw = it->second.execute(normalized.params);
+    // Native tools: prefer the agent-local Tool if it is executable (has a
+    // callback). Manifest import sometimes grants a schema-only ToolDef
+    // (isNative=true, no cb) when registry lookup failed at load time — in
+    // that case fall through to tools::dispatch which hits ToolRegistry
+    // (registerDefaults). tools_ still gates permission above.
+    auto parseToolJson = [](const std::string& raw) -> Json::Value {
         Json::Value parsed;
         Json::CharReaderBuilder reader;
         std::string errs;
@@ -212,6 +215,27 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
         fallback["success"] = true;
         fallback["output"] = raw;
         return fallback;
+    };
+
+    if (it != tools_.end()) {
+        // For natives without a local callback, do NOT call execute() — it
+        // returns "No callback registered". Route through ToolRegistry.
+        const tools::Tool& local = it->second;
+        if (local.isNative() && !local.isValid()) {
+            std::string raw = tools::dispatch(normalized.name, normalized.params);
+            return parseToolJson(raw);
+        }
+        std::string raw = local.execute(normalized.params);
+        // Recover if local execute still reports missing callback.
+        if (raw.find("No callback registered for native tool") != std::string::npos) {
+            raw = tools::dispatch(normalized.name, normalized.params);
+        }
+        return parseToolJson(raw);
+    }
+
+    // Not in tools_ map (should have been gated earlier) — last-chance registry.
+    if (tools::ToolRegistry::instance().has(normalized.name)) {
+        return parseToolJson(tools::dispatch(normalized.name, normalized.params));
     }
 
     Json::Value err;

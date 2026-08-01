@@ -58,6 +58,8 @@ class ToolScene final : public BaseScene {
             params_ = defaultsFromSchema(tool_);
             formFocus_ = 0;
             loadedPath_ = model_->activeToolManifestPath;
+            // Fresh tool page — don't show the previous tool's last run.
+            model_->lastToolRun = ShellModel::ToolRunRecord{};
         }
         model_->status = "ready";
         model_->dashboard.notice = "tool · " + tool_.name + " · ↵ run · e edit · m hub";

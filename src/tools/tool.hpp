@@ -102,9 +102,11 @@ class Tool {
         return def_;
     }
 
-    /// Whether the tool has been fully initialized
+    /// Whether the tool has been fully initialized (has a way to run).
+    /// Streaming-only natives (streamingCb_ set, cb_ null) are valid.
     bool isValid() const noexcept {
-        return !def_.name.empty() && (cb_ != nullptr || !def_.scriptPath.empty());
+        return !def_.name.empty() &&
+               (cb_ != nullptr || streamingCb_ != nullptr || !def_.scriptPath.empty());
     }
 
     /// Whether this tool has a registered callback (ready to execute)
