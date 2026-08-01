@@ -57,6 +57,8 @@ struct ChatSurfaceModel {
     TranscriptWrapCache* transcriptCache = nullptr;
     std::string input;
     int inputCursor = 0;
+    int inputScrollRow = 0;   // first visible logical/wrapped row in multi-line prompt
+    int inputMaxRows = 8;     // hard cap for grow-with-content prompt box
     std::string hint;
     std::string agentName;  // real agent display name for the assistant label (replaces CORTEX)
     std::string scopeName;  // drilled-in subagent name (empty at root) for header/status scope indicator
@@ -218,61 +220,168 @@ inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const C
     bar.draw(surface, barRow);
 }
 
-inline void drawPromptLine(inkcell::Surface& surface, inkcell::Rect row, const ChatSurfaceModel& m) {
-    // Elevated prompt surface. Input always wins over any status copy.
+// Soft-wrap helper for the multi-line prompt box. Logical \n lines first,
+// then hard-wrap by display width so long lines don't clip into oblivion.
+inline std::vector<std::string> promptDisplayLines(const std::string& input, int maxW) {
+    if (maxW < 1) maxW = 1;
+    std::vector<std::string> out;
+    auto logical = inkcell::text::split_lines(input);
+    if (logical.empty()) logical.push_back({});
+    for (const auto& ln : logical) {
+        if (ln.empty()) {
+            out.push_back({});
+            continue;
+        }
+        // Greedy codepoint wrap by display width (no word-break heroics).
+        std::string cur;
+        size_t i = 0;
+        while (i < ln.size()) {
+            size_t len = 1;
+            while (i + len < ln.size() &&
+                   (static_cast<unsigned char>(ln[i + len]) & 0xc0) == 0x80)
+                ++len;
+            std::string cp = ln.substr(i, len);
+            if (!cur.empty() &&
+                inkcell::text::display_width(cur) + inkcell::text::display_width(cp) > maxW) {
+                out.push_back(cur);
+                cur.clear();
+            }
+            cur += cp;
+            i += len;
+        }
+        out.push_back(cur);
+    }
+    if (out.empty()) out.push_back({});
+    return out;
+}
+
+// Map a byte cursor in `input` onto a display-row index under the same wrap
+// rules as promptDisplayLines. Used for scroll + cursor paint.
+inline int promptCursorDisplayRow(const std::string& input, int cursor, int maxW) {
+    if (maxW < 1) maxW = 1;
+    cursor = std::max(0, std::min(cursor, static_cast<int>(input.size())));
+    // Prefix up to cursor, then count display rows of that prefix. If cursor
+    // sits on a trailing newline, split_lines yields an extra empty line —
+    // which is the row we want.
+    std::string prefix = input.substr(0, static_cast<size_t>(cursor));
+    auto rows = promptDisplayLines(prefix, maxW);
+    int row = static_cast<int>(rows.size()) - 1;
+    if (row < 0) row = 0;
+    // If prefix ends with \n, last row is empty and correct. If not, still last.
+    return row;
+}
+
+// Height of the grow-with-content prompt box (1..inputMaxRows).
+inline int promptBoxHeight(const ChatSurfaceModel& m, int frameW) {
+    const int maxW = std::max(1, frameW - 4);  // accent + gutter
+    if (m.input.empty()) return 1;
+    auto rows = promptDisplayLines(m.input, maxW);
+    int n = static_cast<int>(rows.size());
+    int cap = std::max(1, m.inputMaxRows);
+    if (n < 1) n = 1;
+    if (n > cap) n = cap;
+    return n;
+}
+
+inline void drawPromptBox(inkcell::Surface& surface, inkcell::Rect box, const ChatSurfaceModel& m) {
+    // Multi-line elevated prompt (pi-style). Grows with content up to box.h.
+    // Single-row footer was the usability killer: newlines existed in state but
+    // painted as one flattened horizontal scrap.
+    if (box.w <= 0 || box.h <= 0) return;
     const bool focusBar = m.inputFocused;
     auto bg = focusBar ? theme::footer_bg_focus() : theme::footer_bg();
-    surface.fill(row, " ", bg);
+    surface.fill(box, " ", bg);
 
     auto accent = m.running  ? theme::footer_accent_live()
                   : focusBar ? theme::footer_accent_focus()
                              : theme::footer_accent_idle();
-    surface.text({row.x, row.y}, "▌", accent);
-
     auto textSt = focusBar ? theme::footer_bright() : theme::footer_dim();
-    const std::string glyph = focusBar ? "› " : "  ";
+    auto dim = theme::footer_dim();
+    const int maxW = std::max(1, box.w - 4);
 
-    // Empty idle placeholder — disappears on first key / while running.
-    // Pi-parity key contract shown once; help overlay owns the full map.
+    // Left accent bar on every prompt row.
+    for (int r = 0; r < box.h; ++r)
+        surface.text({box.x, box.y + r}, "▌", accent);
+
     if (m.input.empty() && !m.running && focusBar) {
-        auto dim = theme::footer_dim();
-        surface.text({row.x + 2, row.y},
+        surface.text({box.x + 2, box.y},
                      inkcell::text::truncate(
-                         glyph + "type to run  ·  ↵ send  ·  ⇧↵ newline  ·  / commands  ·  ? help",
-                         std::max(1, row.w - 4)),
+                         "› type to run  ·  ↵ send  ·  ⇧↵ newline  ·  / commands  ·  ? help",
+                         maxW),
                      dim);
         return;
     }
 
-    std::string body = m.input;
+    auto lines = promptDisplayLines(m.input, maxW);
+    int scroll = std::max(0, m.inputScrollRow);
+    if (scroll > static_cast<int>(lines.size()) - 1)
+        scroll = std::max(0, static_cast<int>(lines.size()) - 1);
+
+    // Cursor location in display rows + column within that row.
+    const int cursor = std::max(0, std::min(m.inputCursor, static_cast<int>(m.input.size())));
+    const int cursorRow = promptCursorDisplayRow(m.input, cursor, maxW);
+    // Column: re-wrap the logical line that contains the cursor and measure.
+    int cursorCol = 0;
+    {
+        // Find byte offset of start of the display-row's content by replaying wrap
+        // on the full prefix — simpler: width of last display line of prefix.
+        std::string prefix = m.input.substr(0, static_cast<size_t>(cursor));
+        auto prefRows = promptDisplayLines(prefix, maxW);
+        if (!prefRows.empty())
+            cursorCol = inkcell::text::display_width(prefRows.back());
+    }
     const bool showCursor = cursorVisible(m.nowMs, focusBar);
-    if (focusBar) {
-        int cursor = std::max(0, std::min(m.inputCursor, static_cast<int>(body.size())));
-        if (showCursor)
-            body.insert(static_cast<size_t>(cursor), "█");
-        else if (cursor >= static_cast<int>(body.size()))
-            body.push_back(' ');  // keep layout stable on blink-off at EOL
-        else
-            body.insert(static_cast<size_t>(cursor), " ");
-    }
 
-    // Keep the cursor end in view for long input (simple tail window).
-    int maxW = std::max(1, row.w - 4);
-    std::string shown = glyph + body;
-    if (inkcell::text::display_width(shown) > maxW) {
-        // Drop from the left of body until it fits, then mark with ellipsis.
-        std::string tail = body;
-        while (!tail.empty() && inkcell::text::display_width(glyph + "…" + tail) > maxW) {
-            size_t len = 1;
-            while (len < tail.size() &&
-                   (static_cast<unsigned char>(tail[len]) & 0xc0) == 0x80)
-                ++len;
-            tail.erase(0, len);
+    for (int r = 0; r < box.h; ++r) {
+        int li = scroll + r;
+        std::string line = (li >= 0 && li < static_cast<int>(lines.size()))
+                               ? lines[static_cast<size_t>(li)]
+                               : std::string();
+        // First visible row gets the › glyph; continuation rows indent to align.
+        const char* g = (r == 0 && focusBar) ? "› " : "  ";
+        std::string shown = std::string(g) + line;
+
+        if (focusBar && showCursor && li == cursorRow) {
+            // Paint block cursor by inserting █ at display column in the raw line,
+            // then re-prefix glyph. Approximate: insert at byte pos matching col.
+            std::string withCur = line;
+            // Walk display width to byte offset.
+            int col = 0;
+            size_t bi = 0;
+            while (bi < withCur.size() && col < cursorCol) {
+                size_t len = 1;
+                while (bi + len < withCur.size() &&
+                       (static_cast<unsigned char>(withCur[bi + len]) & 0xc0) == 0x80)
+                    ++len;
+                col += inkcell::text::display_width(withCur.substr(bi, len));
+                bi += len;
+            }
+            withCur.insert(bi, "█");
+            shown = std::string(g) + withCur;
+        } else if (focusBar && !showCursor && li == cursorRow &&
+                   cursor >= static_cast<int>(m.input.size()) &&
+                   r == box.h - 1) {
+            shown.push_back(' ');  // layout stable at EOL blink-off
         }
-        shown = glyph + "…" + tail;
+
+        surface.text({box.x + 2, box.y + r},
+                     inkcell::text::truncate(shown, maxW + 2),
+                     textSt);
     }
 
-    surface.text({row.x + 2, row.y}, inkcell::text::truncate(shown, maxW), textSt);
+    // Scroll affordance when content exceeds box height.
+    if (static_cast<int>(lines.size()) > box.h) {
+        auto mark = theme::footer_dim();
+        if (scroll > 0)
+            surface.text({box.x + box.w - 1, box.y}, "▴", mark);
+        if (scroll + box.h < static_cast<int>(lines.size()))
+            surface.text({box.x + box.w - 1, box.y + box.h - 1}, "▾", mark);
+    }
+}
+
+// Back-compat name used by older call sites.
+inline void drawPromptLine(inkcell::Surface& surface, inkcell::Rect row, const ChatSurfaceModel& m) {
+    drawPromptBox(surface, row, m);
 }
 
 inline void drawHeader(inkcell::Surface& surface, inkcell::Rect frame, const ChatSurfaceModel& m) {
@@ -1050,8 +1159,9 @@ inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, cons
     if (frame.w <= 0 || frame.h <= 0) return;
     // One flat page, no nested boxes. Leave the app-level page inset to caller.
     drawHeader(surface, frame, m);
-    int promptY = frame.bottom() - 1;
-    int statusY = frame.bottom() - 2;
+    const int promptH = std::max(1, promptBoxHeight(m, frame.w));
+    const int promptY = frame.bottom() - promptH;
+    const int statusY = promptY - 1;
     int menuH = completionMenuHeight(m, frame.w);
     int menuY = statusY - menuH;
     // No separator rule — elevated footer is the visual break.
@@ -1061,7 +1171,7 @@ inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, cons
     if (menuH > 0)
         drawCompletionMenu(surface, {frame.x, menuY, frame.w, menuH}, m);
     drawStatusLine(surface, {frame.x, statusY, frame.w, 1}, m);
-    drawPromptLine(surface, {frame.x, promptY, frame.w, 1}, m);
+    drawPromptBox(surface, {frame.x, promptY, frame.w, promptH}, m);
 }
 
 }  // namespace cortex::mk3::ui::chat

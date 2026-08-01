@@ -300,13 +300,30 @@ class AgentScene final : public BaseScene {
             completeSlashCommand(/*reverse=*/true);
             return true;
         }
+        // Multi-line prompt: Up/Down navigate logical lines inside the composer
+        // when there is more than one line; only edge lines fall through to
+        // prompt history (pi-like). Single-line keeps history on every Up/Down.
         if (event.code == KeyCode::ArrowUp) {
             model_->clearTabCompletion();
+            auto [line, col] = model_->composer.cursor_line_col();
+            (void)col;
+            auto ls = model_->composer.lines();
+            if (ls.size() > 1 && line > 0) {
+                model_->composer.handle_key(event);
+                return true;
+            }
             model_->historyPrevious();
             return true;
         }
         if (event.code == KeyCode::ArrowDown) {
             model_->clearTabCompletion();
+            auto [line, col] = model_->composer.cursor_line_col();
+            (void)col;
+            auto ls = model_->composer.lines();
+            if (ls.size() > 1 && line + 1 < static_cast<int>(ls.size())) {
+                model_->composer.handle_key(event);
+                return true;
+            }
             model_->historyNext();
             return true;
         }
@@ -326,8 +343,9 @@ class AgentScene final : public BaseScene {
             model_->submitComposer();
             return true;
         }
-        // PageUp/PageDown scroll the transcript without leaving the composer,
-        // so you can peek at history while typing. Home/End jump to top/bottom.
+        // PageUp/PageDown scroll the transcript without leaving the composer.
+        // Home/End are LINE motions in the multi-line prompt (TextArea),
+        // not transcript jumps — that was part of the unusable one-row UX.
         if (event.code == KeyCode::PageUp) {
             model_->transcriptView.scroll_by(-std::max(1, model_->transcriptView.viewport_h / 2));
             return true;
@@ -336,13 +354,9 @@ class AgentScene final : public BaseScene {
             model_->transcriptView.scroll_by(std::max(1, model_->transcriptView.viewport_h / 2));
             return true;
         }
-        if (event.code == KeyCode::Home) {
-            model_->transcriptView.scroll_to_start();
-            return true;
-        }
-        if (event.code == KeyCode::End) {
-            model_->transcriptView.scroll_to_end();
-            return true;
+        if (event.code == KeyCode::Home || event.code == KeyCode::End) {
+            model_->clearTabCompletion();
+            return model_->composer.handle_key(event);
         }
         // Any normal edit invalidates the tab-cycle stem (readline behavior).
         if (event.code != KeyCode::Tab && event.code != KeyCode::BackTab)
@@ -398,6 +412,13 @@ class AgentScene final : public BaseScene {
         vm.transcriptCache = &model_->transcriptWrapCache;
         vm.input = model_->composer.value;
         vm.inputCursor = model_->composer.cursor;
+        vm.inputMaxRows = 8;
+        // Keep composer scroll so the cursor line stays visible in the box.
+        {
+            const int promptH = chat::promptBoxHeight(vm, p.w);
+            model_->composer.ensure_cursor_visible(promptH);
+            vm.inputScrollRow = model_->composer.scroll_row;
+        }
         // Classification/palette keys off the assistant label text. In a nested
         // sub-agent scope that label is the CHILD name — use it here too so
         // blocks get the same cyan/kind backgrounds as the parent chat.
@@ -418,9 +439,11 @@ class AgentScene final : public BaseScene {
         model_->notificationStack.tick();
         vm.notifications = &model_->notificationStack;
 
-        // Reserve transcript height for completion menu + footer only.
+        // Reserve transcript for header(2) + status(1) + multi-line prompt + menu.
         int menuH = chat::completionMenuHeight(vm, p.w);
-        model_->transcriptView.viewport_h = std::max(1, p.h - 6 - menuH);
+        const int promptH = chat::promptBoxHeight(vm, p.w);
+        model_->transcriptView.viewport_h =
+            std::max(1, p.h - 2 /*header*/ - 1 /*status*/ - promptH - menuH - 1 /*pad*/);
         if (model_->transcriptView.stick_bottom) model_->transcriptView.scroll_to_end();
         else model_->transcriptView.clamp();
 
