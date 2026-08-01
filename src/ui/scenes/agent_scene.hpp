@@ -310,8 +310,18 @@ class AgentScene final : public BaseScene {
             model_->historyNext();
             return true;
         }
+        // Pi-style composer contract:
+        //   Enter           → submit (or run /command)
+        //   Shift+Enter     → newline
+        //   Ctrl+Enter      → newline (Windows Terminal / fallback)
+        // Requires inkcell keyboard_enhance (CSI-u / modifyOtherKeys) so
+        // modified Enter is distinguishable from bare CR.
         if (event.code == KeyCode::Enter) {
             model_->clearTabCompletion();
+            if (event.shift() || event.ctrl()) {
+                // Newline path — TextArea inserts '\n' on Enter.
+                return model_->composer.handle_key(event);
+            }
             if (runSlashCommand()) return true;
             model_->submitComposer();
             return true;

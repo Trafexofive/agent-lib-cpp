@@ -233,11 +233,13 @@ inline void drawPromptLine(inkcell::Surface& surface, inkcell::Rect row, const C
     const std::string glyph = focusBar ? "› " : "  ";
 
     // Empty idle placeholder — disappears on first key / while running.
+    // Pi-parity key contract shown once; help overlay owns the full map.
     if (m.input.empty() && !m.running && focusBar) {
         auto dim = theme::footer_dim();
         surface.text({row.x + 2, row.y},
-                     inkcell::text::truncate(glyph + "type to run  ·  / commands  ·  ? help",
-                                             std::max(1, row.w - 4)),
+                     inkcell::text::truncate(
+                         glyph + "type to run  ·  ↵ send  ·  ⇧↵ newline  ·  / commands  ·  ? help",
+                         std::max(1, row.w - 4)),
                      dim);
         return;
     }
