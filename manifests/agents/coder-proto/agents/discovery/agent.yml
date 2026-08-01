@@ -1,0 +1,45 @@
+kind: Agent
+name: discovery
+version: "1.1"
+summary: Read-mostly area mapper — structure, conventions, risk, open questions.
+
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: deepseek-v4-flash-free
+    parameters:
+      temperature: 0.4
+      max_tokens: 32768
+  fallback:
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.3
+      max_tokens: 32768
+
+context:
+  harness: ../../../harness/default.md
+  system: ./system.md
+  persona: ./persona.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  max_iterations: 20
+  history_cap: 60
+  mode: normal
+
+import:
+  tools:
+    - list
+    - grep
+    - fs_read
+    - exec
+    - context_peek
+  feeds:
+    - working_directory
+  agents: []
+  env: []
