@@ -176,6 +176,7 @@ class MainScene final : public BaseScene {
                 {"g", "Home"},
                 {"s", "Sessions"},
                 {"a", "Manifests"},
+                {"w", "Workflows"},
                 {"?", "Settings"},
             };
             const int restBottomY = page.bottom() - 1;
@@ -213,6 +214,7 @@ class MainScene final : public BaseScene {
     void drawHome(inkcell::Surface& surface, inkcell::Rect frame) const;
     void drawSessions(inkcell::Surface& surface, inkcell::Rect frame) const;
     void drawManifests(inkcell::Surface& surface, inkcell::Rect frame) const;
+    void drawWorkflows(inkcell::Surface& surface, inkcell::Rect frame) const;
     void drawSettings(inkcell::Surface& surface, inkcell::Rect frame) const;
     void drawWorkflowStage(inkcell::Surface& surface, inkcell::Rect frame,
                            const catalog::ManifestEntry& m, float tsec) const;
@@ -227,6 +229,12 @@ class MainScene final : public BaseScene {
             model_->launchError.clear();
         } else if (id == "nav.manifests") {
             dash.select(model::DashboardSection::Manifests);
+            dash.refreshManifests();
+            model_->launchError.clear();
+        } else if (id == "nav.workflows") {
+            dash.select(model::DashboardSection::Workflows);
+            dash.refreshManifests();
+            dash.manifestFilter = "workflow";
             dash.refreshManifests();
             model_->launchError.clear();
         } else if (id == "nav.help" || id == "nav.settings") {

@@ -7,10 +7,12 @@ namespace cortex::mk3::ui {
 
 enum class PendingRoute {
     None = 0,
-    Agent,  // open chat / agent scene
-    Tool,   // open dedicated tool scene (full UX: input form + streaming output + history)
-    Main,   // dashboard / hub
-    Quit,   // app.quit
+    Agent,     // open chat / agent scene
+    Tool,      // dedicated tool page
+    Relic,     // dedicated relic page
+    Workflow,  // dedicated workflow page (canvas + run)
+    Main,      // dashboard / hub
+    Quit,      // app.quit
 };
 
 inline const char* pendingRouteAction(PendingRoute r) {
@@ -19,6 +21,10 @@ inline const char* pendingRouteAction(PendingRoute r) {
             return "scene.agent";
         case PendingRoute::Tool:
             return "scene.tool";
+        case PendingRoute::Relic:
+            return "scene.relic";
+        case PendingRoute::Workflow:
+            return "scene.workflow";
         case PendingRoute::Main:
             return "scene.main";
         case PendingRoute::Quit:
@@ -40,6 +46,10 @@ inline const char* pendingRouteName(PendingRoute r) {
             return "agent";
         case PendingRoute::Tool:
             return "tool";
+        case PendingRoute::Relic:
+            return "relic";
+        case PendingRoute::Workflow:
+            return "workflow";
         case PendingRoute::Main:
             return "main";
         case PendingRoute::Quit:
@@ -53,6 +63,8 @@ inline const char* pendingRouteName(PendingRoute r) {
 inline PendingRoute pendingRouteFromName(const std::string& s) {
     if (s == "agent") return PendingRoute::Agent;
     if (s == "tool") return PendingRoute::Tool;
+    if (s == "relic") return PendingRoute::Relic;
+    if (s == "workflow") return PendingRoute::Workflow;
     if (s == "main") return PendingRoute::Main;
     if (s == "quit") return PendingRoute::Quit;
     return PendingRoute::None;

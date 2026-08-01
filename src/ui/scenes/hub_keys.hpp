@@ -255,13 +255,15 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
         } else {
             if (up) {
                 if (dash.section == model::DashboardSection::Sessions) dash.moveSession(-1);
-                else if (dash.section == model::DashboardSection::Manifests)
+                else if (dash.section == model::DashboardSection::Manifests ||
+                         dash.section == model::DashboardSection::Workflows)
                     dash.moveManifest(-1);
                 return true;
             }
             if (down) {
                 if (dash.section == model::DashboardSection::Sessions) dash.moveSession(1);
-                else if (dash.section == model::DashboardSection::Manifests)
+                else if (dash.section == model::DashboardSection::Manifests ||
+                         dash.section == model::DashboardSection::Workflows)
                     dash.moveManifest(1);
                 return true;
             }
@@ -357,6 +359,15 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             case 'm':
             case 'M':
                 dash.select(model::DashboardSection::Manifests);
+                dash.refreshManifests();
+                model_->launchError.clear();
+                bumpNotice();
+                return true;
+            case 'w':
+            case 'W':
+                // Workflows hub page (canvas lives here, not on manifest cards).
+                dash.select(model::DashboardSection::Workflows);
+                dash.manifestFilter = "workflow";
                 dash.refreshManifests();
                 model_->launchError.clear();
                 bumpNotice();

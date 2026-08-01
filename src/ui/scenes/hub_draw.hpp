@@ -57,6 +57,7 @@ inline void MainScene::drawContent(inkcell::Surface& surface, inkcell::Rect fram
         case model::DashboardSection::Home: drawHome(surface, frame); break;
         case model::DashboardSection::Sessions: drawSessions(surface, frame); break;
         case model::DashboardSection::Manifests: drawManifests(surface, frame); break;
+        case model::DashboardSection::Workflows: drawWorkflows(surface, frame); break;
         case model::DashboardSection::Settings: drawSettings(surface, frame); break;
     }
 }
@@ -388,11 +389,11 @@ inline void MainScene::drawManifests(inkcell::Surface& surface, inkcell::Rect fr
     } else if (focused->kind == "agent") {
         legend = fmt("agent", "· ↵ launch · c clone");
     } else if (focused->kind == "workflow") {
-        legend = fmt("workflow", "· ↵ run · z canvas · x stop · r resume");
+        legend = fmt("workflow", "· ↵ open workflow page");
     } else if (focused->kind == "tool") {
-        legend = fmt("tool", "· ↵ open page");
+        legend = fmt("tool", "· ↵ open tool page");
     } else if (focused->kind == "relic") {
-        legend = fmt("relic", "· ↵ inspect endpoints");
+        legend = fmt("relic", "· ↵ open relic page");
     } else if (focused->kind == "feed") {
         legend = fmt("feed", "· ↵ inspect");
     } else if (focused->kind == "harness" || focused->kind == "prompt" || focused->kind == "skill") {
@@ -403,16 +404,6 @@ inline void MainScene::drawManifests(inkcell::Surface& surface, inkcell::Rect fr
     sectionHead(surface, frame, "Manifests", legend);
 
     int y = frame.y + 4;
-
-    // Expanded infinite canvas owns the whole stage.
-    if (dash.wfCanvasExpanded) {
-        const auto* sel = dash.selectedManifest();
-        if (sel && sel->kind == "workflow") {
-            drawWorkflowStage(surface, {frame.x, y, frame.w, frame.bottom() - y}, *sel,
-                              gfx::nowSeconds());
-            return;
-        }
-    }
 
     // Operable kind chips with indices: [1 agent 12] ...
     std::map<std::string, int> kindCounts;
@@ -519,7 +510,7 @@ inline void MainScene::drawManifests(inkcell::Surface& surface, inkcell::Rect fr
         std::string name = std::string(active ? "● " : "  ") + m.name;
         if (m.launchable && m.kind == "agent") name += selected ? "  ↵ launch" : "";
         if (m.kind == "workflow") {
-            name += selected ? "  ↵ run" : "  ▷";
+            name += selected ? "  ↵ page" : "  ▷";
             auto live = model_->workflowRun.snapshot();
             if (live.live && (live.path == m.path || live.name == m.name))
                 name += "  ●";
@@ -548,19 +539,11 @@ inline void MainScene::drawManifests(inkcell::Surface& surface, inkcell::Rect fr
         return;
     }
 
-    // Card well — fill only for non-workflow; canvas wants field void.
-    const auto* selPeek = dash.selectedManifest();
-    const bool wfDetail = selPeek && selPeek->kind == "workflow";
-    if (!wfDetail) surface.fill(det, " ", theme::panel_bg());
+    // Card well — always a field card. Workflow canvas lives on Workflows page.
+    surface.fill(det, " ", theme::panel_bg());
 
     auto paintManifestBody = [&](inkcell::Surface& s, inkcell::Rect inner, float alpha,
                                  const catalog::ManifestEntry& m) {
-        // Workflows get infinite canvas + rail — not the generic field card.
-        if (m.kind == "workflow" && alpha >= 0.55f) {
-            drawWorkflowStage(s, inner, m, gfx::nowSeconds());
-            return;
-        }
-
         bool ghost = alpha < 0.55f;
         auto titleSt = ghost ? theme::muted() : theme::bright();
         auto kindSt = ghost ? theme::dim() : theme::kindAccent(m.kind, true);
@@ -591,23 +574,97 @@ inline void MainScene::drawManifests(inkcell::Surface& surface, inkcell::Rect fr
         }
         if (dy < inner.bottom()) ++dy;
 
+        // Shared identity fields — always useful.
         if (dy < inner.bottom())
             components::fieldLine(s, ix, dy++, iw, "kind", m.kind);
         if (dy < inner.bottom() && !m.version.empty())
             components::fieldLine(s, ix, dy++, iw, "version", m.version);
         if (dy < inner.bottom())
             components::fieldLine(s, ix, dy++, iw, "category", m.category);
-        if (dy < inner.bottom() && (!m.provider.empty() || !m.model.empty()))
-            components::fieldLine(s, ix, dy++, iw, "engine",
-                                  nonempty(m.provider, "?") + "/" + nonempty(m.model, "?"));
+
+        // ── Per-kind card data (operator-visible, not path soup) ──
+        if (m.kind == "agent") {
+            if (dy < inner.bottom() && (!m.provider.empty() || !m.model.empty()))
+                components::fieldLine(s, ix, dy++, iw, "engine",
+                                      nonempty(m.provider, "?") + "/" +
+                                          nonempty(m.model, "?"));
+        } else if (m.kind == "tool") {
+            if (dy < inner.bottom() && !m.runtime.empty())
+                components::fieldLine(s, ix, dy++, iw, "runtime", m.runtime);
+            if (dy < inner.bottom() && !m.entrypoint.empty())
+                components::fieldLine(s, ix, dy++, iw, "entry", m.entrypoint);
+            // First line of PE description if richer than summary
+            if (dy < inner.bottom() && !m.description.empty() &&
+                m.description != m.summary) {
+                std::string pe = m.description;
+                auto nl = pe.find('\n');
+                if (nl != std::string::npos) pe = pe.substr(0, nl);
+                if (pe.size() > 90) pe = pe.substr(0, 87) + "…";
+                if (dy < inner.bottom()) ++dy;
+                if (dy < inner.bottom())
+                    s.text({ix, dy++}, inkcell::text::truncate(pe, iw), bodySt);
+            }
+        } else if (m.kind == "skill") {
+            // Frontmatter is the product surface for skills — show it.
+            if (dy < inner.bottom() && !m.summary.empty()) {
+                // summary already painted above when non-empty; frontmatter extras:
+            }
+            for (const auto& meta : m.extraMeta) {
+                if (dy >= inner.bottom() - 4) break;
+                auto colon = meta.find(':');
+                if (colon != std::string::npos)
+                    components::fieldLine(s, ix, dy++, iw, meta.substr(0, colon),
+                                          meta.substr(colon + 1));
+                else if (dy < inner.bottom())
+                    s.text({ix, dy++}, inkcell::text::truncate(meta, iw), bodySt);
+            }
+            if (m.extraMeta.empty() && dy < inner.bottom())
+                components::fieldLine(s, ix, dy++, iw, "module",
+                                      m.relPath.empty() ? m.name : m.relPath);
+        } else if (m.kind == "relic") {
+            // Prefer catalog-parsed endpoints; fall back to last inspect cache.
+            std::vector<std::string> eps = m.endpoints;
+            if (eps.empty() && dash.relicRun.relicName == m.name)
+                eps = dash.relicRun.endpoints;
+            if (dy < inner.bottom()) {
+                char buf[24];
+                std::snprintf(buf, sizeof(buf), "%zu", eps.size());
+                components::fieldLine(s, ix, dy++, iw, "endpoints", buf);
+            }
+            for (size_t i = 0; i < eps.size() && dy < inner.bottom() - 3; ++i) {
+                s.text({ix, dy++},
+                       inkcell::text::truncate(std::string("  · ") + eps[i], iw),
+                       bodySt);
+            }
+            if (eps.empty() && dy < inner.bottom())
+                s.text({ix, dy++}, "no endpoints in manifest", theme::italic_dim());
+        } else if (m.kind == "workflow") {
+            // Card stays lean — full canvas lives on the Workflows page / ↵ open.
+            if (dy < inner.bottom() && !m.summary.empty()) {
+                /* summary already shown */
+            }
+            if (dy < inner.bottom())
+                components::fieldLine(s, ix, dy++, iw, "open",
+                                      "↵ workflow page · run from there");
+        } else if (m.kind == "feed") {
+            if (dy < inner.bottom() && !m.runtime.empty())
+                components::fieldLine(s, ix, dy++, iw, "runtime", m.runtime);
+            if (dy < inner.bottom() && !m.entrypoint.empty())
+                components::fieldLine(s, ix, dy++, iw, "entry", m.entrypoint);
+        } else if (m.kind == "harness" || m.kind == "prompt") {
+            if (dy < inner.bottom())
+                components::fieldLine(s, ix, dy++, iw, "module",
+                                      m.relPath.empty() ? m.name : m.relPath);
+        }
+
         if (dy < inner.bottom())
             components::fieldLine(s, ix, dy++, iw, "source", nonempty(m.source, "—"));
-        if (dy < inner.bottom())
-            components::fieldLine(s, ix, dy++, iw, "rel",
-                                  m.relPath.empty() ? "—" : m.relPath);
-        if (dy < inner.bottom())
-            components::fieldLine(s, ix, dy++, iw, "path",
-                                  m.path.empty() ? "—" : m.path);
+        if (dy < inner.bottom() && !m.relPath.empty())
+            components::fieldLine(s, ix, dy++, iw, "rel", m.relPath);
+        // Full path only if room — often noise on short cards
+        if (dy < inner.bottom() - 3 && !m.path.empty())
+            components::fieldLine(s, ix, dy++, iw, "path", m.path);
+
         if (dy < inner.bottom()) {
             std::string flags;
             if (m.launchable) flags += "launch ";
@@ -645,45 +702,24 @@ inline void MainScene::drawManifests(inkcell::Surface& surface, inkcell::Rect fr
                        ghost ? theme::green_soft() : theme::green());
         }
 
-        // Tool affordance — ↵ opens the dedicated ToolScene (full UX).
-        // The legacy sync smoke-test RUN block is gone; the tool page owns
-        // input form + streaming output + run history now.
         if (m.kind == "tool" && !ghost && dy < inner.bottom()) {
             if (dy < inner.bottom()) ++dy;
             if (dy < inner.bottom())
                 s.text({ix, dy++}, inkcell::text::truncate("↵ open tool page", iw),
                        theme::green_soft());
         }
-
-        // Relic endpoint inventory — parsed from relic.yml on Enter.
         if (m.kind == "relic" && !ghost && dy < inner.bottom()) {
-            const auto& r = dash.relicRun;
-            if (r.relicName == m.name && !r.relicName.empty()) {
-                if (dy < inner.bottom()) ++dy;
-                if (dy < inner.bottom()) {
-                    s.text({ix, dy++},
-                           inkcell::text::truncate("RELIC · " + r.relicName, iw),
-                           r.healthy ? theme::green() : theme::amber());
-                }
-                if (dy < inner.bottom()) {
-                    char buf[16];
-                    std::snprintf(buf, sizeof(buf), "%zu", r.endpoints.size());
-                    components::fieldLine(s, ix, dy++, iw, "endpoints", buf);
-                }
-                for (const auto& ep : r.endpoints) {
-                    if (dy >= inner.bottom() - 2) break;
-                    std::string line = "  - " + ep;
-                    if (ep == r.endpoint) line += "  ◀ last";
-                    s.text({ix, dy++}, inkcell::text::truncate(line, iw),
-                           theme::text());
-                }
-                if (dy < inner.bottom())
-                    s.text({ix, dy++}, "press enter to refresh",
-                           theme::italic_dim());
-            } else if (dy < inner.bottom()) {
-                s.text({ix, dy++}, "↵ inspect endpoints",
+            if (dy < inner.bottom()) ++dy;
+            if (dy < inner.bottom())
+                s.text({ix, dy++}, inkcell::text::truncate("↵ open relic page", iw),
                        theme::green_soft());
-            }
+        }
+        if (m.kind == "workflow" && !ghost && dy < inner.bottom()) {
+            if (dy < inner.bottom()) ++dy;
+            if (dy < inner.bottom())
+                s.text({ix, dy++},
+                       inkcell::text::truncate("↵ open workflow page", iw),
+                       theme::green_soft());
         }
     };
 
@@ -722,6 +758,74 @@ inline void MainScene::drawManifests(inkcell::Surface& surface, inkcell::Rect fr
 }
 
 // AAA options: j/k focus · h/l or enter cycle · no redundant dumps
+// Dedicated Workflows hub page — list + live canvas stage (not jammed into cards).
+inline void MainScene::drawWorkflows(inkcell::Surface& surface, inkcell::Rect frame) const {
+    auto& dash = model_->dashboard;
+    sectionHead(surface, frame, "Workflows",
+                "j/k select · ↵ run · z expand canvas · x stop · r re-run · a manifests");
+
+    int y = frame.y + 4;
+    // Collect workflows from full discovery (not just current facet).
+    std::vector<const catalog::ManifestEntry*> wfs;
+    auto all = catalog::discoverManifests(dash.manifestDir);
+    for (const auto& m : all) {
+        if (m.kind == "workflow") wfs.push_back(&m);
+    }
+    // Prefer filtered list if user is already on workflow facet in Manifests cache
+    if (wfs.empty()) {
+        for (const auto& m : dash.manifests)
+            if (m.kind == "workflow") wfs.push_back(&m);
+    }
+
+    if (wfs.empty()) {
+        surface.text({frame.x, y}, "No workflows in manifests/.", theme::amber());
+        return;
+    }
+
+    // Keep selection index in range against workflow-only list via manifestIndex
+    // when current selection is a workflow; else default first.
+    int sel = 0;
+    const auto* cur = dash.selectedManifest();
+    for (int i = 0; i < static_cast<int>(wfs.size()); ++i) {
+        if (cur && wfs[static_cast<size_t>(i)]->path == cur->path) {
+            sel = i;
+            break;
+        }
+    }
+
+    // Split: list left (narrow) + canvas stage right/bottom.
+    const int listW = std::min(36, std::max(18, frame.w / 3));
+    const int listH = std::max(4, frame.bottom() - y - 1);
+
+    int visible = listH;
+    int start = std::max(0, std::min(sel - visible / 3,
+                                     std::max(0, static_cast<int>(wfs.size()) - visible)));
+    for (int i = start; i < static_cast<int>(wfs.size()) && (i - start) < visible; ++i) {
+        const auto& m = *wfs[static_cast<size_t>(i)];
+        bool selected = (i == sel);
+        auto live = model_->workflowRun.snapshot();
+        bool liveHere = live.live && (live.path == m.path || live.name == m.name);
+        std::string line = (selected ? "› " : "  ") + m.name;
+        if (liveHere) line += "  ●";
+        else if (selected) line += "  ↵ run";
+        auto st = selected ? theme::bright() : theme::text();
+        if (liveHere) st = theme::green();
+        surface.text({frame.x, y + (i - start)},
+                     inkcell::text::truncate(line, listW - 1), st);
+    }
+
+    // Stage: canvas for selected workflow
+    inkcell::Rect stage{frame.x + listW + 1, y, std::max(12, frame.w - listW - 1),
+                        frame.bottom() - y};
+    if (stage.w >= 12 && stage.h >= 6 && sel >= 0 &&
+        sel < static_cast<int>(wfs.size())) {
+        // hairline separator
+        for (int yy = y; yy < frame.bottom(); ++yy)
+            surface.text({frame.x + listW, yy}, "│", theme::dim());
+        drawWorkflowStage(surface, stage, *wfs[static_cast<size_t>(sel)], gfx::nowSeconds());
+    }
+}
+
 inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect frame) const {
     // Title plate
     surface.text({frame.x, frame.y}, "SETTINGS", theme::bright());

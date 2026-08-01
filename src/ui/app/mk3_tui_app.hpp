@@ -28,7 +28,9 @@
 #include "src/ui/model/workflow_runner.hpp"
 #include "src/ui/scenes/agent_scene.hpp"
 #include "src/ui/scenes/main_scene.hpp"
+#include "src/ui/scenes/relic_scene.hpp"
 #include "src/ui/scenes/tool_scene.hpp"
+#include "src/ui/scenes/workflow_scene.hpp"
 
 namespace cortex::mk3::ui {
 
@@ -119,9 +121,13 @@ inline inkcell::App makeInkcellApp(const InkcellAppConfig& cfg, AgentBridge& bri
         .route("scene.agent", "agent")
         .route("scene.main", "main")
         .route("scene.tool", "tool")
+        .route("scene.relic", "relic")
+        .route("scene.workflow", "workflow")
         .scene<scenes::MainScene>("main", cfg, bridge, model)
         .scene<scenes::AgentScene>("agent", cfg, bridge, model)
         .scene<scenes::ToolScene>("tool", cfg, bridge, model)
+        .scene<scenes::RelicScene>("relic", cfg, bridge, model)
+        .scene<scenes::WorkflowScene>("workflow", cfg, bridge, model)
         .initial_scene(startAtDashboard ? "main" : "agent");
     return app;
 }
@@ -419,23 +425,28 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
             std::string kind = ManifestLoader::detectKind(path);
             if (kind != "agent") {
                 if (kind == "tool") {
-                    // Set the active tool state on ShellModel so ToolScene
-                    // on_enter can find it, then route.
                     ToolSchema ts = ManifestLoader::loadToolManifest(path);
                     model.activeToolManifestPath = path;
-                    model.activeToolName = ts.name.empty() ? std::filesystem::path(path).parent_path().filename().string() : ts.name;
+                    model.activeToolName = ts.name.empty()
+                        ? std::filesystem::path(path).parent_path().filename().string()
+                        : ts.name;
                     model.requestRoute(PendingRoute::Tool);
+                } else if (kind == "relic") {
+                    model.activeRelicManifestPath = path;
+                    model.activeRelicName =
+                        std::filesystem::path(path).parent_path().filename().string();
+                    model.requestRoute(PendingRoute::Relic);
                 } else if (kind == "workflow") {
-                    // Should not normally happen (workflow uses pendingRunWorkflow)
-                    // but harmless: route to main with a notice.
-                    model.dashboard.flashNotice("workflow · use the canvas to run");
+                    model.activeWorkflowManifestPath = path;
+                    model.activeWorkflowName =
+                        std::filesystem::path(path).stem().string();
+                    model.requestRoute(PendingRoute::Workflow);
                 } else if (!kind.empty()) {
                     model.dashboard.flashNotice(kind + " page · not implemented yet");
                 } else {
                     model.dashboard.flashNotice("unrecognized manifest kind");
                 }
-                // Skip the agent build path — handled above per-kind.
-                return;  // tail of the lambda for this tick
+                return;  // non-agent kinds handled above
             }
             if (!model.activeManifestPath.empty() && path == model.activeManifestPath) {
                 model.dashboard.notice = "already live · " + model.agentName;

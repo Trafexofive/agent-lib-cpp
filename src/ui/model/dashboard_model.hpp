@@ -18,7 +18,14 @@
 
 namespace cortex::mk3::ui::model {
 
-enum class DashboardSection { Home = 0, Sessions = 1, Manifests = 2, Settings = 3 };
+// Pill order: Home · Sessions · Manifests · Workflows · Settings
+enum class DashboardSection {
+    Home = 0,
+    Sessions = 1,
+    Manifests = 2,
+    Workflows = 3,  // dedicated workflow page (canvas lives here, not on cards)
+    Settings = 4
+};
 // Alias — older call sites / muscle memory
 constexpr DashboardSection Help = DashboardSection::Settings;
 
@@ -75,7 +82,7 @@ struct DashboardState {
     int navAnimDir = 1;
     int64_t navAnimStartMs = 0;
     static constexpr int navAnimDurationMs = 280;
-    static constexpr int sectionCount = 4;
+    static constexpr int sectionCount = 5;
 
     // Floating pill visibility (zen auto-hide + master enable live on ShellModel).
     // lastNavActivityMs bumped on section change / dock focus / nav binds.
@@ -456,6 +463,7 @@ inline const char* dashboardSectionName(DashboardSection section) {
         case DashboardSection::Home: return "Home";
         case DashboardSection::Sessions: return "Sessions";
         case DashboardSection::Manifests: return "Manifests";
+        case DashboardSection::Workflows: return "Workflows";
         case DashboardSection::Settings: return "Settings";
     }
     return "Home";

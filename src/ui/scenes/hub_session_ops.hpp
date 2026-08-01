@@ -89,26 +89,62 @@ inline void MainScene::activate() {
             return;
         }
         if (m->kind == "workflow") {
-            queueWorkflowRun(*m);
+            // Workflows page is a hub section (nav pill), not a card embed.
+            // Jump there with this workflow selected + canvas ready.
+            model_->activeWorkflowManifestPath = m->path;
+            model_->activeWorkflowName = m->name;
+            dash.manifestFilter = "workflow";
+            dash.refreshManifests();
+            // Select matching index in filtered list
+            for (int i = 0; i < static_cast<int>(dash.manifests.size()); ++i) {
+                if (dash.manifests[static_cast<size_t>(i)].path == m->path) {
+                    dash.manifestIndex = i;
+                    break;
+                }
+            }
+            dash.select(model::DashboardSection::Workflows);
+            dash.wfCanvasFocus = true;
+            dash.flashNotice("workflows · " + m->name);
             return;
         }
         if (m->kind == "tool") {
-            // Route to dedicated ToolScene (full UX: input form, streaming
-            // output, run history). The REPL tick picks up the path,
-            // resolves the kind, and sets activeTool* fields on ShellModel
-            // before routing so scenes::ToolScene::on_enter can find them.
-            model_->pendingLaunchManifest = m->path;
             model_->activeToolManifestPath = m->path;
             model_->activeToolName = m->name;
             model_->requestRoute(PendingRoute::Tool);
-            dash.flashNotice("opening " + m->name + " tool page");
+            dash.flashNotice("tool · " + m->name);
             return;
         }
         if (m->kind == "relic") {
+            model_->activeRelicManifestPath = m->path;
+            model_->activeRelicName = m->name;
+            // Seed endpoint inventory for the page + card cache.
             queueRelicRun(*m);
+            model_->requestRoute(PendingRoute::Relic);
+            dash.flashNotice("relic · " + m->name);
             return;
         }
         dash.flashNotice(m->kind + " · " + m->category + " · inspect only");
+        return;
+    }
+    if (dash.section == model::DashboardSection::Workflows) {
+        // On Workflows page, Enter runs the focused workflow (page is the stage).
+        const auto* m = dash.selectedManifest();
+        // Prefer workflow-filtered selection; if facet wrong, pick by name from cache.
+        if (m && m->kind == "workflow") {
+            queueWorkflowRun(*m);
+            return;
+        }
+        // Fallback: first workflow in full discovery matching index
+        auto all = catalog::discoverManifests(dash.manifestDir);
+        std::vector<catalog::ManifestEntry> wfs;
+        for (const auto& e : all)
+            if (e.kind == "workflow") wfs.push_back(e);
+        if (!wfs.empty()) {
+            int idx = std::max(0, std::min(dash.manifestIndex, (int)wfs.size() - 1));
+            queueWorkflowRun(wfs[static_cast<size_t>(idx)]);
+            return;
+        }
+        dash.flashNotice("no workflow selected");
         return;
     }
 }

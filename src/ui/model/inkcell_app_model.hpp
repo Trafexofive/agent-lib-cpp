@@ -153,6 +153,10 @@ struct ShellModel : TimelineStore {
     // tool scene isn't active.
     std::string activeToolManifestPath;
     std::string activeToolName;
+    std::string activeRelicManifestPath;
+    std::string activeRelicName;
+    std::string activeWorkflowManifestPath;
+    std::string activeWorkflowName;
     // Live tool worker cancel signal — flipped by the scene on Esc/x,
     // checked by the worker between output chunks.
     bool toolCancelRequested = false;

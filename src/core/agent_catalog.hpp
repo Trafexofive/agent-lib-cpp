@@ -730,13 +730,18 @@ struct ManifestEntry {
     std::string name;
     std::string version;
     std::string summary;
+    std::string description;   // longer body blurb (tool PE, skill prose, …)
     std::string path;          // absolute path to primary file
     std::string relPath;       // path relative to manifests root
     std::string source;        // cwd|project|env|...
     std::string manifestsRoot;
     std::string provider;      // agent only
     std::string model;         // agent only
+    std::string runtime;       // tool/feed/relic runtime hint
+    std::string entrypoint;    // tool/feed entrypoint
     std::vector<std::string> tags;
+    std::vector<std::string> endpoints;  // relic endpoints when known
+    std::vector<std::string> extraMeta;  // "key: value" lines for card (skill license, …)
     bool launchable = false;   // currently: agents only
     bool nested = false;       // specialist under another agent
     bool builtin = false;      // under built-in/
@@ -800,7 +805,43 @@ inline ManifestEntry readYamlManifestMeta(const fs::path& path, const std::strin
     if (!n.empty()) e.name = n;
     e.version = ManifestYaml::get(root, "version", "");
     e.summary = ManifestYaml::get(root, "summary");
-    if (e.summary.empty()) e.summary = ManifestYaml::get(root, "description");
+    e.description = ManifestYaml::get(root, "description");
+    if (e.summary.empty()) e.summary = e.description;
+    // Cap description for card paint (full body lives on kind pages).
+    if (e.description.size() > 480)
+        e.description = e.description.substr(0, 477) + "…";
+
+    // Runtime surface (tool / feed / relic implementation blocks or top-level).
+    e.runtime = ManifestYaml::get(root, "runtime");
+    e.entrypoint = ManifestYaml::get(root, "entrypoint");
+    auto* impl = ManifestYaml::find(root, "implementation");
+    if (impl) {
+        if (e.runtime.empty()) e.runtime = ManifestYaml::get(*impl, "runtime");
+        if (e.entrypoint.empty()) e.entrypoint = ManifestYaml::get(*impl, "entrypoint");
+    }
+    // Relic endpoints: list of strings or {name/url} maps.
+    if (e.kind == "relic" || kindHint == "relic") {
+        auto* eps = ManifestYaml::find(root, "endpoints");
+        if (eps) {
+            for (const auto& child : eps->children) {
+                std::string ep = child.value;
+                if (ep.empty()) ep = ManifestYaml::get(child, "name");
+                if (ep.empty()) ep = ManifestYaml::get(child, "url");
+                if (ep.empty() && child.key == "name") ep = child.value;
+                if (!ep.empty()) e.endpoints.push_back(ep);
+            }
+            // Scalar list items sometimes sit as key-only children
+            if (e.endpoints.empty()) {
+                for (const auto& child : eps->children) {
+                    if (!child.key.empty() && child.value.empty())
+                        e.endpoints.push_back(child.key);
+                    else if (!child.key.empty() && !child.value.empty() &&
+                             child.key != "name" && child.key != "url")
+                        e.endpoints.push_back(child.key + ": " + child.value);
+                }
+            }
+        }
+    }
 
     // Explicit tags + category from YAML when present.
     e.tags = ManifestYaml::getList(root, "tags");
@@ -877,6 +918,130 @@ inline ManifestEntry readYamlManifestMeta(const fs::path& path, const std::strin
     return e;
 }
 
+// SKILL.md — YAML frontmatter between --- fences (name, description, …).
+// Body after the second --- becomes description fallback / prose blurb.
+inline ManifestEntry readSkillManifestMeta(const fs::path& path, const std::string& source,
+                                           const fs::path& manifestsRoot) {
+    ManifestEntry e;
+    e.kind = "skill";
+    e.category = "skill";
+    e.name = path.parent_path().filename().string();
+    e.path = absPath(path);
+    e.source = source;
+    e.manifestsRoot = absPath(manifestsRoot);
+    e.relPath = relToRoot(path, manifestsRoot);
+    e.tags = {"skill", "policy"};
+
+    std::ifstream in(path);
+    if (!in) {
+        e.summary = "skill module";
+        return e;
+    }
+    std::string all((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (all.empty()) {
+        e.summary = "skill module";
+        return e;
+    }
+
+    // Normalize newlines lightly
+    auto startsWithFence = [](const std::string& s, size_t pos) {
+        return pos < s.size() && s.compare(pos, 3, "---") == 0;
+    };
+    size_t pos = 0;
+    // Skip UTF-8 BOM
+    if (all.size() >= 3 && static_cast<unsigned char>(all[0]) == 0xEF)
+        pos = 3;
+    // Optional leading whitespace/newlines before first ---
+    while (pos < all.size() && (all[pos] == ' ' || all[pos] == '\t' || all[pos] == '\r' ||
+                                all[pos] == '\n'))
+        ++pos;
+
+    std::string front;
+    std::string body;
+    if (startsWithFence(all, pos)) {
+        size_t fmStart = pos + 3;
+        if (fmStart < all.size() && all[fmStart] == '\r') ++fmStart;
+        if (fmStart < all.size() && all[fmStart] == '\n') ++fmStart;
+        size_t fmEnd = all.find("\n---", fmStart);
+        if (fmEnd == std::string::npos) fmEnd = all.find("\r\n---", fmStart);
+        if (fmEnd != std::string::npos) {
+            front = all.substr(fmStart, fmEnd - fmStart);
+            size_t bodyStart = all.find('\n', fmEnd + 1);
+            if (bodyStart != std::string::npos) {
+                ++bodyStart;
+                if (bodyStart < all.size() && all[bodyStart] == '\n') ++bodyStart;
+                body = all.substr(bodyStart);
+            }
+        } else {
+            body = all;
+        }
+    } else {
+        body = all;
+    }
+
+    if (!front.empty()) {
+        auto root = ManifestYaml::parse(front);
+        std::string n = ManifestYaml::get(root, "name");
+        if (!n.empty()) e.name = n;
+        e.version = ManifestYaml::get(root, "version");
+        e.summary = ManifestYaml::get(root, "description");
+        if (e.summary.empty()) e.summary = ManifestYaml::get(root, "summary");
+        e.description = e.summary;
+        // Common skill frontmatter keys → extraMeta + tags
+        auto addMeta = [&](const char* key) {
+            std::string v = ManifestYaml::get(root, key);
+            if (!v.empty()) e.extraMeta.push_back(std::string(key) + ": " + v);
+        };
+        addMeta("license");
+        addMeta("compatibility");
+        addMeta("metadata");
+        addMeta("author");
+        addMeta("homepage");
+        auto tags = ManifestYaml::getList(root, "tags");
+        for (const auto& t : tags) {
+            if (std::find(e.tags.begin(), e.tags.end(), t) == e.tags.end()) e.tags.push_back(t);
+        }
+        // allowed-tools / disable-model-invocation as flags
+        std::string allowed = ManifestYaml::get(root, "allowed-tools");
+        if (allowed.empty()) allowed = ManifestYaml::get(root, "allowed_tools");
+        if (!allowed.empty()) e.extraMeta.push_back("allowed-tools: " + allowed);
+        std::string disable = ManifestYaml::get(root, "disable-model-invocation");
+        if (disable.empty()) disable = ManifestYaml::get(root, "disable_model_invocation");
+        if (!disable.empty()) e.extraMeta.push_back("disable-model-invocation: " + disable);
+    }
+
+    if (e.summary.empty() && !body.empty()) {
+        // First non-empty, non-heading line of body as summary
+        std::istringstream iss(body);
+        std::string line;
+        while (std::getline(iss, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+                line.pop_back();
+            size_t a = line.find_first_not_of(" \t");
+            if (a == std::string::npos) continue;
+            line = line.substr(a);
+            if (line.rfind("#", 0) == 0) continue;
+            if (line.rfind("---", 0) == 0) continue;
+            e.summary = line.size() > 160 ? line.substr(0, 157) + "…" : line;
+            break;
+        }
+        if (e.summary.empty()) e.summary = "skill module";
+    }
+    if (e.description.empty() && !body.empty()) {
+        e.description = body.size() > 480 ? body.substr(0, 477) + "…" : body;
+    }
+    if (e.summary.empty()) e.summary = "skill module";
+
+    e.builtin = e.relPath.rfind("built-in/", 0) == 0 ||
+                e.relPath.rfind("skills/", 0) == 0;
+    if (e.relPath.find("/skills/") != std::string::npos ||
+        e.relPath.rfind("agents/", 0) == 0)
+        e.nested = e.relPath.find("/agents/") != std::string::npos;
+    if (std::find(e.tags.begin(), e.tags.end(), e.name) == e.tags.end())
+        e.tags.push_back(e.name);
+    return e;
+}
+
 inline void scanManifestsTree(const fs::path& root, const std::string& source,
                               std::map<std::string, ManifestEntry>& byKey) {
     std::error_code ec;
@@ -929,17 +1094,7 @@ inline void scanManifestsTree(const fs::path& root, const std::string& source,
             continue;
         }
         if (fname == "SKILL.md") {
-            ManifestEntry e;
-            e.kind = "skill";
-            e.category = "skill";
-            e.name = p.parent_path().filename().string();
-            e.path = absPath(p);
-            e.source = source;
-            e.manifestsRoot = absPath(root);
-            e.relPath = relToRoot(p, root);
-            e.summary = "skill module";
-            e.tags = {"skill", "policy"};
-            pushUnique(byKey, std::move(e));
+            pushUnique(byKey, readSkillManifestMeta(p, source, root));
             continue;
         }
         // harness + prompts as first-class registry entries (md modules)

@@ -193,11 +193,26 @@ class ToolScene final : public BaseScene {
             tool_.name.empty() ? (model_->activeToolName.empty() ? "tool" : model_->activeToolName)
                                : tool_.name;
         surface.text({p.x, y++}, inkcell::text::truncate(title, p.w), theme::bright());
+        // Identity strip — runtime/entry from tool.yml (gold card parity).
+        {
+            std::string meta = "TOOL";
+            if (!tool_.runtime.empty()) meta += " · " + tool_.runtime;
+            if (!tool_.entrypoint.empty()) meta += " · " + tool_.entrypoint;
+            surface.text({p.x, y++}, inkcell::text::truncate(meta, p.w),
+                         theme::kindAccent("tool", true));
+        }
         if (!tool_.description.empty()) {
+            // Prefer first ~6 lines of PE description so the page isn't a wall.
+            int linesLeft = 6;
             for (const auto& line : chat::wrapWordsLossless(tool_.description, p.w)) {
-                if (y >= p.y + p.h - 10) break;
+                if (y >= p.y + p.h - 12 || linesLeft-- <= 0) break;
                 surface.text({p.x, y++}, line, theme::text());
             }
+        }
+        if (!model_->activeToolManifestPath.empty() && y < p.y + p.h - 10) {
+            surface.text({p.x, y++},
+                         inkcell::text::truncate("path  " + model_->activeToolManifestPath, p.w),
+                         theme::dim());
         }
         y++;
 
