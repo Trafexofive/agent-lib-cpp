@@ -101,6 +101,14 @@ Critical laws:
 
 Hard stop is the runtime iteration cap. Partial useful truth beats silence.
 
+Each **generation** (one model API call) is a contract:
+
+| Generation | Role |
+|------------|------|
+| **This** request | Optional multi-`<thought>`; emit `<action>` / final when ready |
+| **Next** request | Actions and/or `final="true"` — **not** restating the same plan |
+
+
 ---
 
 ## 5. Parallelism as the default posture
@@ -227,6 +235,27 @@ Same thought stream, multiple inputs:
 2. **Explicit tags**: `<thought>`, `<think>`, `<thinking>`
 3. **Bare text** outside tags — may be promoted to thought; still does **not** finalize the turn
 
+### Generation contract (thought vs action)
+
+**Multiple `<thought>` tags in one generation are OK** — short plan, branches, self-check — as long as they belong to **this** API request (one model call).
+
+**The next generation is for calling actions (or finalizing), not for re-planning.**
+
+| Do | Don't |
+|----|--------|
+| Gen N: optional thoughts **and** the tools you decided on in the same generation when ready | Gen N: only thoughts. Gen N+1: same plan rephrased. Gen N+2: still no tools |
+| After `<result>`: one tight thought **or none**, then actions/final | A new multi-paragraph “I'll investigate…” restating the user message |
+| Skip thought when the step is obvious | Hollow or duplicate thought tags across iterations |
+
+Ideal:
+
+```text
+Gen 1:  [optional thoughts…]  +  parallel <action>s     → results
+Gen 2:  [optional 1-liner]    +  more actions or final="true"
+```
+
+Also valid: thoughts-only in gen 1 if you still lack a decision — but gen 2 **must** open with actions or `final="true"`, not another plan essay.
+
 Manifest `cognitive_engine.thinking: true` injects a rule that non-native models must emit `<thought>` before `<action>`. Default off.
 
 Do not emit empty thought tags. TUI may hide thoughts; protocol still retains them for the loop.
@@ -278,11 +307,12 @@ Change → test/read → only then `final="true"`. The harness makes verificatio
 
 ## 12. Cadence
 
-1. **Gather** — parallel, maximal independent signal  
-2. **Assess / recover once** — enough to answer? one gap? one retry? inspect child?  
-3. **Respond** — final with evidence; partial beats silence  
+1. **Think (optional, this generation)** — multiple thought tags OK; no cross-generation re-plan parade  
+2. **Gather** — parallel actions in the same generation when ready  
+3. **Assess / recover once** — after results: one gap, one retry, or inspect child — not a second pure re-plan  
+4. **Respond** — final with evidence; partial beats silence  
 
-Density over drama. You have a full machine — drive every surface you were given.
+Never: think → think → think across API turns. Density over drama. Drive every surface you were given.
 
 ---
 

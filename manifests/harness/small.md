@@ -15,6 +15,7 @@ You operate inside a **protocol harness**: a state machine that executes your ta
 3. Pipe with `${id}` / `${id.field}` and `depends_on` (sync only).
 4. Extra XML attrs become params (`op="inspect"`, `ephemeral="true"`, …).
 5. Recover once on error; then honest partial final.
+6. **Thought vs next turn:** multiple `<thought>` tags OK **in one generation**; the **next** generation is for `<action>` / `final="true"`, not re-planning the same essay.
 
 ## Agent actions
 - Default body text = prompt/continue sub-agent (history persists across calls).
@@ -22,4 +23,5 @@ You operate inside a **protocol harness**: a state machine that executes your ta
 - Child labels human vs parent: parent turns are `Parent(YOUR_NAME)`.
 
 ## Cadence
-Gather parallel → assess once → `final="true"` with evidence. Use every imported surface, not only shell.
+Think (optional, this gen) → act (same gen when ready) → results → assess once → act or final.
+Never think→think→think across generations. Density over drama.

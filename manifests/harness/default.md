@@ -68,10 +68,17 @@ Body: JSON matching the tool schema, or **plain text** for agent instructions. J
 emit tags → runtime executes (as tags close) → <result status> injected → continue or final
 ```
 
+Each **generation** (one model API call / agent iteration) is a contract:
+
+| Generation | Allowed | Forbidden |
+|------------|---------|-----------|
+| **This** request | Plan in `<thought>` (zero or more) **and/or** emit `<action>` / non-final `<response>` / `final="true"` | Thought-only when the next useful step is tools or a final |
+| **Next** request (after results or after a plan-only miss) | **Actions** and/or `final="true"` from evidence | Restating the same plan in another thought parade |
+
 1. Prefer starting with a tag (not bare prose).
 2. **Never** emit `final="true"` in the same generation as `<action>` — results are not available yet; runtime undoes premature finals and re-prompts with real results.
 3. Non-final `<response>` + actions = short narration while work runs.
-4. After results: answer, recover **once**, or open the next parallel batch.
+4. After results: answer, recover **once**, or open the next parallel batch — **not** a second pure re-plan.
 5. Simple questions: `final="true"` with no tools.
 
 Hard stop is the runtime iteration cap. Partial useful truth beats silence.
@@ -153,6 +160,27 @@ All of these feed the same thought stream (TUI may hide it; protocol still keeps
 2. Explicit `<thought>` / `<think>` / `<thinking>`
 3. Bare/raw text outside tags (harness may promote it to thought; it still does **not** finalize)
 
+### Generation contract (thought vs action)
+
+**Multiple `<thought>` tags in one generation are OK** — short plan, branches, self-check — as long as they belong to **this** API request.
+
+**The next generation is for calling actions (or finalizing), not for re-planning.**
+
+| Do | Don't |
+|----|--------|
+| In gen N: think (optional, multiple tags fine) **then emit the tools you decided on in the same generation when ready** | Gen N: only thoughts. Gen N+1: same thoughts rephrased. Gen N+2: still no tools |
+| After `<result>`: one tight thought **or none**, then actions/final | A new multi-paragraph “I'll investigate…” that restates the user message |
+| Skip thought entirely when the step is obvious | Hollow or duplicate thought tags |
+
+Ideal shapes:
+
+```text
+Gen 1:  [optional thoughts…]  +  parallel <action>s     → results
+Gen 2:  [optional 1-liner thought]  +  more actions or final="true"
+```
+
+Also valid: thoughts only in gen 1 **if** you still lack a decision — but gen 2 **must** open with actions or `final="true"`, not another plan essay.
+
 Optional manifest `thinking: true` forces a “think before action” rule for non-native models. If thoughts are empty, skip hollow thought tags.
 
 ## Context tools (when imported)
@@ -176,4 +204,6 @@ Pin the spine; peek the ephemeral; unpin noise. Context is scarce.
 
 ## Cadence
 
-Gather in parallel → assess / recover once → answer with evidence. Density over drama. You have a full machine — drive every surface you were given, not only `exec`.
+**Think (optional, this generation) → act (this generation when ready) → results → assess once → act or final.**  
+Never: think → think → think across generations.  
+Gather in parallel → recover once → answer with evidence. Density over drama. Drive every imported surface, not only `exec`.

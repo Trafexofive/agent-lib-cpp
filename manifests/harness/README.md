@@ -17,7 +17,7 @@ All sizes teach (at different density):
 2. **Orthogonal surfaces** — tool / agent / feed / relic / workflow  
 3. **Parallelism as default posture** — fan-out in one generation  
 4. **Piping** — `${id}` / `depends_on` as dataflow edges  
-5. **Loop physics** — act → `<result status>` → continue; no premature `final`  
+5. **Loop physics** — act → `<result status>` → continue; no premature `final`; multi-thought OK in **one** generation, **next** gen is actions/final (not re-plan)  
 6. **Composition patterns** — fan-in, delegate, ambient, persist, verify  
 
 `big` adds worked examples and a longer pattern catalog. `small` keeps the same truths in bullets.
