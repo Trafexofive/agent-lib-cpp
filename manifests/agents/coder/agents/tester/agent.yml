@@ -1,0 +1,47 @@
+kind: Agent
+name: tester
+version: "1.0"
+summary: Verification runner — narrowest build/test/lint; pass/fail + log tail.
+category: agent
+tags: [specialist, coding, verify]
+
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: deepseek-v4-flash-free
+    parameters:
+      temperature: 0.2
+      max_tokens: 16384
+  fallback:
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.2
+      max_tokens: 16384
+
+context:
+  harness: ../../../harness/default.md
+  system: ./system.md
+  persona: ./persona.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  max_iterations: 12
+  history_cap: 40
+  mode: normal
+
+import:
+  tools:
+    - exec
+    - list
+    - fs_read
+    - grep
+    - ../../tools/project_test/tool.yml
+    - ../../tools/build_detect/tool.yml
+  feeds: []
+  agents: []
+  env: []

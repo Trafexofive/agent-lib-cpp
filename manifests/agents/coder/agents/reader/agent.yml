@@ -1,0 +1,45 @@
+kind: Agent
+name: reader
+version: "1.0"
+summary: Task-scoped read-only scout — paths, symbols, evidence table.
+category: agent
+tags: [specialist, coding, scout, read-only]
+
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: deepseek-v4-flash-free
+    parameters:
+      temperature: 0.35
+      max_tokens: 32768
+  fallback:
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.3
+      max_tokens: 32768
+
+context:
+  harness: ../../../harness/default.md
+  system: ./system.md
+  persona: ./persona.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  max_iterations: 16
+  history_cap: 48
+  mode: normal
+
+import:
+  tools:
+    - list
+    - grep
+    - fs_read
+    - context_peek
+  feeds: []
+  agents: []
+  env: []

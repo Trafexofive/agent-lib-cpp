@@ -1,0 +1,86 @@
+kind: Agent
+name: coder
+version: "1.0"
+summary: Daily-driver implementation agent — evidence in, smallest verified change out.
+description: |
+  Production coding module for Cortex-Prime MK3. Owns the write path.
+  Specialists (discovery, reader, tester, reviewer) are sensors and gates.
+  Local tools wrap common git/verify probes. Workflows codify high-ROI loops.
+category: agent
+tags: [agent, launchable, prod, coding, daily-driver]
+
+cognitive_engine:
+  primary:
+    # Swap freely for cost/quality — structure does not depend on one vendor.
+    provider: deepseek
+    model: deepseek-v4-pro
+    # provider: opencode
+    # model: deepseek-v4-flash-free
+    # provider: openai-codex
+    # model: gpt-5.5
+    # provider: xai
+    # model: grok-4.5
+    parameters:
+      temperature: 0.35
+      max_tokens: 65536
+  fallback:
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.25
+      max_tokens: 65536
+
+context:
+  harness: ../../harness/default.md
+  system: ./system.md
+  persona: ./persona.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  max_iterations: 24
+  history_cap: 100
+  mode: normal
+  subagents:
+    persistence: session
+  # dev_mode: true
+  # CORTEX_DEV_MODE=1 for dumps without editing this file
+
+import:
+  tools:
+    - exec
+    - grep
+    - list
+    - fs_read
+    - fs_write
+    - json
+    - ask_tool
+    - web_fetch
+    - ./tools/git_status/tool.yml
+    - ./tools/git_diff/tool.yml
+    - ./tools/project_test/tool.yml
+    - ./tools/build_detect/tool.yml
+  feeds:
+    - working_directory
+    - ./feeds/repo_pulse/feed.yml
+  agents:
+    - discovery
+    - reader
+    - tester
+    - reviewer
+  workflows:
+    - ./workflows/implement.yml
+    - ./workflows/fix-failure.yml
+    - ./workflows/map-area.yml
+    - ./workflows/review-diff.yml
+  # files: mounts for docker sandbox + future context inject
+  files:
+    - ./skills/evidence-first/SKILL.md
+    - ./skills/smallest-diff/SKILL.md
+    - ./skills/verify-before-final/SKILL.md
+    - ./skills/match-local-style/SKILL.md
+    - ./prompts/final-report.md
+  env: []

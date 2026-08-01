@@ -1,0 +1,24 @@
+kind: Tool
+name: project_test
+version: "1.0"
+summary: "Run the narrowest project verify command (make test, ctest, …)"
+description: |
+  Bounded verification runner. Pass an explicit command when known; otherwise
+  tries common project entry points. Prefer over unbounded exec for prove step.
+category: coding
+tags: [test, verify, make]
+implementation:
+  runtime: bash
+  entrypoint: run.sh
+  timeout: 300
+input_schema:
+  type: object
+  properties:
+    cwd: {type: string, default: "."}
+    command:
+      type: string
+      description: "Explicit verify command (preferred)"
+    timeout_sec: {type: integer, default: 120}
+examples:
+  - description: "Explicit make target"
+    params: {command: "make test-parser"}

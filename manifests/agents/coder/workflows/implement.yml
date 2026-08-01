@@ -1,0 +1,50 @@
+kind: Workflow
+version: "1.0"
+name: implement
+summary: "Scout → narrow → write → prove → report (default coding spine)"
+description: |
+  High-ROI implementation rails. Parent adapts depth (skip scout when trivial).
+  Specialists are optional steps — model may skip when evidence already exists.
+steps:
+  - id: pulse
+    type: tool
+    name: "Repo pulse"
+    tool: git_status
+    params: {short: true}
+    on_error: skip
+
+  - id: scout_map
+    type: agent
+    name: "Discovery if area unknown"
+    agent: discovery
+    params:
+      instruction: "Map structure/conventions/risk for the task area. CONFIRMED vs INFERRED. Task: ${input.task}"
+    on_error: skip
+
+  - id: scout_hits
+    type: agent
+    name: "Reader for task files"
+    agent: reader
+    params:
+      instruction: "Task-scoped evidence for: ${input.task}. Paths + why. Map context: ${scout_map.output}"
+    on_error: skip
+
+  - id: write
+    type: agent
+    name: "Parent implements (self)"
+    agent: coder
+    params:
+      instruction: "Using evidence, apply smallest correct write cluster for: ${input.task}. Then verify."
+    on_error: abort
+
+  - id: prove
+    type: tool
+    name: "Verify"
+    tool: project_test
+    params: {}
+    on_error: skip
+
+import:
+  agents: [discovery, reader]
+  tools: [git_status, project_test]
+tags: [coder, implement, daily-driver]

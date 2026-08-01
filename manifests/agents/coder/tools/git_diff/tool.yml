@@ -1,0 +1,24 @@
+kind: Tool
+name: git_diff
+version: "1.0"
+summary: "Read-only git diff (stat or full) with byte cap"
+description: |
+  Bounded git diff for review and change awareness. Prefer before reviewer
+  or final when you need the actual patch text.
+category: coding
+tags: [git, diff, read-only]
+implementation:
+  runtime: bash
+  entrypoint: run.sh
+  timeout: 30
+input_schema:
+  type: object
+  properties:
+    cwd: {type: string, default: "."}
+    stat: {type: boolean, default: true, description: "If true, --stat only"}
+    staged: {type: boolean, default: false}
+    path: {type: string, description: "Optional path limiter"}
+    max_bytes: {type: integer, default: 100000}
+examples:
+  - description: "Diff stat"
+    params: {stat: true}

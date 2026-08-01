@@ -1,0 +1,47 @@
+kind: Agent
+name: reviewer
+version: "1.0"
+summary: Diff/risk pass — severity findings only; no edits.
+category: agent
+tags: [specialist, coding, review]
+
+cognitive_engine:
+  primary:
+    provider: opencode
+    model: deepseek-v4-flash-free
+    parameters:
+      temperature: 0.25
+      max_tokens: 16384
+  fallback:
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.2
+      max_tokens: 16384
+
+context:
+  harness: ../../../harness/default.md
+  system: ./system.md
+  persona: ./persona.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  max_iterations: 10
+  history_cap: 40
+  mode: normal
+
+import:
+  tools:
+    - exec
+    - fs_read
+    - grep
+    - list
+    - ../../tools/git_diff/tool.yml
+    - ../../tools/git_status/tool.yml
+  feeds: []
+  agents: []
+  env: []
