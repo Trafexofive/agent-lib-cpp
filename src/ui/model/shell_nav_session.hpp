@@ -205,6 +205,56 @@ inline void ShellModel::refreshNested() {
     rebuildViews();
 }
 
+inline void ShellModel::reannotateDrillable() {
+    // Session restore deserializes drillable flags from disk, but those can be
+    // stale/false when the live Agent tree was rebuilt (or when older timelines
+    // never set actionName). Re-resolve against the current rootAgent so ↳ Enter
+    // works after resume the same way it does on first-start live turns.
+    if (!rootAgent) return;
+    auto fix = [this](TimelineRow& row) {
+        // Recover agent name from titles when older/partial rows lost actionName.
+        if (row.actionName.empty()) {
+            // Live titles: "agent:reader  ↳ enter" / Result titles often include the name.
+            auto recover = [](const std::string& s) -> std::string {
+                // "agent:NAME" prefix
+                if (s.rfind("agent:", 0) == 0) {
+                    std::string n = s.substr(6);
+                    auto sp = n.find_first_of(" \t");
+                    if (sp != std::string::npos) n = n.substr(0, sp);
+                    return n;
+                }
+                return {};
+            };
+            std::string n = recover(row.title);
+            if (n.empty()) n = recover(row.actionType == "agent" ? row.title : "");
+            if (!n.empty() && rootAgent->hasSubAgent(n)) {
+                row.actionName = n;
+                row.actionType = "agent";
+            }
+        }
+        const bool isAgentish =
+            row.actionType == "agent" ||
+            (row.kind == TimelineKind::Action && !row.actionName.empty() &&
+             rootAgent->hasSubAgent(row.actionName)) ||
+            (row.kind == TimelineKind::Result && !row.actionName.empty() &&
+             rootAgent->hasSubAgent(row.actionName));
+        if (!isAgentish) {
+            // Don't force-clear non-agent drillable (none today); only agent rows.
+            if (row.actionType == "agent") row.drillable = false;
+            return;
+        }
+        if (row.actionName.empty() || !rootAgent->hasSubAgent(row.actionName)) {
+            row.drillable = false;
+            return;
+        }
+        row.drillable = true;
+        if (row.actionType.empty()) row.actionType = "agent";
+        if (row.title.find("↳") == std::string::npos) row.title += "  ↳ enter";
+    };
+    for (auto& row : rootRows) fix(row);
+    for (auto& row : nestedRows) fix(row);
+}
+
 inline void ShellModel::loadSessionRecords(const std::vector<SessionRecord>& records) {
     rootRows.clear();
     for (const auto& record : records) {
@@ -235,6 +285,7 @@ inline void ShellModel::loadSessionRecords(const std::vector<SessionRecord>& rec
         }
         rootRows.push_back(std::move(row));
     }
+    reannotateDrillable();
     timelineState = rootRows.empty() ? PageState::Empty : PageState::Populated;
     selectedBlock = 0;
     markProjFull();
@@ -253,6 +304,10 @@ inline void ShellModel::loadSessionUi(const Session& session) {
         if (!rows.empty()) {
             rootRows.assign(std::make_move_iterator(rows.begin()),
                             std::make_move_iterator(rows.end()));
+            // Critical: re-bind ↳ drill targets to the LIVE agent tree.
+            // Without this, resume shows agent rows but Enter is a no-op
+            // (drillable false / empty actionName / subagent not resolved).
+            reannotateDrillable();
             timelineState = PageState::Populated;
             selectedBlock = 0;
             markProjFull();

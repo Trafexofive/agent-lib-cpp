@@ -222,6 +222,15 @@ struct ShellModel : TimelineStore {
 
     void setRootAgent(Agent* agent) {
         rootAgent = agent;
+        // Align shell identity with the live Agent config (manifest wins).
+        // Prevents header/footer showing stale session/cli provider·model.
+        if (rootAgent) {
+            const auto& c = rootAgent->config();
+            if (!c.name.empty()) agentName = c.name;
+            if (!c.model.empty()) agentModel = c.model;
+            if (!c.provider.empty()) agentProvider = c.provider;
+        }
+        reannotateDrillable();
         rebuildViews();
     }
 
@@ -387,6 +396,7 @@ struct ShellModel : TimelineStore {
     // Session load/persist — definitions in shell_nav_session.hpp (F4b).
     void loadSessionRecords(const std::vector<SessionRecord>& records);
     void loadSessionUi(const Session& session);
+    void reannotateDrillable();  // re-bind ↳ enter after restore / setRootAgent
     void persistUiTimeline();
     void persistUiTimelineFlush();
     void clearTranscript();

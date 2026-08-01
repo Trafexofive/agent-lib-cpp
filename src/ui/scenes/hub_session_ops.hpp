@@ -231,7 +231,12 @@ inline void MainScene::resumeSelectedSession() {
     session::SessionManager sessions;
     auto result = model::resumeDashboardSession(
         model_->dashboard, sessions,
-        [&](const std::string& id) { model_->rootAgent->loadSession(id); });
+        [&](const std::string& id) {
+            model_->rootAgent->loadSession(id);
+            // Subagent history lives in the state checkpoint, not session.records.
+            // Without this, ↳ enter after hub resume shows empty nested chats.
+            model_->rootAgent->loadStateCheckpoint(id);
+        });
     if (!result.ok) return;
     // loadSession may have repaired records:[] from the state
     // checkpoint into agent.history_ + re-saved the session file.
@@ -271,6 +276,14 @@ inline void MainScene::resumeSelectedSession() {
         }
     }
     model_->loadSessionUi(full);
+    // Live Agent config wins header identity after resume (not session file).
+    if (model_->rootAgent) {
+        const auto& c = model_->rootAgent->config();
+        if (!c.name.empty()) model_->agentName = c.name;
+        if (!c.model.empty()) model_->agentModel = c.model;
+        if (!c.provider.empty()) model_->agentProvider = c.provider;
+    }
+    model_->reannotateDrillable();
     model_->activeSessionId = result.sessionId;
     model_->requestRoute(PendingRoute::Agent);
 }

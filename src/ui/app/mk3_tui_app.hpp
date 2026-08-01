@@ -72,8 +72,23 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
     // Unified resume: prefer ui_timeline, fall back to records (session audit S0.3).
     if (!cfg.sessionId.empty()) {
         session::SessionManager sessions;
-        if (sessions.exists(cfg.sessionId))
+        if (sessions.exists(cfg.sessionId)) {
+            // Restore parent + subagent runtime state BEFORE painting timeline
+            // so ↳ drill has nested history (first-start works because prompt()
+            // loads this lazily; resume never called prompt yet).
+            if (model->rootAgent) {
+                model->rootAgent->loadSession(cfg.sessionId);
+                model->rootAgent->loadStateCheckpoint(cfg.sessionId);
+            }
             model->loadSessionUi(sessions.load(cfg.sessionId));
+            // Live Agent config always wins over session file identity fields.
+            if (model->rootAgent) {
+                const auto& c = model->rootAgent->config();
+                if (!c.name.empty()) model->agentName = c.name;
+                if (!c.model.empty()) model->agentModel = c.model;
+                if (!c.provider.empty()) model->agentProvider = c.provider;
+            }
+        }
     }
 }
 

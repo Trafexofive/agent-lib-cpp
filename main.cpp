@@ -1106,9 +1106,16 @@ static void applySessionMetadata(CliConfig& cli, const std::string& sessionId) {
         cli.systemPromptPath = get("system_prompt_path");
     if (cli.personaPath.empty())
         cli.personaPath = get("persona_path");
-    if (!cli.providerSet && !get("provider").empty())
+    // Cognitive engine: session metadata must NOT clobber an explicit -m
+    // manifest. Previously resume always overwrote cli.provider/model with
+    // whatever was saved on the session (often a free flash/opencode pair),
+    // so the TUI header and createProvider() disagreed with agent.yml.
+    // Only restore engine from session when no manifest is selected and the
+    // operator did not pass --provider/--model.
+    const bool manifestPinned = !cli.manifestPath.empty();
+    if (!manifestPinned && !cli.providerSet && !get("provider").empty())
         cli.provider = get("provider");
-    if (!cli.modelSet && !get("model").empty())
+    if (!manifestPinned && !cli.modelSet && !get("model").empty())
         cli.model = get("model");
 }
 

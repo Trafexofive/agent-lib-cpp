@@ -371,8 +371,17 @@ class AgentScene final : public BaseScene {
 
         chat::ChatSurfaceModel vm;
         vm.path = model_->breadcrumb();
-        vm.provider = cfg_.provider;
-        vm.model = cfg_.model;
+        // Live agent identity — never paint frozen InkcellAppConfig. Session
+        // resume used to leave cfg_ as stale opencode-go/flash while the
+        // running Agent was x-ai/grok-4.5 (or whatever -m loaded).
+        if (model_->rootAgent) {
+            const auto& c = model_->rootAgent->config();
+            vm.provider = !c.provider.empty() ? c.provider : model_->agentProvider;
+            vm.model = !c.model.empty() ? c.model : model_->agentModel;
+        } else {
+            vm.provider = !model_->agentProvider.empty() ? model_->agentProvider : cfg_.provider;
+            vm.model = !model_->agentModel.empty() ? model_->agentModel : cfg_.model;
+        }
         vm.sessionId = model_->activeSessionId;
         vm.status = model_->status;
         {
