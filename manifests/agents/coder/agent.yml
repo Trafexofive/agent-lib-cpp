@@ -33,8 +33,10 @@ prompt_building:
     usage_examples: false
 
 runtime:
-  max_iterations: 124
-  history_cap: 200
+  # Daily-driver caps — prevent context mush / endless thought parades.
+  # Raise only for long known-good implement sessions after history digests land.
+  max_iterations: 40
+  history_cap: 50
   mode: normal
   subagents:
     persistence: session

@@ -333,6 +333,12 @@ std::string Agent::runLoop(AgentContext &ctx) {
             ? config_.bareRecoveryPromoteAfter
             : (compPolicy == CompPolicy::Promote ? 2 : 1000000);
     int bareRecoveryCount = 0;
+    // Consecutive generations with content but no tool action and no final.
+    // Soft nudge at kThoughtOnlySoftCap; hard stop at kThoughtOnlyHardCap.
+    // Multi-thought inside ONE generation is fine (not counted per-tag).
+    static constexpr int kThoughtOnlySoftCap = 2;
+    static constexpr int kThoughtOnlyHardCap = 3;
+    int thoughtOnlyStreak = 0;
     std::string lastSalvage; // best non-final content this turn (for promote)
 
 
@@ -786,6 +792,41 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // mid-turn still leaves the last LLM-facing prompt on disk.
         if (devMode_ || verbose_ || raw_ || ctx.debug)
             dumpSessionArtifacts();
+
+        // Thought-only / no-progress streak (work turns only).
+        // Counts generations that produced content but neither tools nor final.
+        // Actions or a real final zero the streak. Empty upstream aborts above.
+        if (!finalizationTurn && !st.taskComplete) {
+            const bool hadActions = !results.empty() ||
+                iterationRawOutput.find("<action") != std::string::npos;
+            const bool hadContent = streamStats.anyContent ||
+                !trimCopy(iterationRawOutput).empty() ||
+                !thoughtOutput_.empty();
+            if (!hadActions && hadContent) {
+                ++thoughtOnlyStreak;
+                if (thoughtOnlyStreak >= kThoughtOnlyHardCap) {
+                    std::string stop = buildThoughtOnlyHardStop(thoughtOnlyStreak);
+                    emitStatus(stop);
+                    history_.push_back("Agent: " + stop);
+                    responseOutput_ = stop;
+                    fullResponse = stop;
+                    protocolEvents_.push_back(
+                        {ProtocolEventKind::RESPONSE, stop, {}, {}});
+                    st.taskComplete = true;
+                    break;
+                }
+                if (thoughtOnlyStreak >= kThoughtOnlySoftCap) {
+                    history_.push_back(
+                        "System: " +
+                        buildThoughtOnlyNudge(thoughtOnlyStreak,
+                                              kThoughtOnlyHardCap));
+                }
+            } else if (hadActions) {
+                thoughtOnlyStreak = 0;
+            }
+        } else if (st.taskComplete) {
+            thoughtOnlyStreak = 0;
+        }
 
         // Never force a follow-up after finalization — that turn is one-shot.
         bool forceResultFollowup =

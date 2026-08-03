@@ -335,4 +335,30 @@ os << "\n----- END SALVAGE -----\n\n"
 return os.str();
 }
 
+// Thought-only streak: model produced content but no <action> and no final.
+// Multi-thought in ONE generation is fine; N consecutive generations without
+// tools/final burns API cost and is almost always a re-plan loop.
+inline std::string buildThoughtOnlyNudge(int streak, int softCap) {
+    std::ostringstream os;
+    os << "[THOUGHT-ONLY " << streak << "/" << softCap
+       << "] Previous generation had no <action> and no "
+          "<response final=\"true\">.\n"
+          "Multiple <thought> tags in ONE generation are OK. "
+          "THIS generation must open with tools or a final — "
+          "do not restate the plan.\n"
+          "Emit EXACTLY one of:\n"
+          "  <action type=\"tool\" name=\"…\" id=\"…\">…</action>\n"
+          "  <response final=\"true\">…evidence-based answer…</response>\n";
+    return os.str();
+}
+
+inline std::string buildThoughtOnlyHardStop(int streak) {
+    std::ostringstream os;
+    os << "[THOUGHT-ONLY HARD STOP] " << streak
+       << " consecutive generations without tools or final. "
+          "Loop aborted to protect budget. "
+          "Re-run with a tighter prompt or a stronger model.";
+    return os.str();
+}
+
 }  // namespace cortex::mk3
