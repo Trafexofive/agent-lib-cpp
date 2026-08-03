@@ -1,43 +1,34 @@
-# Harness prompts (operator notes — NOT injected)
+# Harness (operator notes — not model PE)
 
-These files are loaded into `<harness><protocol>…</protocol></harness>` in the
-**system** message the model actually sees. They must be a **self-contained
-surface of truth**.
+Loaded into `<harness><protocol>…</protocol></harness>` every generation.
 
-## Rules
+## Content rule
 
-1. **No external pointers** — never "see CANON.md", never "docs/…". The model
-   cannot open those files. If it is not in this text, it does not exist for the model.
-2. **Protocol only** — tags, loop, action grammar, thought/result laws.
-   Domain taste lives in agent `system.md` / `persona` / skills.
-3. **Name the real prompt surface** — speak in terms of `<action_available>`,
-   inline transcript, `<result>`, user continue cue — because that is what
-   `buildSystemPrompt` / `buildChatPrompt` assemble every iteration.
-4. **Tier by bytes, not essays**
+**Wire laws only.** No meta-PE:
 
-| File | Inject when | Target |
-|------|-------------|--------|
-| `small.md` | specialists / children | ~1KB |
-| `default.md` | daily parents / workers | ~2.5–3.5KB |
-| `medium.md` | need agent/pipe nudge | ~3KB |
-| `big.md` | debug / stubborn models only | ~5–6KB |
+- no “you are a runtime / not a chatbot”
+- no “what you see in this prompt”
+- no cadence slogans (“density over theater”)
+- no pointers to CANON/docs the model cannot open
+- no domain taste (that is system/persona/skills)
 
-## What the model sees each iteration
+State tags, attrs, loop constraints, pipe forms, agent ops. Stop.
+
+## Tiers
+
+| File | Use |
+|------|-----|
+| `small.md` | children / specialists |
+| `default.md` | parents / workers |
+| `medium.md` | slightly more agent/pipe detail |
+| `big.md` | full reference / stubborn models |
+
+## Assembly (for editors)
 
 ```
-system:
-  <harness><protocol>{this file}</protocol><info …/></harness>
-  <system>
-    persona / system_prompt / skills / modules
-    <action_available> tools relics feeds sub_agents workflows
-    cwd + counts
-    inline transcript (history capped)
-  </system>
-user:
-  iter1 → real user request
-  iterN → "Continue from the inline transcript…"
-system (optional tail):
-  dynamic feeds
+system: harness + system block (persona, tools, transcript…)
+user:  request | continue cue
+system: optional dynamic feeds
 ```
 
-Edit harness with that assembly in mind. Every line costs every generation.
+Every harness line is paid on every generation.
