@@ -24,24 +24,17 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     if (!harnessText_.empty()) {
         ss << harnessText_;
     } else {
-        // Hardcoded fallback
-        ss << "    ⚠ ABSOLUTELY REQUIRED: Each turn, output EXACTLY ONE of "
-              "these XML formats. Nothing else.\n";
-        ss << "    Bare text (not inside <response>...</response>) is "
-              "DISCARDED. The user will NOT see it.\n";
-        ss << "    \n";
-        ss << "    FORMAT A — Final answer:\n";
-        ss << "    <response final=\"true\">answer here</response>\n";
-        ss << "    \n";
-        ss << "    FORMAT B — Call a tool:\n";
-        ss << "    <action type=\"tool\" name=\"list\" id=\"ls1\" "
-              "mode=\"sync\">{\"path\":\".\"}</action>\n";
-        ss << "    id must be unique. Use short ids like ls1, grep1, read1.\n";
-        ss << "    \n";
-        ss << "    After a tool call, you receive a <result> message. Read the "
-              "result, then respond.\n";
-        ss << "    Do not call the same tool twice with the same parameters.\n";
-        ss << "    Stop after giving your final answer.\n";
+        // Harness file missing — minimal self-contained contract (no external refs).
+        ss << "    Emit protocol tags only. Bare text does not finalize.\n"
+              "    <thought>…</thought>\n"
+              "    <action type=\"tool|agent|relic|feed|workflow\" "
+              "name=\"EXACT_FROM_ACTION_AVAILABLE\" id=\"unique\" "
+              "mode=\"sync\">BODY</action>\n"
+              "    <response>…</response>\n"
+              "    <response final=\"true\">…</response>  only normal stop\n"
+              "    Runtime injects <result status=\"ok|error|…\"> — never forge.\n"
+              "    Never final=\"true\" in the same generation as <action>.\n"
+              "    After results: act once more, recover once, or final.\n";
     }
     ss << "  </protocol>\n";
     ss << "  <info name=\"" << xmlAttr(config_.name) << "\" version=\""
@@ -69,9 +62,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     // Live skill laws (import.skills → SKILL.md). Absent = not claimed.
     auto skillIt = env_.find("__SKILLS_XML__");
     if (skillIt != env_.end() && !skillIt->second.empty()) {
-        ss << "  <skills>\n"
-              "    <description>Non-negotiable module laws. Obey always. "
-              "Not optional flavor.</description>\n";
+        ss << "  <skills>\n";
         ss << indentText(skillIt->second, 4) << "\n";
         ss << "  </skills>\n";
     }
@@ -85,15 +76,8 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     }
 
     ss << "  <action_available>\n";
-    ss << "    <description>Callable runtime surfaces. Use these with <action "
-          "type=\"...\"> only "
-          "when needed.</description>\n";
 
-    ss << "    <tools>\n        <description>Functions callable with <action "
-          "type=\"tool\">. Cards list name + WHEN/ANTI PE + required/keys. "
-          "Prefer named tools over exec. Do not invent param names outside "
-          "the card. Prefer attrs + short JSON bodies."
-          "</description>\n";
+    ss << "    <tools>\n";
     auto schemaIt = env_.find("__TOOL_SCHEMAS__");
     bool hasSchemas = (schemaIt != env_.end() && !schemaIt->second.empty());
     // Dedup by tool name (set) — string find on the schema blob was fragile
@@ -153,9 +137,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     ss << "    </tools>\n";
 
     if (!relics_.empty()) {
-        ss << "    <relics>\n        <description>Persistent stores callable "
-              "with <action "
-              "type=\"relic\">.</description>\n";
+        ss << "    <relics>\n";
         for (auto &name : relics_) {
             ss << "        <relic name=\"" << xmlAttr(name) << "\"/>\n";
         }
@@ -163,32 +145,21 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     }
 
     if (!feedNames().empty()) {
-        ss << "    <feeds>\n        <description>Ambient context feeds. "
-              "Callable with <action "
-              "type=\"feed\"> when fresh params are needed.</description>\n";
+        ss << "    <feeds>\n";
         for (const auto &name : feedNames()) {
-            ss << "        <feed name=\"" << xmlAttr(name)
-               << "\" action=\"feed\"/>\n";
+            ss << "        <feed name=\"" << xmlAttr(name) << "\"/>\n";
         }
         ss << "    </feeds>\n";
     }
 
     if (!subAgents_.empty()) {
-        // Slim cards: name + summary only. Nested child tool lists re-paid the
-        // full tool taxonomy inside the parent prompt (major bloat / dup source).
-        ss << "    <sub_agents>\n"
-              "        <description>Delegatable agents: <action type=\"agent\" "
-              "name=\"AGENT\" id=\"a1\" mode=\"sync\">instruction</action>. "
-              "Default result = sub-agent final only. dump_context=true only "
-              "when you need its trace. Do not re-list their tools here — "
-              "they own their surface.</description>\n";
+        // Slim cards: name + summary only. Child tools stay on the child.
+        ss << "    <sub_agents>\n";
         for (const auto &[name, agent] : subAgents_) {
             const auto &cfg = agent->config();
             ss << "        <sub_agent name=\"" << xmlAttr(name) << "\"";
             if (!cfg.summary.empty())
                 ss << " summary=\"" << xmlAttr(cfg.summary) << "\"";
-            // Keep model hint short for routing cost awareness; drop
-            // version/manifest_dir noise from the hot prompt.
             if (!cfg.model.empty())
                 ss << " model=\"" << xmlAttr(cfg.model) << "\"";
             ss << "/>\n";
@@ -198,25 +169,16 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
 
     auto wfIt = env_.find("__WORKFLOW_XML__");
     if (wfIt != env_.end() && !wfIt->second.empty()) {
-        ss << "    <workflows>\n"
-              "        <description>Codified spines (guidance). Prefer as "
-              "rails; adapt. Full step bodies omitted unless "
-              "CORTEX_WORKFLOW_FULL=1.</description>\n";
+        ss << "    <workflows>\n";
         ss << indentText(wfIt->second, 8) << "\n";
         ss << "    </workflows>\n";
     }
 
     ss << "  </action_available>\n";
 
-    // Capability counts — a compact at-a-glance summary of what the active
-    // manifest granted. Helps the model self-check before attempting an
-    // action: if tools c=0, no <action type="tool"> can succeed.
-    ss << "  <manifest_count>";
-    ss << "<tools c=" << tools_.size() << ">";
-    ss << "<relics c=" << relicNames().size() << ">";
-    ss << "<feeds c=" << feedNames().size() << ">";
-    ss << "<agents c=" << subAgentNames().size() << ">";
-    ss << "</manifest_count>\n";
+    ss << "  <manifest_count tools=\"" << tools_.size() << "\" relics=\""
+       << relicNames().size() << "\" feeds=\"" << feedNames().size()
+       << "\" agents=\"" << subAgentNames().size() << "\"/>\n";
 
     ss << "  <cwd>" << std::filesystem::current_path().string() << "</cwd>\n";
     ss << "</system>\n\n";
