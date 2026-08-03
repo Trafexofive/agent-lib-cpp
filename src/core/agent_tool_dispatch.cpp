@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unistd.h>
 
 #include "../feeds/feed_engine.hpp"
 #include "../tools/dispatch.hpp"
@@ -15,17 +16,60 @@
 namespace cortex::mk3 {
 
 Json::Value Agent::dispatchAskTool(const Json::Value& params) {
-    if (askToolHandler_) {
-        Json::Value result = askToolHandler_(params);
+    // Normalize result so TUI bridge and stdin fallback share one contract:
+    //   success, cancelled, results{id:value}, answered[], count
+    auto finalize = [](Json::Value result) -> Json::Value {
         if (!result.isObject()) {
             Json::Value wrapped;
             wrapped["success"] = true;
+            wrapped["cancelled"] = false;
             wrapped["results"] = result;
-            return wrapped;
+            result = std::move(wrapped);
         }
         if (!result.isMember("success"))
-            result["success"] = true;
+            result["success"] = !result.get("cancelled", false).asBool();
+        if (!result.isMember("cancelled"))
+            result["cancelled"] = false;
+        if (!result.isMember("results") || !result["results"].isObject())
+            result["results"] = Json::Value(Json::objectValue);
+        if (!result.isMember("answered") || !result["answered"].isArray()) {
+            Json::Value answered(Json::arrayValue);
+            for (const auto& key : result["results"].getMemberNames())
+                answered.append(key);
+            result["answered"] = answered;
+        }
+        result["count"] =
+            static_cast<Json::UInt64>(result["answered"].size());
         return result;
+    };
+
+    if (askToolHandler_) {
+        try {
+            return finalize(askToolHandler_(params));
+        } catch (const std::exception& e) {
+            Json::Value err;
+            err["success"] = false;
+            err["cancelled"] = false;
+            err["error"] = std::string("ask_tool handler failed: ") + e.what();
+            err["results"] = Json::Value(Json::objectValue);
+            err["answered"] = Json::Value(Json::arrayValue);
+            err["count"] = 0;
+            return err;
+        }
+    }
+
+    // No interactive handler (headless / missing bridge). Prefer registry
+    // stdin path only when a TTY is present — otherwise fail loud.
+    if (!::isatty(STDIN_FILENO)) {
+        Json::Value out;
+        out["success"] = false;
+        out["cancelled"] = false;
+        out["error"] =
+            "ask_tool requires interactive TUI (no ask handler and stdin is not a TTY)";
+        out["results"] = Json::Value(Json::objectValue);
+        out["answered"] = Json::Value(Json::arrayValue);
+        out["count"] = 0;
+        return out;
     }
 
     auto fn = tools::ToolRegistry::instance().get("ask_tool");
@@ -36,12 +80,16 @@ Json::Value Agent::dispatchAskTool(const Json::Value& params) {
         std::string errs;
         std::istringstream ss(raw);
         if (Json::parseFromStream(reader, ss, &parsed, &errs))
-            return parsed;
+            return finalize(parsed);
     }
 
     Json::Value out;
     out["success"] = false;
+    out["cancelled"] = false;
     out["error"] = "ask_tool requires an interactive ask handler";
+    out["results"] = Json::Value(Json::objectValue);
+    out["answered"] = Json::Value(Json::arrayValue);
+    out["count"] = 0;
     return out;
 }
 

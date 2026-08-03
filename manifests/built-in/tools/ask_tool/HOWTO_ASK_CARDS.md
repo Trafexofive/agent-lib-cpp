@@ -1,68 +1,82 @@
 # ask_tool / ask cards — operator + implementer notes
 
-## Status (2026-03-27)
+## Status
 
-Inkcell TUI path is **live**, not vapor:
+Inkcell TUI path is **production** for coder daily-driver:
 
 | Feature | Status |
 |---------|--------|
-| Modal overlay (`drawAskDialog`) | **shipped** |
-| Card chain progress `card i/n · type` | **shipped** |
-| Esc / Ctrl-C cancel → `bridge.cancelAsk` | **shipped** |
-| Y/N confirm single key | **shipped** |
-| Arrow / j k choice selection | **shipped** |
-| Multi-select Space toggle | **shipped** |
-| Number min/max, type_confirm exact word | **shipped** |
-| Secret masked input | **shipped** |
-| Default value on empty Enter | **shipped** (text/number/secret/textarea) |
-| Worker unblock on answer (`completeAsk`) | **shipped** (P0 fix) |
-| Notes-only auto-complete via `settleAsk` | **shipped** |
-| Nested chains / branches / goto | **not yet** (pi ask_cards parity later) |
-| optionsResolver / condition / transform | **not yet** |
+| Modal overlay (`drawAskDialog`) | live |
+| Card chain `card i/n · type` | live |
+| Esc / Ctrl-C → `cancelAsk` | live |
+| Y/N confirm single key | live |
+| Arrow / j k choice | live |
+| Multi-select Space toggle | live |
+| Number min/max, type_confirm | live |
+| Secret masked input | live |
+| Default on empty Enter | live |
+| Worker unblock (`completeAsk`) | live |
+| Notes-only auto (`settleAsk`) | live |
+| Result shape parity (answered/count) | live |
+| Ask timeout (default 120s) | live |
+| Headless without TTY | fails loud (no hang) |
+| Nested chains / branches / goto | later (pi parity) |
+| optionsResolver / condition | later |
 
 ## Call path
 
 ```
-LLM <action type="tool" name="ask_tool">JSON</action>
+LLM <action type="tool" name="ask_tool" id="a1">JSON</action>
   → Agent::dispatchAskTool
       → askToolHandler_  (inkcell: bridge.requestAsk)
           → UiEvent::AskDialog
           → ShellModel parseDialogState + overlay
           → operator keys → finishAskCard / settleAsk
           → bridge.completeAsk(results)  // unblocks worker
-      → fallback: ToolRegistry native ask_tool (stdin) if no handler
+      → else if TTY: stdin builtin fallback
+      → else: error (no hang)
 ```
 
-## Supported card types (DialogState)
-
-`text` · `textarea` · `secret` · `number` · `confirm` · `type_confirm` ·  
-`choice` · `multi_choice` · `ranker` · `key_value` ·  
-`note` · `info` · `section_header` (non-interactive, auto-advance)
-
-Schema authority for the model: `manifests/built-in/tools/ask_tool/tool.yml`.
-
-## Result shape
+## Result shape (always)
 
 ```json
 {
   "success": true,
   "cancelled": false,
-  "results": { "card_id": "value-or-array-or-bool" }
+  "timed_out": false,
+  "results": { "card_id": "value" },
+  "answered": ["card_id"],
+  "count": 1
 }
 ```
 
-`success=false` + `cancelled=true` when operator Escapes. Do not re-ask the same chain.
+On Esc/cancel: `success=false`, `cancelled=true`, empty results.  
+On timeout: `success=false`, `timed_out=true`, `error` set.
 
-## Tests
+## Supported card types
 
-- `src/testing/ask_tool_test.cpp` — registry + stdin fallback
-- `src/testing/ui_model_test.cpp` — bridge channel, number/type_confirm, settleAsk notes
-- `src/testing/chat_scene_test.cpp` — choice roundtrip + notes-only auto-complete
+`text` · `textarea` · `secret` · `number` · `confirm` · `type_confirm` ·  
+`choice` · `multi_choice` · `ranker` · `key_value` ·  
+`note` · `info` · `section_header`
 
-## Next (parity backlog, not blockers)
+Unknown types → treated as `text`. Empty/missing `cards` → one free-text card.
 
-1. condition / branches / goto between cards
-2. optionsResolver (dynamic options)
-3. transform pipeline (trim/lower/int)
-4. minDelaySecs on destructive confirms
-5. command_approval card type
+## Operator keys
+
+| Type | Keys |
+|------|------|
+| text / number / secret / type_confirm | type · Enter submit · Esc cancel |
+| confirm | y / n (no Enter) |
+| choice | ↑↓ or j/k · Enter |
+| multi_choice | ↑↓ · Space toggle · Enter |
+| ranker | Enter accepts 1..n order, or type `3,1,2` |
+
+## Timeout
+
+Default **120s** waiting for operator (`requestAsk`). Override per call:
+
+```json
+{ "title": "…", "timeout_sec": 60, "cards": [ … ] }
+```
+
+`timeout_sec: 0` waits forever (Esc still cancels).

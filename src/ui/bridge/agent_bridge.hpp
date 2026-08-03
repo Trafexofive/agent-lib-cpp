@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
@@ -123,6 +124,7 @@ class AgentBridge {
             askPending_ = true;
             askComplete_ = false;
             askCancelled_ = false;
+            askTimedOut_ = false;
             askResult_ = Json::objectValue;
         }
         UiEvent event;
@@ -130,12 +132,37 @@ class AgentBridge {
         event.json = params;
         publish(std::move(event));
 
+        // Optional timeout_sec on params (tool.yml default 120). 0 = wait forever.
+        int timeoutSec = 120;
+        if (params.isMember("timeout_sec") && params["timeout_sec"].isNumeric())
+            timeoutSec = params["timeout_sec"].asInt();
+        else if (params.isMember("timeout") && params["timeout"].isNumeric())
+            timeoutSec = params["timeout"].asInt();
+        if (timeoutSec < 0)
+            timeoutSec = 0;
+
         std::unique_lock<std::mutex> lock(askMu_);
-        askCv_.wait(lock, [&] { return askComplete_ || askCancelled_; });
+        bool answered = true;
+        if (timeoutSec > 0) {
+            answered = askCv_.wait_for(lock, std::chrono::seconds(timeoutSec), [&] {
+                return askComplete_ || askCancelled_;
+            });
+            if (!answered) {
+                askTimedOut_ = true;
+                askCancelled_ = true;  // unblock; treat like cancel for the loop
+            }
+        } else {
+            askCv_.wait(lock, [&] { return askComplete_ || askCancelled_; });
+        }
+
         Json::Value out;
-        out["success"] = !askCancelled_;
-        out["cancelled"] = askCancelled_;
-        out["results"] = askResult_;
+        out["success"] = askComplete_ && !askCancelled_ && !askTimedOut_;
+        out["cancelled"] = askCancelled_ && !askTimedOut_;
+        out["timed_out"] = askTimedOut_;
+        out["results"] = askTimedOut_ ? Json::Value(Json::objectValue) : askResult_;
+        if (askTimedOut_)
+            out["error"] = "ask_tool timed out waiting for operator (" +
+                           std::to_string(timeoutSec) + "s)";
         askPending_ = false;
         return out;
     }
@@ -143,7 +170,8 @@ class AgentBridge {
     void completeAsk(const Json::Value& results) {
         {
             std::lock_guard<std::mutex> lock(askMu_);
-            if (!askPending_) return;
+            if (!askPending_ || askComplete_ || askCancelled_)
+                return;  // idempotent
             askResult_ = results;
             askComplete_ = true;
         }
@@ -153,7 +181,8 @@ class AgentBridge {
     void cancelAsk() {
         {
             std::lock_guard<std::mutex> lock(askMu_);
-            if (!askPending_) return;
+            if (!askPending_ || askComplete_ || askCancelled_)
+                return;  // idempotent
             askCancelled_ = true;
         }
         askCv_.notify_all();
@@ -181,6 +210,7 @@ class AgentBridge {
     bool askPending_ = false;
     bool askComplete_ = false;
     bool askCancelled_ = false;
+    bool askTimedOut_ = false;
     Json::Value askResult_ = Json::objectValue;
 
     void wake() const {

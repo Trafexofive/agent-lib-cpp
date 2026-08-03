@@ -616,10 +616,15 @@ class AgentScene final : public BaseScene {
                 for (const auto& key : members) {
                     const auto& v = model_->askDialog.results[key];
                     std::string val;
-                    if (v.isString()) val = v.asString();
-                    else if (v.isBool()) val = v.asBool() ? "true" : "false";
-                    else if (v.isNumeric()) val = v.asString();
-                    else {
+                    if (v.isString()) {
+                        val = v.asString();
+                    } else if (v.isBool()) {
+                        val = v.asBool() ? "true" : "false";
+                    } else if (v.isInt() || v.isUInt() || v.isInt64() || v.isUInt64()) {
+                        val = std::to_string(v.asInt64());
+                    } else if (v.isDouble()) {
+                        val = std::to_string(v.asDouble());
+                    } else {
                         Json::StreamWriterBuilder wb;
                         wb["indentation"] = "";
                         val = Json::writeString(wb, v);

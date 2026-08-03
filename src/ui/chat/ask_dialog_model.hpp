@@ -134,19 +134,34 @@ static inline DialogState parseDialogState(const Json::Value& params) {
     DialogState state;
     state.chainTitle = params.get("title", params.get("chainTitle", "Agent asks")).asString();
     state.message = params.get("message", "").asString();
-    if (params.isMember("cards") && params["cards"].isArray()) {
+    if (params.isMember("cards") && params["cards"].isArray() && !params["cards"].empty()) {
         for (size_t i = 0; i < params["cards"].size(); i++) {
             DialogCard card = cardFromJson(params["cards"][(Json::ArrayIndex)i]);
             if (card.id.empty())
                 card.id = "card_" + std::to_string(i);
+            // Unknown types fall back to free text so the operator is never stuck.
+            static const char* kKnown[] = {
+                "text",       "textarea", "secret",  "number",         "confirm",
+                "type_confirm", "choice", "multi_choice", "ranker",     "key_value",
+                "note",       "info",     "section_header"};
+            bool known = false;
+            for (const char* t : kKnown) {
+                if (card.type == t) {
+                    known = true;
+                    break;
+                }
+            }
+            if (!known)
+                card.type = "text";
             state.cards.push_back(card);
         }
     } else {
+        // No cards / empty cards → single free-text card under title.
         DialogCard card;
         card.id = "response";
         card.type = "text";
-        card.title = "Type anything";
-        card.message = params.get("message", "").asString();
+        card.title = state.chainTitle.empty() ? "Type anything" : state.chainTitle;
+        card.message = state.message;
         state.cards.push_back(card);
     }
     return state;
@@ -276,6 +291,10 @@ static inline bool handleDialogLine(DialogState& state, const std::string& rawLi
 
     if (card->type == "multi_choice") {
         auto parts = splitDialogCsv(line);
+        if (parts.empty() && card->required && card->minSelect <= 0) {
+            state.error = "Select at least one option (Space toggle, Enter done).";
+            return false;
+        }
         if ((int)parts.size() < card->minSelect) {
             state.error = "Select at least " + std::to_string(card->minSelect) + " options.";
             return false;
