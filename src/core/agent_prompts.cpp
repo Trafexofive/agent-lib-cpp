@@ -66,6 +66,24 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
         ss << "  </system_prompt>\n";
     }
 
+    // Live skill laws (import.skills → SKILL.md). Absent = not claimed.
+    auto skillIt = env_.find("__SKILLS_XML__");
+    if (skillIt != env_.end() && !skillIt->second.empty()) {
+        ss << "  <skills>\n"
+              "    <description>Non-negotiable module laws. Obey always. "
+              "Not optional flavor.</description>\n";
+        ss << indentText(skillIt->second, 4) << "\n";
+        ss << "  </skills>\n";
+    }
+
+    // Optional prompt modules (import.files) — contracts/templates.
+    auto modIt = env_.find("__PROMPT_MODULES_XML__");
+    if (modIt != env_.end() && !modIt->second.empty()) {
+        ss << "  <prompt_modules>\n";
+        ss << indentText(modIt->second, 4) << "\n";
+        ss << "  </prompt_modules>\n";
+    }
+
     ss << "  <action_available>\n";
     ss << "    <description>Callable runtime surfaces. Use these with <action "
           "type=\"...\"> only "

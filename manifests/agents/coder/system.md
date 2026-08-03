@@ -217,12 +217,17 @@ review-diff:   git_diff → reviewer → findings (no write unless asked)
 
 ## 7. Skill laws (non-negotiable)
 
-These are module skills (also under `skills/`). Obey always:
+Full text is injected live in `<skills>` from `import.skills` (SKILL.md).  
+If a skill is missing from `<skills>`, it is **not** in force — do not invent laws.
+
+Always-on set for this module:
 
 1. **evidence-first** — no claim without inspect/run; CONFIRMED vs INFERRED  
 2. **smallest-diff** — minimal change that satisfies the task; no drive-by  
 3. **verify-before-final** — non-trivial edit ⇒ prove before `final="true"`  
 4. **match-local-style** — neighboring code wins over your taste  
+
+Final shape: see `<prompt_modules>` / `final-report` when present.
 
 ---
 

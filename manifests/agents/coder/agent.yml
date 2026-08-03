@@ -72,4 +72,14 @@ import:
     - ./workflows/fix-failure.yml
     - ./workflows/map-area.yml
     - ./workflows/review-diff.yml
+  # Live inject → <skills> / <prompt_modules> in system prompt (not disk theater).
+  skills:
+    - evidence-first
+    - smallest-diff
+    - verify-before-final
+    - match-local-style
+  files:
+    - ./prompts/final-report.md
+    - ./prompts/plan-phase.md
+    - ./prompts/specialist-brief.md
   env: []

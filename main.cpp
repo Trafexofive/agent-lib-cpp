@@ -2210,6 +2210,14 @@ static int cmdRun(CliConfig& cli) {
         agent.setEnv("__TOOL_SCHEMAS__", schemaXml);
     if (!workflowXml.empty())
         agent.setEnv("__WORKFLOW_XML__", workflowXml);
+    if (!cli.manifestPath.empty()) {
+        std::string skillsXml = ManifestLoader::loadSkillsXml(cli.manifestPath);
+        if (!skillsXml.empty())
+            agent.setEnv("__SKILLS_XML__", skillsXml);
+        std::string modsXml = ManifestLoader::loadPromptModulesXml(cli.manifestPath);
+        if (!modsXml.empty())
+            agent.setEnv("__PROMPT_MODULES_XML__", modsXml);
+    }
 
     if (cli.debug)
         agent.setEnv("__DEBUG_MODE__", "true");

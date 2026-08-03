@@ -13,29 +13,6 @@ print(json.dumps({"cwd":d.get("cwd") or ".","command":d.get("command") or "","ti
   timeout_sec=$(printf '%s' "$parsed" | python3 -c 'import json,sys;print(json.load(sys.stdin)["timeout_sec"])')
 fi
 cd "$cwd" 2>/dev/null || { echo '{"success":false,"error":"cwd not found"}'; exit 0; }
-run_cmd() {
-  local cmd="$1"
-  local out ec
-  set +e
-  out=$(timeout "$timeout_sec" bash -lc "$cmd" 2>&1)
-  ec=$?
-  set -e
-  python3 -c '
-import json,sys,os
-out=sys.stdin.read()
-maxb=200000
-trunc=len(out)>maxb
-if trunc: out=out[:maxb]+"\n…[truncated]"
-print(json.dumps({
-  "success": int(os.environ["EC"])==0,
-  "exit_code": int(os.environ["EC"]),
-  "command": os.environ["CMD"],
-  "truncated": trunc,
-  "output": out,
-}, ensure_ascii=False))
-' <<<"$out"
-  export EC="$ec" CMD="$cmd"
-}
 export timeout_sec
 if [[ -n "$command" ]]; then
   EC=0; CMD="$command"

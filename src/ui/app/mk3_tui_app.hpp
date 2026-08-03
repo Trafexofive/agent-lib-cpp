@@ -323,6 +323,14 @@ inline std::unique_ptr<Agent> buildAgentFromManifest(const std::string& manifest
             agent->setEnv("__TOOL_SCHEMAS__", schemaXml);
         if (!workflowXml.empty())
             agent->setEnv("__WORKFLOW_XML__", workflowXml);
+        {
+            std::string skillsXml = ManifestLoader::loadSkillsXml(manifestPath);
+            if (!skillsXml.empty())
+                agent->setEnv("__SKILLS_XML__", skillsXml);
+            std::string modsXml = ManifestLoader::loadPromptModulesXml(manifestPath);
+            if (!modsXml.empty())
+                agent->setEnv("__PROMPT_MODULES_XML__", modsXml);
+        }
         agent->setAskToolHandler([&bridge](const Json::Value& params) {
             return bridge.requestAsk(params);
         });

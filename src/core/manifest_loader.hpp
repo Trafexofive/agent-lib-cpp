@@ -670,6 +670,133 @@ class ManifestLoader {
         return resolved;
     }
 
+    // Resolve a skill name/path to SKILL.md under the agent module.
+    static fs::path resolveSkillPath(const fs::path& agentManifest, const std::string& name) {
+        fs::path base = agentManifest.parent_path();
+        fs::path requested(name);
+        std::vector<fs::path> candidates;
+        if (requested.is_absolute()) {
+            candidates.push_back(requested);
+        } else if (name.find('/') != std::string::npos || requested.extension() == ".md") {
+            candidates.push_back(base / requested);
+            if (requested.filename() != "SKILL.md")
+                candidates.push_back(base / requested / "SKILL.md");
+        } else {
+            candidates.push_back(base / "skills" / name / "SKILL.md");
+            candidates.push_back(base / "skills" / (name + ".md"));
+            candidates.push_back(base / name / "SKILL.md");
+        }
+        for (const auto& c : candidates) {
+            std::error_code ec;
+            fs::path n = c.lexically_normal();
+            if (fs::exists(n, ec) && fs::is_regular_file(n, ec))
+                return n;
+        }
+        return {};
+    }
+
+    // Strip YAML frontmatter; return {title, body}.
+    static void splitSkillMarkdown(const std::string& raw, std::string& title,
+                                   std::string& body) {
+        title.clear();
+        body.clear();
+        if (raw.size() >= 3 && raw.compare(0, 3, "---") == 0) {
+            size_t end = raw.find("\n---", 3);
+            if (end != std::string::npos) {
+                std::string fm = raw.substr(3, end - 3);
+                auto root = ManifestYaml::parse(fm);
+                title = ManifestYaml::get(root, "name");
+                if (title.empty())
+                    title = ManifestYaml::get(root, "description");
+                size_t bodyStart = raw.find('\n', end + 1);
+                if (bodyStart != std::string::npos)
+                    body = raw.substr(bodyStart + 1);
+                else
+                    body.clear();
+                // drop leading blank lines
+                while (!body.empty() && (body[0] == '\n' || body[0] == '\r'))
+                    body.erase(body.begin());
+                return;
+            }
+        }
+        body = raw;
+    }
+
+    // Build <skill> cards for prompt injection from import.skills.
+    // Empty import → empty string (no fake skill theater).
+    static std::string loadSkillsXml(const std::string& manifestPath) {
+        auto yaml = readFile(manifestPath);
+        if (yaml.empty())
+            return "";
+        auto root = ManifestYaml::parse(yaml);
+        auto* importNode = ManifestYaml::find(root, "import");
+        if (!importNode)
+            return "";
+        auto skillList = ManifestYaml::getList(*importNode, "skills");
+        if (skillList.empty())
+            return "";
+
+        std::ostringstream ss;
+        fs::path agentMan(manifestPath);
+        for (auto& name : skillList) {
+            fs::path sp = resolveSkillPath(agentMan, name);
+            if (sp.empty()) {
+                std::cerr << "[manifest] skill not found: " << name
+                          << " (from " << manifestPath << ")\n";
+                continue;
+            }
+            std::string raw = readFile(sp.string());
+            if (raw.empty())
+                continue;
+            std::string title, body;
+            splitSkillMarkdown(raw, title, body);
+            if (title.empty())
+                title = sp.parent_path().filename().string();
+            if (title.empty())
+                title = name;
+            // Cap body so skills stay laws, not essays.
+            const size_t kCap = 900;
+            if (body.size() > kCap)
+                body = body.substr(0, kCap - 1) + "…";
+            ss << "<skill name=\"" << title << "\">\n";
+            if (!body.empty())
+                ss << indentBlock(body, 2);
+            ss << "</skill>\n";
+        }
+        return ss.str();
+    }
+
+    // Optional prompt modules from import.files (markdown snippets).
+    // Only injects files that exist; missing paths are errors to stderr.
+    static std::string loadPromptModulesXml(const std::string& manifestPath) {
+        auto paths = loadFiles(manifestPath);
+        if (paths.empty())
+            return "";
+        std::ostringstream ss;
+        for (const auto& p : paths) {
+            if (!fs::exists(p)) {
+                std::cerr << "[manifest] import.files missing: " << p << "\n";
+                continue;
+            }
+            // Skip non-text / huge dumps
+            std::error_code ec;
+            auto sz = fs::file_size(p, ec);
+            if (ec || sz > 24000)
+                continue;
+            std::string raw = readFile(p);
+            if (raw.empty())
+                continue;
+            const size_t kCap = 1200;
+            if (raw.size() > kCap)
+                raw = raw.substr(0, kCap - 1) + "…";
+            std::string stem = fs::path(p).stem().string();
+            ss << "<module name=\"" << stem << "\">\n";
+            ss << indentBlock(raw, 2);
+            ss << "</module>\n";
+        }
+        return ss.str();
+    }
+
     // Compact one-line key inventory from a JSON Schema object (card mode).
     // Avoids dumping full property trees while still naming required params.
     static std::string toolSchemaCardLine(const std::string& inputSchemaJson) {

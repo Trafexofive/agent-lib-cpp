@@ -1,24 +1,33 @@
 # coder (PROD)
 
-Daily-driver implementation module for Cortex-Prime MK3.
+Daily-driver implementation module. **No empty product surfaces** — if it is
+listed in `agent.yml`, it is loaded at runtime.
 
 ```text
 coder/
 ├── agent.yml · system.md · persona.md
-├── tools/     git_status · git_diff · project_test · build_detect
-├── feeds/     repo_pulse (+ built-in working_directory)
-├── workflows/ implement · fix-failure · map-area · review-diff
-├── skills/    evidence-first · smallest-diff · verify-before-final · match-local-style
-├── prompts/   final-report · plan-phase · specialist-brief
-└── agents/    discovery · reader · tester · reviewer  (full units)
+├── tools/      git_status · git_diff · project_test · build_detect   (bash, real)
+├── feeds/      repo_pulse                                            (bash, real)
+├── workflows/  implement · fix-failure · map-area · review-diff
+├── skills/     evidence-first · smallest-diff · verify-before-final · match-local-style
+│                 → import.skills → live <skills> in prompt
+├── prompts/    final-report · plan-phase · specialist-brief
+│                 → import.files → live <prompt_modules>
+└── agents/     discovery · reader · tester · reviewer
+                (own agent.yml + system + persona; slim harness/small.md)
 ```
 
-## Quick start
+## Runtime inject
 
-```bash
-./cortex-mk3 -m coder --dry-run -p "noop"
-./cortex-mk3 -m coder -p "Fix X in src/... and verify with the narrowest make target"
-```
+| import key | Prompt block |
+|------------|--------------|
+| `tools` / schemas | `<tools>` cards |
+| `skills` | `<skills>` |
+| `files` | `<prompt_modules>` |
+| `workflows` | `<workflows>` spines |
+| `agents` | `<sub_agents>` cards |
+
+Missing import path → stderr warning, not silent theater.
 
 ## Roles
 
@@ -30,10 +39,13 @@ coder/
 | tester | no | narrow verify |
 | reviewer | no | diff risk |
 
-## Models
+## Quick start
 
-See `agent.yml` `cognitive_engine` (live source of truth).
+```bash
+./cortex-mk3 -m manifests/agents/coder/agent.yml --dry-run -p "noop"
+./cortex-mk3 -m manifests/agents/coder/agent.yml -p "Fix X and verify with the narrowest make target"
+```
 
 ## Lab
 
-`manifests/agents/coder-proto/` remains experimental. This tree is PROD.
+`manifests/agents/coder-proto/` is experimental if present. This tree is PROD.
