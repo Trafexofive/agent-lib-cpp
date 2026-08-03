@@ -36,6 +36,9 @@ import:
     - list
     - ../../tools/git_diff/tool.yml
     - ../../tools/git_status/tool.yml
+  skills:
+    - ../../skills/evidence-first
+    - ../../skills/smallest-diff
   feeds: []
   agents: []
   env: []

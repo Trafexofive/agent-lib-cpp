@@ -87,6 +87,7 @@ struct ToolDef {
     std::string buildOutput;         // output artifact used to skip rebuild when present
     std::string inputType = "json";  // action body mode: json | text
     std::string textParam;           // for text body mode: content/input/instruction
+    int timeoutSec = 0;              // script tool wall clock; 0 → agent actionTimeoutSec
 
     // Generate OpenAI function-calling schema
     Json::Value toOpenAISchema() const;

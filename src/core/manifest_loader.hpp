@@ -45,6 +45,7 @@ struct ToolSchema {
     std::string buildOutput;         // optional build artifact
     std::string inputType = "json";  // action body mode: json | text
     std::string textParam;           // where text body lands for text mode
+    int timeoutSec = 0;              // wall clock for script tools; 0 = agent default
 };
 
 // ── Manifest loader ──
@@ -215,6 +216,11 @@ class ManifestLoader {
             std::string hc = ManifestYaml::get(*runtime, "history_cap");
             if (!hc.empty())
                 cfg.historyCap = std::stoi(hc);
+            std::string ats = ManifestYaml::get(*runtime, "action_timeout_sec");
+            if (ats.empty())
+                ats = ManifestYaml::get(*runtime, "action_timeout");
+            if (!ats.empty())
+                cfg.actionTimeoutSec = std::stoi(ats);
             // Orthogonal lifecycle defaults (CLI flags OR with these):
             //   no_session → don't load/save session records
             //   ephemeral  → exit when the agent turn finishes (app layer)
@@ -422,6 +428,7 @@ class ManifestLoader {
                     td.description = schema.description;
                     td.inputType = schema.inputType.empty() ? "json" : schema.inputType;
                     td.textParam = schema.textParam;
+                    td.timeoutSec = schema.timeoutSec;
                     if (!schema.runtime.empty() && !schema.entrypoint.empty()) {
                         td.isNative = false;
                         td.scriptRuntime = schema.runtime;
@@ -570,13 +577,19 @@ class ManifestLoader {
             auto schemas = loadTools(agentManifest.string(), *subAgent);
             loadFeeds(agentManifest.string(), *subAgent);
             loadRelics(agentManifest.string(), *subAgent);
-            // Children get the same card/schema inject as parent CLI path.
+            // Children get the same card/schema/skills inject as parent path.
             const auto& rc = subCfg.promptBuilding.runtimeCapabilities;
             std::string schemaXml =
                 toolSchemasToXml(schemas, 8, rc.inputSchemas, rc.returnSchemas,
                                  rc.usageExamples);
             if (!schemaXml.empty())
                 subAgent->setEnv("__TOOL_SCHEMAS__", schemaXml);
+            std::string skillsXml = loadSkillsXml(agentManifest.string());
+            if (!skillsXml.empty())
+                subAgent->setEnv("__SKILLS_XML__", skillsXml);
+            std::string modsXml = loadPromptModulesXml(agentManifest.string());
+            if (!modsXml.empty())
+                subAgent->setEnv("__PROMPT_MODULES_XML__", modsXml);
             agent.addSubAgent(subAgent);
         }
     }
@@ -1072,6 +1085,15 @@ class ManifestLoader {
             s.entrypoint = ManifestYaml::get(*impl, "entrypoint", s.entrypoint);
             s.inputType = ManifestYaml::get(*impl, "input_type", s.inputType);
             s.textParam = ManifestYaml::get(*impl, "text_param", s.textParam);
+            std::string to = ManifestYaml::get(*impl, "timeout", "");
+            if (to.empty())
+                to = ManifestYaml::get(*impl, "timeout_sec", "");
+            if (!to.empty()) {
+                try {
+                    s.timeoutSec = std::stoi(to);
+                } catch (...) {
+                }
+            }
             auto* build = ManifestYaml::find(*impl, "build");
             if (build) {
                 s.buildCommand = ManifestYaml::get(*build, "command", s.buildCommand);
@@ -1084,6 +1106,17 @@ class ManifestLoader {
             s.runtime = ManifestYaml::get(root, "runtime");
         if (s.entrypoint.empty())
             s.entrypoint = ManifestYaml::get(root, "entrypoint");
+        if (s.timeoutSec <= 0) {
+            std::string to = ManifestYaml::get(root, "timeout", "");
+            if (to.empty())
+                to = ManifestYaml::get(root, "timeout_sec", "");
+            if (!to.empty()) {
+                try {
+                    s.timeoutSec = std::stoi(to);
+                } catch (...) {
+                }
+            }
+        }
         auto* topBuild = ManifestYaml::find(root, "build");
         if (topBuild) {
             s.buildCommand = ManifestYaml::get(*topBuild, "command", s.buildCommand);

@@ -96,6 +96,9 @@ class Tool {
     const std::string& textParam() const noexcept {
         return def_.textParam;
     }
+    int timeoutSec() const noexcept {
+        return def_.timeoutSec;
+    }
 
     /// Full definition (for introspection / serialization)
     const ToolDef& definition() const noexcept {

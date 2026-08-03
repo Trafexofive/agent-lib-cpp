@@ -44,5 +44,8 @@ import:
     - ../../tools/build_detect/tool.yml
   feeds:
     - working_directory
+  skills:
+    - ../../skills/evidence-first
+    - ../../skills/smallest-diff
   agents: []
   env: []

@@ -35,6 +35,8 @@ import:
     - grep
     - fs_read
     - context_peek
+  skills:
+    - ../../skills/evidence-first
   feeds: []
   agents: []
   env: []

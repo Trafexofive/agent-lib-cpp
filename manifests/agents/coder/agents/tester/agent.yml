@@ -36,6 +36,9 @@ import:
     - fs_read
     - ../../tools/project_test/tool.yml
     - ../../tools/build_detect/tool.yml
+  skills:
+    - ../../skills/evidence-first
+    - ../../skills/verify-before-final
   feeds: []
   agents: []
   env: []

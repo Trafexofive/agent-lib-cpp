@@ -40,6 +40,7 @@ runtime:
   # Raise only for long known-good implement sessions after history digests land.
   max_iterations: 40
   history_cap: 50
+  action_timeout_sec: 180   # project_test / make can exceed default 30s
   mode: normal
   subagents:
     persistence: session

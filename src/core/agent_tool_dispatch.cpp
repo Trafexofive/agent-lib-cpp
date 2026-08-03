@@ -245,9 +245,15 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
 }
 
 Json::Value Agent::executeScriptTool(const tools::Tool& tool, const Json::Value& params) {
-    // Synchronous execution — blocks but returns actual output
+    // Synchronous execution — blocks but returns actual output.
+    // Contract for manifest script tools (tool.yml runtime + entrypoint):
+    //   - params JSON on stdin (primary)
+    //   - same JSON also as argv[1] file path (compat)
+    //   - stdout should be a JSON object when possible
     std::string toolName = tool.name();
-    std::string paramsJson = Json::writeString(Json::StreamWriterBuilder(), params);
+    Json::StreamWriterBuilder wb;
+    wb["indentation"] = "";
+    std::string paramsJson = Json::writeString(wb, params);
     std::string blockReason = sandboxPolicy_.validate(toolName, paramsJson);
     if (!blockReason.empty()) {
         Json::Value err;
@@ -261,12 +267,11 @@ Json::Value Agent::executeScriptTool(const tools::Tool& tool, const Json::Value&
         return build;
 
     auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-    fs::path tmpFile = fs::temp_directory_path() / ("cortex-tool-" + toolName + "-" + std::to_string(now) + ".json");
+    fs::path tmpFile = fs::temp_directory_path() /
+                       ("cortex-tool-" + toolName + "-" + std::to_string(now) + ".json");
     {
-        Json::StreamWriterBuilder w;
-        w["indentation"] = "";
         std::ofstream tf(tmpFile);
-        tf << Json::writeString(w, params);
+        tf << paramsJson;
     }
 
     bool allowAnsi = true;
@@ -275,10 +280,16 @@ Json::Value Agent::executeScriptTool(const tools::Tool& tool, const Json::Value&
                                  ansiIt->second == "no" || ansiIt->second == "never"))
         allowAnsi = false;
 
+    // Per-tool timeout from tool.yml, else agent actionTimeoutSec.
+    int timeoutSec = tool.timeoutSec() > 0 ? tool.timeoutSec() : config_.actionTimeoutSec;
+    int timeoutMs = std::max(1, timeoutSec) * 1000;
+
     process::Spec spec;
     spec.shell = false;
+    // argv: runtime entrypoint [paramsFile] — scripts may ignore file and use stdin.
     spec.argv = runtimeArgv(tool.scriptRuntime(), tool.scriptPath(), tmpFile.string());
-    spec.timeoutMs = std::max(1, config_.actionTimeoutSec) * 1000;
+    spec.stdinText = paramsJson;  // primary contract for bash tools that `cat`
+    spec.timeoutMs = timeoutMs;
     spec.maxStdout = 1024 * 1024;
     spec.maxStderr = 256 * 1024;
     spec.env = allowAnsi ? std::map<std::string, std::string>{{"FORCE_COLOR", "1"},
@@ -290,8 +301,38 @@ Json::Value Agent::executeScriptTool(const tools::Tool& tool, const Json::Value&
     std::error_code ignored;
     fs::remove(tmpFile, ignored);
 
+    // Prefer structured JSON from stdout (coder tools print a single object).
+    {
+        std::string out = pr.stdoutText;
+        while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
+            out.pop_back();
+        Json::Value parsed;
+        Json::CharReaderBuilder reader;
+        std::string errs;
+        std::istringstream ss(out);
+        if (!out.empty() && Json::parseFromStream(reader, ss, &parsed, &errs) &&
+            parsed.isObject()) {
+            if (!parsed.isMember("success"))
+                parsed["success"] = pr.success() && (pr.exitCode == 0);
+            if (pr.timedOut) {
+                parsed["success"] = false;
+                if (!parsed.isMember("error"))
+                    parsed["error"] = "timed out";
+            } else if (pr.exitCode != 0 && !parsed.isMember("error")) {
+                parsed["error"] = "exit code " + std::to_string(pr.exitCode);
+            }
+            parsed["exit_code"] = pr.exitCode;
+            parsed["ms"] = (Json::Int64)pr.elapsedMs;
+            if (pr.stdoutTruncated)
+                parsed["stdout_truncated"] = true;
+            if (!pr.stderrText.empty() && !parsed.isMember("stderr"))
+                parsed["stderr"] = pr.stderrText;
+            return parsed;
+        }
+    }
+
     Json::Value r;
-    r["success"] = pr.success();
+    r["success"] = pr.success() && pr.exitCode == 0 && !pr.timedOut;
     r["exit"] = pr.exitCode;
     r["exit_code"] = pr.exitCode;
     r["signal"] = pr.termSignal;
@@ -299,7 +340,9 @@ Json::Value Agent::executeScriptTool(const tools::Tool& tool, const Json::Value&
     r["ms"] = (Json::Int64)pr.elapsedMs;
     r["stdout"] = pr.stdoutText;
     r["stderr"] = pr.stderrText;
-    r["output"] = pr.stdoutText + pr.stderrText;
+    r["output"] = pr.stdoutText;
+    if (!pr.stderrText.empty() && pr.stdoutText.empty())
+        r["output"] = pr.stderrText;
     r["stdout_truncated"] = pr.stdoutTruncated;
     r["stderr_truncated"] = pr.stderrTruncated;
     r["truncated"] = pr.stdoutTruncated || pr.stderrTruncated;
