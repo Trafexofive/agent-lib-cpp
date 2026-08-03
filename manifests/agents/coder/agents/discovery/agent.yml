@@ -11,27 +11,27 @@ cognitive_engine:
     model: deepseek-v4-flash-free
     parameters:
       temperature: 0.35
-      max_tokens: 32768
-  fallback:
-    provider: deepseek
-    model: deepseek-v4-flash
-    parameters:
-      temperature: 0.3
-      max_tokens: 32768
+      max_tokens: 16384
+  # fallback paid only when free is dead — avoid default 402 burn
+  # fallback:
+  #   provider: deepseek
+  #   model: deepseek-v4-flash
 
 context:
-  harness: ../../../harness/default.md
+  harness: ../../../harness/small.md
   system: ./system.md
   persona: ./persona.md
 
 prompt_building:
   runtime_capabilities:
+    input_schemas: false
     return_schemas: false
     usage_examples: false
 
 runtime:
-  max_iterations: 20
-  history_cap: 60
+  # Slim scout — map fast or hand back; never 200-iter tourism
+  max_iterations: 12
+  history_cap: 24
   mode: normal
 
 import:
@@ -39,10 +39,9 @@ import:
     - list
     - grep
     - fs_read
-    - exec
     - context_peek
-    - ../../tools/build_detect/tool.yml
     - ../../tools/git_status/tool.yml
+    - ../../tools/build_detect/tool.yml
   feeds:
     - working_directory
   agents: []

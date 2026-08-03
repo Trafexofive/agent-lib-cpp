@@ -311,9 +311,18 @@ inline std::unique_ptr<Agent> buildAgentFromManifest(const std::string& manifest
         auto agent = std::make_unique<Agent>(acfg, provider);
         ManifestLoader::loadFeeds(manifestPath, *agent);
         ManifestLoader::loadRelics(manifestPath, *agent);
-        ManifestLoader::loadTools(manifestPath, *agent);
+        auto schemas = ManifestLoader::loadTools(manifestPath, *agent);
         ManifestLoader::loadSubAgents(manifestPath, *agent, acfg.provider);
-        ManifestLoader::loadWorkflows(manifestPath);
+        std::string workflowXml = ManifestLoader::loadWorkflows(manifestPath);
+        // Same schema inject path as main.cpp CLI — hub launch used to skip
+        // this and fall back to desc-only stubs (or nothing useful).
+        const auto& rc = acfg.promptBuilding.runtimeCapabilities;
+        std::string schemaXml = ManifestLoader::toolSchemasToXml(
+            schemas, 8, rc.inputSchemas, rc.returnSchemas, rc.usageExamples);
+        if (!schemaXml.empty())
+            agent->setEnv("__TOOL_SCHEMAS__", schemaXml);
+        if (!workflowXml.empty())
+            agent->setEnv("__WORKFLOW_XML__", workflowXml);
         agent->setAskToolHandler([&bridge](const Json::Value& params) {
             return bridge.requestAsk(params);
         });

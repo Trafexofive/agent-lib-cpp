@@ -176,9 +176,11 @@ class ManifestLoader {
             if (!rc)
                 rc = ManifestYaml::find(*promptBuilding, "available_actions");
             if (rc) {
-                std::string inputSchemas = ManifestYaml::get(*rc, "input_schemas", "enable");
-                std::string returnSchemas = ManifestYaml::get(*rc, "return_schemas", "enable");
-                std::string examples = ManifestYaml::get(*rc, "usage_examples", "enable");
+                // Default OFF = tool cards (cheaper cold prompt). Explicit
+                // enable/true still turns full JSON schemas back on.
+                std::string inputSchemas = ManifestYaml::get(*rc, "input_schemas", "disable");
+                std::string returnSchemas = ManifestYaml::get(*rc, "return_schemas", "disable");
+                std::string examples = ManifestYaml::get(*rc, "usage_examples", "disable");
 
                 // Backward-compatible aliases for the old names.
                 if (ManifestYaml::find(*rc, "output_schema"))
@@ -565,9 +567,16 @@ class ManifestLoader {
             }
 
             auto subAgent = std::make_shared<Agent>(subCfg, provider);
-            loadTools(agentManifest.string(), *subAgent);
+            auto schemas = loadTools(agentManifest.string(), *subAgent);
             loadFeeds(agentManifest.string(), *subAgent);
             loadRelics(agentManifest.string(), *subAgent);
+            // Children get the same card/schema inject as parent CLI path.
+            const auto& rc = subCfg.promptBuilding.runtimeCapabilities;
+            std::string schemaXml =
+                toolSchemasToXml(schemas, 8, rc.inputSchemas, rc.returnSchemas,
+                                 rc.usageExamples);
+            if (!schemaXml.empty())
+                subAgent->setEnv("__TOOL_SCHEMAS__", schemaXml);
             agent.addSubAgent(subAgent);
         }
     }
@@ -661,20 +670,84 @@ class ManifestLoader {
         return resolved;
     }
 
-    // Build tool schemas XML for prompt injection
+    // Compact one-line key inventory from a JSON Schema object (card mode).
+    // Avoids dumping full property trees while still naming required params.
+    static std::string toolSchemaCardLine(const std::string& inputSchemaJson) {
+        if (inputSchemaJson.empty())
+            return "";
+        Json::Value root;
+        Json::CharReaderBuilder rb;
+        std::string errs;
+        std::istringstream iss(inputSchemaJson);
+        if (!Json::parseFromStream(rb, iss, &root, &errs) || !root.isObject())
+            return "";
+        std::vector<std::string> required;
+        if (root.isMember("required") && root["required"].isArray()) {
+            for (const auto& r : root["required"]) {
+                if (r.isString())
+                    required.push_back(r.asString());
+            }
+        }
+        std::vector<std::string> keys;
+        if (root.isMember("properties") && root["properties"].isObject()) {
+            auto names = root["properties"].getMemberNames();
+            keys.assign(names.begin(), names.end());
+        }
+        if (required.empty() && keys.empty())
+            return "";
+        std::ostringstream line;
+        if (!required.empty()) {
+            line << "required: ";
+            for (size_t i = 0; i < required.size(); ++i) {
+                if (i)
+                    line << ", ";
+                line << required[i];
+            }
+        }
+        if (!keys.empty()) {
+            if (!required.empty())
+                line << " · ";
+            line << "keys: ";
+            const size_t kMax = 12;
+            for (size_t i = 0; i < keys.size() && i < kMax; ++i) {
+                if (i)
+                    line << ", ";
+                line << keys[i];
+            }
+            if (keys.size() > kMax)
+                line << ", …";
+        }
+        return line.str();
+    }
+
+    // Build tool schemas XML for prompt injection.
+    // Default path = CARDS (description + compact key line).
+    // Full JSON when includeInputSchemas / CORTEX_TOOL_FULL=1.
     static std::string toolSchemasToXml(const std::vector<ToolSchema>& schemas, int baseIndent = 8,
-                                        bool includeInputSchemas = true,
-                                        bool includeReturnSchemas = true,
-                                        bool includeExamples = true) {
+                                        bool includeInputSchemas = false,
+                                        bool includeReturnSchemas = false,
+                                        bool includeExamples = false) {
         if (schemas.empty())
             return "";
+        // Escape hatch: force full input JSON regardless of agent.yml flags.
+        const bool forceFull = []() {
+            const char* e = std::getenv("CORTEX_TOOL_FULL");
+            return e && e[0] && std::string(e) != "0" && std::string(e) != "false";
+        }();
+        const bool fullInput = includeInputSchemas || forceFull;
         std::ostringstream ss;
         std::string toolPad(baseIndent, ' ');
         std::string fieldPad(baseIndent + 4, ' ');
         for (auto& s : schemas) {
             ss << toolPad << "<tool name=\"" << s.name << "\">\n";
-            if (!s.description.empty())
-                ss << fieldPad << "<description>" << s.description << "</description>\n";
+            if (!s.description.empty()) {
+                // Cap wall-of-text PE in the hot prompt; full tool.yml still on disk.
+                std::string desc = s.description;
+                const size_t kDescCap = 720;
+                if (desc.size() > kDescCap)
+                    desc = desc.substr(0, kDescCap - 1) + "…";
+                ss << fieldPad << "<description>" << desc << "</description>\n";
+            }
             if (s.inputType != "json" || !s.textParam.empty()) {
                 ss << fieldPad << "<input mode=\"" << s.inputType << "\"";
                 if (!s.textParam.empty())
@@ -684,10 +757,15 @@ class ManifestLoader {
                     ss << "Text action bodies are assigned to params." << s.textParam << ".";
                 ss << "</input>\n";
             }
-            if (includeInputSchemas && !s.inputSchema.empty())
+            if (fullInput && !s.inputSchema.empty()) {
                 ss << fieldPad << "<params>\n"
                    << indentBlock(prettyJson(s.inputSchema), baseIndent + 8) << fieldPad
                    << "</params>\n";
+            } else if (!s.inputSchema.empty()) {
+                std::string card = toolSchemaCardLine(s.inputSchema);
+                if (!card.empty())
+                    ss << fieldPad << "<params card=\"true\">" << card << "</params>\n";
+            }
             if (includeReturnSchemas && !s.outputSchema.empty())
                 ss << fieldPad << "<returns>\n"
                    << indentBlock(prettyJson(s.outputSchema), baseIndent + 8) << fieldPad

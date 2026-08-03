@@ -29,6 +29,9 @@ context:
 
 prompt_building:
   runtime_capabilities:
+    # Tool CARDS by default (name + PE description + required/keys line).
+    # Full JSON: set input_schemas: true or env CORTEX_TOOL_FULL=1.
+    input_schemas: false
     return_schemas: false
     usage_examples: false
 

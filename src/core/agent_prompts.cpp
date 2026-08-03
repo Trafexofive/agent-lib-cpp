@@ -72,11 +72,9 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
           "when needed.</description>\n";
 
     ss << "    <tools>\n        <description>Functions callable with <action "
-          "type=\"tool\">. "
-          "Prefer declared JSON params; if a tool declares text input, small "
-          "scalar attrs plus a "
-          "text body are allowed. Prefer named tools over exec when both "
-          "fit. Read each tool description for WHEN/ANTI/turn economy."
+          "type=\"tool\">. Cards list name + WHEN/ANTI PE + required/keys. "
+          "Prefer named tools over exec. Do not invent param names outside "
+          "the card. Prefer attrs + short JSON bodies."
           "</description>\n";
     auto schemaIt = env_.find("__TOOL_SCHEMAS__");
     bool hasSchemas = (schemaIt != env_.end() && !schemaIt->second.empty());

@@ -131,10 +131,14 @@ struct ToolResult {
 // Agent configuration
 // ---------------------------------------------------------------------------
 struct PromptBuildingConfig {
+    // Defaults = tool CARDS (name + PE description + compact keys).
+    // Full JSON schemas are the expensive path — opt in via agent.yml
+    // prompt_building.runtime_capabilities.input_schemas: true
+    // or env CORTEX_TOOL_FULL=1 at schema build time.
     struct RuntimeCapabilities {
-        bool inputSchemas = true;
-        bool returnSchemas = true;
-        bool usageExamples = true;
+        bool inputSchemas = false;
+        bool returnSchemas = false;
+        bool usageExamples = false;
     };
 
     RuntimeCapabilities runtimeCapabilities;
