@@ -1,12 +1,13 @@
 kind: Agent
 name: coder
-version: "1.0.1"
-summary: Daily-driver implementation agent — evidence in, smallest verified change out.
+version: "1.0.0"
+summary: Design-owner daily driver — architecture, taste, intent; delegates implementation to coder-worker.
 description: |
-  Production coding module. Owns writes. Specialists: discovery, reader, tester, reviewer.
-  Local tools: git_status, git_diff, project_test, build_detect. Feed: repo_pulse.
+  Parent coding module. Holds design/architecture inclinations and product judgment.
+  Does not thrash the tree: implementation writes go through coder-worker.
+  Sensors/gates live under the worker; you brief, constrain, accept or reject.
 category: agent
-tags: [agent, launchable, prod, coding, daily-driver]
+tags: [agent, launchable, prod, coding, design, architecture, daily-driver]
 
 cognitive_engine:
   primary:
@@ -15,12 +16,6 @@ cognitive_engine:
     parameters:
       temperature: 0.55
       max_tokens: 65536
-  # fallback:
-  #   provider: nvidia
-  #   model: minimax-m3
-  #   parameters:
-  #     temperature: 0.25
-  #     max_tokens: 65536
 
 context:
   harness: ../../harness/default.md
@@ -29,58 +24,42 @@ context:
 
 prompt_building:
   runtime_capabilities:
-    # Tool CARDS by default (name + PE description + required/keys line).
-    # Full JSON: set input_schemas: true or env CORTEX_TOOL_FULL=1.
     input_schemas: false
     return_schemas: false
     usage_examples: false
 
 runtime:
-  # Daily-driver caps — prevent context mush / endless thought parades.
-  # Raise only for long known-good implement sessions after history digests land.
-  max_iterations: 40
-  history_cap: 50
-  action_timeout_sec: 180   # project_test / make can exceed default 30s
+  max_iterations: 32
+  history_cap: 48
+  action_timeout_sec: 180
   mode: normal
   subagents:
     persistence: session
 
 import:
   tools:
-    - exec
-    - grep
     - list
+    - grep
     - fs_read
-    - fs_write
     - json
     - ask_tool
-    - web_fetch
     - context_peek
-    - ./tools/git_status/tool.yml
-    - ./tools/git_diff/tool.yml
-    - ./tools/project_test/tool.yml
-    - ./tools/build_detect/tool.yml
+    - web_fetch
+    # Read-only git pulse — writes stay on coder-worker
+    - ../coder-worker/tools/git_status/tool.yml
+    - ../coder-worker/tools/git_diff/tool.yml
+    # No fs_write / exec / project_test here — worker owns the implement path
   feeds:
     - working_directory
-    - ./feeds/repo_pulse/feed.yml
+    - ../coder-worker/feeds/repo_pulse/feed.yml
   agents:
-    - discovery
-    - reader
-    - tester
-    - reviewer
-  workflows:
-    - ./workflows/implement.yml
-    - ./workflows/fix-failure.yml
-    - ./workflows/map-area.yml
-    - ./workflows/review-diff.yml
-  # Live inject → <skills> / <prompt_modules> in system prompt (not disk theater).
+    - coder-worker
   skills:
     - evidence-first
-    - smallest-diff
-    - verify-before-final
-    - match-local-style
+    - architecture-first
+    - taste-and-clarity
+    - verify-before-accept
   files:
-    - ./prompts/final-report.md
-    - ./prompts/plan-phase.md
-    - ./prompts/specialist-brief.md
+    - ./prompts/brief-worker.md
+    - ./prompts/accept-gate.md
   env: []

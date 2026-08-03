@@ -1,10 +1,10 @@
 ---
 name: evidence-first
-description: Never claim paths, APIs, or test results without inspect/run evidence.
+description: No architectural or status claims without inspect/result evidence.
 ---
 # evidence-first
 
-- Trust only tool/agent `<result>` bodies and real command output.
+- Trust tool/worker `<result>` bodies and real command output.
 - Mark CONFIRMED vs INFERRED.
-- Prefer one specialist pass over guessing.
-- No forged results. No invented file paths.
+- Prefer one worker pass with a tight brief over guessing.
+- No forged diffs, paths, or test results.

@@ -1,6 +1,6 @@
 # Standard Manifest Catalog (PROD)
 
-Last updated: 2026-08-01
+Last updated: 2026-08-03
 
 ## Scope
 
@@ -13,17 +13,19 @@ Last updated: 2026-08-01
 
 | Name | Path | Role |
 |------|------|------|
-| **coder** | `agents/coder/` | **PROD daily-driver implementation module** |
-| coder-proto | `agents/coder-proto/` | Lab / experimental coding roster |
+| **coder** | `agents/coder/` | **PROD daily-driver — design/architecture owner** |
+| **coder-worker** | `agents/coder-worker/` | Implementation unit (writes); child of coder |
 | default | `agents/default/` | General agent |
-| brainstormer | `agents/brainstormer/` | Ideation (+ discovery, critic) |
-| std-orchestrator | `agents/std-orchestrator/` | Control plane (+ planner, researcher, skeptic) |
+| brainstormer | `agents/brainstormer/` | Ideation |
 | agent-expert | `agents/agent-expert/` | Manifest authoring (experimental) |
 
-## coder module (first full product unit)
+## Coding stack
 
 ```text
-agents/coder/
+agents/coder/                 parent — taste, architecture, accept gate
+  import.agents: coder-worker
+
+agents/coder-worker/          implementer
   tools/     git_status, git_diff, project_test, build_detect
   feeds/     repo_pulse
   workflows/ implement, fix-failure, map-area, review-diff
@@ -33,10 +35,10 @@ agents/coder/
 
 ## Nested specialists
 
-- **coder** → discovery, reader, tester, reviewer  
-- **coder-proto** → discovery, reader  
-- **brainstormer** → discovery, critic  
-- **std-orchestrator** → planner, researcher, skeptic  
+- **coder** → coder-worker  
+- **coder-worker** → discovery, reader, tester, reviewer  
+- **brainstormer** → (see its tree)  
+- **agent-expert** → (see its tree)  
 
 ## Built-ins
 
@@ -48,7 +50,3 @@ agents/coder/
 | prompts | `prompts/*` (global modules) |
 | skills | `skills/*` |
 | workflows | `workflows/*` |
-
-## Hub
-
-Dashboard → **Manifests** (`a`): recursive registry.

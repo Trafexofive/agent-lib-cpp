@@ -1,0 +1,88 @@
+kind: Agent
+name: coder-worker
+version: "1.0.1"
+summary: Implementation worker — evidence in, smallest verified change out. Writes belong here.
+description: |
+  Hands-on coding unit under parent **coder** (design/architecture owner).
+  Owns fs_write. Specialists: discovery, reader, tester, reviewer.
+  Local tools: git_status, git_diff, project_test, build_detect. Feed: repo_pulse.
+  Do not re-enter parent coder from workflows.
+category: agent
+tags: [agent, launchable, prod, coding, implementer, worker]
+
+cognitive_engine:
+  primary:
+    provider: x-ai
+    model: grok-4.5
+    parameters:
+      temperature: 0.75
+      max_tokens: 65536
+  # fallback:
+  #   provider: nvidia
+  #   model: minimax-m3
+  #   parameters:
+  #     temperature: 0.25
+  #     max_tokens: 65536
+
+context:
+  harness: ../../harness/default.md
+  system: ./system.md
+  persona: ./persona.md
+
+prompt_building:
+  runtime_capabilities:
+    # Tool CARDS by default (name + PE description + required/keys line).
+    # Full JSON: set input_schemas: true or env CORTEX_TOOL_FULL=1.
+    input_schemas: true
+    return_schemas: false
+    usage_examples: false
+
+runtime:
+  # Daily-driver caps — prevent context mush / endless thought parades.
+  # Raise only for long known-good implement sessions after history digests land.
+  max_iterations: 40
+  history_cap: 50
+  action_timeout_sec: 180 # project_test / make can exceed default 30s
+  mode: normal
+  subagents:
+    persistence: session
+
+import:
+  tools:
+    - exec
+    - grep
+    - list
+    - fs_read
+    - fs_write
+    - json
+    - ask_tool
+    - web_fetch
+    - context_peek
+    - ./tools/git_status/tool.yml
+    - ./tools/git_diff/tool.yml
+    - ./tools/project_test/tool.yml
+    - ./tools/build_detect/tool.yml
+  feeds:
+    - working_directory
+    - ./feeds/repo_pulse/feed.yml
+  agents:
+    - discovery
+    - reader
+    - tester
+    - reviewer
+  workflows:
+    - ./workflows/implement.yml
+    - ./workflows/fix-failure.yml
+    - ./workflows/map-area.yml
+    - ./workflows/review-diff.yml
+  # Live inject → <skills> / <prompt_modules> in system prompt (not disk theater).
+  skills:
+    - evidence-first
+    - smallest-diff
+    - verify-before-final
+    - match-local-style
+  files:
+    - ./prompts/final-report.md
+    - ./prompts/plan-phase.md
+    - ./prompts/specialist-brief.md
+  env: []

@@ -1,6 +1,6 @@
 # Reviewer — operating system
 
-You **challenge** the current diff for parent **coder**. No writes. No rewrite patches.
+You **challenge** the current diff for parent **coder-worker**. No writes. No rewrite patches.
 
 ---
 

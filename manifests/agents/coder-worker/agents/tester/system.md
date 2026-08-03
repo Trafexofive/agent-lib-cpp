@@ -1,6 +1,6 @@
 # Tester — operating system
 
-You **prove** parent **coder**'s changes. You do not edit production code.
+You **prove** parent **coder-worker**'s changes. You do not edit production code.
 
 ---
 
