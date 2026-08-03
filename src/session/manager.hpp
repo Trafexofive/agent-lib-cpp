@@ -1,12 +1,17 @@
 #pragma once
 // =============================================================================
 // agent-lib-MK3 — Session Manager
-// Ported from MK2. JSON session files in ~/.cortex/sessions/
+// JSON session files under a STABLE data root (not CWD):
+//   $CORTEX_SESSIONS_DIR
+//   else $CORTEX_HOME/sessions
+//   else $XDG_DATA_HOME/cortex/sessions
+//   else ~/.cortex/sessions
 // Process-local write lock serializes load-merge-save across Agent / UI / atexit.
 // =============================================================================
 
 #include <json/json.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -20,6 +25,37 @@ namespace cortex::mk3::session {
 inline std::recursive_mutex& ioMutex() {
     static std::recursive_mutex m;
     return m;
+}
+
+// Stable cortex data root — never CWD (CWD changes break sessions across repos).
+inline std::filesystem::path cortexDataRoot() {
+    if (const char* ch = std::getenv("CORTEX_HOME"); ch && ch[0])
+        return std::filesystem::path(ch);
+    if (const char* xdg = std::getenv("XDG_DATA_HOME"); xdg && xdg[0])
+        return std::filesystem::path(xdg) / "cortex";
+    const char* home = std::getenv("HOME");
+    return std::filesystem::path(home && home[0] ? home : ".") / ".cortex";
+}
+
+inline std::string defaultSessionsDir() {
+    if (const char* e = std::getenv("CORTEX_SESSIONS_DIR"); e && e[0])
+        return std::string(e);
+    return (cortexDataRoot() / "sessions").string();
+}
+
+inline std::string defaultStateDir() {
+    if (const char* e = std::getenv("CORTEX_STATE_DIR"); e && e[0])
+        return std::string(e);
+    return (cortexDataRoot() / "state").string();
+}
+
+// Legacy project-local store (pre-fix). Read fallback only.
+inline std::string cwdLegacySessionsDir() {
+    std::error_code ec;
+    auto p = std::filesystem::current_path(ec) / ".cortex" / "sessions";
+    if (ec)
+        return {};
+    return p.string();
 }
 
 class SessionManager {

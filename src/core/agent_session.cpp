@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "agent.hpp"
+#include "../session/manager.hpp"
 
 namespace fs = std::filesystem;
 
@@ -27,7 +28,19 @@ static std::string safeCheckpointPart(const std::string& value) {
 }
 
 static fs::path stateCheckpointPath(const std::string& sessionId) {
-    return fs::current_path() / ".cortex" / "state" / (safeCheckpointPart(sessionId) + ".json");
+    // Stable root (same policy as SessionManager) — never CWD.
+    // CWD-local .cortex/state was unreadable after chdir / other-repo launches.
+    fs::path dir = session::defaultStateDir();
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    return dir / (safeCheckpointPart(sessionId) + ".json");
+}
+
+// Read fallback for pre-fix CWD-local checkpoints.
+static fs::path legacyStateCheckpointPath(const std::string& sessionId) {
+    std::error_code ec;
+    return fs::current_path(ec) / ".cortex" / "state" /
+           (safeCheckpointPart(sessionId) + ".json");
 }
 
 static Json::Value stringSetToJson(const std::set<std::string>& values) {
@@ -470,8 +483,14 @@ void Agent::loadStateCheckpointJson(const Json::Value& root) {
 
 void Agent::loadStateCheckpoint(const std::string& sessionId) {
     fs::path path = stateCheckpointPath(sessionId);
-    if (!fs::exists(path))
-        return;
+    if (!fs::exists(path)) {
+        // Pre-fix: checkpoints lived under CWD/.cortex/state/
+        fs::path legacy = legacyStateCheckpointPath(sessionId);
+        if (fs::exists(legacy))
+            path = legacy;
+        else
+            return;
+    }
     try {
         std::ifstream f(path);
         Json::Value root;

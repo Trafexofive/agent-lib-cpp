@@ -1482,11 +1482,14 @@ static int cmdSessions(const CliConfig& cli) {
             return 1;
         }
         sm.remove(cli.sessionsTarget);
-        // Also clear the state checkpoint if present.
-        fs::path statePath =
-            fs::current_path() / ".cortex" / "state" / (cli.sessionsTarget + ".json");
+        // Also clear the state checkpoint if present (stable root + legacy CWD).
         std::error_code ec;
+        fs::path statePath =
+            fs::path(session::defaultStateDir()) / (cli.sessionsTarget + ".json");
         fs::remove(statePath, ec);
+        fs::path legacyState =
+            fs::current_path() / ".cortex" / "state" / (cli.sessionsTarget + ".json");
+        fs::remove(legacyState, ec);
         std::cout << "Removed session " << cli.sessionsTarget << "\n";
         return 0;
     }

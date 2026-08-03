@@ -8,6 +8,7 @@
 #include <ctime>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <sstream>
 
 #include "../utils/json_io.hpp"
@@ -56,8 +57,10 @@ static SessionRecord::Role parseRole(const std::string& s) {
 
 // ─── SessionManager ───────────────────────────────────────────────────
 SessionManager::SessionManager(const std::string& baseDir)
-    : baseDir_(baseDir.empty() ? (std::filesystem::current_path() / ".cortex" / "sessions").string()
-                               : baseDir) {
+    : baseDir_(baseDir.empty() ? defaultSessionsDir() : baseDir) {
+    // Ensure primary store exists so first save never fails on missing parent.
+    std::error_code ec;
+    std::filesystem::create_directories(baseDir_, ec);
 }
 
 std::string SessionManager::sessionPath(const std::string& id) const {
@@ -71,11 +74,31 @@ std::string SessionManager::sessionPath(const std::string& id) const {
     return baseDir_ + "/" + safe + ".json";
 }
 
+static std::string safeSessionFileName(const std::string& id) {
+    std::string safe;
+    for (char c : id) {
+        if (std::isalnum((unsigned char)c) || c == '-' || c == '_')
+            safe += c;
+    }
+    if (safe.empty())
+        safe = "default";
+    return safe + ".json";
+}
+
 Session SessionManager::load(const std::string& id) const {
     std::lock_guard<std::recursive_mutex> lock(ioMutex());
     std::string path = sessionPath(id);
     Session s;
     s.id = id;
+    // Fallback: legacy CWD-local sessions from before the stable-root fix.
+    if (!std::filesystem::exists(path)) {
+        std::string legacy = cwdLegacySessionsDir();
+        if (!legacy.empty() && legacy != baseDir_) {
+            std::string alt = legacy + "/" + safeSessionFileName(id);
+            if (std::filesystem::exists(alt))
+                path = alt;
+        }
+    }
     if (!std::filesystem::exists(path))
         return s;
     try {
@@ -183,7 +206,14 @@ void SessionManager::remove(const std::string& id) const {
 
 bool SessionManager::exists(const std::string& id) const {
     std::lock_guard<std::recursive_mutex> lock(ioMutex());
-    return std::filesystem::exists(sessionPath(id));
+    if (std::filesystem::exists(sessionPath(id)))
+        return true;
+    std::string legacy = cwdLegacySessionsDir();
+    if (!legacy.empty() && legacy != baseDir_) {
+        std::string alt = legacy + "/" + safeSessionFileName(id);
+        return std::filesystem::exists(alt);
+    }
+    return false;
 }
 
 Session SessionManager::create(const std::string& id, const std::string& agent,
@@ -208,54 +238,72 @@ void SessionManager::appendRecord(const std::string& id, const SessionRecord& r)
 std::vector<SessionManager::SessionInfo> SessionManager::list() const {
     std::lock_guard<std::recursive_mutex> lock(ioMutex());
     std::vector<SessionInfo> result;
-    if (!std::filesystem::exists(baseDir_))
-        return result;
-    for (auto& e : std::filesystem::directory_iterator(baseDir_)) {
-        if (!e.is_regular_file() || e.path().extension() != ".json")
-            continue;
-        // Vet-fix: each session writes a sibling `<id>.state.json` checkpoint
-        // file. List must not double-count that as a separate session. Filters
-        // by filename suffix rather than JSON shape so legacy / foreign
-        // state files also disappear.
-        {
-            std::string fn = e.path().filename().string();
-            const std::string suffix = ".state.json";
-            if (fn.size() > suffix.size() &&
-                fn.compare(fn.size() - suffix.size(), suffix.size(), suffix) == 0)
+    std::set<std::string> seenIds;
+
+    auto ingestDir = [&](const std::string& dir) {
+        if (dir.empty() || !std::filesystem::exists(dir))
+            return;
+        for (auto& e : std::filesystem::directory_iterator(dir)) {
+            if (!e.is_regular_file() || e.path().extension() != ".json")
                 continue;
-        }
-        try {
-            std::ifstream f(e.path());
-            Json::Value root;
-            f >> root;
-            SessionInfo info;
-            info.id = root.get("id", "").asString();
-            info.agentName = root.get("agent_name", "").asString();
-            info.model = root.get("model", "").asString();
-            info.updated = root.get("updated", "").asString();
-            info.turnCount = root.isMember("records") ? root["records"].size() : 0;
-            info.hasUiTimeline = root.isMember("ui_timeline") && !root["ui_timeline"].isNull();
-            // Operator display title: metadata.name, else first user record snippet.
-            if (root.isMember("metadata") && root["metadata"].isObject() &&
-                root["metadata"].isMember("name") && root["metadata"]["name"].isString()) {
-                info.title = root["metadata"]["name"].asString();
+            // Vet-fix: each session writes a sibling `<id>.state.json` checkpoint
+            // file. List must not double-count that as a separate session.
+            {
+                std::string fn = e.path().filename().string();
+                const std::string suffix = ".state.json";
+                if (fn.size() > suffix.size() &&
+                    fn.compare(fn.size() - suffix.size(), suffix.size(), suffix) == 0)
+                    continue;
             }
-            if (info.title.empty() && root.isMember("records") && root["records"].isArray()) {
-                for (const auto& rv : root["records"]) {
-                    if (rv.get("role", "").asString() == "user") {
-                        std::string body = rv.get("content", "").asString();
-                        // First line, capped for list scan.
-                        auto nl = body.find('\n');
-                        if (nl != std::string::npos) body = body.substr(0, nl);
-                        if (body.size() > 48) body = body.substr(0, 45) + "...";
-                        info.title = body;
-                        break;
+            try {
+                std::ifstream f(e.path());
+                Json::Value root;
+                f >> root;
+                SessionInfo info;
+                info.id = root.get("id", "").asString();
+                if (info.id.empty())
+                    info.id = e.path().stem().string();
+                if (!seenIds.insert(info.id).second)
+                    continue;  // primary store wins over legacy CWD
+                info.agentName = root.get("agent_name", "").asString();
+                info.model = root.get("model", "").asString();
+                info.updated = root.get("updated", "").asString();
+                info.turnCount = root.isMember("records") ? root["records"].size() : 0;
+                info.hasUiTimeline =
+                    root.isMember("ui_timeline") && !root["ui_timeline"].isNull();
+                if (root.isMember("metadata") && root["metadata"].isObject() &&
+                    root["metadata"].isMember("name") &&
+                    root["metadata"]["name"].isString()) {
+                    info.title = root["metadata"]["name"].asString();
+                }
+                if (info.title.empty() && root.isMember("records") &&
+                    root["records"].isArray()) {
+                    for (const auto& rv : root["records"]) {
+                        if (rv.get("role", "").asString() == "user") {
+                            std::string body = rv.get("content", "").asString();
+                            auto nl = body.find('\n');
+                            if (nl != std::string::npos)
+                                body = body.substr(0, nl);
+                            if (body.size() > 48)
+                                body = body.substr(0, 45) + "...";
+                            info.title = body;
+                            break;
+                        }
                     }
                 }
+                result.push_back(info);
+            } catch (...) {
             }
-            result.push_back(info);
-        } catch (...) {
         }
+    };
+
+    ingestDir(baseDir_);
+    // Also surface leftover project-local sessions so operators don't "lose"
+    // history after the stable-root fix. Primary baseDir wins on id clash.
+    {
+        std::string legacy = cwdLegacySessionsDir();
+        if (!legacy.empty() && legacy != baseDir_)
+            ingestDir(legacy);
     }
     std::sort(result.begin(), result.end(), [](auto& a, auto& b) { return a.updated > b.updated; });
     return result;
