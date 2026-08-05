@@ -389,8 +389,9 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
         model->pushRow({TimelineKind::User, "you", cfg.initialPrompt, true});
     }
 
-    // With a seed prompt go straight to agent; bare launch still opens dashboard.
-    bool startAtDashboard = cfg.manifestPath.empty() && cfg.initialPrompt.empty();
+    // Seed prompt or resumed session go straight to agent; bare launch opens dashboard.
+    bool startAtDashboard =
+        cfg.manifestPath.empty() && cfg.initialPrompt.empty() && cfg.sessionId.empty();
     auto app = makeInkcellApp(cfg, bridge, model, startAtDashboard);
     const bool exitOnDone = cfg.ephemeral;
     // drain + pendingRoute in installCoalescedTick; hub/worker logic in extra (runs first).

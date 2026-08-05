@@ -29,6 +29,7 @@
 #include <thread>
 #include <vector>
 
+#include "src/cli/list_picker.hpp"
 #include "src/core/agent.hpp"
 #include "src/core/agent_catalog.hpp"
 #include "src/core/manifest_autoload.hpp"
@@ -869,188 +870,78 @@ static std::string pickSessionInteractive(bool defaultIfEmpty) {
     if (!isatty(STDIN_FILENO))
         return sessions[0].id;
 
-    // ── Raw mode for j/k/arrow navigation ──
-    struct termios oldt;
-    tcgetattr(STDIN_FILENO, &oldt);
-    struct termios raw = oldt;
-    cfmakeraw(&raw);
-    raw.c_cc[VMIN] = 1;
-    raw.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-    std::cout << tui::ansi::hideCursor() << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1)
-              << std::flush;
-
-    auto restore = [&]() {
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldt);
-        std::cout << tui::ansi::showCursor() << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1)
-                  << "\n"
-                  << std::flush;
-    };
-
-    auto readKey = [&]() -> std::pair<tui::KeyAction, char> {
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(STDIN_FILENO, &fds);
-        select(STDIN_FILENO + 1, &fds, nullptr, nullptr, nullptr);
-        char buf[64];
-        ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
-        if (n <= 0)
-            return {tui::KeyAction::NONE, 0};
-        std::string seq(buf, buf + n);
-        if (seq[0] == 27 && seq.size() == 1) {
-            struct timeval tv = {0, 30000};
-            FD_ZERO(&fds);
-            FD_SET(STDIN_FILENO, &fds);
-            if (select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) > 0) {
-                char buf2[64];
-                ssize_t n2 = read(STDIN_FILENO, buf2, sizeof(buf2));
-                if (n2 > 0)
-                    seq.append(buf2, n2);
-            }
-        }
-        char outChar = 0;
-        tui::KeyMap keymap;
-        tui::KeyAction act = keymap.resolve(seq, outChar);
-        return {act, outChar};
-    };
-
-    // Load metadata for each session.
-    struct PickerRow {
+    // Precompute display rows; run_list_picker styles each row at render time.
+    struct Row {
         std::string id;
         std::string shortId;  // last 16 chars
         std::string name;
         std::string age;  // "2h ago"
-        std::string agentName;
         size_t turnCount = 0;
         std::string model;
     };
-    std::vector<PickerRow> rows;
+    std::vector<Row> rows;
     rows.reserve(sessions.size());
     session::SessionManager sm;
     for (const auto& s : sessions) {
-        PickerRow r;
+        Row r;
         r.id = s.id;
         r.shortId = s.id.size() > 16 ? "…" + s.id.substr(s.id.size() - 15) : s.id;
         r.name = s.agentName;
         r.age = humanAge(s.updated);
         if (r.age.empty())
             r.age = s.updated.substr(11, 5);  // HH:MM
-        r.agentName = s.agentName;
         r.turnCount = s.turnCount;
         r.model = s.model;
         if (sm.exists(s.id)) {
             Session loaded = sm.load(s.id);
             auto it = loaded.metadata.find("name");
-            if (it != loaded.metadata.end() && !it->second.empty()) {
+            if (it != loaded.metadata.end() && !it->second.empty())
                 r.name = it->second;
-            }
         }
         rows.push_back(std::move(r));
     }
 
-    // Render with viewport scrolling: show up to 20 rows starting at `offset`.
-    const size_t VIEW_H = 20;
-    size_t offset = 0;
-    int sel = 0;
-
-    auto renderPicker = [&]() {
-        std::cout << tui::ansi::clearScreen() << tui::ansi::moveTo(1, 1);
-        // Header
-        std::cout << "\033[1;36m┌─ Resume session\033[0m  \033[2m" << rows.size()
-                  << " total — j/k or ↑↓ move, 1-9 jump, d/u page, g/G top/bottom, "
-                     "Enter select, q/Esc cancel\033[0m\r\n";
-        size_t end = std::min(offset + VIEW_H, rows.size());
-        for (size_t i = offset; i < end; ++i) {
-            const auto& r = rows[i];
-            bool isSel = (int)i == sel;
-            std::string num = std::to_string(i + 1);
-            // Pad number for alignment
-            while (num.size() < 3)
-                num = " " + num;
-            std::string numColor = isSel ? "\033[1;36m" : "\033[2;34m";
-            std::string shortId = r.shortId;
-            while (shortId.size() < 16)
-                shortId = " " + shortId;
-            std::string agePad = r.age;
-            while (agePad.size() < 9)
-                agePad = " " + agePad;
-            std::string msg = std::to_string(r.turnCount) + " msg";
-            while (msg.size() < 7)
-                msg = " " + msg;
-            // Truncate fields to fit in a typical 100-col terminal.
-            std::string model = r.model;
-            if (model.size() > 28)
-                model = model.substr(0, 25) + "…";
-            std::string name = r.name;
-            if (name.size() > 24)
-                name = name.substr(0, 21) + "…";
-            if (isSel) {
-                std::cout << "\033[1;36m│\033[0m  \033[7;36m" << num << " " << shortId << "  "
-                          << agePad << "  " << msg << "  " << std::left << std::setw(28) << model
-                          << "  " << std::setw(24) << name << "\033[0m\r\n";
-            } else {
-                std::cout << "\033[2m│\033[0m  " << numColor << num << "\033[0m " << shortId
-                          << "  \033[2m" << agePad << "  " << msg << "  \033[0m" << std::left
-                          << std::setw(28) << model << "  \033[3m" << std::setw(24) << name
-                          << "\033[0m\r\n";
-            }
-        }
-        // Footer with scroll position
-        if (rows.size() > VIEW_H) {
-            size_t pos = offset + 1;
-            size_t total = rows.size();
-            std::cout << "\033[2m└─ showing " << pos << "–" << end << " of " << total
-                      << "\033[0m\r\n";
+    // Shared row renderer: pads columns and highlights the selection.
+    auto render_row = [&](int i, bool isSel) -> std::string {
+        const auto& r = rows[(size_t)i];
+        std::string num = std::to_string(i + 1);
+        while (num.size() < 3)
+            num = " " + num;
+        std::string shortId = r.shortId;
+        while (shortId.size() < 16)
+            shortId = " " + shortId;
+        std::string agePad = r.age;
+        while (agePad.size() < 9)
+            agePad = " " + agePad;
+        std::string msg = std::to_string(r.turnCount) + " msg";
+        while (msg.size() < 7)
+            msg = " " + msg;
+        // Truncate fields to fit a typical 100-col terminal.
+        std::string model = r.model.size() > 28 ? r.model.substr(0, 25) + "…" : r.model;
+        std::string name = r.name.size() > 24 ? r.name.substr(0, 21) + "…" : r.name;
+        std::ostringstream o;
+        if (isSel) {
+            o << "\033[1;36m│\033[0m  \033[7;36m" << num << " " << shortId << "  " << agePad
+              << "  " << msg << "  " << std::left << std::setw(28) << model << "  "
+              << std::setw(24) << name << "\033[0m";
         } else {
-            std::cout << "\033[2m└─ " << rows.size() << " session" << (rows.size() == 1 ? "" : "s")
-                      << "\033[0m\r\n";
+            o << "\033[2m│\033[0m  \033[2;34m" << num << "\033[0m " << shortId << "  \033[2m"
+              << agePad << "  " << msg << "  \033[0m" << std::left << std::setw(28) << model
+              << "  \033[3m" << std::setw(24) << name << "\033[0m";
         }
-        std::cout << std::flush;
+        return o.str();
     };
 
-    bool picked = false;
-    std::string selectedId;
-    while (!picked) {
-        // Keep cursor in view
-        if (sel < (int)offset)
-            offset = sel;
-        if (sel >= (int)(offset + VIEW_H))
-            offset = sel - VIEW_H + 1;
-        renderPicker();
-        auto [act, ch] = readKey();
-        if (act == tui::KeyAction::ENTER) {
-            picked = true;
-            selectedId = rows[sel].id;
-        } else if (act == tui::KeyAction::CANCEL || act == tui::KeyAction::EXIT ||
-                   (act == tui::KeyAction::CHAR && (ch == 'q' || ch == 'Q'))) {
-            restore();
-            // User explicitly cancelled — never mint a new session.
-            return "";
-        } else if (act == tui::KeyAction::HISTORY_DOWN ||
-                   (act == tui::KeyAction::CHAR && ch == 'j')) {
-            sel = (sel + 1) % (int)rows.size();
-        } else if (act == tui::KeyAction::HISTORY_UP ||
-                   (act == tui::KeyAction::CHAR && ch == 'k')) {
-            sel = (sel - 1 + (int)rows.size()) % (int)rows.size();
-        } else if (act == tui::KeyAction::CHAR && ch == 'd') {
-            // Page down
-            sel = std::min((int)rows.size() - 1, sel + (int)VIEW_H);
-        } else if (act == tui::KeyAction::CHAR && ch == 'u') {
-            // Page up
-            sel = std::max(0, sel - (int)VIEW_H);
-        } else if (act == tui::KeyAction::CHAR && ch >= '1' && ch <= '9') {
-            int idx = ch - '1';
-            if (idx < (int)rows.size())
-                sel = idx;
-        } else if (act == tui::KeyAction::CHAR && ch == 'g') {
-            sel = 0;
-        } else if (act == tui::KeyAction::CHAR && ch == 'G') {
-            sel = (int)rows.size() - 1;
-        }
-    }
-
-    restore();
-    return selectedId;
+    cli::ListPickerConfig cfg;
+    cfg.title = "┌─ Resume session";
+    cfg.hint = std::to_string(rows.size()) +
+               " total — j/k or ↑↓ move, 1-9 jump, d/u page, g/G top/bottom, "
+               "Enter select, q/Esc cancel";
+    int idx = cli::run_list_picker((int)rows.size(), render_row, cfg);
+    // User cancelled — never mint a new session.
+    if (idx < 0)
+        return "";
+    return rows[(size_t)idx].id;
 }
 
 static std::string resolveSessionId(const CliConfig& cli, bool defaultIfEmpty) {
