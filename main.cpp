@@ -1666,27 +1666,39 @@ static bool validateExplicitModel(const std::string& providerName, const std::st
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Global manifest manager (bare -m / --manifest)
+// Bare -m / --manifest: defer to the inkcell app's manifest browser
+// (hub launch) in interactive mode; keep the listing fallback non-TTY.
 // ═══════════════════════════════════════════════════════════════════════
-// Returns selected absolute agent.yml path, or empty on cancel.
-// ═══════════════════════════════════════════════════════════════════════
-// Global manifest manager (bare -m / --manifest)
-// ═══════════════════════════════════════════════════════════════════════
-static std::string interactiveManifestManager(const std::string& manifestDirOverride) {
-    return tui::runManifestManager(manifestDirOverride);
-}
-
 static bool resolveCliManifest(CliConfig& cli) {
     if (cli.manifestPickerRequested && cli.manifestPath.empty()) {
-        std::string picked = interactiveManifestManager(cli.manifestDir);
-        if (picked.empty()) {
-            std::cerr << "\033[2m[manifest] cancelled.\033[0m\n";
+        if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
+            auto agents = catalog::discoverAgents(cli.manifestDir);
+            if (agents.empty()) {
+                std::cerr << "No agents found under manifests/agents.\n\nmanifests/ roots:\n";
+                for (const auto& [root, source] : catalog::manifestsSearchRoots(cli.manifestDir))
+                    std::cerr << "  [" << source << "] " << root << "\n";
+                std::cerr << "\nInstall:\n"
+                             "  $CORTEX_HOME/manifests/agents/<name>/agent.yml\n"
+                             "  ~/.config/cortex/manifests/agents/<name>/agent.yml\n"
+                             "List: cortex-mk3 list --agents\n";
+            } else {
+                std::cerr << "Agents (" << agents.size()
+                          << ") under manifests/ — re-run with -m <name> or a TTY:\n\n";
+                for (size_t i = 0; i < agents.size(); ++i) {
+                    for (const auto& line : catalog::formatOwnershipTree(agents[i], false))
+                        std::cerr << line << "\n";
+                    if (i + 1 < agents.size())
+                        std::cerr << "\n";
+                }
+            }
             return false;
         }
-        cli.manifestPath = picked;
-        cli.manifestPickerRequested = false;
-        std::cerr << "\033[2m[manifest]\033[0m " << cli.manifestPath << "\n";
-        return true;
+        if (!cli.prompt.empty() && !cli.replMode) {
+            std::cerr << "Error: bare -m opens the manifest browser (interactive TUI). "
+                         "Use `-m <name>` with -p.\n";
+            return false;
+        }
+        return true;  // interactive app launches at the manifests surface
     }
     if (cli.manifestPath.empty())
         return true;
@@ -2138,6 +2150,7 @@ static int cmdRun(CliConfig& cli) {
         icfg.model = acfg.model;
         icfg.manifestPath = cli.manifestPath;
         icfg.manifestDir = cli.manifestDir;
+        icfg.startAtManifests = cli.manifestPickerRequested;
         icfg.harnessPath = acfg.harnessPath;
         icfg.systemPromptPath = acfg.systemPromptPath;
         icfg.personaPath = acfg.personaPath;

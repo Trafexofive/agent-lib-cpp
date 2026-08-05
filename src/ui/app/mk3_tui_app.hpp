@@ -69,6 +69,10 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
     model->dashboard.manifestDir =
         !cfg.manifestDir.empty() ? cfg.manifestDir : cfg.manifestPath;
     model->dashboard.refreshAll();
+    if (cfg.startAtManifests) {
+        model->dashboard.select(model::DashboardSection::Manifests);
+        model->dashboard.refreshManifests();
+    }
     model->promptHistory = chat::loadPromptHistory();
     model->promptHistoryIndex = static_cast<int>(model->promptHistory.size());
     // Unified resume: prefer ui_timeline, fall back to records (session audit S0.3).

@@ -55,6 +55,8 @@ struct InkcellAppConfig {
     bool ephemeral = false;
     // Optional seed prompt for interactive REPL (-p without --ephemeral).
     std::string initialPrompt;
+    // Bare `-m` (no name): open the app directly on the manifests browser.
+    bool startAtManifests = false;
     // Chat render modifiers (orthogonal to -p / session / lifecycle).
     bool showThoughts = true;
     bool truncateBodies = true;
