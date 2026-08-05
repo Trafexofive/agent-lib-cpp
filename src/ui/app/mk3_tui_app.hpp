@@ -115,6 +115,7 @@ inline inkcell::App makeInkcellApp(const InkcellAppConfig& cfg, AgentBridge& bri
         .bind("t", "shell.toggle_thoughts", "Toggle thoughts")
         // Ctrl chords are handled in AgentScene::on_key so they work while typing:
         //   Ctrl-T thoughts · Ctrl-O truncate · Ctrl-R raw · Ctrl-X stop
+        //   Ctrl-J/K fine transcript scroll (±1 line; Home/End jump ends)
         .bind("i", "shell.focus_composer", "Focus composer")
         .bind("m", "scene.main", "Dashboard")
         .bind("esc", "shell.focus_timeline", "Focus history")
@@ -136,12 +137,11 @@ inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& p
                          const std::string& sessionId, bool ephemeral, std::atomic<bool>& done) {
     try {
         bridge.publish(UiEvent::status("agent running"));
-        // Vet-fix: pipe retry signals into a Notification event. Provider
-        // suppresses stderr once quiet logs are on, so the chat chrome stays
-        // clean during transient upstream flakes.
+        // TUI owns the alternate screen. Any agent/provider stderr mid-frame
+        // corrupts cells (prompt leakage, "eaten spaces", overlapping blocks).
+        // Dev dumps still write files under .cortex/dev/ — just never the tty.
+        agent.setSilenceTerminal(true);
         {
-            // Local provider fetch — captures by reference below; the ptr is
-            // only used at install time.
             auto provider = agent.provider();
             if (provider) provider->setQuietLogs(true);
         }
@@ -204,14 +204,32 @@ inline void runAgentTurn(AgentBridge& bridge, Agent& agent, const std::string& p
         onToken("", true);
         UiEvent end;
         end.kind = UiEventKind::TurnDone;
-        end.text = result;
+        // Normalize abort leftovers if prompt returned a curl-ish cancel string.
+        if (!g_running || result.find("Operation was aborted") != std::string::npos ||
+            result.find("ABORTED_BY_CALLBACK") != std::string::npos ||
+            result.find("cancelled") != std::string::npos)
+            end.text = "[cancelled]";
+        else
+            end.text = result;
         bridge.publish(std::move(end));
     } catch (const std::exception& e) {
-        bridge.publish(UiEvent::error(e.what()));
-        UiEvent end;
-        end.kind = UiEventKind::TurnDone;
-        end.text = std::string("error: ") + e.what();
-        bridge.publish(std::move(end));
+        const std::string msg = e.what() ? e.what() : "";
+        const bool isCancel =
+            !g_running || msg == "cancelled" || msg.find("cancelled") != std::string::npos ||
+            msg.find("Operation was aborted") != std::string::npos ||
+            msg.find("ABORTED_BY_CALLBACK") != std::string::npos;
+        if (isCancel) {
+            UiEvent end;
+            end.kind = UiEventKind::TurnDone;
+            end.text = "[cancelled]";
+            bridge.publish(std::move(end));
+        } else {
+            bridge.publish(UiEvent::error(msg));
+            UiEvent end;
+            end.kind = UiEventKind::TurnDone;
+            end.text = std::string("error: ") + msg;
+            bridge.publish(std::move(end));
+        }
     }
     done.store(true, std::memory_order_release);
 }
@@ -309,6 +327,12 @@ inline std::unique_ptr<Agent> buildAgentFromManifest(const std::string& manifest
             return nullptr;
         }
         auto agent = std::make_unique<Agent>(acfg, provider);
+        // Honor runtime.dev_mode + CORTEX_DEV_MODE for hub-launched agents too.
+        if (acfg.devMode || (std::getenv("CORTEX_DEV_MODE") &&
+                             std::string(std::getenv("CORTEX_DEV_MODE")) != "0" &&
+                             std::string(std::getenv("CORTEX_DEV_MODE")) != "false")) {
+            agent->setDevMode(true);
+        }
         ManifestLoader::loadFeeds(manifestPath, *agent);
         ManifestLoader::loadRelics(manifestPath, *agent);
         auto schemas = ManifestLoader::loadTools(manifestPath, *agent);
@@ -352,6 +376,12 @@ inline int runInkcellRepl(const InkcellAppConfig& cfg, Agent& agent, const std::
     slot->external = &agent;
     model->setRootAgent(slot->ptr());
     initializeChatModel(model, cfg);
+    // Re-assert dev dumps for the live agent (CLI already may have set this).
+    if (std::getenv("CORTEX_DEV_MODE") &&
+        std::string(std::getenv("CORTEX_DEV_MODE")) != "0" &&
+        std::string(std::getenv("CORTEX_DEV_MODE")) != "false") {
+        agent.setDevMode(true);
+    }
     agent.setAskToolHandler([&bridge](const Json::Value& params) { return bridge.requestAsk(params); });
     SessionFlushGuard flushGuard(agent, /*cfgSessionId*/ "", noSession);
     std::atomic<bool> workerBusy{false};
