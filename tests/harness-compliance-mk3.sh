@@ -83,13 +83,13 @@ for MODEL in "${MODELS[@]}"; do
   for run in $(seq 1 "$REPEAT"); do
     LABEL="[run $run/$REPEAT]"
     WORK=$(mktemp -d /tmp/mk3-compliance-XXXXXX)
-    # Headless: --tui legacy avoids experimental inkcell App (which owns the
-    # default -p path and prints ANSI frames, not protocol). --raw prints the
-    # final result to stdout; raw.md is also written under CWD when dumps run.
+    # Headless: inkcell one-shot in snapshot mode renders to stdout without
+    # owning the terminal (the experimental App owns the interactive -p path).
+    # --raw suppresses provider-setup logging so stdout carries only the render.
     (
       cd "$WORK"
-      timeout "$TIMEOUT" env MK3_TUI=legacy \
-        "$MK3" --tui legacy --raw --ephemeral --no-session \
+      timeout "$TIMEOUT" env MK3_TUI_SNAPSHOT=1 \
+        "$MK3" --raw --ephemeral --no-session \
         --provider "$PROVIDER" --model "$MODEL" \
         --harness "$HARNESS" \
         -m "$MANIFEST" \
