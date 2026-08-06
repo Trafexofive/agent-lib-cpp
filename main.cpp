@@ -32,6 +32,7 @@
 #include "src/cli/list_picker.hpp"
 #include "src/cli/options.hpp"
 #include "src/cli/commands.hpp"
+#include "src/cli/serve.hpp"
 #include "src/cli/session.hpp"
 #include "src/core/agent.hpp"
 #include "src/core/agent_catalog.hpp"
@@ -691,21 +692,6 @@ static int cmdRun(CliConfig& cli) {
     }
 
     // Unreachable: inkcell is the only backend; legacy was removed.
-    return 1;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Command: serve
-// ═══════════════════════════════════════════════════════════════════════
-static int cmdServe(const CliConfig& cli) {
-    std::cout << "Server mode — use cortex-mk3-server binary instead.\n";
-    std::cout << "  cortex-mk3-server --host " << cli.serverHost << " --port " << cli.serverPort
-              << " --threads " << cli.serverThreads;
-    if (!cli.serverApiKey.empty())
-        std::cout << " --api-key " << cli.serverApiKey;
-    if (cli.serverNoCors)
-        std::cout << " --no-cors";
-    std::cout << "\n";
     return 1;
 }
 
