@@ -1,51 +1,17 @@
 // =============================================================================
 // agent-lib-MK3 — CLI Runner v3.1
-// Subcommand-based CLI with getopt_long, config file, progress indicators.
+// Thin entry point: parse args, apply config, dispatch to src/cli modules.
 // =============================================================================
 
-#include <getopt.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-
-#include <algorithm>
-#include <atomic>
-#include <cctype>
-#include <chrono>
-#include <condition_variable>
 #include <csignal>
-#include <cstdio>
-#include <cstring>
-#include <ctime>
-#include <filesystem>
-#include <fstream>
-#include <functional>
-#include <iomanip>
+#include <cstdlib>
 #include <iostream>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <sstream>
 #include <string>
-#include <thread>
-#include <vector>
 
-#include "src/cli/list_picker.hpp"
-#include "src/cli/options.hpp"
 #include "src/cli/commands.hpp"
+#include "src/cli/options.hpp"
 #include "src/cli/run.hpp"
 #include "src/cli/serve.hpp"
-#include "src/cli/session.hpp"
-#include "src/core/agent.hpp"
-#include "src/core/agent_catalog.hpp"
-#include "src/core/manifest_autoload.hpp"
-#include "src/core/manifest_loader.hpp"
-#include "src/core/sandbox_launcher.hpp"
-#include "src/providers/factory.hpp"
-#include "src/sandbox/policy.hpp"
-#include "src/session/manager.hpp"
-#include "src/session/controller.hpp"
-#include "src/ui/app/mk3_tui_app.hpp"
-#include "src/utils/ansi.hpp"
 
 using namespace cortex::mk3;
 using namespace cortex::mk3::cli;
