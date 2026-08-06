@@ -112,6 +112,8 @@ struct ShellModel : TimelineStore {
     // just chdir the process. When OFF (default), live session is killed
     // and its file deleted (the historical "exit and reopen" semantics).
     bool keepLiveOnCwdChange = false;
+    // OFF = Sessions page/resume scoped to current CWD; ON = all projects.
+    bool globalSessions = false;
     // When true, long block bodies are capped (pi-like truncation) with a
     // "… N more lines" note. Toggle via /truncate or CLI --[no-]truncate.
     bool truncateBodies = true;

@@ -48,6 +48,19 @@ inline std::string slugPart(std::string s) {
     return out.empty() ? "project" : out;
 }
 
+// Per-project session view: true when the session id was minted under the
+// current CWD slug (the mint scheme embeds slugPart(cwd) as the id prefix).
+// The global-sessions toggle bypasses this at the view layer.
+inline bool sessionInCurrentProject(const std::string& id) {
+    try {
+        std::string slug = slugPart(std::filesystem::current_path().filename().string());
+        std::string prefix = slug + "-";
+        return id.size() > prefix.size() && id.compare(0, prefix.size(), prefix) == 0;
+    } catch (...) {
+        return false;
+    }
+}
+
 // Mint a process-local unique session id. Salt differentiates multi-mint
 // within the same millisecond (hub fork + create + lazy arm).
 inline std::string mintSessionId(const std::string& projectHint = {}) {

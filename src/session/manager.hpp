@@ -77,7 +77,7 @@ class SessionManager {
         size_t turnCount = 0;
         bool hasUiTimeline = false;
     };
-    std::vector<SessionInfo> list() const;
+    std::vector<SessionInfo> list(bool includeCwdLegacy = true) const;
 
     Session create(const std::string& id, const std::string& agent, const std::string& model,
                    const std::string& provider) const;

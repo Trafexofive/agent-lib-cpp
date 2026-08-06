@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "src/core/agent_catalog.hpp"
+#include "src/session/controller.hpp"
 #include "src/session/manager.hpp"
 
 namespace cortex::mk3::ui::model {
@@ -340,8 +341,19 @@ struct DashboardState {
 
     void moveAgent(int delta) { moveManifest(delta); }
 
-    void refreshSessions(const session::SessionManager& manager = session::SessionManager()) {
-        sessions = manager.list();
+    void refreshSessions(const session::SessionManager& manager = session::SessionManager(),
+                         bool globalScope = false) {
+        // Global view is store-only (identical from any CWD); per-project
+        // keeps the CWD-local fallback then filters by current-CWD slug.
+        sessions = manager.list(!globalScope);
+        if (!globalScope) {
+            std::vector<session::SessionManager::SessionInfo> scoped;
+            scoped.reserve(sessions.size());
+            for (auto& s : sessions)
+                if (session::sessionInCurrentProject(s.id))
+                    scoped.push_back(std::move(s));
+            sessions = std::move(scoped);
+        }
         if (sessions.empty())
             sessionIndex = 0;
         else
@@ -399,8 +411,8 @@ struct DashboardState {
 
     void refreshAgents() { refreshManifests(); }
 
-    void refreshAll() {
-        refreshSessions();
+    void refreshAll(bool globalScope = false) {
+        refreshSessions(session::SessionManager(), globalScope);
         refreshManifests();
     }
 

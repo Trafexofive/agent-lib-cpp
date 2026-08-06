@@ -356,7 +356,9 @@ void test_dashboard_session_controller() {
     sessions.save(existing);
 
     model::DashboardState dashboard;
-    dashboard.refreshSessions(sessions);
+    // Explicit temp store — global scope so foreign ids are visible
+    // (per-project filtering is the default-store view policy).
+    dashboard.refreshSessions(sessions, true);
     bool loadedAgent = false;
     auto resumed = model::resumeDashboardSession(
         dashboard, sessions, [&](const std::string& id) { loadedAgent = id == "resume-me"; });

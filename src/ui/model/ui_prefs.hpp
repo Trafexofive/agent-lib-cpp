@@ -41,6 +41,10 @@ struct UiPrefState {
     // When ON, CWD change skips killing the live session. When OFF
     // (default), CWD change tears down the live session and its file.
     bool keepLiveOnCwdChange = false;
+    // When OFF (default), the Sessions page / resume lists only sessions
+    // minted under the current CWD (per-project view). When ON, all
+    // sessions across projects are shown (recent-select + resume).
+    bool globalSessions = false;
 };
 
 // Expand ~ to $HOME on the given path. Empty / already-absolute / no-~
@@ -185,6 +189,7 @@ inline void loadUiPrefs() {
     shad.sessionCwd = jsonGetString(body, "session_cwd");
     shad.rememberLastCwd = jsonGetBool(body, "remember_last_cwd", false);
     shad.keepLiveOnCwdChange = jsonGetBool(body, "keep_live_on_cwd_change", false);
+    shad.globalSessions = jsonGetBool(body, "global_sessions", false);
 }
 
 // Apply shadow → live model (call after model construct / load).
@@ -201,6 +206,7 @@ inline void applyUiPrefsToModel(Model& model) {
     model.sessionCwd = s.sessionCwd;
     model.rememberLastCwd = s.rememberLastCwd;
     model.keepLiveOnCwdChange = s.keepLiveOnCwdChange;
+    model.globalSessions = s.globalSessions;
 }
 
 template <typename Model>
@@ -216,6 +222,7 @@ inline void captureUiPrefsFromModel(const Model& model) {
     s.sessionCwd = model.sessionCwd;
     s.rememberLastCwd = model.rememberLastCwd;
     s.keepLiveOnCwdChange = model.keepLiveOnCwdChange;
+    s.globalSessions = model.globalSessions;
 }
 
 inline void saveUiPrefs() {
@@ -237,7 +244,8 @@ inline void saveUiPrefs() {
         << "  \"nav_pill_hide_ms\": " << s.navPillHideMs << ",\n"
         << "  \"session_cwd\": \"" << s.sessionCwd << "\",\n"
         << "  \"remember_last_cwd\": " << (s.rememberLastCwd ? "true" : "false") << ",\n"
-        << "  \"keep_live_on_cwd_change\": " << (s.keepLiveOnCwdChange ? "true" : "false") << "\n"
+        << "  \"keep_live_on_cwd_change\": " << (s.keepLiveOnCwdChange ? "true" : "false") << ",\n"
+        << "  \"global_sessions\": " << (s.globalSessions ? "true" : "false") << "\n"
         << "}\n";
 }
 

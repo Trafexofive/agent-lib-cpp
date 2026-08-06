@@ -1119,6 +1119,7 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
     }
     option(11, "REMEMBER CWD", model_->rememberLastCwd ? "ON" : "OFF", "", false);
     option(12, "KEEP LIVE", model_->keepLiveOnCwdChange ? "ON" : "OFF", "", false);
+    option(13, "SESSION SCOPE", model_->globalSessions ? "GLOBAL" : "PROJECT", "←→", false);
 
     // Single footer — path only, no key encyclopedia
     if (y + 1 < frame.bottom()) {

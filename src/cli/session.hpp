@@ -11,12 +11,25 @@
 #include "src/cli/options.hpp"
 #include "src/session/controller.hpp"
 #include "src/session/manager.hpp"
+#include "src/ui/model/ui_prefs.hpp"
 
 namespace cortex::mk3::cli {
 
 static std::vector<session::SessionManager::SessionInfo> sortedSessions() {
+    ui::loadUiPrefs();
+    bool global = ui::uiPrefShadow().globalSessions;
+    // Global view is store-only (no CWD-legacy) so the list is identical
+    // from any CWD; per-project keeps the CWD-local fallback + slug filter.
     session::SessionManager sm;
-    auto sessions = sm.list();
+    auto sessions = sm.list(!global);
+    if (!global) {
+        std::vector<session::SessionManager::SessionInfo> scoped;
+        scoped.reserve(sessions.size());
+        for (auto& s : sessions)
+            if (session::sessionInCurrentProject(s.id))
+                scoped.push_back(std::move(s));
+        sessions = std::move(scoped);
+    }
     std::sort(sessions.begin(), sessions.end(),
               [](const auto& a, const auto& b) { return a.updated > b.updated; });
     return sessions;

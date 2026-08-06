@@ -235,7 +235,7 @@ void SessionManager::appendRecord(const std::string& id, const SessionRecord& r)
     save(s);
 }
 
-std::vector<SessionManager::SessionInfo> SessionManager::list() const {
+std::vector<SessionManager::SessionInfo> SessionManager::list(bool includeCwdLegacy) const {
     std::lock_guard<std::recursive_mutex> lock(ioMutex());
     std::vector<SessionInfo> result;
     std::set<std::string> seenIds;
@@ -300,7 +300,8 @@ std::vector<SessionManager::SessionInfo> SessionManager::list() const {
     ingestDir(baseDir_);
     // Also surface leftover project-local sessions so operators don't "lose"
     // history after the stable-root fix. Primary baseDir wins on id clash.
-    {
+    // Global view (includeCwdLegacy=false) is store-only: identical from any CWD.
+    if (includeCwdLegacy) {
         std::string legacy = cwdLegacySessionsDir();
         if (!legacy.empty() && legacy != baseDir_)
             ingestDir(legacy);

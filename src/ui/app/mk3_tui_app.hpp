@@ -68,7 +68,7 @@ inline void initializeChatModel(const std::shared_ptr<ShellModel>& model,
     model->truncateBodies = cfg.truncateBodies;
     model->dashboard.manifestDir =
         !cfg.manifestDir.empty() ? cfg.manifestDir : cfg.manifestPath;
-    model->dashboard.refreshAll();
+    model->dashboard.refreshAll(uiPrefShadow().globalSessions);
     if (cfg.startAtManifests) {
         model->dashboard.select(model::DashboardSection::Manifests);
         model->dashboard.refreshManifests();

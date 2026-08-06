@@ -376,7 +376,8 @@ class MainScene final : public BaseScene {
         if (::chdir(target.c_str()) != 0) return std::string();
         char resolved[1024] = {0};
         if (::getcwd(resolved, sizeof(resolved) - 1)) {
-            model_->dashboard.refreshSessions();
+            model_->dashboard.refreshSessions(
+                session::SessionManager(), uiPrefShadow().globalSessions);
             return resolved;
         }
         return target;
@@ -489,6 +490,15 @@ class MainScene final : public BaseScene {
                 dash.flashNotice(model_->keepLiveOnCwdChange
                                      ? "cwd · live kept across CWD change"
                                      : "cwd · live killed on CWD change");
+                break;
+            }
+            case 13: {  // session list scope: per-project (default) vs global
+                model_->globalSessions = !model_->globalSessions;
+                dash.flashNotice(model_->globalSessions
+                                     ? "sessions · global (all projects)"
+                                     : "sessions · project (current CWD)");
+                model_->dashboard.refreshSessions(session::SessionManager(),
+                                                  model_->globalSessions);
                 break;
             }
             default:
