@@ -509,6 +509,11 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 cli.toolAnsi = false;
                 break;
             case 1002:
+                if (std::strcmp(optarg, "legacy") == 0) {
+                    std::cerr << "Error: --tui legacy was removed — inkcell is the only TUI "
+                                 "backend (use --tui experimental or --tui inkcell)\n";
+                    std::exit(1);
+                }
                 cli.tuiMode = optarg;
                 break;
             case 1010:
