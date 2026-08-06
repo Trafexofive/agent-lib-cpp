@@ -39,21 +39,10 @@
 #include "src/sandbox/policy.hpp"
 #include "src/session/manager.hpp"
 #include "src/session/controller.hpp"
-#include "src/tui/dialog.hpp"
-#include "src/tui/manifest_manager.hpp"
-#include "src/tui/repl_session.hpp"
-#include "src/tui/frame_clock.hpp"
-#include "src/tui/input.hpp"
-#include "src/tui/renderer.hpp"
-#include "src/tui/session_view.hpp"
-#include "src/tui/slash_commands.hpp"
-#include "src/tui/status_prompt.hpp"
 #include "src/ui/app/mk3_tui_app.hpp"
 #include "src/utils/ansi.hpp"
 
 using namespace cortex::mk3;
-
-static volatile bool g_resized = false;
 
 namespace fs = std::filesystem;
 
@@ -102,10 +91,7 @@ struct CliConfig {
     bool raw = false;
     bool toolAnsi = true;
     bool replMode = false;
-    std::string tuiMode;  // legacy | inkcell | experimental
-                          // inkcell is an alias of experimental (native inkcell App).
-                          // legacy = ReplSession oracle. Default: experimental (MK3_TUI / config).
-    std::string tuiDebugDumpPath;
+    std::string tuiMode;  // experimental (alias: inkcell); default: experimental (MK3_TUI / config)
     std::string sessionName;    // --name <name>: human-readable session label
     std::string forkFrom;       // --fork <id>: copy an existing session and continue
     int showHistory = -1;       // --show-history N: render last N records on startup.
@@ -160,53 +146,12 @@ struct CliConfig {
 // ═══════════════════════════════════════════════════════════════════════
 // Progress spinner
 // ═══════════════════════════════════════════════════════════════════════
-class Spinner {
-   public:
-    void start(const std::string& msg) {
-        if (running_)
-            return;
-        running_ = true;
-        thread_ = std::thread([this, msg]() {
-            const char* frames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
-            int i = 0;
-            while (running_) {
-                std::cerr << "\r" << frames[i % 10] << " " << msg << std::flush;
-                i++;
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            std::cerr << "\r" << std::string(msg.size() + 3, ' ') << "\r" << std::flush;
-        });
-    }
-    void stop() {
-        running_ = false;
-        if (thread_.joinable())
-            thread_.join();
-    }
-    ~Spinner() {
-        stop();
-    }
-
-   private:
-    std::atomic<bool> running_{false};
-    std::thread thread_;
-};
-
 // ═══════════════════════════════════════════════════════════════════════
 // Signal handler
 // ═══════════════════════════════════════════════════════════════════════
 void signalHandler(int sig) {
-    if (sig == SIGWINCH)
-        g_resized = true;
-    else
+    if (sig != SIGWINCH)
         cortex::mk3::g_running = false;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Help
-// ═══════════════════════════════════════════════════════════════════════
-void printBanner() {
-    std::cout << ansi::bold << ansi::cyan << "  Cortex MK3 " << VERSION << " — Agent Runtime\n"
-              << ansi::reset;
 }
 
 void printHelpGeneral() {
@@ -215,7 +160,7 @@ void printHelpGeneral() {
 Global flags:
   --config <path>      Config file (default: ~/.config/cortex-mk3/config)
   --manifest-dir <dir> Extra manifests/ root (global surface is manifests/ only)
-  -m, --manifest [name|path]  Agent under manifests/agents; bare -m opens manager
+  -m, --manifest [name|path]  Agent under manifests/agents; bare -m opens the manifest browser
   --agent [name|path]  Alias for --manifest
   --iterations <n>     Max turns before forced response (default: 20)
   --provider <name>    LLM provider (deepseek, openrouter, xai, openai-codex, groq, zen, together, fireworks)
@@ -235,11 +180,9 @@ Global flags:
   --quiet-session      Suppress the resume banner (printed to stderr)
   --no-session         Don't load/save a session record
   --ephemeral          Exit when the agent turn finishes
-  --tui <legacy|inkcell|experimental>
+  --tui <experimental|inkcell>
                        TUI backend (env: MK3_TUI). Default: experimental.
-                       inkcell|experimental = native inkcell App (product surface).
-                       legacy = ReplSession oracle (ANSI 1:1 chat path).
-  --tui-debug-dump <path> Auto-write TUI render/debug state (env: MK3_TUI_DEBUG_DUMP)
+                       inkcell = alias of experimental (native inkcell App).
   --dry-run            Validate config + prompt without calling LLM
   --help               Show this help
 
@@ -271,7 +214,7 @@ Flags:
                          With inkcell/experimental TUI: stays interactive unless --ephemeral.
                          Headless/legacy path: runs once and returns.
   -f, --file <path>      Read prompt from file
-  -m, --manifest [name|path]  Agent name (catalog) or path; bare -m opens manager
+  -m, --manifest [name|path]  Agent name (catalog) or path; bare -m opens the manifest browser
   --agent [name|path]    Alias for --manifest
   --harness <size|path>  Protocol harness: small|medium|big|default or file path
   --system <path>        System prompt override
@@ -391,6 +334,11 @@ static void applyConfig(CliConfig& cli, const std::map<std::string, std::string>
     // Honest alias: --tui inkcell is the native inkcell App (not ReplSession).
     if (cli.tuiMode == "inkcell")
         cli.tuiMode = "experimental";
+    // Legacy backend was removed; env/config values fall back softly.
+    if (cli.tuiMode == "legacy") {
+        std::cerr << "warning: --tui legacy was removed — using inkcell (experimental).\n";
+        cli.tuiMode = "experimental";
+    }
     if (cli.configPath.empty())
         cli.configPath = get("config_path", defaultConfigPath());
 }
@@ -415,7 +363,6 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"raw", no_argument, 0, 1003},
                                        {"no-tool-ansi", no_argument, 0, 1004},
                                        {"tui", required_argument, 0, 1002},
-                                       {"tui-debug-dump", required_argument, 0, 1001},
                                        {"dry-run", no_argument, 0, 'n'},
                                        {"help", no_argument, 0, 'h'},
 
@@ -560,9 +507,6 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 break;
             case 1004:
                 cli.toolAnsi = false;
-                break;
-            case 1001:
-                cli.tuiDebugDumpPath = optarg;
                 break;
             case 1002:
                 cli.tuiMode = optarg;
@@ -1970,9 +1914,14 @@ static int cmdRun(CliConfig& cli) {
     }
 
     // Note: inkcell already normalized to experimental above.
-    if (cli.tuiMode != "legacy" && cli.tuiMode != "experimental") {
+    if (cli.tuiMode == "legacy") {
+        std::cerr << "Error: --tui legacy was removed — inkcell is the only TUI backend "
+                     "(use --tui experimental or --tui inkcell)\n";
+        return 1;
+    }
+    if (cli.tuiMode != "experimental") {
         std::cerr << "Error: unknown TUI backend '" << cli.tuiMode
-                  << "' (expected legacy|inkcell|experimental)\n";
+                  << "' (expected experimental|inkcell)\n";
         return 1;
     }
 
@@ -1996,8 +1945,6 @@ static int cmdRun(CliConfig& cli) {
         cli.noSession = true;
     if (acfg.defaultEphemeral)
         cli.ephemeral = true;
-    tui::TuiRenderer renderer(80);
-    renderer.setToolAnsiPassthrough(cli.toolAnsi);
 
     // Manifest catalog semantics: ./manifests is a lookup catalog, not an
     // implicit capability surface. Capabilities are loaded only from the active
@@ -2112,30 +2059,13 @@ static int cmdRun(CliConfig& cli) {
             return ui::runInkcellRepl(icfg, agent, promptSessionId, cli.noSession);
         }
 
-        Spinner spinner;
-        if (!cli.raw) {
-            printBanner();
-            spinner.start("Thinking...");
-        }
-
-        std::string result = agent.prompt(cli.prompt, promptSessionId, cli.noSession);
-        spinner.stop();
-
-        if (!cli.raw) {
-            tui::Markdown md;
-            md.setText(result);
-            for (auto& l : md.render())
-                std::cout << l << std::endl;
-        } else {
-            std::cout << result << std::endl;
-        }
-        return 0;
+        // Unreachable: experimental is the only backend (validated above).
+        return 1;
     }
 
-    // ── Interactive native inkcell app (product surface) ──
+    // ── Interactive inkcell app (product surface) ──
     // Default for --tui experimental|inkcell and for bare `cortex-mk3`
     // (no prompt, no manifest). Dashboard when no -m; agent scene with -m.
-    // Legacy ReplSession is opt-in via --tui legacy only.
     if (cli.tuiMode == "experimental" ||
         (cli.prompt.empty() && cli.manifestPath.empty())) {
         std::string experimentalSessionId =
@@ -2166,27 +2096,8 @@ static int cmdRun(CliConfig& cli) {
         return ui::runInkcellRepl(icfg, agent, experimentalSessionId, cli.noSession);
     }
 
-    // ── Interactive REPL TUI / chat oracle ──
-    // --tui legacy only. inkcell is no longer a ReplSession alias.
-    std::string replSessionId =
-        cli.noSession
-            ? ""
-            : (activeSessionId.empty() ? resolveSessionId(cli, false) : activeSessionId);
-    if (!cli.noSession && !replSessionId.empty())
-        persistSessionMetadata(replSessionId, cli, acfg);
-
-    tui::ReplSessionConfig replCfg;
-    replCfg.provider = acfg.provider;
-    replCfg.model = acfg.model;
-    replCfg.sessionId = replSessionId;
-    replCfg.sessionName = cli.sessionName;
-    replCfg.tuiDebugDumpPath = cli.tuiDebugDumpPath;
-    replCfg.workflowXml = workflowXml;
-    replCfg.allSchemas = allSchemas;
-    replCfg.ephemeral = cli.noSession;  // ReplSession: ephemeral == no session persist
-    replCfg.toolAnsi = cli.toolAnsi;
-    replCfg.resizedFlag = &g_resized;
-    return tui::ReplSession(std::move(replCfg)).run(agent);
+    // Unreachable: inkcell is the only backend; legacy was removed.
+    return 1;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
