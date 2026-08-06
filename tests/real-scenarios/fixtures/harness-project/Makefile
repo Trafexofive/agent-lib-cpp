@@ -161,11 +161,3 @@ $(POLICY_TEST_BIN): $(POLICY_TEST_SRC)
 	$(CXX) $(CXXFLAGS) -Isrc -Isrc/sandbox $(POLICY_TEST_SRC) -o $@
 test-policy: $(POLICY_TEST_BIN)
 	@./$(POLICY_TEST_BIN)
-
-# ── TUI tests ──
-TUI_TERMINAL_TEST_SRC = tests/tui/terminal_test.cpp
-TUI_TERMINAL_TEST_BIN = tests/tui/terminal_test
-$(TUI_TERMINAL_TEST_BIN): $(TUI_TERMINAL_TEST_SRC)
-	$(CXX) $(CXXFLAGS) -Isrc $(TUI_TERMINAL_TEST_SRC) -o $@
-test-tui-terminal: $(TUI_TERMINAL_TEST_BIN)
-	@./$(TUI_TERMINAL_TEST_BIN)

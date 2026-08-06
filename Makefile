@@ -476,7 +476,7 @@ LIVE_SMOKE_MODEL ?= deepseek-v4-flash
 LIVE_SMOKE_TIMEOUT ?= 90
 
 live-smoke: $(LIVE_SMOKE_BIN)
-	@bash tests/tui/live_smoke.sh $(LIVE_SMOKE_BIN) $(LIVE_SMOKE_MODEL) $(LIVE_SMOKE_TIMEOUT)
+	@bash tests/live_smoke.sh $(LIVE_SMOKE_BIN) $(LIVE_SMOKE_MODEL) $(LIVE_SMOKE_TIMEOUT)
 
 run: $(BIN_CLI)
 	./$(BIN_CLI)
@@ -511,27 +511,17 @@ $(POLICY_TEST_BIN): $(POLICY_TEST_SRC)
 test-policy: $(POLICY_TEST_BIN)
 	@./$(POLICY_TEST_BIN)
 
-# ── TUI tests ──
-TUI_TERMINAL_TEST_SRC = tests/tui/terminal_test.cpp
-TUI_TERMINAL_TEST_BIN = tests/tui/terminal_test
-$(TUI_TERMINAL_TEST_BIN): $(TUI_TERMINAL_TEST_SRC)
-	$(CXX) $(CXXFLAGS) -Isrc $(TUI_TERMINAL_TEST_SRC) -o $@
-test-tui-terminal: $(TUI_TERMINAL_TEST_BIN)
-	@./$(TUI_TERMINAL_TEST_BIN)
-
-TUI_RENDER_TEST_SRC = tests/tui/render_test.cpp
-TUI_RENDER_TEST_BIN = tests/tui/render_test
-$(TUI_RENDER_TEST_BIN): $(TUI_RENDER_TEST_SRC)
-	$(CXX) $(CXXFLAGS) -Isrc $(TUI_RENDER_TEST_SRC) -o $@ $(LDFLAGS)
-test-tui-render: $(TUI_RENDER_TEST_BIN)
-	@./$(TUI_RENDER_TEST_BIN)
+# ── UI architecture gate: src/ui must stay independent of src/tui (removed). ──
+.PHONY: ui-arch-smoke
+test-ui-architecture: $(BIN_CLI)
+	@bash tests/ui_architecture_smoke.sh
 
 # ── DeepSearchStack staging module smoke ──
 test-dss-module: $(BIN_CLI)
 	@tests/deepsearch_stack_manifest_smoke.sh
 
 # ── Install / Uninstall ──
-PREFIX ?= /usr/local
+PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 
 install: $(BIN_CLI)
