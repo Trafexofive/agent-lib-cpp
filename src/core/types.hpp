@@ -145,6 +145,57 @@ struct PromptBuildingConfig {
     RuntimeCapabilities runtimeCapabilities;
 };
 
+// Live host↔sandbox path mapping (bind mount / glorified symlink).
+// host  — path on the operator machine (resolved absolute at load time)
+// guest — path the agent/tools see inside the sandbox
+// readOnly — when true, fs_write under this bind is blocked even if global RO is off
+struct SandboxBind {
+    std::string host;
+    std::string guest;
+    bool readOnly = false;
+};
+
+// Per-kind retention for compaction (see docs/manifests/compaction.md).
+// keep: all | tail | none
+struct CompactionTagPolicy {
+    std::string keep = "tail";  // all | tail | none
+    int keepLast = 8;
+    int truncateChars = 0;      // 0 = no body trim
+    bool onErrorKeepFull = true;  // results: keep errors full when true
+};
+
+// Hybrid compaction config — best of minimal / recommended / profile sugar.
+// Absent or enabled=false → off (only history_cap applies).
+struct CompactionConfig {
+    bool configured = false;  // compaction:/compacting: block present
+    bool enabled = false;
+
+    // none | light | balanced | aggressive | archive_first | "" (explicit policy only)
+    std::string profile;
+
+    // Triggers (OR). Empty triggers + enabled → never auto (manual later).
+    int triggerContextTokens = 0;  // 0 = disabled
+    double triggerContextPct = 0;  // 0 = disabled; 0.65 = 65% of model window
+    int triggerTurns = 0;          // 0 = disabled; user turns since last compact
+    int modelContextTokens = 0;    // 0 = unknown; used with context_pct
+
+    int cooldownMinTurns = 2;
+    int cooldownMinSeconds = 0;  // reserved; wall-clock optional later
+
+    CompactionTagPolicy defaultPolicy;
+    std::map<std::string, CompactionTagPolicy> tags;  // user,parent,thought,action,result,response,agent,system
+    std::vector<std::string> neverDrop;  // pin, open_ask, ...
+
+    // drop | summarize_rules | summarize_llm (llm = phase 2, treated as rules for now)
+    std::string outputMode = "summarize_rules";
+    bool archiveEnabled = false;
+    std::string archiveSink = "artifact";  // artifact | file | none
+    std::string archiveFormat = "markdown";
+
+    bool subagentsInherit = true;
+    bool childBeforeReturn = true;
+};
+
 struct AgentConfig {
     std::string name;
     std::string version = "1.0";
@@ -195,16 +246,26 @@ struct AgentConfig {
     int iterationCap =
         50;  // agent turns before forced response (override via manifest max_iterations)
     int actionTimeoutSec = 30;  // max seconds to wait for dispatched actions
+    // Dumb tail window on history lines fed into the prompt. Compaction does
+    // not replace this — it is the hard ceiling / seatbelt.
     int historyCap = 40;
+    // How often to *recompute* the history_cap window (in user turns).
+    // 1 = every turn (old behavior). Default 15 = clamp at most every 15 user
+    // turns; between recomputes the window start is frozen so the prompt can
+    // grow slightly past the cap until the next clamp.
+    // 0 = never recompute after first apply (freeze first window forever).
+    int historyCapEveryTurns = 15;
 
     // Resilience — retry behavior for transient upstream failures (empty
     // stream, finish_reason=length, content_filter, transient HTTP errors).
     // Retries use exponential backoff between attempts and stop on the first
     // response that carries any non-thinking content.
-    int emptyResponseMaxRetries = 2;             // additional attempts after the first
-    int emptyResponseInitialBackoffMs = 1000;    // first backoff
-    int emptyResponseMaxBackoffMs = 30000;       // cap for exponential growth
-    double emptyResponseBackoffMultiplier = 2.0; // delay multiplier per attempt
+    // Free / flaky providers (opencode, openrouter free, etc.) empty-stream often.
+    // Default is generous: first try + 8 retries ≈ 9 attempts before giving up.
+    int emptyResponseMaxRetries = 8;             // additional attempts after the first
+    int emptyResponseInitialBackoffMs = 1500;    // first backoff
+    int emptyResponseMaxBackoffMs = 45000;       // cap for exponential growth
+    double emptyResponseBackoffMultiplier = 1.8; // delay multiplier per attempt
     bool retryOnFinishReasonLength = true;       // length-truncated responses
     bool retryOnFinishReasonContentFilter = true;// filtered/empty content
     std::vector<std::string> retryOnFinishReasons; // extra reasons to retry (e.g. "refusal")
@@ -214,16 +275,34 @@ struct AgentConfig {
     std::string systemPromptText;  // if set, overrides systemPromptPath (inline prompt)
     std::string harnessPath;       // harness/protocol prompt (XML protocol spec)
     std::string personaPath;       // persona prompt (identity/values)
+    std::string userPath;          // operator context (USER.md) — context.user
+    std::string manifestPath;      // agent.yml file path (for live reload)
     std::string manifestDir;
 
     // Prompt rendering
     PromptBuildingConfig promptBuilding;
 
-    // Sandbox
-    std::string sandboxMode = "process";    // process, docker, chroot
-    std::string sandboxRuntime = "";        // docker image name
-    std::string sandboxImage = "";          // docker image
-    std::vector<std::string> sandboxFiles;  // files to mount/copy
+    // Sandbox — capability boundary + live path binds (see sandbox::SandboxPolicy).
+    // When sandboxConfigured is true the manifest declared a sandbox: block and
+    // the runtime builds a policy from the fields below (CLI --sandbox can still
+    // force a preset on top).
+    bool sandboxConfigured = false;
+    std::string sandboxMode = "process";  // process | docker | chroot
+    std::string sandboxRuntime = "";      // legacy alias for image
+    std::string sandboxImage = "";        // docker image (mode: docker)
+    std::string sandboxNetwork = "out";   // none | out | full (OS-level; docker/chroot)
+    bool sandboxReadonly = false;         // global fs_write block
+    std::vector<std::string> sandboxFiles;  // shorthand host paths → /workspace/<name>
+    std::vector<SandboxBind> sandboxBinds;  // explicit host→guest[:ro] mounts
+    std::vector<std::string> sandboxAllowedCommands;  // exec whitelist (* = all)
+    std::vector<std::string> sandboxAllowedPaths;     // extra fs roots (empty = workspace+binds)
+    std::vector<std::string> sandboxAllowedHosts;     // web_fetch host whitelist (empty = blocked)
+    bool sandboxCommandsSet = false;  // distinguish omitted vs explicit []
+    bool sandboxPathsSet = false;
+    bool sandboxHostsSet = false;
+
+    // Context economy — optional smart compact (see CompactionConfig).
+    CompactionConfig compaction;
 
     // Sub-agent runtime behavior
     // memory  = keep sub-agent history in-process only

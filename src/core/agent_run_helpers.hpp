@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <map>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -257,15 +258,24 @@ inline std::string buildResultTag(const std::string &id,
     }
     if (body.empty() && result.isMember("error") && result["error"].isString())
         body = "error: " + result["error"].asString();
-    // Structured context_* results: serialize compact JSON so the LLM still
-    // sees path/bytes/cycles in <result> tags (not an empty body).
+    // Structured object results with NO known output key: keep the whole
+    // payload instead of dropping it.
+    // Whitelisting silently dropped those to a bare {"success":true}, so the
+    // model never saw tool data. Serialize all non-metadata keys instead of
+    // throwing the payload away. Metadata keys (success/exit_*/ms/_elapsed_/
+    // stdout_/stderr_/signal) stay out of the body — they are runtime noise,
+    // carried in the <result> attributes when meaningful.
     if (body.empty() && result.isObject()) {
+        static const std::set<std::string> meta = {
+            "success", "exit", "exit_code", "signal", "ms", "_elapsed_ms",
+            "timed_out", "stdout_truncated", "stderr_truncated",
+            "stdout", "stderr", "truncated", "error"};
         Json::Value slim;
-        for (const char *k :
-             {"success", "path", "mode", "bytes", "cycles_remaining",
-              "pinned_count", "peek_count", "note", "error", "keys"}) {
-            if (result.isMember(k))
-                slim[k] = result[k];
+        for (auto it = result.begin(); it != result.end(); ++it) {
+            const std::string k = it.key().asString();
+            if (meta.count(k))
+                continue;
+            slim[k] = *it;
         }
         if (!slim.empty()) {
             Json::StreamWriterBuilder w;
@@ -339,16 +349,13 @@ return os.str();
 // Multi-thought in ONE generation is fine; N consecutive generations without
 // tools/final burns API cost and is almost always a re-plan loop.
 inline std::string buildThoughtOnlyNudge(int streak, int softCap) {
+    // Inline XML — never English prose. The model sees what it should emit.
     std::ostringstream os;
-    os << "[THOUGHT-ONLY " << streak << "/" << softCap
-       << "] Previous generation had no <action> and no "
-          "<response final=\"true\">.\n"
-          "Multiple <thought> tags in ONE generation are OK. "
-          "THIS generation must open with tools or a final — "
-          "do not restate the plan.\n"
-          "Emit EXACTLY one of:\n"
-          "  <action type=\"tool\" name=\"…\" id=\"…\">…</action>\n"
-          "  <response final=\"true\">…evidence-based answer…</response>\n";
+    os << "<thought>" << streak << "/" << softCap
+       << " consecutive turns with only thoughts — no actions, no final. "
+          "THIS turn must emit either an <action> or "
+          "<response final=\"true\">. Do not restate the plan."
+          "</thought>";
     return os.str();
 }
 

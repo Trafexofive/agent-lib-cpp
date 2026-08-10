@@ -426,6 +426,9 @@ inline void parseOwnership(AgentEntry& e) {
     addCtx("harness", "harness");
     addCtx("system", "system");
     addCtx("persona", "persona");
+    addCtx("user", "user");
+    addCtx("user_context", "user");
+    addCtx("operator", "user");
 
     auto* importNode = ManifestYaml::find(root, "import");
     if (!importNode)
@@ -492,7 +495,7 @@ inline std::vector<std::string> formatOwnershipTree(const AgentEntry& e, bool co
             return "sub-agents";
         if (k == "workflow")
             return "workflows";
-        if (k == "harness" || k == "system" || k == "persona")
+        if (k == "harness" || k == "system" || k == "persona" || k == "user")
             return "context";
         if (k == "env")
             return "env";
@@ -503,7 +506,7 @@ inline std::vector<std::string> formatOwnershipTree(const AgentEntry& e, bool co
     std::vector<std::pair<std::string, std::vector<const OwnedItem*>>> sections;
     {
         std::vector<const OwnedItem*> ctx;
-        for (const char* k : {"harness", "system", "persona"}) {
+        for (const char* k : {"harness", "system", "persona", "user"}) {
             auto it = groups.find(k);
             if (it != groups.end())
                 ctx.insert(ctx.end(), it->second.begin(), it->second.end());

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -15,14 +16,18 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include "../core/agent.hpp"
+#include "../core/agent_catalog.hpp"
+#include "../core/compaction.hpp"
 #include "../core/types.hpp"
 #include "../feeds/feed_engine.hpp"
 #include "../providers/factory.hpp"
 #include "../relics/docker_dispatcher.hpp"
 #include "../relics/reliquary.hpp"
+#include "../tools/registry.hpp"
 #include "../workflows/workflow_engine.hpp"
 #include "mini_yaml.hpp"
 
@@ -80,6 +85,209 @@ class ManifestLoader {
     }
 
     // Load an agent manifest from path, populate config
+    // Parse a compaction:/compacting: node into CompactionConfig.
+    // Used for both runtime.compaction (preferred) and top-level alias.
+    static void parseCompactionBlock(const ManifestYaml::Node& compactNode,
+                                     CompactionConfig& out) {
+        out.configured = true;
+        std::string en = ManifestYaml::get(compactNode, "enabled", "true");
+        out.enabled = promptFlagEnabled(en);
+
+        out.profile = ManifestYaml::get(compactNode, "profile");
+
+        auto parseTokenCount = [](const std::string& ct) -> int {
+            if (ct.empty()) return 0;
+            // allow "60k" / "60000" / "60K"
+            std::string n;
+            int val = 0;
+            for (char c : ct) {
+                if (std::isdigit(static_cast<unsigned char>(c)))
+                    n.push_back(c);
+                else if (c == 'k' || c == 'K') {
+                    if (!n.empty()) {
+                        val = std::stoi(n) * 1000;
+                        n.clear();
+                    }
+                }
+            }
+            if (!n.empty()) val = std::stoi(n);
+            return val;
+        };
+
+        auto* trig = ManifestYaml::find(compactNode, "trigger");
+        if (trig) {
+            std::string ct = ManifestYaml::get(*trig, "context_tokens");
+            if (ct.empty())
+                ct = ManifestYaml::get(*trig, "context_window");
+            if (!ct.empty())
+                out.triggerContextTokens = parseTokenCount(ct);
+            std::string cp = ManifestYaml::get(*trig, "context_pct");
+            if (!cp.empty())
+                out.triggerContextPct = std::stod(cp);
+            std::string turns = ManifestYaml::get(*trig, "turns");
+            if (!turns.empty())
+                out.triggerTurns = std::stoi(turns);
+            std::string mctx = ManifestYaml::get(*trig, "model_context_tokens");
+            if (mctx.empty())
+                mctx = ManifestYaml::get(*trig, "model_window");
+            if (!mctx.empty())
+                out.modelContextTokens = parseTokenCount(mctx);
+        }
+
+        auto* cool = ManifestYaml::find(compactNode, "cooldown");
+        if (cool) {
+            std::string mt = ManifestYaml::get(*cool, "min_turns");
+            if (!mt.empty())
+                out.cooldownMinTurns = std::stoi(mt);
+            std::string ms = ManifestYaml::get(*cool, "min_seconds");
+            if (!ms.empty())
+                out.cooldownMinSeconds = std::stoi(ms);
+        }
+
+        auto parseTagPol = [](const ManifestYaml::Node& node) {
+            CompactionTagPolicy p;
+            std::string keep = ManifestYaml::get(node, "keep");
+            if (!keep.empty())
+                p.keep = keep;
+            std::string kl = ManifestYaml::get(node, "keep_last");
+            if (kl.empty())
+                kl = ManifestYaml::get(node, "n");
+            if (!kl.empty())
+                p.keepLast = std::stoi(kl);
+            std::string tc = ManifestYaml::get(node, "truncate_chars");
+            if (tc.empty())
+                tc = ManifestYaml::get(node, "truncate_body_chars");
+            if (!tc.empty())
+                p.truncateChars = std::stoi(tc);
+            std::string oe = ManifestYaml::get(node, "on_error");
+            if (oe == "truncate")
+                p.onErrorKeepFull = false;
+            else if (oe == "keep")
+                p.onErrorKeepFull = true;
+            return p;
+        };
+
+        auto* policy = ManifestYaml::find(compactNode, "policy");
+        if (policy) {
+            auto* def = ManifestYaml::find(*policy, "default");
+            if (def)
+                out.defaultPolicy = parseTagPol(*def);
+            auto* tags = ManifestYaml::find(*policy, "tags");
+            if (tags) {
+                for (const auto& t : tags->children) {
+                    if (t.key.empty())
+                        continue;
+                    if (!t.children.empty() || !t.value.empty()) {
+                        CompactionTagPolicy p = out.defaultPolicy;
+                        if (!t.children.empty())
+                            p = parseTagPol(t);
+                        else if (!t.value.empty())
+                            p.keep = t.value;
+                        out.tags[t.key] = p;
+                    }
+                }
+            }
+            auto nd = ManifestYaml::getList(*policy, "never_drop");
+            if (!nd.empty())
+                out.neverDrop = nd;
+        }
+
+        auto* overrides = ManifestYaml::find(compactNode, "overrides");
+        if (!out.profile.empty()) {
+            CompactionConfig base = out;
+            compaction::applyProfile(out);
+            if (base.triggerContextTokens > 0)
+                out.triggerContextTokens = base.triggerContextTokens;
+            if (base.triggerContextPct > 0)
+                out.triggerContextPct = base.triggerContextPct;
+            if (base.triggerTurns > 0)
+                out.triggerTurns = base.triggerTurns;
+            if (base.modelContextTokens > 0)
+                out.modelContextTokens = base.modelContextTokens;
+            if (base.cooldownMinTurns > 0)
+                out.cooldownMinTurns = base.cooldownMinTurns;
+            if (base.cooldownMinSeconds > 0)
+                out.cooldownMinSeconds = base.cooldownMinSeconds;
+            if (!base.tags.empty()) {
+                for (const auto& kv : base.tags)
+                    out.tags[kv.first] = kv.second;
+            }
+            if (!base.neverDrop.empty())
+                out.neverDrop = base.neverDrop;
+            if (!base.defaultPolicy.keep.empty())
+                out.defaultPolicy = base.defaultPolicy;
+            if (!base.outputMode.empty() && base.outputMode != "summarize_rules")
+                out.outputMode = base.outputMode;
+            if (base.archiveEnabled)
+                out.archiveEnabled = true;
+            if (!base.archiveSink.empty())
+                out.archiveSink = base.archiveSink;
+            if (!base.archiveFormat.empty())
+                out.archiveFormat = base.archiveFormat;
+        } else if (out.enabled && out.tags.empty()) {
+            out.profile = "balanced";
+            compaction::applyProfile(out);
+        }
+
+        if (overrides) {
+            auto* otags = ManifestYaml::find(*overrides, "tags");
+            if (otags) {
+                for (const auto& t : otags->children) {
+                    if (t.key.empty())
+                        continue;
+                    CompactionTagPolicy p = compaction::tagOrDefault(out, t.key);
+                    if (!t.children.empty())
+                        p = parseTagPol(t);
+                    else if (!t.value.empty())
+                        p.keep = t.value;
+                    out.tags[t.key] = p;
+                }
+            }
+            auto ond = ManifestYaml::getList(*overrides, "never_drop");
+            if (!ond.empty())
+                out.neverDrop = ond;
+        }
+
+        auto* output = ManifestYaml::find(compactNode, "output");
+        if (output) {
+            std::string mode = ManifestYaml::get(*output, "mode");
+            if (!mode.empty())
+                out.outputMode = mode;
+            auto* arch = ManifestYaml::find(*output, "archive");
+            if (arch) {
+                std::string ae = ManifestYaml::get(*arch, "enabled", "true");
+                out.archiveEnabled = promptFlagEnabled(ae);
+                std::string sink = ManifestYaml::get(*arch, "sink");
+                if (!sink.empty())
+                    out.archiveSink = sink;
+                std::string fmt = ManifestYaml::get(*arch, "format");
+                if (!fmt.empty())
+                    out.archiveFormat = fmt;
+            }
+        }
+        auto* archTop = ManifestYaml::find(compactNode, "archive");
+        if (archTop) {
+            std::string ae = ManifestYaml::get(*archTop, "enabled", "true");
+            out.archiveEnabled = promptFlagEnabled(ae);
+            std::string sink = ManifestYaml::get(*archTop, "sink");
+            if (!sink.empty())
+                out.archiveSink = sink;
+            std::string fmt = ManifestYaml::get(*archTop, "format");
+            if (!fmt.empty())
+                out.archiveFormat = fmt;
+        }
+
+        auto* subs = ManifestYaml::find(compactNode, "subagents");
+        if (subs) {
+            std::string inh = ManifestYaml::get(*subs, "inherit");
+            if (!inh.empty())
+                out.subagentsInherit = promptFlagEnabled(inh);
+            std::string cbr = ManifestYaml::get(*subs, "child_before_return");
+            if (!cbr.empty())
+                out.childBeforeReturn = promptFlagEnabled(cbr);
+        }
+    }
+
     static AgentConfig loadAgentConfig(const std::string& manifestPath) {
         AgentConfig cfg;
         auto yaml = readFile(manifestPath);
@@ -157,6 +365,23 @@ class ManifestLoader {
         cfg.personaPath =
             personaRel.empty() ? "manifests/persona/default.md" : (base / personaRel).string();
 
+        // Operator / user context (USER.md). Optional — empty path = omit block.
+        // context.user: ./USER.md  |  user_context: …  |  operator: …
+        if (context) {
+            std::string userRel = ManifestYaml::get(*context, "user");
+            if (userRel.empty())
+                userRel = ManifestYaml::get(*context, "user_context");
+            if (userRel.empty())
+                userRel = ManifestYaml::get(*context, "operator");
+            if (!userRel.empty()) {
+                fs::path up = fs::path(userRel);
+                if (up.is_absolute())
+                    cfg.userPath = up.string();
+                else
+                    cfg.userPath = (base / up).lexically_normal().string();
+            }
+        }
+
         // Runtime config knobs (max_iterations, history_cap, action_timeout_sec)
         if (context) {
             std::string ic = ManifestYaml::get(*context, "max_iterations");
@@ -170,31 +395,41 @@ class ManifestLoader {
                 cfg.actionTimeoutSec = std::stoi(ats);
         }
 
-        // Prompt-building knobs
-        auto* promptBuilding = ManifestYaml::find(root, "prompt_building");
-        if (promptBuilding) {
-            auto* rc = ManifestYaml::find(*promptBuilding, "runtime_capabilities");
+        // Prompt-building knobs.
+        // Preferred: runtime.prompt_building. Legacy: top-level prompt_building:.
+        auto loadPromptBuilding = [&](const ManifestYaml::Node& pb) {
+            auto* rc = ManifestYaml::find(pb, "runtime_capabilities");
             if (!rc)
-                rc = ManifestYaml::find(*promptBuilding, "available_actions");
-            if (rc) {
-                // Default OFF = tool cards (cheaper cold prompt). Explicit
-                // enable/true still turns full JSON schemas back on.
-                std::string inputSchemas = ManifestYaml::get(*rc, "input_schemas", "disable");
-                std::string returnSchemas = ManifestYaml::get(*rc, "return_schemas", "disable");
-                std::string examples = ManifestYaml::get(*rc, "usage_examples", "disable");
+                rc = ManifestYaml::find(pb, "available_actions");
+            if (!rc)
+                return;
+            // Default OFF = tool cards (cheaper cold prompt). Explicit
+            // enable/true still turns full JSON schemas back on.
+            std::string inputSchemas = ManifestYaml::get(*rc, "input_schemas", "disable");
+            std::string returnSchemas = ManifestYaml::get(*rc, "return_schemas", "disable");
+            std::string examples = ManifestYaml::get(*rc, "usage_examples", "disable");
 
-                // Backward-compatible aliases for the old names.
-                if (ManifestYaml::find(*rc, "output_schema"))
-                    returnSchemas = ManifestYaml::get(*rc, "output_schema", returnSchemas);
-                if (ManifestYaml::find(*rc, "examples"))
-                    examples = ManifestYaml::get(*rc, "examples", examples);
+            // Backward-compatible aliases for the old names.
+            if (ManifestYaml::find(*rc, "output_schema"))
+                returnSchemas = ManifestYaml::get(*rc, "output_schema", returnSchemas);
+            if (ManifestYaml::find(*rc, "examples"))
+                examples = ManifestYaml::get(*rc, "examples", examples);
 
-                cfg.promptBuilding.runtimeCapabilities.inputSchemas =
-                    promptFlagEnabled(inputSchemas);
-                cfg.promptBuilding.runtimeCapabilities.returnSchemas =
-                    promptFlagEnabled(returnSchemas);
-                cfg.promptBuilding.runtimeCapabilities.usageExamples = promptFlagEnabled(examples);
-            }
+            cfg.promptBuilding.runtimeCapabilities.inputSchemas =
+                promptFlagEnabled(inputSchemas);
+            cfg.promptBuilding.runtimeCapabilities.returnSchemas =
+                promptFlagEnabled(returnSchemas);
+            cfg.promptBuilding.runtimeCapabilities.usageExamples = promptFlagEnabled(examples);
+        };
+        {
+            const ManifestYaml::Node* promptBuilding = nullptr;
+            auto* rtPb = ManifestYaml::find(root, "runtime");
+            if (rtPb)
+                promptBuilding = ManifestYaml::find(*rtPb, "prompt_building");
+            if (!promptBuilding)
+                promptBuilding = ManifestYaml::find(root, "prompt_building");
+            if (promptBuilding)
+                loadPromptBuilding(*promptBuilding);
         }
 
         // Legacy fallback: persona.agent (old convention, no context: block)
@@ -270,19 +505,188 @@ class ManifestLoader {
             }
         }
 
-        // Sandbox
+        // Sandbox — full capability boundary + live binds
         auto* sandbox = ManifestYaml::find(root, "sandbox");
         if (sandbox) {
+            cfg.sandboxConfigured = true;
             cfg.sandboxMode = ManifestYaml::get(*sandbox, "mode", "process");
             cfg.sandboxRuntime = ManifestYaml::get(*sandbox, "runtime", "");
             cfg.sandboxImage = ManifestYaml::get(*sandbox, "image", "");
+            if (cfg.sandboxImage.empty() && !cfg.sandboxRuntime.empty())
+                cfg.sandboxImage = cfg.sandboxRuntime;
+
+            std::string net = ManifestYaml::get(*sandbox, "network", "out");
+            if (!net.empty())
+                cfg.sandboxNetwork = net;
+
+            std::string ro = ManifestYaml::get(*sandbox, "readonly", "");
+            if (ro.empty())
+                ro = ManifestYaml::get(*sandbox, "read_only", "");
+            if (!ro.empty())
+                cfg.sandboxReadonly = promptFlagEnabled(ro);
+
+            // allowed_commands — presence matters (empty list = block all)
+            if (ManifestYaml::find(*sandbox, "allowed_commands")) {
+                cfg.sandboxCommandsSet = true;
+                cfg.sandboxAllowedCommands =
+                    ManifestYaml::getList(*sandbox, "allowed_commands");
+            }
+            if (ManifestYaml::find(*sandbox, "allowed_paths")) {
+                cfg.sandboxPathsSet = true;
+                cfg.sandboxAllowedPaths = ManifestYaml::getList(*sandbox, "allowed_paths");
+            }
+            if (ManifestYaml::find(*sandbox, "allowed_hosts")) {
+                cfg.sandboxHostsSet = true;
+                cfg.sandboxAllowedHosts = ManifestYaml::getList(*sandbox, "allowed_hosts");
+            }
+
+            // files: shorthand host paths → /workspace/<basename>
+            auto fileList = ManifestYaml::getList(*sandbox, "files");
+            for (auto& f : fileList) {
+                if (f.size() >= 2 && f.front() == '"' && f.back() == '"')
+                    f = f.substr(1, f.size() - 2);
+                if (!f.empty())
+                    cfg.sandboxFiles.push_back(f);
+            }
+
+            // bind: host:guest[:ro] OR {path/host, to/guest, readonly}
+            auto* bindNode = ManifestYaml::find(*sandbox, "bind");
+            if (!bindNode)
+                bindNode = ManifestYaml::find(*sandbox, "binds");
+            if (bindNode) {
+                for (const auto& item : bindNode->children) {
+                    SandboxBind b;
+                    // Structured map children on list item
+                    if (!item.children.empty() || !item.key.empty()) {
+                        std::string host = item.key == "path" || item.key == "host"
+                                               ? item.value
+                                               : "";
+                        if (host.empty())
+                            host = ManifestYaml::get(item, "path");
+                        if (host.empty())
+                            host = ManifestYaml::get(item, "host");
+                        if (host.empty())
+                            host = ManifestYaml::get(item, "from");
+                        std::string guest = ManifestYaml::get(item, "to");
+                        if (guest.empty())
+                            guest = ManifestYaml::get(item, "guest");
+                        if (guest.empty())
+                            guest = ManifestYaml::get(item, "target");
+                        std::string bro = ManifestYaml::get(item, "readonly");
+                        if (bro.empty())
+                            bro = ManifestYaml::get(item, "ro");
+                        if (!host.empty() && !guest.empty()) {
+                            b.host = host;
+                            b.guest = guest;
+                            b.readOnly = !bro.empty() ? promptFlagEnabled(bro) : false;
+                            cfg.sandboxBinds.push_back(b);
+                            continue;
+                        }
+                    }
+                    // Scalar: "./ctx:/home/ctx" or "./ctx:/home/ctx:ro"
+                    std::string spec = item.value;
+                    if (spec.empty() && !item.key.empty()) {
+                        // parser split on ": " — reconstruct host:guest
+                        spec = item.key;
+                        if (!item.value.empty())
+                            spec += ":" + item.value;
+                    }
+                    if (spec.empty())
+                        continue;
+                    // Inline parse without pulling launcher dep into every TU:
+                    // host:guest[:ro|:rw]
+                    bool roFlag = false;
+                    std::string body = spec;
+                    if (body.size() > 3) {
+                        auto tail = body.substr(body.size() - 3);
+                        if (tail == ":ro") {
+                            roFlag = true;
+                            body = body.substr(0, body.size() - 3);
+                        } else if (tail == ":rw") {
+                            body = body.substr(0, body.size() - 3);
+                        }
+                    }
+                    auto colon = body.rfind(':');
+                    if (colon != std::string::npos && colon > 0 && colon + 1 < body.size()) {
+                        b.host = body.substr(0, colon);
+                        b.guest = body.substr(colon + 1);
+                        b.readOnly = roFlag;
+                        cfg.sandboxBinds.push_back(b);
+                    } else if (!body.empty()) {
+                        // bare path — guest filled at resolve time
+                        b.host = body;
+                        b.readOnly = roFlag || cfg.sandboxReadonly;
+                        cfg.sandboxBinds.push_back(b);
+                    }
+                }
+            }
+
+            // Resolve relative host paths against manifest directory
+            fs::path base = fs::path(manifestPath).parent_path();
+            for (auto& b : cfg.sandboxBinds) {
+                if (b.host.empty())
+                    continue;
+                fs::path h(b.host);
+                if (h.is_relative())
+                    h = base / h;
+                b.host = h.lexically_normal().string();
+                if (b.guest.empty())
+                    b.guest = (fs::path("/workspace") / fs::path(b.host).filename()).string();
+            }
+            for (auto& f : cfg.sandboxFiles) {
+                fs::path h(f);
+                if (h.is_relative())
+                    h = base / h;
+                f = h.lexically_normal().string();
+            }
+        }
+
+        // Compaction / context economy.
+        // Preferred: runtime.compaction (or runtime.compacting).
+        // Legacy alias: top-level compaction:/compacting: (still accepted).
+        {
+            const ManifestYaml::Node* compactNode = nullptr;
+            auto* runtimeNode = ManifestYaml::find(root, "runtime");
+            if (runtimeNode) {
+                compactNode = ManifestYaml::find(*runtimeNode, "compaction");
+                if (!compactNode)
+                    compactNode = ManifestYaml::find(*runtimeNode, "compacting");
+            }
+            if (!compactNode) {
+                compactNode = ManifestYaml::find(root, "compaction");
+                if (!compactNode)
+                    compactNode = ManifestYaml::find(root, "compacting");
+            }
+            if (compactNode)
+                parseCompactionBlock(*compactNode, cfg.compaction);
+        }
+
+        // history_cap_every_turns on runtime/context
+        auto* runtimeForHist = ManifestYaml::find(root, "runtime");
+        if (runtimeForHist) {
+            std::string he = ManifestYaml::get(*runtimeForHist, "history_cap_every_turns");
+            if (he.empty())
+                he = ManifestYaml::get(*runtimeForHist, "history_cap_every");
+            if (!he.empty())
+                cfg.historyCapEveryTurns = std::stoi(he);
+        }
+        auto* contextForHist = ManifestYaml::find(root, "context");
+        if (contextForHist) {
+            std::string he = ManifestYaml::get(*contextForHist, "history_cap_every_turns");
+            if (!he.empty())
+                cfg.historyCapEveryTurns = std::stoi(he);
         }
 
         // Retry / resilience — exponential backoff for transient upstream
-        // failures. Optional block; defaults from AgentConfig apply when
-        // omitted. Useful for OpenRouter/free models that intermittently
-        // emit empty content.
-        auto* retry = ManifestYaml::find(root, "retry");
+        // failures. Preferred: runtime.retry. Legacy: top-level retry:.
+        const ManifestYaml::Node* retry = nullptr;
+        {
+            auto* rt = ManifestYaml::find(root, "runtime");
+            if (rt)
+                retry = ManifestYaml::find(*rt, "retry");
+            if (!retry)
+                retry = ManifestYaml::find(root, "retry");
+        }
         if (retry) {
             std::string maxRetries = ManifestYaml::get(*retry, "empty_response_max_retries");
             if (!maxRetries.empty())
@@ -314,6 +718,7 @@ class ManifestLoader {
 
         // Manifest directory for resolving relative paths (absolute)
         cfg.manifestDir = base.string();
+        cfg.manifestPath = fs::absolute(fs::path(manifestPath)).lexically_normal().string();
 
         return cfg;
     }
@@ -407,6 +812,9 @@ class ManifestLoader {
 
         auto toolNames = ManifestYaml::getList(*importNode, "tools");
         std::vector<ToolSchema> schemas;
+        // CLASS-1: builtin tool.yml lookup must not depend on process CWD.
+        // Hint = agent.yml path → catalog walks binary/project/CORTEX_HOME roots.
+        const std::string schemaHint = manifestPath;
 
         for (auto& name : toolNames) {
             // Trim quotes if present
@@ -451,7 +859,7 @@ class ManifestLoader {
                 // Ensure backend registry is populated before grant. Agent ctor
                 // already calls this, but loadTools can run in other paths.
                 tools::registerDefaults();
-                auto schema = loadBuiltinToolSchema(bareName);
+                auto schema = loadBuiltinToolSchema(bareName, schemaHint);
                 if (!schema.name.empty()) {
                     schemas.push_back(schema);
                     // Prefer the executable Tool from the registry so dispatch
@@ -484,14 +892,16 @@ class ManifestLoader {
     // Grant the standard built-in tool set to an agent and return their
     // schemas. Used by the no-manifest CLI path so bare `run` still has a
     // working tool surface instead of an empty <action_available>.
-    static std::vector<ToolSchema> loadBuiltinTools(Agent& agent) {
+    static std::vector<ToolSchema> loadBuiltinTools(Agent& agent,
+                                                    const std::string& schemaHint = "") {
         static const std::vector<std::string> builtin = {
             "exec", "grep", "list", "fs_read", "fs_write", "json", "web_fetch", "sleep", "artifact",
             "context_pin", "context_peek", "context_unpin", "ask_tool",
         };
         std::vector<ToolSchema> schemas;
+        tools::registerDefaults();
         for (const auto& name : builtin) {
-            auto schema = loadBuiltinToolSchema(name);
+            auto schema = loadBuiltinToolSchema(name, schemaHint);
             if (!schema.name.empty()) {
                 schemas.push_back(schema);
                 const tools::Tool* reg = tools::ToolRegistry::instance().findTool(name);
@@ -567,6 +977,16 @@ class ManifestLoader {
             // belongs to their own agent.yml and must not be overwritten by the
             // parent provider/model.
             (void)providerName;
+
+            // Compaction inherit: if parent has subagents.inherit and child did
+            // not configure its own block, copy parent policy.
+            {
+                const auto& pc = agent.config().compaction;
+                if (pc.subagentsInherit && pc.enabled && !subCfg.compaction.configured) {
+                    subCfg.compaction = pc;
+                    subCfg.compaction.configured = true;
+                }
+            }
 
             auto provider = providers::createProvider(subCfg.provider, subCfg.model);
             if (!provider) {
@@ -1147,16 +1567,61 @@ class ManifestLoader {
         return s;
     }
 
-    static ToolSchema loadBuiltinToolSchema(const std::string& name) {
-        // Look for manifest in manifests/built-in/tools/<name>/tool.yml
-        std::vector<std::string> searchPaths = {
-            "manifests/built-in/tools/" + name + "/tool.yml",
-            "manifests/tools/" + name + "/tool.yml",
-            "config/agents/*/tools/" + name + "/tool.yml",
+    // Resolve builtin tool.yml independent of process CWD.
+    // schemaHint: agent.yml path or any path inside a cortex tree (optional).
+    static ToolSchema loadBuiltinToolSchema(const std::string& name,
+                                            const std::string& schemaHint = "") {
+        // 1) Catalog roots: override → CORTEX_HOME → CWD walk-up → binary parents.
+        //    This is the Class-1 fix for launching with cwd=inkcell (or any foreign tree).
+        const char* rels[] = {
+            "built-in/tools/",  // under manifests/
+            "tools/",           // alt layout under manifests/
         };
-        for (auto& p : searchPaths) {
-            if (fs::exists(p))
-                return loadToolSchema(p);
+        for (const char* rel : rels) {
+            std::string found =
+                catalog::findShared(std::string(rel) + name + "/tool.yml", schemaHint);
+            if (!found.empty())
+                return loadToolSchema(found);
+        }
+
+        // 2) Direct candidates relative to hint / binary (belt).
+        std::vector<fs::path> bases;
+        if (!schemaHint.empty()) {
+            fs::path h = schemaHint;
+            std::error_code ec;
+            if (fs::is_regular_file(h, ec))
+                h = h.parent_path();
+            fs::path mroot = catalog::resolveManifestsRoot(h);
+            if (!mroot.empty())
+                bases.push_back(mroot);
+            bases.push_back(h);
+        }
+        {
+            char buf[PATH_MAX];
+            ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+            if (n > 0) {
+                buf[n] = '\0';
+                fs::path cur = fs::path(buf).parent_path();
+                for (int i = 0; i < 8; ++i) {
+                    bases.push_back(cur);
+                    bases.push_back(cur / "manifests");
+                    if (!cur.has_parent_path() || cur == cur.root_path())
+                        break;
+                    cur = cur.parent_path();
+                }
+            }
+        }
+        bases.push_back(fs::current_path());
+        bases.push_back(fs::current_path() / "manifests");
+
+        std::error_code ec;
+        for (const auto& base : bases) {
+            for (const char* mid : {"built-in/tools/", "tools/", "manifests/built-in/tools/",
+                                    "manifests/tools/"}) {
+                fs::path p = base / mid / name / "tool.yml";
+                if (fs::is_regular_file(p, ec))
+                    return loadToolSchema(p.string());
+            }
         }
         return {};
     }

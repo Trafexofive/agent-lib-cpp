@@ -81,6 +81,18 @@ int Agent::reloadManifests(bool backup) {
     // Persist loaded tools to session manifest (survives restarts)
     if (count > 0)
         saveSessionTools();
+
+    // Reload sub-agents from the active manifest (import.agents).
+    // Adding an agent.yml to import.agents while running should be
+    // visible to the NEXT <action type="agent"> — not just after restart.
+    if (!config_.manifestPath.empty()) {
+        int before = static_cast<int>(subAgents_.size());
+        ManifestLoader::loadSubAgents(config_.manifestPath, *this,
+                                      config_.provider);
+        int after = static_cast<int>(subAgents_.size());
+        if (after != before)
+            ++count;
+    }
     return count;
 }
 

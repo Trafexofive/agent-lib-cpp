@@ -4,9 +4,13 @@
 
 #include "agent.hpp"
 #include "agent_xml.hpp"
+#include "compaction.hpp"
+
+#include <chrono>
 #include "manifest_loader.hpp"
 
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <sstream>
 #include <string>
@@ -49,6 +53,14 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
         ss << "  <persona>\n";
         ss << indentText(personaText_, 4) << "\n";
         ss << "  </persona>\n";
+    }
+
+    // Operator / user context (context.user → USER.md). Ground truth about
+    // who is driving the session — defaults, prefs, hard constraints.
+    if (!userText_.empty()) {
+        ss << "  <user_context path=\"" << xmlAttr(config_.userPath) << "\">\n";
+        ss << indentText(userText_, 4) << "\n";
+        ss << "  </user_context>\n";
     }
 
     // System prompt block — capabilities/tools/behavior (loaded from
@@ -128,9 +140,27 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
             tool.description() != "See input_schema for parameters")
             ss << " desc=\"" << xmlAttr(tool.description()) << "\"";
         ss << ">\n";
-        ss << "            <params unavailable=\"true\">schema not loaded; "
-              "do not guess required "
-              "JSON keys</params>\n";
+        // Last-resort card from ToolDef.params when tool.yml was not found.
+        // Never leave builtins as bare "schema not loaded" if registry has params.
+        if (!tool.params().empty()) {
+            ss << "            <params card=\"true\">keys: ";
+            bool first = true;
+            for (const auto& p : tool.params()) {
+                if (!first)
+                    ss << ", ";
+                first = false;
+                ss << p.name;
+                if (p.required)
+                    ss << "*";
+            }
+            ss << "</params>\n";
+        } else {
+            ss << "            <params unavailable=\"true\">schema not loaded; "
+                  "do not guess required JSON keys — check "
+                  "manifests/built-in/tools/"
+               << xmlAttr(name)
+               << "/tool.yml resolution (CWD-independent)</params>\n";
+        }
         ss << "        </tool>\n";
         emittedTools.insert(name);
     }
@@ -186,17 +216,73 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     // ═══ INLINE EXECUTION TRANSCRIPT ═══
     // Replay what actually happened. Agent/System prefixes are storage detail;
     // the model should see the same inline action → result → response stream.
+    //
+    // Order: optional compaction → history_cap window (recomputed every N user
+    // turns, default 15) → emit. Session history_ on disk stays full.
     if (!history_.empty()) {
-        // Apply history cap — only include the most recent N entries
-        size_t histStart = 0;
-        if (config_.historyCap > 0 &&
-            history_.size() > (size_t)config_.historyCap) {
-            histStart = history_.size() - config_.historyCap;
+        const int userTurnsTotal = compaction::countUserTurns(history_);
+
+        // Working copy for prompt only
+        std::vector<std::string> promptHist = history_;
+
+        // ── Compaction (smart) ──────────────────────────────────────
+        if (config_.compaction.enabled) {
+            size_t tokEst = compaction::estimateTokens(promptHist);
+            // Rough system overhead so pressure trips before the model chokes
+            tokEst += 4000;
+            const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count();
+            if (compaction::shouldTrigger(config_.compaction, tokEst, userTurnsTotal,
+                                          lastCompactAtUserTurn_, nowMs,
+                                          lastCompactWallMs_)) {
+                auto cr = compaction::compactHistory(promptHist, config_.compaction);
+                if (cr.didCompact) {
+                    promptHist = std::move(cr.lines);
+                    lastCompactAtUserTurn_ = userTurnsTotal;
+                    lastCompactWallMs_ = nowMs;
+                    lastCompactNote_ = cr.note;
+                    lastCompactUiPending_ = cr.note;  // UI badge once
+                    lastCompactArchive_ = cr.archiveBody;
+                    // Archive: file and artifact both land under .cortex/compact/
+                    // (artifact sink = same durable dump until full artifact store wire).
+                    const bool wantArchive =
+                        config_.compaction.archiveEnabled &&
+                        config_.compaction.archiveSink != "none" &&
+                        !cr.archiveBody.empty() && !ctx.sessionId.empty();
+                    if (wantArchive) {
+                        namespace fs = std::filesystem;
+                        fs::path dir =
+                            fs::path(".cortex") / "compact" / ctx.sessionId;
+                        std::error_code ec;
+                        fs::create_directories(dir, ec);
+                        if (!ec) {
+                            const char* ext =
+                                (config_.compaction.archiveFormat == "jsonl") ? ".jsonl"
+                                                                               : ".md";
+                            std::ofstream out(dir / ("t" + std::to_string(userTurnsTotal) +
+                                                     ext));
+                            if (out)
+                                out << cr.archiveBody;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── history_cap seatbelt (dumb tail; not every turn) ────────
+        size_t histStart = compaction::resolveHistoryWindowStart(
+            promptHist.size(), config_.historyCap, config_.historyCapEveryTurns,
+            userTurnsTotal, historyCapAppliedAtUserTurn_, historyWindowStart_);
+
+        // Inject last compact note once at the head of the visible window
+        if (!lastCompactNote_.empty()) {
+            ss << "System: " << lastCompactNote_ << "\n\n";
         }
 
         size_t userTurn = 0;
-        for (size_t hi = histStart; hi < history_.size(); hi++) {
-            const auto &h = history_[hi];
+        for (size_t hi = histStart; hi < promptHist.size(); hi++) {
+            const auto &h = promptHist[hi];
             std::string emitted;
             if (h.rfind("Agent: ", 0) == 0) {
                 emitted = h.substr(7);
@@ -412,12 +498,10 @@ ChatMessages Agent::buildChatPrompt(const AgentContext &ctx) const {
     // continuation calls as "No user query found".
     if (ctx.iteration <= 1) {
         msgs.push_back(ChatMessage::user(buildUserPrompt(ctx)));
-    } else {
-        msgs.push_back(ChatMessage::user("Continue from the inline transcript "
-                                         "above. Use runtime results only; "
-                                         "if enough information is available, "
-                                         "emit <response final=\"true\">."));
     }
+    // Iteration > 1: NO synthetic user message. The inline transcript inside
+    // the system prompt carries full context; the model continues from where
+    // history stopped. No "…", no "Continue from..." — both were slop.
     std::string dynamicTail = buildDynamicContextPrompt();
     if (!dynamicTail.empty()) {
         // Dynamic context is intentionally last for prompt-cache friendliness,
@@ -425,6 +509,21 @@ ChatMessages Agent::buildChatPrompt(const AgentContext &ctx) const {
         msgs.push_back(ChatMessage::system(dynamicTail));
     }
     return msgs;
+}
+
+void Agent::compactHistoryInPlaceIfConfigured() {
+    if (!config_.compaction.enabled || history_.empty())
+        return;
+    auto cr = compaction::compactHistory(history_, config_.compaction);
+    if (!cr.didCompact)
+        return;
+    history_ = std::move(cr.lines);
+    lastCompactNote_ = cr.note;
+    lastCompactUiPending_ = std::string("[child] ") + cr.note;
+    lastCompactAtUserTurn_ = compaction::countUserTurns(history_);
+    lastCompactWallMs_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
 }
 
 }  // namespace cortex::mk3

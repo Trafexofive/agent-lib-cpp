@@ -12,8 +12,11 @@
 #include <string>
 
 #include "src/core/agent.hpp"
+#include "src/core/compaction.hpp"
 #include "src/core/manifest_loader.hpp"
+#include "src/core/sandbox_launcher.hpp"
 #include "src/providers/factory.hpp"
+#include "src/sandbox/policy.hpp"
 
 using namespace cortex::mk3;
 namespace fs = std::filesystem;
@@ -315,6 +318,202 @@ import:
     PASS();
 }
 
+void test_sandbox_block_parses_full_surface() {
+    TEST("sandbox: block parses gates + bind + files");
+    fs::path root = fs::temp_directory_path() / "mk3-manifest-semantics-sandbox";
+    fs::remove_all(root);
+    writeFile(root / "agent.yml", R"YAML(kind: Agent
+name: sandbox-agent
+version: "1.0"
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-chat
+sandbox:
+  mode: process
+  image: alpine:3.19
+  network: none
+  readonly: false
+  allowed_commands: [ls, cat, python3]
+  allowed_paths: ["./", "../shared"]
+  allowed_hosts: [api.github.com]
+  files:
+    - ./seed.txt
+  bind:
+    - ./ctx:/workspace/ctx
+    - ./fixtures:/workspace/fixtures:ro
+    - path: ./data
+      to: /workspace/data
+      readonly: true
+)YAML");
+    writeFile(root / "seed.txt", "seed\n");
+    writeFile(root / "ctx" / "a.txt", "a\n");
+    writeFile(root / "fixtures" / "f.txt", "f\n");
+    writeFile(root / "data" / "d.txt", "d\n");
+
+    auto cfg = ManifestLoader::loadAgentConfig((root / "agent.yml").string());
+    CHECK(cfg.sandboxConfigured, "sandboxConfigured not set");
+    CHECK(cfg.sandboxMode == "process", "mode not parsed");
+    CHECK(cfg.sandboxImage == "alpine:3.19", "image not parsed");
+    CHECK(cfg.sandboxNetwork == "none", "network not parsed");
+    CHECK(cfg.sandboxCommandsSet, "commands flag not set");
+    CHECK(cfg.sandboxAllowedCommands.size() == 3, "allowed_commands size");
+    CHECK(cfg.sandboxPathsSet && cfg.sandboxAllowedPaths.size() == 2, "allowed_paths");
+    CHECK(cfg.sandboxHostsSet && cfg.sandboxAllowedHosts.size() == 1, "allowed_hosts");
+    CHECK(cfg.sandboxFiles.size() == 1, "files not parsed");
+    CHECK(cfg.sandboxBinds.size() == 3, "bind entries not parsed");
+
+    bool sawRo = false, sawCtx = false;
+    for (const auto& b : cfg.sandboxBinds) {
+        if (b.guest == "/workspace/fixtures" && b.readOnly)
+            sawRo = true;
+        if (b.guest == "/workspace/ctx" && !b.readOnly)
+            sawCtx = true;
+        if (b.guest == "/workspace/data")
+            CHECK(b.readOnly, "map-form readonly not applied");
+    }
+    CHECK(sawRo, "scalar :ro bind missing");
+    CHECK(sawCtx, "scalar RW bind missing");
+
+    auto policy = sandbox::makePolicyFromConfig(cfg, "/workspace");
+    CHECK(policy.enabled, "policy not enabled from config");
+    CHECK(policy.validate("exec", R"({"command":"ls"})").empty(), "ls allowed");
+    CHECK(!policy.validate("exec", R"({"command":"rm"})").empty(), "rm blocked");
+    CHECK(policy.validate("web_fetch", R"({"url":"https://api.github.com/x"})").empty(),
+          "host allow");
+    CHECK(!policy.validate("web_fetch", R"({"url":"https://evil.com"})").empty(),
+          "host deny");
+    CHECK(!policy.validate("fs_write", R"({"path":"/workspace/fixtures/x"})").empty(),
+          "RO bind write blocked");
+    PASS();
+}
+
+void test_process_bind_materialize_symlinks() {
+    TEST("process binds materialize as live symlinks");
+    fs::path root = fs::temp_directory_path() / "mk3-sandbox-bind-mat";
+    fs::remove_all(root);
+    fs::create_directories(root / "host-ctx");
+    writeFile(root / "host-ctx" / "note.txt", "live\n");
+    fs::path ws = root / "ws";
+    fs::create_directories(ws);
+
+    AgentConfig cfg;
+    cfg.sandboxConfigured = true;
+    cfg.sandboxMode = "process";
+    SandboxBind b;
+    b.host = (root / "host-ctx").string();
+    b.guest = "/workspace/ctx";
+    b.readOnly = false;
+    cfg.sandboxBinds.push_back(b);
+
+    auto mat = sandbox::materializeProcessBinds(cfg, ws);
+    CHECK(mat.ok, "materialize failed");
+    fs::path link = ws / "ctx";
+    CHECK(fs::is_symlink(link) || fs::exists(link / "note.txt"), "symlink/ctx missing");
+    // Live CRUD reflection: write via guest path, read on host
+    writeFile(link / "from-agent.txt", "via-guest\n");
+    CHECK(fs::exists(root / "host-ctx" / "from-agent.txt"), "write did not reflect on host");
+    PASS();
+}
+
+void test_compaction_block_and_history_cap_every() {
+    TEST("compaction: + history_cap_every_turns parse and engine");
+    fs::path root = fs::temp_directory_path() / "mk3-compaction-parse";
+    fs::remove_all(root);
+    writeFile(root / "agent.yml", R"YAML(kind: Agent
+name: compact-agent
+version: "1.0"
+cognitive_engine:
+  primary: { provider: deepseek, model: deepseek-chat }
+runtime:
+  history_cap: 50
+  history_cap_every_turns: 15
+compaction:
+  enabled: true
+  profile: balanced
+  trigger:
+    context_tokens: 60k
+    turns: 15
+  overrides:
+    tags:
+      thought: { keep: none }
+      result: { keep_last: 20 }
+  output:
+    mode: summarize_rules
+    archive: { enabled: true, sink: file }
+)YAML");
+
+    auto cfg = ManifestLoader::loadAgentConfig((root / "agent.yml").string());
+    CHECK(cfg.historyCap == 50, "history_cap");
+    CHECK(cfg.historyCapEveryTurns == 15, "history_cap_every_turns default/parse");
+    CHECK(cfg.compaction.configured && cfg.compaction.enabled, "compaction enabled");
+    CHECK(cfg.compaction.profile == "balanced", "profile");
+    CHECK(cfg.compaction.triggerContextTokens == 60000, "60k tokens parse");
+    CHECK(cfg.compaction.triggerTurns == 15, "trigger turns");
+    CHECK(cfg.compaction.tags.count("thought"), "thought policy");
+    CHECK(cfg.compaction.tags["thought"].keep == "none", "thought none");
+    CHECK(cfg.compaction.tags["result"].keepLast == 20, "override keep_last");
+    CHECK(cfg.compaction.archiveEnabled, "archive on");
+
+    // Engine: strip thoughts + tail
+    std::vector<std::string> hist;
+    hist.push_back("User: hi");
+    hist.push_back("Agent: <thought>secret</thought><response>ok</response>");
+    hist.push_back("System: {\"success\":true,\"data\":\"x\"}");
+    for (int i = 0; i < 30; ++i)
+        hist.push_back("System: noise-" + std::to_string(i));
+    hist.push_back("System: context_pin path=/tmp/x");  // never_drop pin
+
+    auto cr = compaction::compactHistory(hist, cfg.compaction);
+    CHECK(cr.didCompact, "should compact");
+    bool pinKept = false, thoughtGone = true;
+    for (const auto& l : cr.lines) {
+        if (l.find("context_pin") != std::string::npos)
+            pinKept = true;
+        if (l.find("<thought>") != std::string::npos)
+            thoughtGone = false;
+    }
+    CHECK(pinKept, "pin never_drop");
+    CHECK(thoughtGone, "thoughts stripped");
+    CHECK(!cr.note.empty(), "summarize_rules note");
+
+    // history window every_turns: freeze between recomputes
+    int applied = -1000000;
+    size_t frozen = 0;
+    size_t s1 = compaction::resolveHistoryWindowStart(100, 40, 15, 1, applied, frozen);
+    CHECK(s1 == 60, "first clamp to size-cap");
+    size_t s2 = compaction::resolveHistoryWindowStart(105, 40, 15, 5, applied, frozen);
+    CHECK(s2 == s1 || s2 <= 65, "frozen window before 15 turns");
+    size_t s3 = compaction::resolveHistoryWindowStart(120, 40, 15, 20, applied, frozen);
+    CHECK(s3 == 80, "reclamp after 15 user turns");
+    PASS();
+}
+
+void test_import_files_remain_prompt_only() {
+    TEST("import.files still loads as prompt modules (not sandbox binds)");
+    fs::path root = fs::temp_directory_path() / "mk3-import-files-prompt";
+    fs::remove_all(root);
+    writeFile(root / "agent.yml", R"YAML(kind: Agent
+name: import-files-agent
+version: "1.0"
+cognitive_engine:
+  primary: { provider: deepseek, model: deepseek-chat }
+import:
+  files:
+    - ./extra.md
+)YAML");
+    writeFile(root / "extra.md", "# Extra contract\nDo the thing.\n");
+
+    auto cfg = ManifestLoader::loadAgentConfig((root / "agent.yml").string());
+    CHECK(cfg.sandboxFiles.empty(), "import.files must not populate sandboxFiles");
+    CHECK(cfg.sandboxBinds.empty(), "import.files must not populate sandboxBinds");
+    auto xml = ManifestLoader::loadPromptModulesXml((root / "agent.yml").string());
+    CHECK(xml.find("<module") != std::string::npos, "prompt module missing");
+    CHECK(xml.find("Extra contract") != std::string::npos || xml.find("Do the thing") != std::string::npos,
+          "module body missing");
+    PASS();
+}
+
 int main() {
     std::cout.setf(std::ios::unitbuf);
     std::cout << "\n╔══════════════════════════════════════════╗\n";
@@ -330,6 +529,10 @@ int main() {
     test_session_tools_do_not_autoload_without_manifest_import();
     test_subagent_keeps_own_provider_and_model();
     test_global_subagent_resolution_and_prompt_metadata();
+    test_sandbox_block_parses_full_surface();
+    test_process_bind_materialize_symlinks();
+    test_import_files_remain_prompt_only();
+    test_compaction_block_and_history_cap_every();
 
     std::cout << "\n──────────────────────────────────────────\n";
     std::cout << "  " << passed << " passed, " << failed << " failed\n";

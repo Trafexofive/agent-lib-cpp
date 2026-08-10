@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "agent.hpp"
+#include "agent_catalog.hpp"
 #include "../session/manager.hpp"
 
 namespace fs = std::filesystem;
@@ -67,10 +68,18 @@ static std::set<std::string> stringSetFromJson(const Json::Value& root) {
 }
 
 std::string Agent::devDumpDirectory() const {
-    // Prefer CORTEX_HOME, else ~/.cortex/dev/<session|ephemeral-pid>.
+    // Always under .cortex/dev — never bare $CORTEX_HOME/dev (that polluted
+    // the repo root as agent-lib-cpp/dev/ and confused operators).
+    // Priority: CWD/.cortex/dev → $CORTEX_HOME/.cortex/dev → ~/.cortex/dev
+    std::error_code ec;
     fs::path base;
-    if (const char* home = std::getenv("CORTEX_HOME")) {
-        if (home[0] != '\0') base = fs::path(home) / "dev";
+    fs::path cwd = fs::current_path(ec);
+    if (!ec)
+        base = cwd / ".cortex" / "dev";
+    if (base.empty()) {
+        if (const char* ch = std::getenv("CORTEX_HOME")) {
+            if (ch[0] != '\0') base = fs::path(ch) / ".cortex" / "dev";
+        }
     }
     if (base.empty()) {
         const char* userHome = std::getenv("HOME");
@@ -79,7 +88,6 @@ std::string Agent::devDumpDirectory() const {
     std::string id = lastSessionId_;
     if (id.empty())
         id = "ephemeral-" + std::to_string(static_cast<long long>(::getpid()));
-    // Keep path safe for filesystem.
     for (char& c : id) {
         if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.'))
             c = '_';
@@ -87,19 +95,25 @@ std::string Agent::devDumpDirectory() const {
     return (base / id).string();
 }
 
-void Agent::dumpSessionArtifacts() const {
-    // Trace dumps when any of: verbose, raw, __DEBUG_MODE__, runtime.dev_mode.
+void Agent::dumpSessionArtifacts(bool force) const {
+    // Trace dumps when any of: force (/export-dump), verbose, raw, __DEBUG_MODE__,
+    // runtime.dev_mode, env CORTEX_DEV_MODE (belt — hub-launched agents may miss setDevMode).
     bool debugEnabled = env_.count("__DEBUG_MODE__") && env_.at("__DEBUG_MODE__") == "true";
+    bool envDev = false;
+    if (const char* e = std::getenv("CORTEX_DEV_MODE")) {
+        std::string v = e;
+        envDev = !(v.empty() || v == "0" || v == "false" || v == "FALSE");
+    }
     bool devEnabled =
-        devMode_ || (env_.count("__DEV_MODE__") && env_.at("__DEV_MODE__") == "true");
-    if (!verbose_ && !raw_ && !debugEnabled && !devEnabled)
+        devMode_ || envDev || (env_.count("__DEV_MODE__") && env_.at("__DEV_MODE__") == "true");
+    if (!force && !verbose_ && !raw_ && !debugEnabled && !devEnabled)
         return;
 
     std::error_code ec;
     fs::path cwd = fs::current_path(ec);
     if (ec) cwd = ".";
 
-    // Primary sink: per-session dev dir (survives CWD noise, easy to reopen).
+    // Primary sink: per-session dev dir under CWD/.cortex/dev (or CORTEX_HOME).
     fs::path dumpDir = devDumpDirectory();
     fs::create_directories(dumpDir, ec);
     if (ec) dumpDir = cwd;
@@ -179,15 +193,34 @@ void Agent::dumpSessionArtifacts() const {
     writeHistory(dumpDir / "history.md");
     writeProtocol(dumpDir / "protocol.md");
 
-    // Lazy live-test convenience: also drop copies in CWD.
-    writeIterations(cwd / "iterations.md");
-    writeRaw(cwd / "raw.md");
-    writeHistory(cwd / "history.md");
+    // Pointer file only — never std::cerr here. TUI owns the alternate screen;
+    // any stderr byte mid-frame corrupts cells (looks like "eaten spaces" /
+    // overlapping blocks). Operators find dumps via .cortex/dev/ or WHERE.
+    {
+        std::ofstream where(dumpDir / "WHERE.txt");
+        if (where) {
+            where << "cortex dev dump\n"
+                  << "dir=" << dumpDir.string() << "\n"
+                  << "agent=" << config_.name << "\n"
+                  << "session=" << (lastSessionId_.empty() ? "(none)" : lastSessionId_)
+                  << "\n";
+        }
+    }
 
-    std::cerr << "[trace] wrote " << dumpDir.string()
-              << " (iterations.md raw.md history.md protocol.md)"
-              << (devEnabled ? " [DEV_MODE]" : "") << "\n";
-    std::cerr << "[trace] cwd copies: " << cwd.string() << "/{iterations,raw,history}.md\n";
+    // Optional CWD convenience copies — OFF by default; enable with
+    // CORTEX_DEV_CWD_COPIES=1. Default polluted inkcell/ with iterations.md.
+    if (const char* copies = std::getenv("CORTEX_DEV_CWD_COPIES")) {
+        std::string v = copies;
+        if (!(v.empty() || v == "0" || v == "false")) {
+            writeIterations(cwd / "iterations.md");
+            writeRaw(cwd / "raw.md");
+            writeHistory(cwd / "history.md");
+        }
+    }
+
+    // NEVER write to stderr from dumps. TUI alt-screen + any cerr = corruption.
+    // Path is in lastDevDumpDir_ / WHERE.txt for operators.
+    (void)devEnabled;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -296,15 +329,34 @@ void Agent::saveSession(const std::string& id) {
     Session session;
     if (sessionMgr_.exists(id)) {
         session = sessionMgr_.load(id);
-        // Vet-fix: stop clobbering persisted agent identity with current
-        // process defaults. The on-disk agentName/model/provider is the
-        // session's actual identity — if it's empty (legacy file), fill
-        // from this agent; otherwise leave it untouched so a session
-        // started with `--manifest coder/...` doesn't keep its name as
-        // "cortext-builtin-agent" every time the runtime boots.
-        if (session.agentName.empty()) session.agentName = config_.name;
-        if (session.model.empty())     session.model     = config_.model;
-        if (session.provider.empty())  session.provider  = config_.provider;
+        // Identity merge:
+        //  - never demote a real on-disk agent to builtin
+        //  - upgrade empty/builtin → live config when live is a real agent
+        //  - always refresh model/provider (live /model switches)
+        {
+            const bool liveBuiltin = config_.name.empty() ||
+                                     config_.name == "cortext-builtin-agent" ||
+                                     config_.name == "cortex";
+            const bool diskReal = !session.agentName.empty() &&
+                                  session.agentName != "cortext-builtin-agent" &&
+                                  session.agentName != "cortex";
+            if (!liveBuiltin)
+                session.agentName = config_.name;
+            else if (!diskReal && session.agentName.empty())
+                session.agentName = config_.name;
+            // else keep diskReal name
+        }
+        if (!config_.model.empty()) session.model = config_.model;
+        if (!config_.provider.empty()) session.provider = config_.provider;
+        // Backfill manifest_path once so --continue can resolve without -m.
+        if (session.metadata.count("manifest_path") == 0 && !session.agentName.empty() &&
+            session.agentName != "cortext-builtin-agent" && session.agentName != "cortex") {
+            std::string err;
+            std::string resolved =
+                catalog::resolveAgent(session.agentName, config_.manifestDir, &err);
+            if (!resolved.empty())
+                session.metadata["manifest_path"] = resolved;
+        }
         session.updated = session::SessionManager::iso8601();
         // Vet-fix: never replace a non-empty on-disk transcript with an
         // empty in-memory history_. Exit flush used to call saveSession on

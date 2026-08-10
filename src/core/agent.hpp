@@ -7,6 +7,7 @@
 #include <json/json.h>
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -78,15 +79,24 @@ class Agent {
     void setDevMode(bool v) {
         devMode_ = v;
         if (v) {
-            raw_ = true;
-            verbose_ = true;
+            // File dumps only (iterations.md / raw.md under .cortex/dev).
+            // NEVER auto-enable verbose_/raw_ — those print full prompts to
+            // stderr and destroy the alt-screen TUI (looks like mashed text,
+            // prompt leakage, overlapping blocks). Use -V / --raw explicitly
+            // when you want terminal dumps (non-TUI).
             env_["__DEBUG_MODE__"] = "true";
             env_["__DEV_MODE__"] = "true";
         }
     }
+
+    // TUI owns the terminal — suppress all agent std::cerr chatter.
+    void setSilenceTerminal(bool v) { silenceTerminal_ = v; }
+    bool silenceTerminal() const { return silenceTerminal_; }
     bool devMode() const { return devMode_; }
     // Last directory written by dumpSessionArtifacts (empty if none).
     const std::string& lastDevDumpDir() const { return lastDevDumpDir_; }
+    // force=true writes dumps regardless of verbose/raw/dev_mode (slash /export-dump).
+    void dumpSessionArtifacts(bool force = false) const;
 
     // ---- Output ────
     const std::string& rawLlOutput() const {
@@ -124,6 +134,25 @@ class Agent {
     // detects the trailing-equal User: line and skips its own push.
     void seedUserPrompt(const std::string& text) {
         history_.push_back("User: " + text);
+    }
+
+    // Operator steering while a turn is live. Buffered and injected at the
+    // soonest safe boundary (between loop iterations). Thread-safe.
+    void queueSteer(std::string text) {
+        if (text.empty()) return;
+        std::lock_guard<std::mutex> lock(steerMu_);
+        if (!pendingSteer_.empty()) pendingSteer_ += "\n\n";
+        pendingSteer_ += std::move(text);
+    }
+    bool hasPendingSteer() const {
+        std::lock_guard<std::mutex> lock(steerMu_);
+        return !pendingSteer_.empty();
+    }
+    std::string takeSteer() {
+        std::lock_guard<std::mutex> lock(steerMu_);
+        std::string out;
+        out.swap(pendingSteer_);
+        return out;
     }
 
     const std::vector<ProtocolEvent>& protocolEvents() const {
@@ -203,6 +232,39 @@ class Agent {
     }
     LlmProviderPtr provider() const { return provider_; }
 
+    // Compaction UI / child fold-up (see compaction.hpp).
+    const std::string& lastCompactNote() const { return lastCompactNote_; }
+    std::string takeCompactUiPending() const {
+        std::string s = lastCompactUiPending_;
+        lastCompactUiPending_.clear();
+        return s;
+    }
+    // Public so parent can fold child history after delegate return.
+    void compactHistoryInPlaceIfConfigured();
+
+    // Hot-swap cognitive engine (slash /model). Keeps history/tools/session.
+    void setProvider(LlmProviderPtr p, std::string providerName, std::string modelName) {
+        if (!p) return;
+        provider_ = std::move(p);
+        if (!providerName.empty()) config_.provider = std::move(providerName);
+        if (!modelName.empty()) {
+            config_.model = modelName;
+            provider_->setModel(config_.model);
+        } else if (!config_.model.empty()) {
+            provider_->setModel(config_.model);
+        }
+        provider_->setTemperature(config_.temperature);
+        provider_->setMaxTokens(config_.maxTokens > 0 ? config_.maxTokens
+                                                      : provider_->getMaxTokens());
+        if (retryHandler_) provider_->setRetryCallback(retryHandler_);
+        if (silenceTerminal_) provider_->setQuietLogs(true);
+    }
+    void setModelName(const std::string& modelName) {
+        if (modelName.empty() || !provider_) return;
+        config_.model = modelName;
+        provider_->setModel(modelName);
+    }
+
     // ---- Sandbox ----
     void setSandboxPolicy(const sandbox::SandboxPolicy& policy) {
         sandboxPolicy_ = policy;
@@ -265,7 +327,6 @@ class Agent {
     Json::Value dispatchTool(const protocol::ParsedAction& action);
     Json::Value dispatchAskTool(const Json::Value& params);
     Json::Value executeScriptTool(const tools::Tool& tool, const Json::Value& params);
-    void dumpSessionArtifacts() const;
     // Session-scoped dev dump dir (~/.cortex/dev/<id>/). Creates parents.
     std::string devDumpDirectory() const;
 
@@ -277,8 +338,11 @@ class Agent {
     LlmProviderPtr provider_;
     session::SessionManager sessionMgr_;
     std::vector<std::string> history_;
+    mutable std::mutex steerMu_;
+    std::string pendingSteer_;
     std::string systemPrompt_;
     std::string personaText_;                             // persona content (identity/values)
+    std::string userText_;                                // operator context (USER.md)
     std::vector<std::string> contextFeeds_;               // accumulated from <context_feed> tags
     std::map<std::string, std::string> executedActions_;  // dedup: key → cached result JSON string
     std::map<std::string, tools::Tool> tools_;
@@ -303,6 +367,7 @@ class Agent {
     bool raw_ = false;
     bool verbose_ = false;
     bool devMode_ = false;
+    bool silenceTerminal_ = false;
     mutable std::string lastSessionId_;
     mutable std::string lastDevDumpDir_;
     bool bareTextReminded_ = false;  // one-time bare-text warning, persists across turns
@@ -330,6 +395,19 @@ class Agent {
 
     // ── Cached harness text (loaded once in constructor) ──
     mutable std::string harnessText_;
+
+    // ── History window + compaction state (prompt-build only; session keeps full history_) ──
+    // history_cap reclamps at most every historyCapEveryTurns user turns (default 15).
+    mutable size_t historyWindowStart_ = 0;
+    mutable int historyCapAppliedAtUserTurn_ = -1000000;
+    mutable int lastCompactAtUserTurn_ = -1000000;
+    mutable int64_t lastCompactWallMs_ = 0;
+    mutable std::string lastCompactNote_;
+    mutable std::string lastCompactArchive_;  // optional cold body from last compact
+    // One-shot UI badge after a compact fires (prompt still keeps lastCompactNote_).
+    mutable std::string lastCompactUiPending_;
+    // One cognitive_engine.fallback attempt per top-level prompt().
+    bool fallbackTriedThisTurn_ = false;
 };
 
 }  // namespace cortex::mk3
