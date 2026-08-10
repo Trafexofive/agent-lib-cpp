@@ -272,7 +272,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
 
         // ── history_cap seatbelt (dumb tail; not every turn) ────────
         size_t histStart = compaction::resolveHistoryWindowStart(
-            promptHist.size(), config_.historyCap, config_.historyCapEveryTurns,
+            promptHist.size(), config_.historyCap, config_.maxTurnsPerCycle,
             userTurnsTotal, historyCapAppliedAtUserTurn_, historyWindowStart_);
 
         // Inject last compact note once at the head of the visible window

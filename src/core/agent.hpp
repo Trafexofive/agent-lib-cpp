@@ -397,7 +397,7 @@ class Agent {
     mutable std::string harnessText_;
 
     // ── History window + compaction state (prompt-build only; session keeps full history_) ──
-    // history_cap reclamps at most every historyCapEveryTurns user turns (default 15).
+    // history_cap reclamps at most every maxTurnsPerCycle user turns (default 15).
     mutable size_t historyWindowStart_ = 0;
     mutable int historyCapAppliedAtUserTurn_ = -1000000;
     mutable int lastCompactAtUserTurn_ = -1000000;

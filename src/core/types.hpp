@@ -246,6 +246,12 @@ struct AgentConfig {
     int iterationCap =
         50;  // agent turns before forced response (override via manifest max_iterations)
     int actionTimeoutSec = 30;  // max seconds to wait for dispatched actions
+
+    // Stream throttling / stall control (runtime.throttling). 0 = do not cut
+    // a stalled stream (let curl LOW_SPEED alone govern). >0 = abort a
+    // streaming generation that sends zero bytes for this many seconds
+    // (true stall — not slow-but-moving models). Never hardcoded in the codec.
+    int streamStallTimeoutSec = 0;  // 0 = inherit provider/LOW_SPEED default
     // Dumb tail window on history lines fed into the prompt. Compaction does
     // not replace this — it is the hard ceiling / seatbelt.
     int historyCap = 40;
@@ -254,7 +260,7 @@ struct AgentConfig {
     // turns; between recomputes the window start is frozen so the prompt can
     // grow slightly past the cap until the next clamp.
     // 0 = never recompute after first apply (freeze first window forever).
-    int historyCapEveryTurns = 15;
+    int maxTurnsPerCycle = 15;
 
     // Resilience — retry behavior for transient upstream failures (empty
     // stream, finish_reason=length, content_filter, transient HTTP errors).

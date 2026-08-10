@@ -3,7 +3,7 @@
 // Canonical docs: docs/manifests/compaction.md
 //
 // Applies BEFORE history_cap windowing when building the LLM prompt.
-// history_cap remains the dumb seatbelt (recomputed every historyCapEveryTurns).
+// history_cap remains the dumb seatbelt (recomputed every maxTurnsPerCycle).
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 
@@ -94,7 +94,7 @@ inline void applyProfile(CompactionConfig& cfg) {
 
     if (cfg.cooldownMinTurns <= 0)
         cfg.cooldownMinTurns = 2;
-    // Default turn trigger aligns with history_cap_every_turns spirit
+    // Default turn trigger aligns with max_turns_per_cycle spirit
     if (cfg.triggerTurns <= 0)
         cfg.triggerTurns = 15;
 }

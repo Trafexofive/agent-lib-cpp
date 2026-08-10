@@ -417,7 +417,7 @@ void test_process_bind_materialize_symlinks() {
 }
 
 void test_compaction_block_and_history_cap_every() {
-    TEST("compaction: + history_cap_every_turns parse and engine");
+    TEST("compaction: + max_turns_per_cycle parse and engine");
     fs::path root = fs::temp_directory_path() / "mk3-compaction-parse";
     fs::remove_all(root);
     writeFile(root / "agent.yml", R"YAML(kind: Agent
@@ -427,7 +427,7 @@ cognitive_engine:
   primary: { provider: deepseek, model: deepseek-chat }
 runtime:
   history_cap: 50
-  history_cap_every_turns: 15
+  max_turns_per_cycle: 15
 compaction:
   enabled: true
   profile: balanced
@@ -445,7 +445,7 @@ compaction:
 
     auto cfg = ManifestLoader::loadAgentConfig((root / "agent.yml").string());
     CHECK(cfg.historyCap == 50, "history_cap");
-    CHECK(cfg.historyCapEveryTurns == 15, "history_cap_every_turns default/parse");
+    CHECK(cfg.maxTurnsPerCycle == 15, "max_turns_per_cycle default/parse");
     CHECK(cfg.compaction.configured && cfg.compaction.enabled, "compaction enabled");
     CHECK(cfg.compaction.profile == "balanced", "profile");
     CHECK(cfg.compaction.triggerContextTokens == 60000, "60k tokens parse");
