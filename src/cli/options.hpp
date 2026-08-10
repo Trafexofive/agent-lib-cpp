@@ -29,8 +29,13 @@ struct CliConfig {
     // Provider
     std::string provider = "openai-codex";
     std::string model;  // empty → provider's defaultModel is used
-    bool providerSet = false;
-    bool modelSet = false;
+    bool providerSet = false;   // explicit CLI --provider
+    bool modelSet = false;      // explicit CLI --model
+    // Set by applySessionMetadata when session file carried engine fields.
+    // Distinguishes session restore from config-file defaults (config must NOT
+    // beat agent.yml or session on -c).
+    bool providerFromSession = false;
+    bool modelFromSession = false;
     bool providerPickerRequested = false;  // --provider with no arg, no model
 
     // Run mode
@@ -38,6 +43,9 @@ struct CliConfig {
     std::string promptFile;
     std::string manifestPath;
     std::string manifestDir;
+    // Filled by applySessionMetadata on resume — agent name from the session
+    // file when manifest_path was missing (used for resolve + banner).
+    std::string sessionAgentName;
     bool manifestPickerRequested = false;  // bare -m / --manifest → manager
     bool listAgents = false;               // list --agents
     int iterations = 0;

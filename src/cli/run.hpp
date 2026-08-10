@@ -215,6 +215,22 @@ static bool resolveCliManifest(CliConfig& cli) {
 // Command: run (agent execution)
 // ═══════════════════════════════════════════════════════════════════════
 static int cmdRun(CliConfig& cli) {
+    // Stale-binary guard: bare CWD `sessions/` or `state/` dirs are a legacy
+    // (pre home-based) artifact, not where this build reads/writes. Warn so an
+    // operator isn't confused why sessions "disappear" (the binary is using
+    // ~/.cortex / $CORTEX_HOME).
+    {
+        std::error_code ec;
+        for (const char* d : {"sessions", "state"}) {
+            if (fs::is_directory(d, ec)) {
+                std::cerr << "\033[33mcortex-mk3:\033[0m stale CWD " << d
+                          << "/ dir present (legacy location). Sessions/state "
+                             "now live under ~/.cortex or $CORTEX_HOME. Remove "
+                          << d << "/ if unused.\n";
+            }
+        }
+    }
+
     // Global agent / manifest selection (any-CWD catalog)
     if (!resolveCliManifest(cli))
         return cli.manifestPickerRequested ? 0 : 1;
@@ -401,13 +417,29 @@ static int cmdRun(CliConfig& cli) {
             !requireFile("System prompt", dryCfg.systemPromptPath) ||
             !requireFile("Persona prompt", dryCfg.personaPath))
             return 1;
+        // Optional operator context — warn only if declared but missing.
+        if (!dryCfg.userPath.empty()) {
+            std::ifstream uf(dryCfg.userPath);
+            if (uf.good())
+                std::cout << "  ✓ User context: " << dryCfg.userPath << "\n";
+            else
+                std::cerr << "  ⚠ User context missing: " << dryCfg.userPath << "\n";
+        }
 
         if (!cli.manifestPath.empty()) {
             std::cout << "  ✓ Manifest: " << cli.manifestPath << "\n";
         }
 
-        std::cout << "  sandbox:  "
-                  << (cli.sandbox ? (cli.sandboxReadOnly ? "read-only" : "on") : "off") << "\n";
+        std::cout << "  sandbox:  ";
+        if (cli.sandbox || dryCfg.sandboxConfigured) {
+            std::cout << (cli.sandboxReadOnly || dryCfg.sandboxReadonly ? "read-only" : "on")
+                      << " mode=" << dryCfg.sandboxMode
+                      << " binds=" << dryCfg.sandboxBinds.size()
+                      << " files=" << dryCfg.sandboxFiles.size();
+        } else {
+            std::cout << "off";
+        }
+        std::cout << "\n";
         std::cout << "  ✓ Configuration valid. Use without --dry-run to execute.\n";
         return 0;
     }
@@ -416,13 +448,36 @@ static int cmdRun(CliConfig& cli) {
     AgentConfig acfg;
     ansi::colorEnabled() = true;
 
+    // Resume without -m: if applySessionMetadata resolved a manifest via
+    // agent_name, cli.manifestPath is set. If it only set sessionAgentName,
+    // resolve once more here before falling through to builtin.
+    if (cli.manifestPath.empty() && didResume && !cli.sessionAgentName.empty() &&
+        cli.sessionAgentName != "cortext-builtin-agent" &&
+        cli.sessionAgentName != "cortex") {
+        std::string err;
+        std::string resolved =
+            catalog::resolveAgent(cli.sessionAgentName, cli.manifestDir, &err);
+        if (!resolved.empty())
+            cli.manifestPath = resolved;
+        else
+            std::cerr << "[resume] could not resolve agent '" << cli.sessionAgentName
+                      << "': " << err << "\n";
+    }
+
     if (!cli.manifestPath.empty()) {
         acfg = ManifestLoader::loadAgentConfig(cli.manifestPath);
         ManifestLoader::loadEnv(cli.manifestPath, acfg);
         catalog::fixDefaultPromptPaths(acfg, cli.manifestDir);
-        if (cli.providerSet)
+        // Cognitive engine priority:
+        //   1) explicit CLI --provider / --model
+        //   2) session file (last live engine, including /model switches)
+        //   3) agent.yml cognitive_engine (keep acfg as loaded)
+        //   4) config file / hardcoded — already in cli.* but must NOT beat (3)
+        // Bug: didResume + cli.provider from ~/.config (opencode-go) used to
+        // overwrite agent.yml free model → RegionError 403 on every -c.
+        if (cli.providerSet || cli.providerFromSession)
             acfg.provider = cli.provider;
-        if (cli.modelSet)
+        if (cli.modelSet || cli.modelFromSession)
             acfg.model = cli.model;
         if (!cli.harnessPromptPath.empty()) {
             std::string herr;
@@ -436,13 +491,36 @@ static int cmdRun(CliConfig& cli) {
         }
 
         if (acfg.sandboxMode == "docker" && !fs::exists("/.dockerenv")) {
-            auto files = ManifestLoader::loadFiles(cli.manifestPath);
-            return sandbox::launchDocker(cli.manifestPath, acfg, files);
+            // Live binds come from sandbox.bind / sandbox.files on AgentConfig.
+            // import.files stays prompt-only and is intentionally not mounted.
+            return sandbox::launchDocker(cli.manifestPath, acfg, acfg.sandboxFiles);
         }
     } else {
-        acfg.name = "cortext-builtin-agent";
-        acfg.provider = cli.provider;
-        acfg.model = cli.model;
+        // Last-ditch resume identity: session named a real agent but path resolve
+        // failed — keep the name so the header is honest, still builtin surface.
+        acfg.name = !cli.sessionAgentName.empty() ? cli.sessionAgentName
+                                                  : "cortext-builtin-agent";
+        if (didResume && acfg.name != "cortext-builtin-agent") {
+            std::cerr << "[resume] warning: could not resolve manifest for agent '"
+                      << acfg.name << "' — running builtin surface with session history\n";
+        } else if (!didResume) {
+            acfg.name = "cortext-builtin-agent";
+        }
+        // Builtin surface: session engine > config/cli defaults.
+        if (cli.providerSet || cli.providerFromSession || !cli.provider.empty())
+            acfg.provider = cli.provider;
+        if (cli.modelSet || cli.modelFromSession) {
+            acfg.model = cli.model;
+        } else if (!cli.model.empty() && !didResume) {
+            // Cold builtin launch may take config model; resume without session
+            // model keeps provider default via createProvider.
+            acfg.model = cli.model;
+        } else if (!cli.model.empty() && didResume && cli.modelFromSession) {
+            acfg.model = cli.model;
+        }
+        if (acfg.model.empty() && !cli.model.empty() &&
+            (cli.modelSet || cli.modelFromSession))
+            acfg.model = cli.model;
         if (!cli.harnessPromptPath.empty()) {
             std::string herr;
             std::string hp =
@@ -553,17 +631,53 @@ static int cmdRun(CliConfig& cli) {
             std::cerr << "[dev_mode] iteration dumps → ~/.cortex/dev/<session>/ + CWD copies\n";
     }
 
-    // Sandbox
-    if (cli.sandbox) {
+    // Sandbox — manifest sandbox: is source of truth; CLI --sandbox/--sandbox-ro
+    // forces enable (and optional global RO) on top.
+    {
         std::string cwd = fs::current_path().string();
-        if (cli.sandboxReadOnly) {
-            agent.setSandboxPolicy(sandbox::makeReadOnlySandbox(cwd));
-            if (!cli.raw)
-                std::cerr << "[sandbox] read-only — " << cwd << "\n";
-        } else {
-            agent.setSandboxPolicy(sandbox::makeHarnessSandbox(cwd));
-            if (!cli.raw)
-                std::cerr << "[sandbox] enabled — " << cwd << "\n";
+
+        // Expand sandbox.files → binds and materialize process-mode symlinks
+        // so bound paths are live CRUD surfaces that reflect on the host.
+        if (acfg.sandboxConfigured || !acfg.sandboxBinds.empty() || !acfg.sandboxFiles.empty()) {
+            sandbox::expandFilesToBinds(acfg);
+            fs::path base =
+                acfg.manifestDir.empty() ? fs::current_path() : fs::path(acfg.manifestDir);
+            sandbox::resolveBindHosts(acfg, base);
+            if (acfg.sandboxMode == "process" || acfg.sandboxMode.empty()) {
+                auto mat = sandbox::materializeProcessBinds(acfg, fs::current_path());
+                if (!cli.raw) {
+                    for (const auto& w : mat.warnings)
+                        std::cerr << "[sandbox] warn: " << w << "\n";
+                    if (!mat.created.empty())
+                        std::cerr << "[sandbox] binds: " << mat.created.size()
+                                  << " symlink(s) materialized\n";
+                }
+            }
+        }
+
+        sandbox::SandboxPolicy policy = sandbox::makePolicyFromConfig(acfg, cwd);
+        // allowed_paths from manifest are often relative to the agent module;
+        // resolve them against manifestDir so "./" means the agent dir.
+        if (!acfg.manifestDir.empty()) {
+            for (auto& p : policy.allowedPaths) {
+                fs::path hp(p);
+                if (hp.is_relative())
+                    p = (fs::path(acfg.manifestDir) / hp).lexically_normal().string();
+            }
+            policy.binds = acfg.sandboxBinds;
+        }
+        policy = sandbox::mergeCliSandbox(policy, cli.sandbox, cli.sandboxReadOnly, cwd);
+        if (policy.enabled) {
+            agent.setSandboxPolicy(policy);
+            if (!cli.raw) {
+                std::cerr << "[sandbox] " << (policy.readOnly ? "read-only" : "enabled")
+                          << " mode=" << acfg.sandboxMode << " workspace=" << cwd;
+                if (!policy.binds.empty())
+                    std::cerr << " binds=" << policy.binds.size();
+                if (!policy.allowedCommands.empty())
+                    std::cerr << " cmds=" << policy.allowedCommands.size();
+                std::cerr << "\n";
+            }
         }
     }
 

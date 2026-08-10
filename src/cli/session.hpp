@@ -1,6 +1,7 @@
 #pragma once
 // Session id resolution, metadata persistence, and interactive resume pickers.
 
+#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <iostream>
@@ -9,9 +10,14 @@
 
 #include "src/cli/list_picker.hpp"
 #include "src/cli/options.hpp"
+#include "src/core/agent_catalog.hpp"
 #include "src/session/controller.hpp"
 #include "src/session/manager.hpp"
 #include "src/ui/model/ui_prefs.hpp"
+
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 namespace cortex::mk3::cli {
 
@@ -171,23 +177,64 @@ static void applySessionMetadata(CliConfig& cli, const std::string& sessionId) {
     };
     if (cli.manifestPath.empty())
         cli.manifestPath = get("manifest_path");
+    // Resume identity: if manifest_path was never saved (older sessions) or
+    // the path vanished, resolve by session.agentName so --continue does not
+    // silently fall through to cortext-builtin-agent while the transcript
+    // still looks like the original agent.
+    if (cli.manifestPath.empty() && !session.agentName.empty() &&
+        session.agentName != "cortext-builtin-agent" && session.agentName != "cortex") {
+        std::string err;
+        std::string resolved =
+            catalog::resolveAgent(session.agentName, cli.manifestDir, &err);
+        if (!resolved.empty())
+            cli.manifestPath = resolved;
+    } else if (!cli.manifestPath.empty()) {
+        // Stale absolute path → try resolve by stem/name.
+        std::error_code ec;
+        if (!fs::is_regular_file(cli.manifestPath, ec)) {
+            std::string name = session.agentName;
+            if (name.empty()) {
+                fs::path p(cli.manifestPath);
+                name = p.parent_path().filename().string();
+                if (name.empty() || name == "." || name == "/")
+                    name = p.stem().string();
+            }
+            std::string err;
+            std::string resolved = catalog::resolveAgent(name, cli.manifestDir, &err);
+            if (!resolved.empty())
+                cli.manifestPath = resolved;
+            else
+                cli.manifestPath.clear();  // fall through cleanly rather than load fail later
+        }
+    }
     if (cli.harnessPromptPath.empty())
         cli.harnessPromptPath = get("harness_path");
     if (cli.systemPromptPath.empty())
         cli.systemPromptPath = get("system_prompt_path");
     if (cli.personaPath.empty())
         cli.personaPath = get("persona_path");
-    // Cognitive engine: session metadata must NOT clobber an explicit -m
-    // manifest. Previously resume always overwrote cli.provider/model with
-    // whatever was saved on the session (often a free flash/opencode pair),
-    // so the TUI header and createProvider() disagreed with agent.yml.
-    // Only restore engine from session when no manifest is selected and the
-    // operator did not pass --provider/--model.
-    const bool manifestPinned = !cli.manifestPath.empty();
-    if (!manifestPinned && !cli.providerSet && !get("provider").empty())
-        cli.provider = get("provider");
-    if (!manifestPinned && !cli.modelSet && !get("model").empty())
-        cli.model = get("model");
+    // Cognitive engine on resume — priority later is:
+    //   CLI explicit > session file > agent.yml > config file > hardcoded
+    // Use top-level session.provider/model FIRST (always written by save),
+    // then metadata keys (older / partial files). Mark FromSession so config
+    // defaults cannot clobber agent.yml on -c when session had no engine.
+    std::string sessProv = session.provider;
+    if (sessProv.empty())
+        sessProv = get("provider");
+    std::string sessModel = session.model;
+    if (sessModel.empty())
+        sessModel = get("model");
+    if (!cli.providerSet && !sessProv.empty()) {
+        cli.provider = sessProv;
+        cli.providerFromSession = true;
+    }
+    if (!cli.modelSet && !sessModel.empty()) {
+        cli.model = sessModel;
+        cli.modelFromSession = true;
+    }
+    // Prefer session agentName when provider restore left name empty later.
+    if (!session.agentName.empty())
+        cli.sessionAgentName = session.agentName;
 }
 
 static void persistSessionMetadata(const std::string& sessionId, const CliConfig& cli,
@@ -198,14 +245,49 @@ static void persistSessionMetadata(const std::string& sessionId, const CliConfig
     auto session = sm.exists(sessionId)
                        ? sm.load(sessionId)
                        : sm.create(sessionId, acfg.name, acfg.model, acfg.provider);
-    session.agentName = acfg.name;
-    session.model = acfg.model;
-    session.provider = acfg.provider;
+
+    // Identity: never demote a real agent to cortext-builtin-agent on -c resume.
+    // That was the --continue bug — bare resume without -m rebuilt acfg as
+    // builtin, then this write stamped the session permanently as builtin.
+    const std::string prevName = session.agentName;
+    const bool acfgBuiltin =
+        acfg.name.empty() || acfg.name == "cortext-builtin-agent" || acfg.name == "cortex";
+    const bool prevReal =
+        !prevName.empty() && prevName != "cortext-builtin-agent" && prevName != "cortex";
+    if (!acfgBuiltin) {
+        session.agentName = acfg.name;
+    } else if (prevReal) {
+        session.agentName = prevName;  // keep on-disk identity
+    } else if (!cli.sessionAgentName.empty() && cli.sessionAgentName != "cortext-builtin-agent") {
+        session.agentName = cli.sessionAgentName;
+    } else if (session.agentName.empty()) {
+        session.agentName = acfg.name.empty() ? "cortext-builtin-agent" : acfg.name;
+    }
+
+    // Engine tracks live /model switches; always refresh.
+    if (!acfg.model.empty()) session.model = acfg.model;
+    if (!acfg.provider.empty()) session.provider = acfg.provider;
     session.metadata["cwd"] = fs::current_path().string();
-    session.metadata["provider"] = acfg.provider;
-    session.metadata["model"] = acfg.model;
-    if (!cli.manifestPath.empty())
+    if (!session.provider.empty()) session.metadata["provider"] = session.provider;
+    if (!session.model.empty()) session.metadata["model"] = session.model;
+
+    // Manifest path: prefer live cli, else keep prior, else backfill from agent name.
+    if (!cli.manifestPath.empty()) {
         session.metadata["manifest_path"] = cli.manifestPath;
+    } else if (session.metadata.count("manifest_path") == 0 && prevReal) {
+        std::string err;
+        std::string resolved =
+            catalog::resolveAgent(session.agentName, cli.manifestDir, &err);
+        if (!resolved.empty())
+            session.metadata["manifest_path"] = resolved;
+    } else if (session.metadata.count("manifest_path") == 0 && !acfgBuiltin &&
+               !acfg.name.empty()) {
+        std::string err;
+        std::string resolved = catalog::resolveAgent(acfg.name, cli.manifestDir, &err);
+        if (!resolved.empty())
+            session.metadata["manifest_path"] = resolved;
+    }
+
     if (!acfg.harnessPath.empty())
         session.metadata["harness_path"] = acfg.harnessPath;
     if (!acfg.systemPromptPath.empty())
