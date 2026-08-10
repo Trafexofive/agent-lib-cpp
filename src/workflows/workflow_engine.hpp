@@ -221,6 +221,14 @@ class WorkflowEngine {
     }
 
     // ── Load workflow manifest from YAML path ──
+    // Reload a workflow manifest from disk (drop cache, re-parse). Returns the
+    // freshly loaded definition.
+    Workflow& reload(const std::string& path) {
+        auto it = manifestCache_.find(path);
+        if (it != manifestCache_.end()) manifestCache_.erase(it);
+        return load(path);
+    }
+
     Workflow& load(const std::string& path) {
         // Check cache first
         auto cacheIt = manifestCache_.find(path);
