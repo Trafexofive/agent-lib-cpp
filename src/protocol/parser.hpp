@@ -181,6 +181,10 @@ class Parser {
 
     // Protocol enforcement — track used action IDs
     std::unordered_set<std::string> usedActionIds_;
+    // Retained last-result per used id — survives clearResults() so a model
+    // that re-emits an already-run action id gets an idempotent replay instead
+    // of a duplicate-id error (prevents a non-recovering stall).
+    std::map<std::string, Json::Value> retainedResults_;
 
     // Context feeds (accumulated for prompt injection)
     std::vector<std::string> contextFeeds_;

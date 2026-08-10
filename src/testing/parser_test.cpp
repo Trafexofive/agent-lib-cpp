@@ -386,12 +386,12 @@ void test_clear_results_keeps_used_ids() {
         r["output"] = "x";
         return r;
     });
-    bool sawDupError = false;
+    bool sawDupReplay = false;
     parser.onEvent([&](const TokenEvent& ev) {
         if (ev.type == TokenEvent::ERROR &&
             ev.metadata.count("reason") &&
-            ev.metadata.at("reason") == "duplicate_action_id")
-            sawDupError = true;
+            ev.metadata.at("reason") == "duplicate_action_id_replay")
+            sawDupReplay = true;
     });
 
     parser.feed(
@@ -401,14 +401,44 @@ void test_clear_results_keeps_used_ids() {
 
     parser.clearResults();  // end of iteration — must NOT free the id
 
+    // Duplicate id of a SUCCESSFULLY-completed action now idempotently replays
+    // the retained result (fixes the non-recovering stall: a model that
+    // re-emits an id sees its prior result instead of a deadlocking error).
     parser.feed(
         "<action type=\"tool\" name=\"list\" id=\"same\" mode=\"sync\">{\"path\":\"/tmp\"}</action>",
         true);
     CHECK(execCount == 1, "duplicate id after clearResults must not re-execute");
-    CHECK(sawDupError, "expected duplicate_action_id error");
+    CHECK(sawDupReplay, "duplicate id replay signals duplicate_action_id_replay");
     Json::Value dup = parser.getResult("same");
-    CHECK(dup.isObject() && dup.get("protocol_error", false).asBool(),
-          "expected protocol_error result for duplicate");
+    CHECK(dup.isObject() && dup.get("success", false).asBool(),
+          "replayed duplicate returns the prior successful result");
+    PASS();
+}
+
+void test_duplicate_id_no_retained_rejects() {
+    TEST("duplicate id of a protocol-error action rejects (no real result)");
+    Parser parser([&](const ParsedAction&) -> Json::Value {
+        Json::Value r;
+        r["protocol_error"] = true;
+        r["success"] = false;
+        return r;
+    });
+    bool sawDupError = false;
+    parser.onEvent([&](const TokenEvent& ev) {
+        if (ev.type == TokenEvent::ERROR &&
+            ev.metadata.count("reason") &&
+            ev.metadata.at("reason") == "duplicate_action_id")
+            sawDupError = true;
+    });
+    // First completion is a protocol_error (not a real success) → retained not
+    // marked replayable; a re-emit must produce the duplicate_id error.
+    parser.feed(
+        "<action type=\"tool\" name=\"list\" id=\"a\" mode=\"sync\">{}</action>", true);
+    parser.clearResults();
+    parser.feed(
+        "<action type=\"tool\" name=\"list\" id=\"a\" mode=\"sync\">{}</action>", true);
+    CHECK(sawDupError,
+          "duplicate id with only-a-protocol-error retained → duplicate_action_id error");
     PASS();
 }
 
@@ -767,6 +797,7 @@ int main() {
     test_PP06_action_attrs_and_text_body();
     test_model_result_tags_ignored();
     test_clear_results_keeps_used_ids();
+    test_duplicate_id_no_retained_rejects();
     test_invalid_json_body_fail_closed();
     test_depends_on_async_rejected();
     test_provisional_action_on_open_tag();

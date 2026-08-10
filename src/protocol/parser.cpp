@@ -561,8 +561,35 @@ void Parser::handleAction(const std::string& content,
     if (!action)
         return;
 
-    // Enforce: reject duplicate action IDs (unique across the agent run)
+    // Enforce: reject duplicate action IDs (unique across the agent run) — BUT
+    // replay the retained result instead of stalling. A model that re-emits an
+    // already-run action id (seen across iterations via usedActionIds_) is
+    // either confused or genuinely re-requesting; if we still have the prior
+    // result, return it idempotently so the turn proceeds instead of deadlocking
+    // on a duplicate-id error the model cannot resolve.
     if (usedActionIds_.count(action->id)) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto retained = retainedResults_.find(action->id);
+        const bool retainedIsReal =
+            retained != retainedResults_.end() && retained->second.isObject() &&
+            retained->second.type() == Json::objectValue &&
+            !retained->second.isMember("protocol_error") &&
+            !(retained->second.isMember("success") &&
+              retained->second["success"].asBool() == false);
+        if (retainedIsReal) {
+            // Idempotent replay — the model already ran id and got this result.
+            results_[action->id] = retained->second;
+            completed_[action->id] = true;
+            emit({TokenEvent::ACTION_RESULT,
+                  Json::writeString(Json::StreamWriterBuilder(), retained->second),
+                  nullptr,
+                  {{"id", action->id}}});
+            emit({TokenEvent::ERROR,
+                  "duplicate id replayed: " + action->id,
+                  nullptr,
+                  {{"id", action->id}, {"reason", "duplicate_action_id_replay"}}});
+            return;
+        }
         Json::Value err;
         err["success"] = false;
         err["protocol_error"] = true;
@@ -894,6 +921,7 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
         std::lock_guard<std::mutex> lock(mtx_);
         results_[a->id] = result;
         completed_[a->id] = true;
+        retainedResults_[a->id] = result;  // survives clearResults for replay
 
         emit({TokenEvent::ACTION_RESULT,
               Json::writeString(Json::StreamWriterBuilder(), result),
@@ -965,6 +993,7 @@ void Parser::injectResult(const std::string& id, const Json::Value& result) {
         std::lock_guard<std::mutex> lock(mtx_);
         results_[id] = result;
         completed_[id] = true;
+        retainedResults_[id] = result;  // survives clearResults for idempotent replay
         emit({TokenEvent::ACTION_RESULT,
               Json::writeString(Json::StreamWriterBuilder(), result),
               nullptr,
@@ -1079,6 +1108,7 @@ void Parser::reset() {
     inThought_ = false;
     thoughtContentStart_ = 0;
     usedActionIds_.clear();
+    retainedResults_.clear();
     responseAttrs_.clear();
     hasProvisionalAction_ = false;
     provisionalActionId_.clear();
