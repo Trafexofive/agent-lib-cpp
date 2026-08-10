@@ -456,6 +456,13 @@ class ManifestLoader {
                 ats = ManifestYaml::get(*runtime, "action_timeout");
             if (!ats.empty())
                 cfg.actionTimeoutSec = std::stoi(ats);
+            // runtime.throttling — stream stall / generation cutoffs, manifest
+            // configurable (never hardcoded in the provider codec).
+            if (auto* thr = ManifestYaml::find(*runtime, "throttling")) {
+                std::string stall = ManifestYaml::get(*thr, "stall_timeout_sec");
+                if (!stall.empty())
+                    cfg.streamStallTimeoutSec = std::stoi(stall);
+            }
             // Orthogonal lifecycle defaults (CLI flags OR with these):
             //   no_session → don't load/save session records
             //   ephemeral  → exit when the agent turn finishes (app layer)
@@ -661,20 +668,24 @@ class ManifestLoader {
                 parseCompactionBlock(*compactNode, cfg.compaction);
         }
 
-        // history_cap_every_turns on runtime/context
+        // max_turns_per_cycle on runtime/context (legacy: history_cap_every_turns).
+        auto readCycleTurns = [](const ManifestYaml::Node& node) -> std::string {
+            std::string v = ManifestYaml::get(node, "max_turns_per_cycle");
+            if (v.empty())
+                v = ManifestYaml::get(node, "history_cap_every_turns");  // legacy alias
+            return v;
+        };
         auto* runtimeForHist = ManifestYaml::find(root, "runtime");
         if (runtimeForHist) {
-            std::string he = ManifestYaml::get(*runtimeForHist, "history_cap_every_turns");
-            if (he.empty())
-                he = ManifestYaml::get(*runtimeForHist, "history_cap_every");
+            std::string he = readCycleTurns(*runtimeForHist);
             if (!he.empty())
-                cfg.historyCapEveryTurns = std::stoi(he);
+                cfg.maxTurnsPerCycle = std::stoi(he);
         }
         auto* contextForHist = ManifestYaml::find(root, "context");
         if (contextForHist) {
-            std::string he = ManifestYaml::get(*contextForHist, "history_cap_every_turns");
+            std::string he = readCycleTurns(*contextForHist);
             if (!he.empty())
-                cfg.historyCapEveryTurns = std::stoi(he);
+                cfg.maxTurnsPerCycle = std::stoi(he);
         }
 
         // Retry / resilience — exponential backoff for transient upstream
