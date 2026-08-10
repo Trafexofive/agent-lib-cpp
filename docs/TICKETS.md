@@ -67,6 +67,35 @@ slice gets its own commit so a bisect stays clean.
 - **Delete or route old `Tool::executeScript`** shell runner to `process::run`
   so the hardened substrate covers every tool execution path.
 
+## Live session debug — inkcell-1786357930926 (2026-08-10)
+
+Investigated the latest live test (read-only AI-slop audit across the inkcell
+repo). The harness surfaced a critical bug class, now fixed:
+
+- **Thought-only final lost to stale non-final response** — the model did the
+  entire audit inside `<thought>`, forgot `final="true"`, and a stale
+  non-final `<response>Scanning structural patterns now...</response>` from an
+  early iteration won as the turn's answer (`responseOutput_` accumulated
+  across iterations). The actual deliverable was invisible to the operator.
+  **Fixed in `20c9625`** — per-iteration `responseOutput_`/`thoughtOutput_`
+  reset, plus bounded thought-to-final recovery at cap (surfaces the last
+  substantive >120-char `<thought>` if no real final was emitted).
+- **Pointless empty `exec {}` at finalization** (model behavior, not bug) — the
+  model emitted two `<action type="tool" name="exec">{}</action>` with empty
+  bodies; the tool correctly errored (`command is required when shell=true`).
+  Wasteful but correctly handled.
+
+Open after this session:
+- **Reasoning models put finals in thoughts frequently** — the bounded recovery
+  handles it, but consider strengthening the finalization prompt so models
+  re-emit `final="true"` reliably (fewer cap-promotes).
+- **`test-ui-model` 7 pre-existing failures** — dashboard nav (3), dev-gated cmd
+  classification (3: `/prompts` `/dump-prompt` `/cp-raw` called without devMode),
+  dynamic-completion (1). Unrelated to the above; fix the test expectations.
+- The session itself confirmed repo-root AI artifacts (root `iterations.md`/
+  `raw.md`/`history.md`, `.cortex/`, `.artifacts/`) are a recurring slop class —
+  add `.gitignore` entries (see repo-root cleanup track).
+
 ## Recently resolved
 
 Tickets that were on the historical doc but are now closed get a one-line
@@ -93,7 +122,7 @@ Each slice has a design in `docs/manifests/context-and-sandbox-design.md`. The `
 | Slice | Status | Note |
 |---|---|---|
 | `context:` block: 6 new fields (`history_mode`, `on_protocol_violation`, `stream_strategy`, `action_timeout_sec` + rename of `runtime:` keys) | queued | Design §1. Parser change in `manifest_loader.hpp`, runtime wiring in `agent.cpp`. |
-| `sandbox:` block: 6 new fields (`allowed_commands`, `allowed_paths`, `allowed_hosts`, `readonly`, `network`, `files`) | queued | Design §2. Most-restrictive default is a behavior change; needs migration note. |
-| `import.files` and `import.folders` | queued | Design §5. Wrap content in `<imported_file path="...">`, recursive + .gitignore by default, follow symlinks by default, re-read on every load. |
+| `sandbox:` block: gates + `bind`/`files` live mounts | **done** | Full parse → SandboxPolicy; process symlinks + guest→host rewrite; docker `-v`; per-bind RO. `import.files` stays prompt-only. |
+| `import.files` (prompt modules) | partial | Process injects `<module>` today; tag rename to `<imported_file>` + `import.folders` still queued. |
 | "What's loaded" startup message — show counts of tools/feeds/relics/sub-agents/env/imports on agent start | queued | Design §7. Stderr line. Replace with status-bar indicator or `/loaded` slash command if user wants. |
 | `auto_play_on_start: [tool calls]` | queued | Future feature for protocol alignment. Reduces bare-text rate. Separate from `import:`. |
