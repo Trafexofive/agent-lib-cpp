@@ -87,3 +87,7 @@ runs/
 
 # Session handoff / audit artifacts (per-session, never commit)
 .artifacts/
+
+# Example compiled binaries (never commit build artifacts)
+examples/*_example
+examples/c_agent
