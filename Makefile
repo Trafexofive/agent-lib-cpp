@@ -73,7 +73,7 @@ clean:
 # ── Parser unit test ──
 PARSER_TEST_SRC := src/testing/parser_test.cpp
 PARSER_TEST_OBJ := $(BUILD_DIR)/testing/parser_test.o
-PARSER_TEST_BIN := parser-test
+PARSER_TEST_BIN := $(BUILD_DIR)/parser-test
 
 $(PARSER_TEST_OBJ): $(PARSER_TEST_SRC) src/protocol/parser.hpp
 	@mkdir -p $(dir $@)
@@ -87,7 +87,7 @@ test-parser: $(PARSER_TEST_BIN)
 
 # ── UI model tests (timeline/adapters; no TUI rendering) ──
 UI_MODEL_TEST_SRC := src/testing/ui_model_test.cpp
-UI_MODEL_TEST_BIN := ui-model-test
+UI_MODEL_TEST_BIN := $(BUILD_DIR)/ui-model-test
 
 $(UI_MODEL_TEST_BIN): $(OBJS) $(UI_MODEL_TEST_SRC) src/ui/chat/ask_dialog_model.hpp src/ui/chat/chat_blocks.hpp src/ui/chat/chat_command_catalog.hpp src/ui/chat/chat_commands.hpp src/ui/chat/chat_io.hpp src/ui/chat/prompt_history.hpp src/ui/chat/transcript_cache.hpp src/ui/model/dashboard_controller.hpp src/ui/model/dashboard_model.hpp src/ui/model/timeline_model.hpp src/ui/model/app_context.hpp src/ui/model/command_model.hpp src/ui/model/inkcell_app_model.hpp src/ui/model/navigation_model.hpp src/ui/model/adapters/protocol_to_timeline.hpp src/ui/model/adapters/agent_tree.hpp
 	$(CXX) $(CXXFLAGS) $(UI_MODEL_TEST_SRC) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) -o $@ $(LDFLAGS)
@@ -97,7 +97,7 @@ test-ui-model: $(UI_MODEL_TEST_BIN)
 
 # ── UI view tests (fixture-only Surface rendering) ──
 UI_VIEW_TEST_SRC := src/testing/ui_view_test.cpp
-UI_VIEW_TEST_BIN := ui-view-test
+UI_VIEW_TEST_BIN := $(BUILD_DIR)/ui-view-test
 
 $(UI_VIEW_TEST_BIN): $(UI_VIEW_TEST_SRC) src/ui/chat/chat_view.hpp src/ui/views/timeline_view.hpp src/ui/model/timeline_model.hpp src/ui/layout/sbtui_layout.hpp src/ui/theme/cortex_theme.hpp
 	$(CXX) $(CXXFLAGS) $(UI_VIEW_TEST_SRC) -o $@ $(LDFLAGS)
@@ -107,7 +107,7 @@ test-ui-view: $(UI_VIEW_TEST_BIN)
 
 # ── Chat scene integration tests (ask bridge, slash input, cancellation) ──
 CHAT_SCENE_TEST_SRC := src/testing/chat_scene_test.cpp
-CHAT_SCENE_TEST_BIN := chat-scene-test
+CHAT_SCENE_TEST_BIN := $(BUILD_DIR)/chat-scene-test
 
 $(CHAT_SCENE_TEST_BIN): $(OBJS) $(CHAT_SCENE_TEST_SRC) src/ui/scenes/agent_scene.hpp src/ui/scenes/main_scene.hpp src/ui/model/dashboard_controller.hpp src/ui/model/dashboard_model.hpp src/ui/chat/ask_dialog_model.hpp src/ui/chat/chat_commands.hpp
 	$(CXX) $(CXXFLAGS) $(CHAT_SCENE_TEST_SRC) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) -o $@ $(INKCELL_LIB) $(LDFLAGS)
@@ -117,7 +117,7 @@ test-chat-scene: $(CHAT_SCENE_TEST_BIN) | inkcell-lib
 
 # ── Parser + streaming reducer performance regression gates ──
 PERF_TEST_SRC := src/testing/perf_test.cpp
-PERF_TEST_BIN := perf-test
+PERF_TEST_BIN := $(BUILD_DIR)/perf-test
 
 $(PERF_TEST_BIN): $(OBJS) $(PERF_TEST_SRC) src/protocol/parser.hpp src/ui/bridge/agent_bridge.hpp src/ui/model/inkcell_app_model.hpp
 	$(CXX) $(CXXFLAGS) $(PERF_TEST_SRC) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) -o $@ $(INKCELL_LIB) $(LDFLAGS)
@@ -127,7 +127,7 @@ test-perf: $(PERF_TEST_BIN) | inkcell-lib
 
 # ── mini_yaml unit tests ──
 YAML_TEST_SRC := src/testing/yaml_test.cpp
-YAML_TEST_BIN := yaml-test
+YAML_TEST_BIN := $(BUILD_DIR)/yaml-test
 
 $(YAML_TEST_BIN): $(YAML_TEST_SRC) src/core/mini_yaml.hpp
 	$(CXX) $(CXXFLAGS) $(YAML_TEST_SRC) -o $@
@@ -137,7 +137,7 @@ test-yaml: $(YAML_TEST_BIN)
 
 # ── Manifest classifier tests (ML01) ──
 MCLASS_TEST_SRC := src/testing/manifest_classifier_test.cpp
-MCLASS_TEST_BIN := manifest-classifier-test
+MCLASS_TEST_BIN := $(BUILD_DIR)/manifest-classifier-test
 
 $(MCLASS_TEST_BIN): $(MCLASS_TEST_SRC) src/core/manifest_loader.hpp src/core/mini_yaml.hpp
 	$(CXX) $(CXXFLAGS) $(MCLASS_TEST_SRC) -o $@ $(LDFLAGS)
@@ -148,7 +148,7 @@ test-manifest-classifier: $(MCLASS_TEST_BIN)
 # ── Manifest semantics tests (agent.yml source-of-truth) ──
 MSEM_TEST_SRC := src/testing/manifest_semantics_test.cpp
 MSEM_TEST_OBJ := $(BUILD_DIR)/testing/manifest_semantics_test.o
-MSEM_TEST_BIN := manifest-semantics-test
+MSEM_TEST_BIN := $(BUILD_DIR)/manifest-semantics-test
 
 $(MSEM_TEST_OBJ): $(MSEM_TEST_SRC) src/core/manifest_loader.hpp src/core/agent.hpp
 	@mkdir -p $(dir $@)
@@ -163,7 +163,7 @@ test-manifest-semantics: $(MSEM_TEST_BIN)
 # ── Recursive autoload tests (MA01) ──
 AUTOLOAD_TEST_SRC := src/testing/autoload_test.cpp
 AUTOLOAD_TEST_OBJ := $(BUILD_DIR)/testing/autoload_test.o
-AUTOLOAD_TEST_BIN := autoload-test
+AUTOLOAD_TEST_BIN := $(BUILD_DIR)/autoload-test
 
 $(AUTOLOAD_TEST_OBJ): $(AUTOLOAD_TEST_SRC)
 	@mkdir -p $(dir $@)
@@ -178,7 +178,7 @@ test-autoload: $(AUTOLOAD_TEST_BIN)
 # ── Context manager tests (pin / peek / unpin) ──
 CTX_TEST_SRC := src/testing/context_test.cpp
 CTX_TEST_OBJ := $(BUILD_DIR)/testing/context_test.o
-CTX_TEST_BIN := context-test
+CTX_TEST_BIN := $(BUILD_DIR)/context-test
 
 $(CTX_TEST_OBJ): $(CTX_TEST_SRC)
 	@mkdir -p $(dir $@)
@@ -193,7 +193,7 @@ test-context: $(CTX_TEST_BIN)
 # ── Session round-trip tests (AC14/04/17/18) ──
 SESS_TEST_SRC := src/testing/session_test.cpp
 SESS_TEST_OBJ := $(BUILD_DIR)/testing/session_test.o
-SESS_TEST_BIN := session-test
+SESS_TEST_BIN := $(BUILD_DIR)/session-test
 
 $(SESS_TEST_OBJ): $(SESS_TEST_SRC)
 	@mkdir -p $(dir $@)
@@ -208,7 +208,7 @@ test-session: $(SESS_TEST_BIN)
 # ── Lazy-arm session-id test (vet-fix) ──
 LAZY_SESSION_TEST_SRC := src/testing/lazy_session_test.cpp
 LAZY_SESSION_TEST_OBJ := $(BUILD_DIR)/testing/lazy_session_test.o
-LAZY_SESSION_TEST_BIN := lazy-session-test
+LAZY_SESSION_TEST_BIN := $(BUILD_DIR)/lazy-session-test
 
 $(LAZY_SESSION_TEST_OBJ): $(LAZY_SESSION_TEST_SRC)
 	@mkdir -p $(dir $@)
@@ -224,7 +224,7 @@ test-lazy-session: $(LAZY_SESSION_TEST_BIN)
 # Header-only under test; no Agent/libcurl objects required.
 PROTOCOL_DIFF_TEST_SRC := src/testing/protocol_event_diff_test.cpp
 PROTOCOL_DIFF_TEST_OBJ := $(BUILD_DIR)/testing/protocol_event_diff_test.o
-PROTOCOL_DIFF_TEST_BIN := protocol-event-diff-test
+PROTOCOL_DIFF_TEST_BIN := $(BUILD_DIR)/protocol-event-diff-test
 
 $(PROTOCOL_DIFF_TEST_OBJ): $(PROTOCOL_DIFF_TEST_SRC) src/ui/model/protocol_event_diff.hpp
 	@mkdir -p $(dir $@)
@@ -239,7 +239,7 @@ test-protocol-event-diff: $(PROTOCOL_DIFF_TEST_BIN)
 # ── Session seed + final-response round-trip ──
 SESSION_ROUNDTRIP_TEST_SRC := src/testing/session_roundtrip_test.cpp
 SESSION_ROUNDTRIP_TEST_OBJ := $(BUILD_DIR)/testing/session_roundtrip_test.o
-SESSION_ROUNDTRIP_TEST_BIN := session-roundtrip-test
+SESSION_ROUNDTRIP_TEST_BIN := $(BUILD_DIR)/session-roundtrip-test
 
 $(SESSION_ROUNDTRIP_TEST_OBJ): $(SESSION_ROUNDTRIP_TEST_SRC)
 	@mkdir -p $(dir $@)
@@ -254,7 +254,7 @@ test-session-roundtrip: $(SESSION_ROUNDTRIP_TEST_BIN)
 # ── UI timeline serialize/deserialize (live ↔ resume parity) ──
 UI_TIMELINE_TEST_SRC := src/testing/ui_timeline_test.cpp
 UI_TIMELINE_TEST_OBJ := $(BUILD_DIR)/testing/ui_timeline_test.o
-UI_TIMELINE_TEST_BIN := ui-timeline-test
+UI_TIMELINE_TEST_BIN := $(BUILD_DIR)/ui-timeline-test
 
 $(UI_TIMELINE_TEST_OBJ): $(UI_TIMELINE_TEST_SRC)
 	@mkdir -p $(dir $@)
@@ -269,7 +269,7 @@ test-ui-timeline: $(UI_TIMELINE_TEST_BIN)
 # ── SessionController foundation (SessionRef, mutex, async timeline, fork) ──
 SESSION_CTL_TEST_SRC := src/testing/session_controller_test.cpp
 SESSION_CTL_TEST_OBJ := $(BUILD_DIR)/testing/session_controller_test.o
-SESSION_CTL_TEST_BIN := session-controller-test
+SESSION_CTL_TEST_BIN := $(BUILD_DIR)/session-controller-test
 
 $(SESSION_CTL_TEST_OBJ): $(SESSION_CTL_TEST_SRC) src/session/controller.hpp src/session/manager.hpp
 	@mkdir -p $(dir $@)
@@ -284,7 +284,7 @@ test-session-controller: $(SESSION_CTL_TEST_BIN)
 # ── Run-epoch stream isolation (no stream-into-stale-event) ──
 RUN_EPOCH_TEST_SRC := src/testing/run_epoch_test.cpp
 RUN_EPOCH_TEST_OBJ := $(BUILD_DIR)/testing/run_epoch_test.o
-RUN_EPOCH_TEST_BIN := run-epoch-test
+RUN_EPOCH_TEST_BIN := $(BUILD_DIR)/run-epoch-test
 
 $(RUN_EPOCH_TEST_OBJ): $(RUN_EPOCH_TEST_SRC)
 	@mkdir -p $(dir $@)
@@ -299,7 +299,7 @@ test-run-epoch: $(RUN_EPOCH_TEST_BIN)
 # ── Live ↔ resume parity (ui_timeline) ──
 LIVE_RESUME_TEST_SRC := src/testing/live_resume_parity_test.cpp
 LIVE_RESUME_TEST_OBJ := $(BUILD_DIR)/testing/live_resume_parity_test.o
-LIVE_RESUME_TEST_BIN := live-resume-parity-test
+LIVE_RESUME_TEST_BIN := $(BUILD_DIR)/live-resume-parity-test
 
 $(LIVE_RESUME_TEST_OBJ): $(LIVE_RESUME_TEST_SRC)
 	@mkdir -p $(dir $@)
@@ -314,7 +314,7 @@ test-live-resume-parity: $(LIVE_RESUME_TEST_BIN)
 # ── Protocol noise filter (orphan closes / result echo) ──
 PROTOCOL_NOISE_TEST_SRC := src/testing/protocol_noise_test.cpp
 PROTOCOL_NOISE_TEST_OBJ := $(BUILD_DIR)/testing/protocol_noise_test.o
-PROTOCOL_NOISE_TEST_BIN := protocol-noise-test
+PROTOCOL_NOISE_TEST_BIN := $(BUILD_DIR)/protocol-noise-test
 
 $(PROTOCOL_NOISE_TEST_OBJ): $(PROTOCOL_NOISE_TEST_SRC)
 	@mkdir -p $(dir $@)
@@ -329,7 +329,7 @@ test-protocol-noise: $(PROTOCOL_NOISE_TEST_BIN)
 # ── Session-load backfill test (vet-fix) ──
 LOAD_BACKFILL_TEST_SRC := src/testing/load_backfill_test.cpp
 LOAD_BACKFILL_TEST_OBJ := $(BUILD_DIR)/testing/load_backfill_test.o
-LOAD_BACKFILL_TEST_BIN := load-backfill-test
+LOAD_BACKFILL_TEST_BIN := $(BUILD_DIR)/load-backfill-test
 
 $(LOAD_BACKFILL_TEST_OBJ): $(LOAD_BACKFILL_TEST_SRC)
 	@mkdir -p $(dir $@)
@@ -344,7 +344,7 @@ test-load-backfill: $(LOAD_BACKFILL_TEST_BIN)
 # ── Completion policy (bare/non-final recover + promote) ──
 COMPLETION_POLICY_TEST_SRC := src/testing/completion_policy_test.cpp
 COMPLETION_POLICY_TEST_OBJ := $(BUILD_DIR)/testing/completion_policy_test.o
-COMPLETION_POLICY_TEST_BIN := completion-policy-test
+COMPLETION_POLICY_TEST_BIN := $(BUILD_DIR)/completion-policy-test
 
 $(COMPLETION_POLICY_TEST_OBJ): $(COMPLETION_POLICY_TEST_SRC)
 	@mkdir -p $(dir $@)
@@ -358,7 +358,7 @@ test-completion-policy: $(COMPLETION_POLICY_TEST_BIN)
 
 # ── Manifest catalog / hub discovery ──
 MANIFEST_CATALOG_TEST_SRC := src/testing/manifest_catalog_test.cpp
-MANIFEST_CATALOG_TEST_BIN := manifest-catalog-test
+MANIFEST_CATALOG_TEST_BIN := $(BUILD_DIR)/manifest-catalog-test
 
 $(MANIFEST_CATALOG_TEST_BIN): $(MANIFEST_CATALOG_TEST_SRC) src/core/agent_catalog.hpp
 	$(CXX) $(CXXFLAGS) $(MANIFEST_CATALOG_TEST_SRC) -o $@ $(LDFLAGS)
@@ -369,7 +369,7 @@ test-manifest-catalog: $(MANIFEST_CATALOG_TEST_BIN)
 # ── Sandbox + context_* integration tests (SB02/SB07/BT04) ──
 SBOX_TEST_SRC := src/testing/sandbox_context_test.cpp
 SBOX_TEST_OBJ := $(BUILD_DIR)/testing/sandbox_context_test.o
-SBOX_TEST_BIN := sandbox-context-test
+SBOX_TEST_BIN := $(BUILD_DIR)/sandbox-context-test
 
 $(SBOX_TEST_OBJ): $(SBOX_TEST_SRC)
 	@mkdir -p $(dir $@)
@@ -384,7 +384,7 @@ test-sandbox-context: $(SBOX_TEST_BIN)
 # ── Protocol test runner ──
 PROTOCOL_TEST_SRC := src/testing/protocol_test.cpp
 PROTOCOL_TEST_OBJ := $(BUILD_DIR)/testing/protocol_test.o
-PROTOCOL_TEST_BIN := protocol-test
+PROTOCOL_TEST_BIN := $(BUILD_DIR)/protocol-test
 
 $(PROTOCOL_TEST_OBJ): $(PROTOCOL_TEST_SRC) src/protocol/parser.hpp
 	@mkdir -p $(dir $@)
@@ -401,7 +401,7 @@ test-protocol-list: $(PROTOCOL_TEST_BIN)
 
 # ── Workflow engine tests ──
 WORKFLOW_ENGINE_TEST_SRC := src/testing/workflow_engine_test.cpp
-WORKFLOW_ENGINE_TEST_BIN := workflow-engine-test
+WORKFLOW_ENGINE_TEST_BIN := $(BUILD_DIR)/workflow-engine-test
 
 $(WORKFLOW_ENGINE_TEST_BIN): $(WORKFLOW_ENGINE_TEST_SRC)
 	$(CXX) $(CXXFLAGS) $(WORKFLOW_ENGINE_TEST_SRC) -o $@ $(LDFLAGS)
@@ -411,7 +411,7 @@ test-workflows: $(WORKFLOW_ENGINE_TEST_BIN)
 
 # Feed manifest tests
 FEED_MANIFEST_TEST_SRC = src/testing/feed_manifest_runner.cpp
-FEED_MANIFEST_TEST_BIN = feed-manifest-test
+FEED_MANIFEST_TEST_BIN = $(BUILD_DIR)/feed-manifest-test
 
 $(FEED_MANIFEST_TEST_BIN): $(OBJS) $(FEED_MANIFEST_TEST_SRC)
 	$(CXX) $(CXXFLAGS) $(FEED_MANIFEST_TEST_SRC) $(OBJS) -o $@ $(LDFLAGS)
@@ -421,7 +421,7 @@ test-feeds: $(FEED_MANIFEST_TEST_BIN)
 
 # Docker relic dispatcher tests
 DOCKER_RELIC_TEST_SRC = src/testing/docker_relic_runner.cpp
-DOCKER_RELIC_TEST_BIN = docker-relic-test
+DOCKER_RELIC_TEST_BIN = $(BUILD_DIR)/docker-relic-test
 
 $(DOCKER_RELIC_TEST_BIN): $(DOCKER_RELIC_TEST_SRC) build/src/utils/process.o
 	$(CXX) $(CXXFLAGS) $(DOCKER_RELIC_TEST_SRC) build/src/utils/process.o -o $@ $(LDFLAGS)
@@ -430,13 +430,13 @@ test-relics: $(DOCKER_RELIC_TEST_BIN)
 	@./$(DOCKER_RELIC_TEST_BIN)
 
 # call-tool helper for feed scripts
-CALL_TOOL_BIN = call-tool
+CALL_TOOL_BIN = $(BUILD_DIR)/call-tool
 $(CALL_TOOL_BIN): src/tools/call_tool.cpp $(OBJS)
 	$(CXX) $(CXXFLAGS) src/tools/call_tool.cpp $(OBJS) -o $@ $(LDFLAGS)
 
 # ask_tool built-in test
 ASK_CARDS_TEST_SRC = src/testing/ask_tool_test.cpp
-ASK_CARDS_TEST_BIN = ask-tool-test
+ASK_CARDS_TEST_BIN = $(BUILD_DIR)/ask-tool-test
 $(ASK_CARDS_TEST_BIN): $(ASK_CARDS_TEST_SRC) $(OBJS)
 	$(CXX) $(CXXFLAGS) $(ASK_CARDS_TEST_SRC) $(OBJS) -o $@ $(LDFLAGS)
 test-ask-cards: $(ASK_CARDS_TEST_BIN)
@@ -444,7 +444,7 @@ test-ask-cards: $(ASK_CARDS_TEST_BIN)
 
 # Provider model metadata tests
 PROVIDER_MODEL_INFO_TEST_SRC = src/testing/provider_model_info_test.cpp
-PROVIDER_MODEL_INFO_TEST_BIN = provider-model-info-test
+PROVIDER_MODEL_INFO_TEST_BIN = $(BUILD_DIR)/provider-model-info-test
 $(PROVIDER_MODEL_INFO_TEST_BIN): $(PROVIDER_MODEL_INFO_TEST_SRC) $(BUILD_DIR)/src/providers/generic_openai.o
 	$(CXX) $(CXXFLAGS) $(PROVIDER_MODEL_INFO_TEST_SRC) $(BUILD_DIR)/src/providers/generic_openai.o -o $@ $(LDFLAGS)
 
@@ -457,7 +457,7 @@ test-provider-model-info: $(PROVIDER_MODEL_INFO_TEST_BIN)
 # <action type="agent"> delegation, tool calls, multi-turn flows, and edge
 # cases without touching the network. Header-only — no .o to link.
 SCRIPTED_PROVIDER_TEST_SRC := src/testing/scripted_provider_test.cpp
-SCRIPTED_PROVIDER_TEST_BIN := scripted-provider-test
+SCRIPTED_PROVIDER_TEST_BIN := $(BUILD_DIR)/scripted-provider-test
 
 $(SCRIPTED_PROVIDER_TEST_BIN): $(SCRIPTED_PROVIDER_TEST_SRC) src/testing/scripted_provider.hpp
 	$(CXX) $(CXXFLAGS) $(SCRIPTED_PROVIDER_TEST_SRC) -o $@ $(LDFLAGS)
@@ -505,7 +505,7 @@ tune-cat:
 
 # ── Sandbox policy tests ──
 POLICY_TEST_SRC = tests/policy_test.cpp
-POLICY_TEST_BIN = policy-test
+POLICY_TEST_BIN = $(BUILD_DIR)/policy-test
 $(POLICY_TEST_BIN): $(POLICY_TEST_SRC)
 	$(CXX) $(CXXFLAGS) -Isrc -Isrc/sandbox $(POLICY_TEST_SRC) -o $@
 test-policy: $(POLICY_TEST_BIN)
@@ -574,7 +574,7 @@ all-tests: test-yaml test-manifest-classifier test-autoload test-context test-se
 
 # ── Sub-agent delegation test ──
 SUBAGENT_TEST_SRC := src/testing/subagent_delegation_test.cpp
-SUBAGENT_TEST_BIN := subagent-delegation-test
+SUBAGENT_TEST_BIN := $(BUILD_DIR)/subagent-delegation-test
 
 $(SUBAGENT_TEST_BIN): $(SUBAGENT_TEST_SRC) src/testing/scripted_provider.hpp
 	$(CXX) $(CXXFLAGS) $(SUBAGENT_TEST_SRC) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) -o $@ $(LDFLAGS)
@@ -607,3 +607,13 @@ evolve-task: $(BIN_CLI)
 
 evolve-cheap: $(BIN_CLI)
 	python3 tests/self-evolve/runner.py --model deepseek-chat --provider deepseek $(EVOLVE_ARGS)
+
+# ── Tool scene tests (schema form + keymap render smoke) ──
+TOOL_SCENE_TEST_SRC := src/testing/tool_scene_test.cpp
+TOOL_SCENE_TEST_BIN := $(BUILD_DIR)/tool-scene-test
+
+$(TOOL_SCENE_TEST_BIN): $(OBJS) $(TOOL_SCENE_TEST_SRC) src/ui/scenes/tool_scene.hpp
+	$(CXX) $(CXXFLAGS) $(TOOL_SCENE_TEST_SRC) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) -o $@ $(INKCELL_LIB) $(LDFLAGS)
+
+test-tool-scene: $(TOOL_SCENE_TEST_BIN) | inkcell-lib
+	./$(TOOL_SCENE_TEST_BIN)

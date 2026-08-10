@@ -6,11 +6,6 @@ build/
 cortex-mk3
 cortex-mk3-server
 cortex-mk3-asan
-call-tool
-docker-relic-test
-feed-manifest-test
-parser-debug
-protocol-test
 __pycache__/
 .pi/
 .keys.env
@@ -23,37 +18,6 @@ tests/tui/*_demo
 tests/tui/pipe_demo
 tests/sandbox/run.sh
 tests/scenario-runner
-yaml-test
-manifest-classifier-test
-manifest-catalog-test
-autoload-test
-context-test
-session-test
-session-roundtrip-test
-sandbox-context-test
-policy-test
-ask-tool-test
-workflow-engine-test
-provider-model-info-test
-chat-scene-test
-ui-model-test
-ui-view-test
-ui-timeline-test
-perf-test
-protocol-event-diff-test
-protocol-noise-test
-live-resume-parity-test
-load-backfill-test
-run-epoch-test
-lazy-session-test
-session-controller-test
-completion-policy-test
-scripted-provider-test
-subagent-delegation-test
-iterations.md
-raw.md
-.pi/
-
 # Runtime artifacts
 manifests/_session/
 
@@ -62,8 +26,6 @@ tmp*.py
 full_context.md
 iterations.xml
 context.jsonl
-manifest-semantics-test
-parser-test
 tests/bench.py
 
 # Experimental/scratch
