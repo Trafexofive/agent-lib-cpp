@@ -143,8 +143,11 @@ Json::Value GenericOpenAIClient::buildRequestBody(const ChatMessages& msgs, bool
         body["include"].append("reasoning.encrypted_content");
         body["tool_choice"] = "auto";
         body["parallel_tool_calls"] = true;
-        if (!config_.reasoningEffort.empty()) {
-            body["reasoning"]["effort"] = config_.reasoningEffort;
+        {
+            std::string effort = config_.reasoningEffort.empty()
+                                     ? "high"
+                                     : config_.reasoningEffort;
+            body["reasoning"]["effort"] = effort;
             body["reasoning"]["summary"] = "auto";
         }
 
@@ -207,8 +210,10 @@ Json::Value GenericOpenAIClient::buildRequestBody(const ChatMessages& msgs, bool
         allowTopK = topKIt->second;
     if (topK_ > 0 && allowTopK)
         body["top_k"] = topK_;
-    if (!config_.reasoningEffort.empty())
-        body["reasoning_effort"] = config_.reasoningEffort;
+    // Test-time compute / reasoning — default to high for all providers.
+    // DeepSeek, Grok, Gemini, Qwen etc. all support reasoning_effort.
+    body["reasoning_effort"] =
+        config_.reasoningEffort.empty() ? "high" : config_.reasoningEffort;
     if (presencePenalty_ != 0.0)
         body["presence_penalty"] = presencePenalty_;
     if (frequencyPenalty_ != 0.0)
@@ -357,16 +362,18 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
             curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, abortCheckCb);
             curl_easy_setopt(curl, CURLOPT_XFERINFODATA, nullptr);
             curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-            // Vet-fix: Ctrl-C speed. CURLOPT_XFERINFO only fires during data
-            // movement, so a stalled stream (server hangs after headers)
-            // would otherwise wait the full CURLOPT_TIMEOUT. Configure
-            // low-speed abort to fail in 4s if <200B/s arrives, which
-            // catches genuine hangs but keeps slow tokens alive. We also
-            // hard-cap streaming transfers at 30s total — Ctrl-C must
-            // unwind within the operator's patience.
-            curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 4L);
-            curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 200L);
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 30000L);
+            // Stream timeouts — free/slow models (opencode flash, etc.) routinely
+            // pause >4s between tokens and run well past 30s per generation.
+            // The OLD knobs (LOW_SPEED 4s@200B + TIMEOUT_MS 30s) killed live
+            // turns with "CURL error: Timeout was reached" while the operator
+            // touched nothing. Ctrl-C still aborts via abortCheckCb/g_running.
+            //
+            // No total wall-clock cap (0). Low-speed only trips on a truly
+            // dead pipe: 90s with under 1 byte/s.
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 0L);
+            curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 90L);
+            curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
         } else {
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCb);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBuffer);
@@ -406,6 +413,10 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
             lastStats_.finishReason = "curl_error";
             lastStats_.lastError = curl_easy_strerror(res);
             lastStats_.httpStatus = httpCode;
+            // Operator stop (Ctrl-X) trips XFERINFO abort — not a transport failure.
+            if (res == CURLE_ABORTED_BY_CALLBACK || !g_running) {
+                throw std::runtime_error("cancelled");
+            }
             throw std::runtime_error(std::string("CURL error: ") + curl_easy_strerror(res));
         }
 
@@ -414,7 +425,7 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
                 stream ? (ctx.lastErrorBody.empty() ? ctx.buffer : ctx.lastErrorBody)
                        : responseBuffer;
             bool isRetryable =
-                (httpCode == 429) ||
+                (httpCode == 429) || httpCode == 502 || httpCode == 503 || httpCode == 504 ||
                 (httpCode == 413 && errorBody.find("rate_limit_exceeded") != std::string::npos);
 
             if (isRetryable && retry < maxRetries_) {

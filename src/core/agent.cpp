@@ -123,6 +123,16 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
         }
     }
 
+    // Operator context (context.user → USER.md). Optional; silent if missing.
+    if (!config_.userPath.empty()) {
+        std::ifstream uf(config_.userPath);
+        if (uf) {
+            std::ostringstream ss;
+            ss << uf.rdbuf();
+            userText_ = ss.str();
+        }
+    }
+
     // Built-ins are registered in the backend registry below, but NOT granted
     // to this agent by default. Capabilities are declarative: a tool appears in
     // tools_ only when the active manifest imports it.
@@ -186,6 +196,7 @@ std::string Agent::prompt(const std::string &input, StreamCallback onToken,
         // else: keep seeded / continuing history_
     }
     lastSessionId_ = sessionId;
+    fallbackTriedThisTurn_ = false;
 
     std::string result = runLoop(ctx);
 
@@ -297,6 +308,9 @@ std::string Agent::runLoop(AgentContext &ctx) {
         history_.push_back("Parent(" + from + "): " + ctx.userInput);
     } else if (ctx.source == PromptSource::Internal) {
         history_.push_back("System: " + ctx.userInput);
+    } else if (ctx.userInput.empty() && continuation) {
+        // Silent /continue — resume the loop from existing history without
+        // injecting a User: line (no "continue", no ".").
     } else {
         // Vet-fix: submitComposer pre-seeds history_ with the same user
         // text so a TUI exit before this method runs still lands the
@@ -355,6 +369,32 @@ std::string Agent::runLoop(AgentContext &ctx) {
             ctx.onToken("", false);
     };
 
+    // Unified terminal bookkeeping — every stop path must leave BOTH the
+    // LLM context (history_) and the chat stream (protocolEvents_) with an
+    // honest closing block. Callers still set fullResponse themselves.
+    auto finishTurn = [&](const std::string &origin, const std::string &text,
+                          bool asResponse = true) {
+        const std::string body =
+            text.empty() ? (std::string("turn ended · ") + origin) : text;
+        const std::string needle = "Agent: " + body;
+        if (history_.empty() || history_.back() != needle)
+            history_.push_back(needle);
+        if (asResponse) {
+            bool hasResp = false;
+            for (size_t i = protocolEvents_.size(); i-- > runEpochStart;) {
+                if (protocolEvents_[i].kind == ProtocolEventKind::RESPONSE) {
+                    hasResp = true;
+                    break;
+                }
+            }
+            if (!hasResp)
+                protocolEvents_.push_back(
+                    {ProtocolEventKind::RESPONSE, body, {}, {}});
+        }
+        if (ctx.onToken)
+            ctx.onToken("", true);
+    };
+
     // Work turns 1..workCap, then at most one FINALIZATION turn (tools
     // disabled) so the model always gets an honest last chance to emit
     // final=true.
@@ -362,6 +402,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
         if (!g_running) {
             fullResponse = "[cancelled]";
             emitStatus("[LIMIT] cancelled by operator (Ctrl-C / stop).");
+            finishTurn("cancel", "[cancelled by operator]");
             break;
         }
 
@@ -458,13 +499,14 @@ std::string Agent::runLoop(AgentContext &ctx) {
             msgs.push_back(ChatMessage::user(fin.str()));
         }
 
-        if (ctx.debug || ctx.verbose) {
+        // Terminal logs only when operator asked (-V) AND TUI has not silenced us.
+        // Full prompt always lands in .cortex/dev/*/iterations.md under dev_mode.
+        if (!silenceTerminal_ && (ctx.debug || ctx.verbose)) {
             std::cerr << "[MK3:DEBUG] iter " << ctx.iteration << " — "
                       << msgs.size() << " msgs";
         }
 
-        // Verbose: dump prompt
-        if (ctx.verbose) {
+        if (!silenceTerminal_ && ctx.verbose) {
             std::cerr << "\n─── PROMPT iter " << ctx.iteration << " ───\n";
             for (size_t i = 0; i < msgs.size(); i++) {
                 const char *role = ChatMessage::roleName(msgs[i].role);
@@ -569,7 +611,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     rs.backoffMs = delay;
                     retryHandler_(rs);
                 }
-                if (ctx.debug) {
+                if (!silenceTerminal_ && ctx.debug) {
                     std::cerr
                         << "[MK3:RETRY] empty-response attempt=" << attempt
                         << " delay_ms=" << delay << " finish_reason=\""
@@ -606,9 +648,14 @@ std::string Agent::runLoop(AgentContext &ctx) {
                             std::string thoughtChunk = token.substr(1);
                             thoughtOutput_ += thoughtChunk;
                             if (!thoughtChunk.empty()) {
-                                if (!protocolEvents_.empty() &&
+                                // Only merge into THIS run's open thought — never
+                                // append into a prior-turn THOUGHT left in the
+                                // vector on continuation (streams-into-old-block).
+                                const bool canMerge =
+                                    protocolEvents_.size() > runEpochStart &&
                                     protocolEvents_.back().kind ==
-                                        ProtocolEventKind::THOUGHT) {
+                                        ProtocolEventKind::THOUGHT;
+                                if (canMerge) {
                                     protocolEvents_.back().text += thoughtChunk;
                                 } else {
                                     protocolEvents_.push_back(
@@ -632,11 +679,88 @@ std::string Agent::runLoop(AgentContext &ctx) {
                             ctx.onToken("", isFinal);
                     });
             } catch (const std::exception &e) {
-                std::string err = std::string("Error: ") + e.what();
+                const std::string msg = e.what() ? e.what() : "";
+                // Intentional operator stop (Ctrl-X / CURL abort callback).
+                if (!g_running || msg == "cancelled" ||
+                    msg.find("cancelled") != std::string::npos ||
+                    msg.find("ABORTED_BY_CALLBACK") != std::string::npos) {
+                    fullResponse = "[cancelled]";
+                    emitStatus(
+                        "[LIMIT] cancelled by operator (Ctrl-C / stop).");
+                    finishTurn("cancel", "[cancelled by operator]");
+                    iterationOutputs_.push_back("[cancelled]");
+                    break;  // leave generateStream retry loop → outer cancel path
+                }
+                // Transport / HTTP failures after the provider's own retries.
+                // Classify so the operator AND the next LLM turn see a clear,
+                // non-final failure — not a fake completed answer.
+                const bool isTimeout =
+                    msg.find("Timeout") != std::string::npos ||
+                    msg.find("timeout") != std::string::npos ||
+                    msg.find("timed out") != std::string::npos ||
+                    msg.find("Operation too slow") != std::string::npos;
+                const bool isRegionOrForbidden =
+                    msg.find("HTTP 403") != std::string::npos ||
+                    msg.find("RegionError") != std::string::npos ||
+                    msg.find("region") != std::string::npos;
+                const bool isTransientNet =
+                    isTimeout ||
+                    msg.find("CURL error") != std::string::npos ||
+                    msg.find("Couldn't connect") != std::string::npos ||
+                    msg.find("Connection reset") != std::string::npos ||
+                    msg.find("HTTP 429") != std::string::npos ||
+                    msg.find("HTTP 502") != std::string::npos ||
+                    msg.find("HTTP 503") != std::string::npos ||
+                    msg.find("HTTP 504") != std::string::npos;
+                // One-shot cognitive_engine.fallback swap on hard region/403/net.
+                if (!fallbackTriedThisTurn_ && !config_.fallbackProvider.empty() &&
+                    !config_.fallbackModel.empty() &&
+                    (isRegionOrForbidden || isTransientNet)) {
+                    auto fb = providers::createProvider(config_.fallbackProvider,
+                                                        config_.fallbackModel);
+                    if (fb) {
+                        fallbackTriedThisTurn_ = true;
+                        fb->setQuietLogs(silenceTerminal_);
+                        setProvider(fb, config_.fallbackProvider, config_.fallbackModel);
+                        emitStatus("[FALLBACK] " + config_.fallbackProvider + "/" +
+                                   config_.fallbackModel + " after: " + msg);
+                        history_.push_back(
+                            "System: [PROVIDER FALLBACK] switched to " +
+                            config_.fallbackProvider + "/" + config_.fallbackModel +
+                            " after failure: " + msg);
+                        continue;  // retry generateStream with new provider
+                    }
+                }
+                std::ostringstream notice;
+                if (isTimeout) {
+                    notice << "⚠ Upstream stream TIMED OUT after provider retries.\n"
+                           << "Detail: " << msg << "\n"
+                           << "This is a transport failure — not a completed answer.\n"
+                           << "Re-send the prompt or wait and continue; the model never finished.";
+                } else if (isTransientNet) {
+                    notice << "⚠ Upstream network/HTTP failure after provider retries.\n"
+                           << "Detail: " << msg << "\n"
+                           << "Turn aborted without a final response. Retry the prompt.";
+                } else {
+                    notice << "⚠ Provider error: " << msg << "\n"
+                           << "Turn aborted without a final response.";
+                }
+                const std::string err = notice.str();
                 rawLlOutput_ += err;
                 iterationRawOutput += err;
                 iterationOutputs_.push_back(err);
-                return err;
+                emitStatus(std::string(isTimeout ? "[TIMEOUT] " : "[ERROR] ") + msg);
+                // System line first so the NEXT prompt's context carries the
+                // failure reason for the LLM (not only the UI Final block).
+                history_.push_back(
+                    "System: [PROVIDER " + std::string(isTimeout ? "TIMEOUT" : "ERROR") +
+                    "] " + msg +
+                    " — previous turn did not complete. Do not treat any partial "
+                    "output as final; continue or ask the operator to retry.");
+                finishTurn("provider_error", err);
+                fullResponse = err;
+                responseOutput_ = err;
+                break;  // leave retry loop → outer break via fullResponse set
             }
 
             streamStats = provider_ ? provider_->lastStreamStats()
@@ -672,11 +796,26 @@ std::string Agent::runLoop(AgentContext &ctx) {
             ++attempt;
         }
 
+        // Cancelled mid-stream / provider hard-fail: leave the outer iteration
+        // loop cleanly. Without this we fall into empty-response / salvage
+        // recovery and paint a fake "empty response" error after Ctrl-X.
+        if (!g_running || fullResponse == "[cancelled]") {
+            fullResponse = "[cancelled]";
+            break;
+        }
+        if (fullResponse.rfind("Error: ", 0) == 0) {
+            // finishTurn already ran in the catch path.
+            break;
+        }
+
         if (!parser.waitForActions(
                 std::chrono::seconds(config_.actionTimeoutSec))) {
-            history_.push_back(
-                "System: [TIMEOUT] actions did not complete within " +
-                std::to_string(config_.actionTimeoutSec) + "s");
+            const std::string to =
+                "[TIMEOUT] actions did not complete within " +
+                std::to_string(config_.actionTimeoutSec) + "s";
+            emitStatus(to);
+            finishTurn("action_timeout", to);
+            fullResponse = to;
             break;
         }
         parser.flush();
@@ -689,7 +828,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // Determine completion
         auto results = parser.allResults();
 
-        if (ctx.debug || ctx.verbose) {
+        if (!silenceTerminal_ && (ctx.debug || ctx.verbose)) {
             std::cerr << " | actions=" << results.size()
                       << " complete=" << st.taskComplete
                       << " resp=" << responseOutput_.size() << "b"
@@ -715,18 +854,17 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 if (streamStats.httpStatus > 0)
                     detail += " [http " +
                               std::to_string(streamStats.httpStatus) + "]";
+                detail += " after " + std::to_string(attempt + 1) + "/" +
+                          std::to_string(maxAttempts) + " attempt(s)";
                 std::string visibleError =
                     "⚠ Model returned an empty response" + detail +
                     ". The agent loop is aborting this turn rather than "
                     "silently finishing. "
                     "Retry with a different model if this persists.";
-                history_.push_back("System: [EMPTY RESPONSE] " + detail);
-                history_.push_back("Agent: " + visibleError);
+                emitStatus("[EMPTY RESPONSE]" + detail);
+                finishTurn("empty_response", visibleError);
                 responseOutput_ = visibleError;
-                // Surface as RESPONSE protocol event so the TUI paints one
-                // clean error row — not a thought soup of orphan tags.
-                protocolEvents_.push_back(
-                    {ProtocolEventKind::RESPONSE, visibleError, {}, {}});
+                fullResponse = visibleError;
                 st.taskComplete = true; // runtime failure, not model final
             } else {
                 // Salvage whatever the model produced so the next turn can
@@ -735,43 +873,26 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     pickSalvage(iterationRawOutput, responseOutput_);
                 const bool hadNonFinalResponse =
                     !trimCopy(responseOutput_).empty();
-                if (!salvage.empty())
+                // Auto-promote bare text immediately — no retry/stall loop.
+                // Wrap as <thought> in history so the model sees the pattern,
+                // then promote as the turn result and exit cleanly.
+                if (!salvage.empty()) {
                     lastSalvage = salvage;
-
-                history_.push_back("Agent: " + iterationRawOutput);
-                ++bareRecoveryCount;
-                bareTextReminded_ = true;
-
-                // Autonomous / promote policy: after N failed recoveries,
-                // accept salvage as the turn result rather than burning the
-                // rest of the iteration budget on a stuck small model.
-                const bool earlyPromote =
-                    compPolicy == CompPolicy::Promote &&
-                    bareRecoveryCount >= promoteAfter && !lastSalvage.empty() &&
-                    !finalizationTurn && ctx.iteration < workCap;
-
-                if (earlyPromote) {
-                    history_.push_back(
-                        "System: [AUTO-PROMOTED] runtime.mode=" +
-                        config_.runtimeMode +
-                        " promoted salvaged non-final output after " +
-                        std::to_string(bareRecoveryCount) +
-                        " recovery attempt(s). Original lacked "
-                        "<response final=\"true\">.");
-                    responseOutput_ = lastSalvage;
-                    fullResponse = lastSalvage;
+                    // Push wrapped version to history so next turn sees protocol
+                    std::string agentLine;
+                    if (hadNonFinalResponse) {
+                        agentLine = "<response final=\"true\">" +
+                                    trimCopy(responseOutput_) + "</response>";
+                    } else {
+                        agentLine = "<thought>" + salvage + "</thought>";
+                    }
+                    history_.push_back("Agent: " + agentLine);
+                    // Promote as the turn result — don't stall, don't loop.
+                    responseOutput_ = salvage;
+                    fullResponse = salvage;
                     st.taskComplete = true;
-                    // Surface as a protocol RESPONSE so nested chat / TUI
-                    // paint the promoted answer instead of only a stop banner.
                     protocolEvents_.push_back(
-                        {ProtocolEventKind::RESPONSE, lastSalvage, {}, {}});
-                } else {
-                    history_.push_back(
-                        "System: " +
-                        buildRecoveryCorrection(salvage, hadNonFinalResponse));
-                    st.nonFinalProtocolRetry = true;
-                    st.taskComplete = false;
-                    responseOutput_.clear();
+                        {ProtocolEventKind::RESPONSE, salvage, {}, {}});
                 }
             }
         }
@@ -781,6 +902,11 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // already marks sections.
         {
             std::ostringstream os;
+            // Provider reasoning first (SOH-routed thoughts) — visible here
+            // so iterations.md shows what the model actually thought.
+            if (!thoughtOutput_.empty()) {
+                os << "<thought>" << thoughtOutput_ << "</thought>\n";
+            }
             os << iterationRawOutput;
             if (!iterationRawOutput.empty() &&
                 iterationRawOutput.back() != '\n')
@@ -796,6 +922,10 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // Thought-only / no-progress streak (work turns only).
         // Counts generations that produced content but neither tools nor final.
         // Actions or a real final zero the streak. Empty upstream aborts above.
+        // Hard stop ONLY on genuine repetition (same body again) — not on
+        // continued thinking. A reasoning model legitimately thinks across
+        // generations; only response final="true" (or operator cancel/settings)
+        // may stop a working agent.
         if (!finalizationTurn && !st.taskComplete) {
             const bool hadActions = !results.empty() ||
                 iterationRawOutput.find("<action") != std::string::npos;
@@ -804,7 +934,21 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 !thoughtOutput_.empty();
             if (!hadActions && hadContent) {
                 ++thoughtOnlyStreak;
-                if (thoughtOnlyStreak >= kThoughtOnlyHardCap) {
+                // Repetition guard: hard-stop only when the model is stuck
+                // (literal same output again), never when it is progressing.
+                std::string curTrim = trimCopy(iterationRawOutput);
+                static std::string prevTrim;
+                static int tinyStreak = 0;
+                const bool repeated =
+                    (curTrim.size() > 40 && prevTrim == curTrim) ||
+                    (curTrim.size() <= 40 &&
+                     (curTrim.empty() || curTrim.size() <= 40) &&
+                     ++tinyStreak >= kThoughtOnlyHardCap);
+                if (curTrim.size() > 40) {
+                    prevTrim = curTrim;
+                    tinyStreak = 0;
+                }
+                if (repeated && thoughtOnlyStreak >= kThoughtOnlyHardCap) {
                     std::string stop = buildThoughtOnlyHardStop(thoughtOnlyStreak);
                     emitStatus(stop);
                     history_.push_back("Agent: " + stop);
@@ -832,12 +976,19 @@ std::string Agent::runLoop(AgentContext &ctx) {
         bool forceResultFollowup =
             !finalizationTurn && st.taskComplete && !results.empty() &&
             iterationRawOutput.find("<action") != std::string::npos;
+
         // If the model emits action(s) and a final response in the same
         // generation, it cannot have seen the real runtime results yet. Keep
         // only the action transcript for the follow-up prompt; discard
         // premature response text and any model-owned result/prose.
         std::string historyOutput =
             forceResultFollowup ? st.actionTranscriptOutput : st.llmOutput;
+        // Provider reasoning tokens (thinking/reasoning blocks) are routed
+        // to the UI via SOH prefix but NOT to history. Wrap them as <thought>
+        // so the next turn sees its own thinking inline.
+        if (!thoughtOutput_.empty())
+            historyOutput = "<thought>" + thoughtOutput_ + "</thought>\n" +
+                            historyOutput;
         if (forceResultFollowup) {
             // The model cannot consume a sync action result in the same
             // generation that emitted the action. Force one follow-up turn with
@@ -887,10 +1038,45 @@ std::string Agent::runLoop(AgentContext &ctx) {
         parser.clearResults(); // prevent result leakage to next iteration
         tickContextCycles();   // decrement peek cycles; auto-evict at 0
 
+        // Operator steering — inject between iterations (soonest safe boundary).
+        // Policy is embedded so the model keeps the plot unless told to drop it.
+        {
+            std::string steer = takeSteer();
+            if (!steer.empty()) {
+                history_.push_back("User: [STEER] " + steer);
+                history_.push_back(
+                    "System: [STEER POLICY] Operator guidance just arrived mid-turn.\n"
+                    "- Incorporate it at the next natural step.\n"
+                    "- Do NOT abandon current work unless the steer explicitly says "
+                    "to stop/drop/leave it immediately (e.g. 'stop', 'drop that', "
+                    "'forget the previous task', 'do this instead now').\n"
+                    "- If you must switch immediately, park a one-line resume note "
+                    "of what you were doing and return to it after the steer is done.\n"
+                    "- Never treat the steer as a completed answer; keep using tools "
+                    "and finish with <response final=\"true\"> when the whole job is done.");
+                emitStatus("[STEER] operator guidance injected");
+                if (ctx.onToken)
+                    ctx.onToken("", false);
+            }
+        }
+
         // Finalization is exactly one shot — never loop forever after cap.
         if (finalizationTurn) {
             finalizationDone = true;
             break;
+        }
+    }
+
+    // Drain any leftover steer into history so it is not lost if the turn ended
+    // before the next iteration (cancel / final / error).
+    {
+        std::string steer = takeSteer();
+        if (!steer.empty()) {
+            history_.push_back("User: [STEER · deferred] " + steer);
+            history_.push_back(
+                "System: [STEER] Guidance arrived as the previous turn ended. "
+                "Address it on the next turn; resume prior unfinished work unless "
+                "the steer explicitly cancels it.");
         }
     }
 
@@ -899,8 +1085,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // Per policy: promote salvage when allowed so small-model turns still
         // leave a usable answer + an honest recovery note in history.
         if (compPolicy != CompPolicy::Strict && !lastSalvage.empty()) {
-            history_.push_back(
-                "System: [AUTO-PROMOTED @ CAP] No <response final=\"true\"> "
+            emitStatus(
+                "[AUTO-PROMOTED @ CAP] No <response final=\"true\"> "
                 "before iteration cap. Promoted salvaged content under "
                 "runtime.mode=" +
                 config_.runtimeMode + " / policy=" +
@@ -909,9 +1095,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 ".");
             fullResponse = lastSalvage;
             responseOutput_ = lastSalvage;
-            protocolEvents_.push_back(
-                {ProtocolEventKind::RESPONSE, lastSalvage, {}, {}});
-            history_.push_back("Agent: " + lastSalvage);
+            finishTurn("auto_promote_cap", lastSalvage);
         } else {
             fullResponse =
                 "⚠ Agent stopped without emitting <response final=\"true\">. "
@@ -920,7 +1104,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 (lastSalvage.empty() ? std::string(".")
                                      : " (salvage was available but "
                                        "completion_policy=strict).");
-            history_.push_back("Agent: " + fullResponse);
+            emitStatus("[STOP] no final response before cap/timeout");
+            finishTurn("stop_no_final", fullResponse);
         }
     }
 
@@ -956,6 +1141,15 @@ Json::Value Agent::handleAgentDelegate(AgentContext &ctx,
                                        const std::string &instruction) {
     const std::string &agentName = action.name;
     auto it = subAgents_.find(agentName);
+    if (it == subAgents_.end()) {
+        // Manifest may have gained the sub-agent since load (operator edited
+        // import.agents live). Try reload once before reporting unknown.
+        if (!config_.manifestPath.empty()) {
+            ManifestLoader::loadSubAgents(config_.manifestPath, *this,
+                                          config_.provider);
+            it = subAgents_.find(agentName);
+        }
+    }
     if (it == subAgents_.end()) {
         Json::Value err;
         err["success"] = false;
@@ -1045,6 +1239,9 @@ Json::Value Agent::handleAgentDelegate(AgentContext &ctx,
             : it->second->prompt(
                   instruction, childProgress, childSessionId, false,
                   PromptSource::ParentAgent, config_.name);
+    // Fold-up economy: shrink child history before parent reuses it next time.
+    if (config_.compaction.childBeforeReturn)
+        it->second->compactHistoryInPlaceIfConfigured();
     std::string trace;
     if (dumpContext) {
         trace = formatDelegatedTrace(agentName, instruction,
@@ -1132,12 +1329,10 @@ void Agent::handleProtocolEvent(AgentContext &ctx, ProtocolStreamState &st,
     st.llmOutput += ev.content;
     responseOutput_ += ev.content;
     if (!ev.content.empty()) {
-        // Strip glued harness tags/attrs from the response body
-        // for display; keep raw if strip would wipe a real answer.
-        std::string paint =
-            protocol::stripProtocolNoise(ev.content);
-        if (paint.empty())
-            paint = ev.content;
+        // Use raw content directly — stripProtocolNoise is too aggressive
+        // for response text (strips spaces around UTF-8 punctuation like em dashes).
+        // The parser already extracted clean content between <response> tags.
+        std::string paint = ev.content;
         auto prevSame = [&](ProtocolEventKind k) {
             for (size_t i = protocolEvents_.size();
                  i > st.runEpochStart;) {
@@ -1317,14 +1512,23 @@ void Agent::handleProtocolEvent(AgentContext &ctx, ProtocolStreamState &st,
     break;
 
     case protocol::TokenEvent::ERROR:
-    history_.push_back(
-        "[ERROR] action=" + (ev.action ? ev.action->name : "?") +
-        " id=" +
-        (ev.metadata.count("id") ? ev.metadata.at("id") : "?") +
-        " reason=" +
-        (ev.metadata.count("reason") ? ev.metadata.at("reason")
-                                     : "?") +
-        ": " + ev.content);
+    if (ev.metadata.count("reason") &&
+        ev.metadata.at("reason") == "forged_result") {
+        // Inline XML correction — the model must see it never emits <result>.
+        history_.push_back(
+            "System: <thought>Forged <result> tags are ignored by the "
+            "runtime. Never emit <result> — real results are injected "
+            "automatically after each action. Use the injected results, "
+            "not invented ones.</thought>");
+    } else {
+        history_.push_back(
+            "[ERROR] action=" + (ev.action ? ev.action->name : "?") +
+            " id=" +
+            (ev.metadata.count("id") ? ev.metadata.at("id") : "?") +
+            " reason=" +
+            (ev.metadata.count("reason") ? ev.metadata.at("reason") : "?") +
+            ": " + ev.content);
+    }
     break;
 
     case protocol::TokenEvent::CONTEXT_FEED:
@@ -1346,7 +1550,7 @@ Json::Value Agent::handleActionExecute(
         denied["success"] = false;
         denied["error"] =
             "finalization turn: actions disabled — emit "
-            "<response final=\"true\"> only";
+            "<response final=\"true\"> only"; // OR whatever we will treat it as such regardless
         denied["output"] = denied["error"];
         return denied;
     }
@@ -1437,6 +1641,9 @@ Json::Value Agent::handleActionExecute(
             else if (result.isMember("output") &&
                      result["output"].isString())
                 summary = result["output"].asString();
+            else if (result.isMember("content") &&
+                     result["content"].isString())
+                summary = result["content"].asString();
             else if (result.isMember("data") &&
                      result["data"].isString())
                 summary = result["data"].asString();
@@ -1522,6 +1729,11 @@ workflows::WorkflowResult Agent::handleWorkflowDelegate(
         [this, &ctx](const workflows::WorkflowAgentInvocation &inv)
         -> Json::Value {
         auto it = subAgents_.find(inv.name);
+        if (it == subAgents_.end() && !config_.manifestPath.empty()) {
+            ManifestLoader::loadSubAgents(config_.manifestPath, *this,
+                                          config_.provider);
+            it = subAgents_.find(inv.name);
+        }
         if (it == subAgents_.end()) {
             Json::Value err;
             err["success"] = false;
@@ -1713,6 +1925,11 @@ workflows::WorkflowResult Agent::handleWorkflowDelegate(
             [this, &ctx](const workflows::WorkflowAgentInvocation &inv)
             -> Json::Value {
             auto it = subAgents_.find(inv.name);
+            if (it == subAgents_.end() && !config_.manifestPath.empty()) {
+                ManifestLoader::loadSubAgents(config_.manifestPath, *this,
+                                              config_.provider);
+                it = subAgents_.find(inv.name);
+            }
             if (it == subAgents_.end()) {
                 Json::Value err;
                 err["success"] = false;

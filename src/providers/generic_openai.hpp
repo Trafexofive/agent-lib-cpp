@@ -268,7 +268,8 @@ class GenericOpenAIClient : public ILlmProvider {
     mutable std::vector<ModelInfo> cachedModels_;
     mutable bool modelsFetched_ = false;
     mutable std::unordered_map<std::string, bool> modelTopKSupport_;
-    int maxRetries_ = 3;
+    // Transport retries (timeout / recv / 429). Free tiers flake often.
+    int maxRetries_ = 6;
     bool quietLogs_ = false;
     RetryCallback retryCb_;
 
@@ -403,7 +404,7 @@ inline OpenAIProviderConfig zenConfig() {
             true,
             "/chat/completions",
             "/models",
-            "",
+            "high",
             65536,
             "chat-completions"};
 }
@@ -425,7 +426,7 @@ inline OpenAIProviderConfig opencodeGoConfig() {
             true,
             "/chat/completions",
             "/models",
-            "",
+            "high",
             65536,
             "chat-completions"};
 }

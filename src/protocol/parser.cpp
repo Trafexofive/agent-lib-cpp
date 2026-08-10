@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cctype>
+#include <cstdlib>
 #include <iostream>
 #include <regex>
 #include <sstream>
@@ -609,9 +610,19 @@ void Parser::handleResult(const std::string& content,
                           const std::map<std::string, std::string>& attrs) {
     // <result> is runtime-owned. LLM-emitted result tags are ignored so the
     // model cannot forge tool/sub-agent outcomes after a real failure.
-    (void)content;
-    (void)attrs;
-    return;
+    // Track + surface the first forgery so the harness can correct the model
+    // instead of silently dropping (silent drop = model never learns).
+    ++forgedResultCount_;
+    if (forgedResultCount_ == 1) {
+        std::string id = "?";
+        auto it = attrs.find("id");
+        if (it != attrs.end()) id = it->second;
+        emit({TokenEvent::ERROR,
+              "forged <result id=\"" + id + "\"> ignored — runtime injects "
+              "real results; never emit <result> tags yourself",
+              nullptr,
+              {{"id", id}, {"reason", "forged_result"}}});
+    }
 }
 
 void Parser::handleContextFeed(const std::string& content,
@@ -639,6 +650,17 @@ std::shared_ptr<ParsedAction> Parser::buildAction(const std::string& json,
     auto nameIt = attrs.find("name");
     if (nameIt != attrs.end())
         action->name = nameIt->second;
+
+    // Reject actions with missing/empty name BEFORE dispatch — an empty name
+    // would otherwise surface as a cryptic "tool not available: " and stall
+    // the loop while the model keeps retrying the same malformed tag.
+    if (action->name.empty()) {
+        action->params["__protocol_error"] =
+            "action missing name attribute — every <action> needs "
+            "type=\"tool\" name=\"ACTUAL_TOOL\" id=\"unique\">BODY</action>";
+        action->content.clear();
+        return action;
+    }
 
     // ID
     auto idIt = attrs.find("id");
@@ -708,6 +730,44 @@ std::shared_ptr<ParsedAction> Parser::buildAction(const std::string& json,
         return action;
     }
 
+    // Helper: extract <param name="k">v</param> blocks into a Json::Value.
+    auto xmlishParamsToJson = [](const std::string& s) -> Json::Value {
+        if (s.find("<param") == std::string::npos)
+            return Json::Value();
+        Json::Value out(Json::objectValue);
+        size_t pos = 0;
+        while (true) {
+            auto start = s.find("<param name=", pos);
+            if (start == std::string::npos) start = s.find("<param name='", pos);
+            if (start == std::string::npos) break;
+            char q = s[start + 12] == '"' ? '"' : '\'';
+            auto nameEnd = s.find(q, start + 13);
+            if (nameEnd == std::string::npos) break;
+            std::string key = s.substr(start + 13, nameEnd - start - 13);
+            auto gt = s.find('>', nameEnd);
+            if (gt == std::string::npos) break;
+            auto valEnd = s.find("</param>", gt + 1);
+            if (valEnd == std::string::npos) break;
+            std::string val = s.substr(gt + 1, valEnd - gt - 1);
+            // Trim
+            auto trim = [](std::string& str) {
+                while (!str.empty() &&
+                       (str.front() == ' ' || str.front() == '\n' ||
+                        str.front() == '\r' || str.front() == '\t'))
+                    str.erase(0, 1);
+                while (!str.empty() &&
+                       (str.back() == ' ' || str.back() == '\n' ||
+                        str.back() == '\r' || str.back() == '\t'))
+                    str.pop_back();
+            };
+            trim(key);
+            trim(val);
+            out[key] = val;
+            pos = valEnd + 8;
+        }
+        return out.empty() ? Json::Value() : out;
+    };
+
     if (looksLikeJson(cleaned)) {
         Json::Value params;
         Json::CharReaderBuilder reader;
@@ -715,8 +775,29 @@ std::shared_ptr<ParsedAction> Parser::buildAction(const std::string& json,
         std::istringstream ss(cleaned);
         if (!Json::parseFromStream(reader, ss, &params, &errs)) {
             // Mark for protocol_error at execute — keep id/name for the result tag.
+            // Include a snippet around the failure column so the model can
+            // SEE what broke instead of blind-retrying the same long body.
+            std::string detail = errs.empty() ? "invalid JSON" : errs;
+            // jsoncpp reports "Line L, Column C\n ..." — extract column if present.
+            size_t colPos = detail.find("Column ");
+            if (colPos != std::string::npos) {
+                size_t start = detail.find_first_of("0123456789", colPos + 7);
+                size_t end = detail.find_first_not_of("0123456789", start);
+                if (start != std::string::npos) {
+                    int col = std::atoi(detail.substr(start, end - start).c_str());
+                    int lo = std::max(0, col - 40);
+                    int hi = std::min(static_cast<int>(cleaned.size()), col + 40);
+                    if (col > 0 && lo < hi) {
+                        std::string snip = cleaned.substr(static_cast<size_t>(lo),
+                                                          static_cast<size_t>(hi - lo));
+                        for (auto& ch : snip)
+                            if (ch == '\n' || ch == '\r') ch = ' ';
+                        detail += " near: …" + snip + "…";
+                    }
+                }
+            }
             action->params["__protocol_error"] =
-                "invalid JSON action body" + (errs.empty() ? "" : (": " + errs));
+                "invalid JSON action body: " + detail;
             action->content.clear();
             return action;
         }
@@ -728,8 +809,19 @@ std::shared_ptr<ParsedAction> Parser::buildAction(const std::string& json,
             }
         }
     } else {
-        // Plain text body (agent instructions, text-mode tools).
-        action->content = json;
+        // XML <params> block? Extract into params so the model never gets a
+        // silent param-drop → confusing "X is required" → retry loop.
+        Json::Value xmlParams = xmlishParamsToJson(cleaned);
+        if (!xmlParams.isNull()) {
+            action->params = xmlParams;
+            for (const auto& key : attrParams.getMemberNames()) {
+                if (!action->params.isMember(key))
+                    action->params[key] = attrParams[key];
+            }
+        } else {
+            // Plain text body (agent instructions, text-mode tools).
+            action->content = json;
+        }
     }
 
     return action;

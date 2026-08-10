@@ -2,6 +2,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <unistd.h>
 
@@ -186,7 +187,8 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
     }
 
     // ── Sandbox validation (BT04, SB07) — runs FIRST so meta-tools and
-    //    context_pin/peek/unpin can't bypass the policy.
+    //    context_pin/peek/unpin can't bypass the policy. Guest bind paths are
+    //    rewritten to host paths so process-mode binds behave like mounts.
     if (sandboxPolicy_.enabled) {
         Json::StreamWriterBuilder w;
         w["indentation"] = "";
@@ -197,6 +199,17 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
             err["success"] = false;
             err["error"] = blockReason;
             return err;
+        }
+        std::string rewritten = sandboxPolicy_.rewritePath(normalized.name, paramsStr);
+        if (rewritten != paramsStr) {
+            Json::CharReaderBuilder rb;
+            std::string errs;
+            std::unique_ptr<Json::CharReader> reader(rb.newCharReader());
+            Json::Value rewrittenParams;
+            if (reader->parse(rewritten.data(), rewritten.data() + rewritten.size(),
+                              &rewrittenParams, &errs)) {
+                normalized.params = rewrittenParams;
+            }
         }
     }
 
@@ -288,7 +301,19 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
 
     Json::Value err;
     err["success"] = false;
-    err["error"] = "tool not available: " + normalized.name;
+    // Diagnostic: catch the common type/name swap where the model emits
+    //   <action type="grep" name="t5">  (type is a tool name, name is an id)
+    // and guide the correct form: type="tool" name="grep".
+    std::string msg = "tool not available: " + normalized.name;
+    if (normalized.name.rfind("t", 0) == 0 ||
+        normalized.name.find('_') != std::string::npos ||
+        normalized.name.find('-') != std::string::npos) {
+        // Likely an id landed in name= — suggest the real shape.
+        msg += " — looks like an id or a type/name swap. Correct form: "
+               "<action type=\"tool\" name=\"ACTUAL_TOOL\" "
+               "id=\"unique\">BODY</action>";
+    }
+    err["error"] = msg;
     return err;
 }
 

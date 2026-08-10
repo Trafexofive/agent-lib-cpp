@@ -211,20 +211,31 @@ inline std::string stripAttrDebris(const std::string& raw) {
     return out;
 }
 
+// Collapse runs of spaces/tabs; preserve newlines (paragraph structure for UI).
+// Old behavior flattened \n → ' ' which made long thoughts one mega-line and
+// interacted badly with truncate + wrap (looked like mashed/overlapping text).
 inline void collapseWs(std::string& s) {
     std::string out;
     out.reserve(s.size());
-    bool prevWs = true;  // trim leading
+    bool prevSpace = true;  // trim leading spaces/tabs on each line
     for (char c : s) {
-        if (isWs(c)) {
-            if (!prevWs) out.push_back(' ');
-            prevWs = true;
+        if (c == '\n') {
+            // trim trailing spaces on the line we just finished
+            while (!out.empty() && out.back() == ' ') out.pop_back();
+            out.push_back('\n');
+            prevSpace = true;  // trim indent-ish leading spaces after newline
+            continue;
+        }
+        if (c == '\r') continue;
+        if (c == ' ' || c == '\t') {
+            if (!prevSpace) out.push_back(' ');
+            prevSpace = true;
         } else {
             out.push_back(c);
-            prevWs = false;
+            prevSpace = false;
         }
     }
-    while (!out.empty() && out.back() == ' ') out.pop_back();
+    while (!out.empty() && (out.back() == ' ' || out.back() == '\n')) out.pop_back();
     s.swap(out);
 }
 

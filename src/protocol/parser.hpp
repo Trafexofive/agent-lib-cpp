@@ -168,6 +168,7 @@ class Parser {
     bool inThought_ = false;  // stream thought body as tokens arrive (same as response)
     size_t thoughtContentStart_ = 0;
     bool finalResponseSeen_ = false;  // true after first <response final="true">
+    int forgedResultCount_ = 0;       // LLM-emitted <result> tags ignored by runtime
     std::map<std::string, std::string>
         responseAttrs_;  // attrs from opening <response>, applied when streaming closes
     // At most one incomplete action while its body streams — stable id for UI card.
