@@ -56,6 +56,9 @@ class ILlmProvider {
     }
     virtual void setQuietLogs(bool) {
     }
+    // Manifest-configurable stream stall cutoff (runtime.throttling). 0 = off.
+    virtual void setStreamStallTimeoutSec(int /*sec*/) {
+    }
 
     // Getters
     virtual std::string getModel() const = 0;

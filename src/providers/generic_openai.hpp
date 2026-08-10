@@ -9,6 +9,7 @@
 #include <curl/curl.h>
 #include <json/json.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
@@ -207,6 +208,10 @@ class GenericOpenAIClient : public ILlmProvider {
     void setRetryCallback(RetryCallback cb) override {
         retryCb_ = cb;
     }
+    // Manifest-configurable stream stall cutoff (runtime.throttling). 0 = off.
+    void setStreamStallTimeoutSec(int sec) override {
+        streamStallTimeoutSec_ = sec;
+    }
     std::string getModel() const override {
         return model_;
     }
@@ -239,6 +244,7 @@ class GenericOpenAIClient : public ILlmProvider {
     double presencePenalty_ = 0.0;
     double frequencyPenalty_ = 0.0;
     int maxTokens_ = 8192;
+    int streamStallTimeoutSec_ = 0;  // runtime.throttling; 0 = off
 
     // HTTP
     Json::Value buildRequestBody(const ChatMessages& msgs, bool stream) const;
@@ -260,6 +266,14 @@ class GenericOpenAIClient : public ILlmProvider {
         bool anyContent = false;   // true if any non-thinking token reached cb
         std::string finishReason;  // last finish_reason seen in SSE deltas
         long httpStatus = 0;       // HTTP status of the streaming response
+        // Streaming stall detection: last time a chunk arrived. A model that is
+        // connected but dribbles zero bytes for a long window is stalled (the
+        // "spinner spins forever" hang). Free models legitimately pause seconds
+        // between tokens, so the cutoff is generous and manifest-configurable.
+        std::chrono::steady_clock::time_point lastChunk{std::chrono::steady_clock::now()};
+        // stallTimeoutSec: 0 = no progress-based cutoff (LOW_SPEED governs);
+        // >0 = abort if zero bytes arrive for this many seconds.
+        int stallTimeoutSec = 0;
     };
 
     mutable StreamStats lastStats_;

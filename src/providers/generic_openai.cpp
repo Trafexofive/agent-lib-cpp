@@ -330,6 +330,7 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
                       /*anyContent=*/false,
                       /*finishReason=*/{},
                       /*httpStatus=*/0};
+        ctx.stallTimeoutSec = streamStallTimeoutSec_;
 
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -360,7 +361,7 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, streamCb);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
             curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, abortCheckCb);
-            curl_easy_setopt(curl, CURLOPT_XFERINFODATA, nullptr);
+            curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
             curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
             // Stream timeouts — free/slow models (opencode flash, etc.) routinely
             // pause >4s between tokens and run well past 30s per generation.
@@ -474,6 +475,23 @@ size_t GenericOpenAIClient::writeCb(void* ptr, size_t sz, size_t nmemb, void* us
 size_t GenericOpenAIClient::streamCb(void* ptr, size_t sz, size_t nmemb, void* userdata) {
     auto* ctx = static_cast<StreamCtx*>(userdata);
     size_t total = sz * nmemb;
+
+    // Progress-based stall guard: if the stream sends NO bytes for a long
+    // window, abort (return 0) so the harness can surface a stall instead of
+    // spinning forever. This catches the "connected but frozen" hang even
+    // though LOW_SPEED (90s@1B) lets a 1-byte trickle pass forever. Free models
+    // that pause a few seconds between tokens are untouched — only TRUE silence
+    // (zero bytes past the cutoff) aborts. Ctrl-C still works via abortCheckCb.
+    auto now = std::chrono::steady_clock::now();
+    if (ctx->stallTimeoutSec > 0 &&
+        now - ctx->lastChunk > std::chrono::seconds(ctx->stallTimeoutSec)) {
+        // Abort the transfer (return 0). The next progress tick also checks
+        // this (abortCheckCb) so a lone stall with no new data aborts too.
+        ctx->finishReason = "stream_stall";
+        return 0;  // libcurl aborts the transfer on 0 return from WRITEFUNCTION
+    }
+    ctx->lastChunk = now;
+
     std::string chunk(static_cast<char*>(ptr), total);
     // If chunk looks like a JSON error (not SSE format), save it directly
     if (chunk.size() > 2 && chunk[0] == '{') {
@@ -696,9 +714,22 @@ size_t GenericOpenAIClient::streamCb(void* ptr, size_t sz, size_t nmemb, void* u
     return total;
 }
 
-// ── CURL progress callback: abort transfer when g_running becomes false ──
-int GenericOpenAIClient::abortCheckCb(void*, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
-    return g_running ? 0 : 1;  // return 1 to abort
+// ── CURL progress callback: abort transfer when g_running becomes false, or
+// when a manifest-configured stream stall (no bytes for N seconds) elapses. ──
+int GenericOpenAIClient::abortCheckCb(void* clientp, curl_off_t, curl_off_t, curl_off_t,
+                                      curl_off_t) {
+    if (!g_running)
+        return 1;  // abort
+    if (clientp) {
+        auto* ctx = static_cast<StreamCtx*>(clientp);
+        if (ctx->stallTimeoutSec > 0 &&
+            std::chrono::steady_clock::now() - ctx->lastChunk >
+                std::chrono::seconds(ctx->stallTimeoutSec)) {
+            ctx->finishReason = "stream_stall";
+            return 1;  // abort — stream silent past cutoff
+        }
+    }
+    return 0;
 }
 
 // ---------------------------------------------------------------------------

@@ -61,6 +61,7 @@ Agent::Agent(AgentConfig cfg, LlmProviderPtr provider)
     provider_->setTopK(config_.topK);
     provider_->setPresencePenalty(config_.presencePenalty);
     provider_->setFrequencyPenalty(config_.frequencyPenalty);
+    provider_->setStreamStallTimeoutSec(config_.streamStallTimeoutSec);
 
     for (auto &[k, v] : config_.environment)
         env_[k] = v;
