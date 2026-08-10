@@ -267,6 +267,67 @@ class ManifestYaml {
 
                 kv.value = trimQuotes(rawValue);
 
+                // Y01c — multiline flow list `key:\n  [\n    a,\n    b\n  ]`
+                // (the network/security agents use this bracket style). Consume
+                // lines until the closing `]`, collecting comma-separated items.
+                if (rawValue.empty() || rawValue == "[") {
+                    size_t j = idx + 1;
+                    bool inMultilineList = false;
+                    std::vector<std::string> collect;
+                    std::string acc;
+                    auto flushAcc = [&]() {
+                        std::string e = trimWs(acc);
+                        if (!e.empty()) {
+                            auto entries = splitTopLevel(e, ',');
+                            for (auto& en : entries) {
+                                std::string val = trimQuotes(trimWs(en));
+                                if (!val.empty()) collect.push_back(val);
+                            }
+                        }
+                        acc.clear();
+                    };
+                    while (j < lines.size()) {
+                        int jIndent = 0;
+                        while (jIndent < (int)lines[j].size() && lines[j][jIndent] == ' ')
+                            jIndent++;
+                        if (jIndent <= lineIndent && j > idx)
+                            break;  // dedent past key
+                        std::string content = lines[j].substr(jIndent);
+                        std::string t = trimWs(content);
+                        if (!inMultilineList && t == "[") { inMultilineList = true; ++j; continue; }
+                        if (inMultilineList) {
+                            if (t == "]" || t.rfind("]", 0) == 0) {
+                                // trailing content after ] (rare) — flush remaining
+                                std::string tail = t;
+                                if (tail[0] == ']') tail = tail.substr(1);
+                                tail = trimWs(tail);
+                                if (!tail.empty()) { if (!acc.empty()) acc += ','; acc += tail; }
+                                flushAcc();
+                                inMultilineList = false;
+                                ++j;
+                                break;
+                            }
+                            if (!acc.empty()) acc += ',';
+                            acc += t;
+                        } else {
+                            break;
+                        }
+                        ++j;
+                    }
+                    if (inMultilineList || !collect.empty()) {
+                        // Even if unclosed, keep what we collected; fall through
+                        // won't re-walk these lines.
+                        for (auto& c : collect) {
+                            Node child;
+                            child.value = c;
+                            kv.children.push_back(child);
+                        }
+                        idx = j;
+                        parent.children.push_back(kv);
+                        continue;
+                    }
+                }
+
                 if (idx + 1 < lines.size()) {
                     int nextIndent = 0;
                     while (nextIndent < (int)lines[idx + 1].size() &&
