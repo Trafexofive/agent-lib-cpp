@@ -861,8 +861,26 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
     if (!executor_)
         return;
 
+    // Repeated identical failure guard — a collapsing free model re-emits the
+    // same broken action (same id, keeps failing). Count per id; past a small
+    // threshold inject a hard corrective <thought> so the loop stops instead of
+    // streaming KBs indefinitely.
+    auto trackRepeatFailure = [&]() {
+        int n = ++actionFailCount_[action->id];
+        if (n >= 3) {
+            emit({TokenEvent::THOUGHT,
+                  "System: action '" + action->id +
+                      "' has failed multiple times with the same body. STOP "
+                      "re-emitting it — fix the action (new unique id, valid "
+                      "JSON, correct params) or move on. Repeated identical "
+                      "failed actions burn budget.",
+                  nullptr, {}});
+        }
+    };
+
     // depends_on is only legal with sync (CANON §4).
     if (!action->dependsOn.empty() && action->mode != ExecutionMode::SYNC) {
+        trackRepeatFailure();
         Json::Value err;
         err["success"] = false;
         err["protocol_error"] = true;
@@ -885,6 +903,7 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
 
     // Invalid JSON body marked at parse time — do not execute.
     if (action->params.isObject() && action->params.isMember("__protocol_error")) {
+        trackRepeatFailure();
         Json::Value err;
         err["success"] = false;
         err["protocol_error"] = true;
@@ -922,6 +941,7 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
         results_[a->id] = result;
         completed_[a->id] = true;
         retainedResults_[a->id] = result;  // survives clearResults for replay
+        actionFailCount_.erase(a->id);     // success clears repeat-fail counter
 
         emit({TokenEvent::ACTION_RESULT,
               Json::writeString(Json::StreamWriterBuilder(), result),
@@ -1109,6 +1129,7 @@ void Parser::reset() {
     thoughtContentStart_ = 0;
     usedActionIds_.clear();
     retainedResults_.clear();
+    actionFailCount_.clear();
     responseAttrs_.clear();
     hasProvisionalAction_ = false;
     provisionalActionId_.clear();

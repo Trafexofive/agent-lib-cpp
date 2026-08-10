@@ -185,6 +185,10 @@ class Parser {
     // that re-emits an already-run action id gets an idempotent replay instead
     // of a duplicate-id error (prevents a non-recovering stall).
     std::map<std::string, Json::Value> retainedResults_;
+    // Repeated failing action count per (id) — after N identical failures the
+    // parser injects a hard corrective <thought> so a collapsing free model
+    // stops re-emitting the same broken body (the "KBs rising, frozen" loop).
+    std::map<std::string, int> actionFailCount_;
 
     // Context feeds (accumulated for prompt injection)
     std::vector<std::string> contextFeeds_;
