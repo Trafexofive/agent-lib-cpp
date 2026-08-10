@@ -125,6 +125,147 @@ inline std::string expandDynamicChatCommand(const DynamicChatCommand& command,
     return body;
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Composer command batching — /skill:x /prompt:y <user text> in one prompt.
+//
+// Lets the operator load several skills/prompts into a single submit, each
+// tag applying the trailing user text as its $ARGUMENTS, then threads a
+// plain instruction alongside. This is the prompt-box generalization of the
+// single /foo:skill flow: a batch of command tags + one user ask.
+// ────────────────────────────────────────────────────────────────────────
+struct ComposerBatchToken {
+    const DynamicChatCommand* command = nullptr;  // resolved (null if unknown)
+    std::string name;       // e.g. "/manifest:skill" (as typed / canonical)
+    std::string kind;       // "skill" | "prompt"
+    std::string arguments;  // text that followed this tag (trimmed)
+    std::string expanded;   // command.body with $ARGUMENTS substituted
+    bool resolved = false;
+};
+
+struct ComposerBatch {
+    std::vector<ComposerBatchToken> commands;  // in input order
+    std::string plainText;   // non-tag user text (the core instruction)
+    bool anyCommand = false;
+    bool allResolved = true;
+
+    bool empty() const { return commands.empty() && plainText.empty(); }
+};
+
+// True if `tok` looks like a /name:kind command tag (e.g. "/manifest:skill",
+// "/review:prompt", "/bare" — bare /x matches any kind).
+inline bool looksLikeCommandTag(const std::string& tok) {
+    if (tok.size() < 2 || tok[0] != '/') return false;
+    if (tok.find(' ') != std::string::npos) return false;
+    // A /-prefixed token with no whitespace is a command candidate. Allow
+    // '/name:skill' and bare '/name' (resolved to whichever kind exists).
+    return true;
+}
+
+// Parse a composer input into a batch of command tags + trailing plain text.
+// Each '/name:kind' (or bare '/name') token captures the text up to the next
+// tag as its arguments. The remaining non-tag text becomes plainText.
+inline ComposerBatch parseComposerBatch(
+    const std::string& input,
+    const std::vector<DynamicChatCommand>& commands) {
+    ComposerBatch batch;
+    if (trimCommandText(input).empty()) return batch;
+
+    auto resolve = [&](const std::string& tag) -> const DynamicChatCommand* {
+        size_t colon = tag.find(':');
+        if (colon == std::string::npos)
+            return findDynamicChatCommand(tag, commands);
+        std::string left = tag.substr(1, colon - 1);  // before ':' (after '/')
+        std::string right = tag.substr(colon + 1);   // after ':'
+        // User writes /kind:name (e.g. /skill:manifest); canonical is /name:kind
+        // (e.g. /manifest:skill). Try both orientations.
+        if (const auto* c = findDynamicChatCommand("/" + right + ":" + left, commands))
+            return c;   // /kind:name → /name:kind
+        if (const auto* c = findDynamicChatCommand("/" + left + ":" + right, commands))
+            return c;   // canonical /name:kind direct
+        if (const auto* c = findDynamicChatCommand("/" + right, commands))
+            return c;   // bare /name fallback
+        return nullptr;
+    };
+
+    // Tokenize: split on whitespace but keep /...:kind tags as atomic tokens;
+    // everything between tags belongs to the preceding tag's args, unless no
+    // tag has started yet (then it's leading plain text).
+    std::string currentPlain;
+    ComposerBatchToken* cur = nullptr;
+
+    std::istringstream ss(input);
+    std::string tok;
+    std::vector<std::string> tokens;
+    while (ss >> tok) tokens.push_back(tok);
+
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        const std::string& tok = tokens[i];
+        if (looksLikeCommandTag(tok)) {
+            ComposerBatchToken t;
+            t.name = tok;
+            size_t colon = tok.find(':');
+            t.kind = colon == std::string::npos ? "" : tok.substr(colon + 1);
+            // Resolve across both /kind:name and /name:kind orientations.
+            if (const auto* c = resolve(tok)) {
+                t.command = c;
+                t.resolved = true;
+                t.kind = c->kind;
+                t.name = c->name;  // canonical
+            }
+            if (t.kind.empty() && t.command) t.kind = t.command->kind;
+            if (!t.resolved) batch.allResolved = false;
+            batch.anyCommand = true;
+            batch.commands.push_back(std::move(t));
+            cur = &batch.commands.back();
+        } else {
+            // Free text between two tags → that tag's inline args. Free text
+            // after the LAST tag → the primary plain ask (threaded last), not
+            // swallowed by the preceding command. A single lone tag keeps its
+            // trailing text as $ARGUMENTS for backward compatibility.
+            const bool afterLastTag = !batch.commands.empty();
+            const bool moreTagsAhead =
+                [&]() {
+                    for (size_t j = i + 1; j < tokens.size(); ++j)
+                        if (looksLikeCommandTag(tokens[j])) return true;
+                    return false;
+                }();
+            if (afterLastTag && !moreTagsAhead && batch.commands.size() > 1) {
+                if (!currentPlain.empty()) currentPlain += ' ';
+                currentPlain += tok;
+            } else if (cur) {
+                if (!cur->arguments.empty()) cur->arguments += ' ';
+                cur->arguments += tok;
+            } else {
+                if (!currentPlain.empty()) currentPlain += ' ';
+                currentPlain += tok;
+            }
+        }
+    }
+    for (auto& t : batch.commands)
+        if (t.resolved && t.command)
+            t.expanded = expandDynamicChatCommand(*t.command, trimCommandText(t.arguments));
+    batch.plainText = trimCommandText(currentPlain);
+    return batch;
+}
+
+// Compose the batch into a single agent-facing prompt: command bodies first
+// (each expanded with its args), then the plain user instruction.
+inline std::string composeBatchPrompt(const ComposerBatch& batch) {
+    std::ostringstream out;
+    for (const auto& t : batch.commands) {
+        if (!t.expanded.empty()) {
+            if (out.tellp() > 0) out << "\n\n";
+            out << t.expanded;
+        }
+    }
+    std::string plain = trimCommandText(batch.plainText);
+    if (!plain.empty()) {
+        if (out.tellp() > 0) out << "\n\n";
+        out << plain;
+    }
+    return out.str();
+}
+
 // userFacing: omit debug cmds unless Settings · DEV MODE (or CORTEX_DEV_MODE).
 inline std::vector<std::string> completeChatCommand(const std::string& prefix,
                                                     bool devMode = false) {

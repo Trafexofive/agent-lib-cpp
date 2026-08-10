@@ -433,6 +433,75 @@ void test_slash_tab_completion_lcp_and_stop_command() {
     check(cancel.handled && cancel.stopLoop, "/cancel aliases stopLoop");
 }
 
+// ── Composer command batching ──────────────────────────────────────────
+// Hermetic: build synthetic skills/prompts, then verify parse/compose.
+static chat::DynamicChatCommand makeDynamic(const std::string& name,
+                                            const std::string& kind,
+                                            const std::string& body) {
+    chat::DynamicChatCommand c;
+    c.name = "/" + name + ":" + kind;
+    c.kind = kind;
+    c.body = body;
+    return c;
+}
+
+void test_composer_batch_parse_and_compose() {
+    using chat::DynamicChatCommand;
+    std::vector<DynamicChatCommand> cmds;
+    cmds.push_back(makeDynamic("manifest", "skill",
+                               "MANIFEST-SKILL-BODY\n$ARGUMENTS"));
+    cmds.push_back(makeDynamic("review", "prompt",
+                               "REVIEW-PROMPT-BODY\nargs={{args}}"));
+
+    // User writes /kind:name (e.g. /skill:manifest); canonical is /name:kind.
+    auto b1 = chat::parseComposerBatch("/skill:manifest /prompt:review audit this repo", cmds);
+    check(b1.anyCommand && b1.commands.size() == 2, "batch sees 2 tags");
+    check(b1.allResolved, "both tags resolved across /kind:name orientation");
+    check(b1.commands[0].kind == "skill" && b1.commands[1].kind == "prompt",
+          "tag kinds resolved from canonical");
+    check(b1.commands[0].name == "/manifest:skill" &&
+          b1.commands[1].name == "/review:prompt",
+          "tags canonicalized to /name:kind");
+    // Trailing text after the last tag (multi-tag) becomes the plain ask.
+    check(b1.plainText == "audit this repo", "trailing text threads as plain ask");
+    check(b1.commands[0].expanded.find("MANIFEST-SKILL-BODY") != std::string::npos,
+          "skill body expanded");
+    check(b1.commands[1].expanded.find("REVIEW-PROMPT-BODY") != std::string::npos,
+          "prompt body expanded");
+
+    // A single tag keeps trailing text as its $ARGUMENTS (backward compatible).
+    auto b2 = chat::parseComposerBatch("/skill:manifest  \n focus the engine", cmds);
+    check(b2.commands.size() == 1, "single skill tag");
+    check(b2.plainText.empty(), "single tag: no plain ask split");
+    check(b2.commands[0].expanded.find("focus the engine") != std::string::npos,
+          "single-tag trailing text is its args");
+
+    // Unknown tag flagged unresolved but doesn't crash.
+    auto b3 = chat::parseComposerBatch("/skill:nope hi", cmds);
+    check(b3.anyCommand && b3.commands.size() == 1, "unknown tag still a command");
+    check(!b3.allResolved, "unknown tag marks allResolved false");
+    check(!b3.commands[0].resolved, "the unknown command is unresolved");
+
+    // composeBatchPrompt joins bodies in order, then the plain ask.
+    std::string prompt = chat::composeBatchPrompt(b1);
+    check(prompt.find("MANIFEST-SKILL-BODY") < prompt.find("REVIEW-PROMPT-BODY"),
+          "compose keeps command order");
+    check(prompt.find("audit this repo") != std::string::npos,
+          "compose includes the plain ask");
+    check(prompt.find("REVIEW-PROMPT-BODY") < prompt.find("audit this repo"),
+          "plain ask composed after command bodies");
+
+    // Empty input → empty batch.
+    auto b0 = chat::parseComposerBatch("   ", cmds);
+    check(b0.empty(), "whitespace-only input yields empty batch");
+
+    // Canonical /name:kind also parses.
+    auto b4 = chat::parseComposerBatch("/manifest:skill /review:prompt go", cmds);
+    check(b4.commands.size() == 2 && b4.allResolved,
+          "canonical /name:kind parses too");
+    check(b4.plainText == "go", "canonical form threads plain ask");
+}
+
 void test_chat_ask_dialog_channel() {
     Json::Value params;
     params["chainTitle"] = "Choose target";
@@ -1044,6 +1113,7 @@ int main() {
     test_dashboard_session_controller();
     test_chat_persistence();
     test_slash_tab_completion_lcp_and_stop_command();
+    test_composer_batch_parse_and_compose();
     test_chat_ask_dialog_channel();
     test_chat_commands();
     test_chat_prompt_history();

@@ -1183,6 +1183,60 @@ class AgentScene final : public BaseScene {
         // History: keep slash (+ args). No consecutive exact duplicate.
         model_->pushPromptHistory(chat::trimCommandText(command));
 
+        // ── Composer command batching ────────────────────────────────
+        // A prompt-box input may carry several /skill:x /prompt:y tags plus
+        // free-text. Resolve each tag to its expanded body and submit the
+        // composed prompt directly (unlike a single control slash which sets
+        // composerReplacement for editing). Guards: skip batching for pure
+        // control commands (quit/stop/theme/...) — those stay single-shot.
+        if (chat::looksLikeCommandTag(command)) {
+            auto dynamicCommands = chat::discoverDynamicChatCommands();
+            auto batch = chat::parseComposerBatch(command, dynamicCommands);
+            if (batch.anyCommand && batch.commands.size() > 0) {
+                // TRUE batching intent = multiple tags, OR a single tag PLUS
+                // free text. A lone '/skill:x' (no plain text) falls through to
+                // the classic single-command path (edit body in composer first).
+                const bool isPureSingle =
+                    batch.commands.size() == 1 && batch.plainText.empty();
+                const bool batchIntent =
+                    !isPureSingle &&
+                    !(batch.commands.size() == 1 && !batch.commands[0].command);
+                if (batchIntent) {
+                    // Unknown tags → report, don't silently drop.
+                    if (!batch.allResolved) {
+                        std::vector<std::string> lines;
+                        for (const auto& t : batch.commands)
+                            if (!t.resolved)
+                                lines.push_back("unknown command: " + t.name);
+                        lines.push_back("use /help for available commands");
+                        model_->appendNotice("batch", lines);
+                        model_->composer.value.clear();
+                        model_->composer.cursor = 0;
+                        model_->rebuildViews();
+                        return true;
+                    }
+                    // Compose and submit as a real prompt if any text/expanded body.
+                    std::string prompt = chat::composeBatchPrompt(batch);
+                    if (!chat::trimCommandText(prompt).empty()) {
+                        model_->composer.value = prompt;
+                        model_->composer.cursor =
+                            static_cast<int>(model_->composer.value.size());
+                        model_->submitComposer();
+                        // submitComposer consumed composer.value; surface the
+                        // resolved tags so the operator sees what got loaded.
+                        if (batch.commands.size() > 1 || !batch.plainText.empty()) {
+                            std::string summary;
+                            for (size_t i = 0; i < batch.commands.size(); ++i)
+                                summary += (i ? " " : "") + batch.commands[i].name;
+                            model_->appendNotice("batch",
+                                                 {"loaded " + summary});
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+
         chat::ChatCommandContext ctx;
         ctx.manifestPath = cfg_.manifestPath;
         ctx.harnessPath = cfg_.harnessPath;
