@@ -3,23 +3,40 @@
 // Path: $XDG_CONFIG_HOME/cortex-mk3/ui.json  or  ~/.config/cortex-mk3/ui.json
 
 #include <cstdlib>
+#include <mutex>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "src/ui/chat/chat_footer.hpp"
 #include "src/ui/gfx/field_raster.hpp"
+#include "src/ui/model/timeline_codec.hpp"
 #include "src/ui/theme/cortex_theme.hpp"
 
 namespace cortex::mk3::ui {
 
 // Chat-side prefs live on ShellModel — keep a shadow copy so load works
 // before the model exists, then apply.
+// Camera snapshot for one workflow manifest (see UiPrefState::wfCams).
+struct WfCamPref {
+    std::string path;
+    int zoomX100 = 100;  // zoom * 100
+    int x = 0;
+    int y = 0;
+    int focus = 0;
+};
+
 struct UiPrefState {
     bool showThoughts = true;
     bool truncateBodies = true;
     bool showRaw = false;
+    // Action/result body paint: "json" | "yaml" | "raw"
+    std::string inputBodyFmt = "json";
+    std::string outputBodyFmt = "json";
+    // 0=live 1=session 2=engine
+    int chatFooterPane = 0;
     // Chat-side field underlay. Inherits shared gfx::activeFieldIndex; this
     // is the on/off gate for the chat surface specifically.
     bool chatFieldEnabled = false;
@@ -45,6 +62,14 @@ struct UiPrefState {
     // minted under the current CWD (per-project view). When ON, all
     // sessions across projects are shown (recent-select + resume).
     bool globalSessions = false;
+    // Operator dev mode (Settings toggle). Gates debug slash commands
+    // (/export-dump, /dump-prompt, /prompts) and does not require agent.yml
+    // runtime.dev_mode or CORTEX_DEV_MODE env.
+    bool uiDevMode = false;
+    // Per-workflow canvas camera memory (bounded, most-recent-first). Lets the
+    // Workflow page reopen at the zoom/pan you left it at — no more resetting
+    // to the overview every time you jump in and out.
+    std::vector<WfCamPref> wfCams;
 };
 
 // Expand ~ to $HOME on the given path. Empty / already-absolute / no-~
@@ -82,8 +107,40 @@ inline void applyLaunchCwd(Model& model) {
 }
 
 inline UiPrefState& uiPrefShadow() {
-    static UiPrefState s;
-    return s;
+    // Heap-allocated on purpose: its destructor is never invoked at process
+    // exit, so the atexit prefs flush (which reads this live, incl. the
+    // wfCams vector) never touches already-destroyed members.
+    static UiPrefState* s = new UiPrefState();
+    return *s;
+}
+
+// Remember a workflow camera in the in-memory table (cheap; called per draw).
+inline void wfCamRemember(const std::string& path, float zoom, float x, float y, int focus) {
+    if (path.empty()) return;
+    auto& v = uiPrefShadow().wfCams;
+    auto it = std::find_if(v.begin(), v.end(),
+                           [&](const WfCamPref& c) { return c.path == path; });
+    WfCamPref c;
+    c.path = path;
+    c.zoomX100 = static_cast<int>(zoom * 100.f + 0.5f);
+    c.x = static_cast<int>(x);
+    c.y = static_cast<int>(y);
+    c.focus = focus;
+    if (it != v.end()) {
+        *it = c;
+        std::rotate(v.begin(), it, it + 1);  // most-recent-first
+    } else {
+        v.insert(v.begin(), c);
+        if (v.size() > 16) v.resize(16);
+    }
+}
+
+// Look up a remembered camera for a workflow path (nullptr if never visited).
+inline const WfCamPref* wfCamFind(const std::string& path) {
+    if (path.empty()) return nullptr;
+    for (const auto& c : uiPrefShadow().wfCams)
+        if (c.path == path) return &c;
+    return nullptr;
 }
 
 inline std::string uiPrefsPath() {
@@ -151,7 +208,27 @@ inline int jsonGetInt(const std::string& body, const std::string& key, int fallb
     }
 }
 
+inline void saveUiPrefs();  // fwd (defined below)
+inline std::string& cachedUiThemeName();
+inline std::string& cachedUiShaderId();
+inline std::string serializeUiPrefs(const std::string&, const std::string&);
+inline void writeUiPrefsFile(const std::string&);
+
+// Flush UI prefs on process exit (normal return or SIGINT) so the workflow
+// camera memory survives. Registered once per process, idemPOTENT.
+inline void installUiPrefsFlush() {
+    static std::once_flag once;
+    std::call_once(once, []() {
+        // At exit the gfx/anim statics may already be torn down, so build from
+        // the cached names + the (heap, never-destroyed) prefs shadow only.
+        std::atexit([]() {
+            writeUiPrefsFile(serializeUiPrefs(cachedUiThemeName(), cachedUiShaderId()));
+        });
+    });
+}
+
 inline void loadUiPrefs() {
+    installUiPrefsFlush();  // ensure prefs (incl. workflow cams) flush on exit
     std::ifstream in(uiPrefsPath());
     if (!in) return;
     std::ostringstream ss;
@@ -179,6 +256,14 @@ inline void loadUiPrefs() {
     shad.showThoughts = jsonGetBool(body, "show_thoughts", true);
     shad.truncateBodies = jsonGetBool(body, "truncate_bodies", true);
     shad.showRaw = jsonGetBool(body, "show_raw", false);
+    {
+        std::string in = jsonGetString(body, "input_body_fmt");
+        if (in.empty()) in = jsonGetString(body, "action_body_mode");
+        if (!in.empty()) shad.inputBodyFmt = in;
+        std::string out = jsonGetString(body, "output_body_fmt");
+        if (!out.empty()) shad.outputBodyFmt = out;
+        shad.chatFooterPane = jsonGetInt(body, "chat_footer_pane", 0);
+    }
     shad.chatFieldEnabled = jsonGetBool(body, "chat_field_enabled", false);
     shad.zenMode = jsonGetBool(body, "zen_mode", false);
     shad.navPillEnabled = jsonGetBool(body, "nav_pill_enabled", true);
@@ -190,6 +275,43 @@ inline void loadUiPrefs() {
     shad.rememberLastCwd = jsonGetBool(body, "remember_last_cwd", false);
     shad.keepLiveOnCwdChange = jsonGetBool(body, "keep_live_on_cwd_change", false);
     shad.globalSessions = jsonGetBool(body, "global_sessions", false);
+    shad.uiDevMode = jsonGetBool(body, "ui_dev_mode", false);
+    // wf_cams: entries split by 0x1e, fields by 0x1f (control chars never
+    // appear in manifest paths). path|zoomX100|x|y|focus.
+    {
+        shad.wfCams.clear();
+        std::string raw = jsonGetString(body, "wf_cams");
+        size_t e0 = 0;
+        while (e0 <= raw.size()) {
+            size_t e1 = raw.find('\x1e', e0);
+            if (e1 == std::string::npos) e1 = raw.size();
+            std::string entry = raw.substr(e0, e1 - e0);
+            if (!entry.empty()) {
+                size_t f0 = 0;
+                std::vector<std::string> fields;
+                while (f0 <= entry.size()) {
+                    size_t f1 = entry.find('\x1f', f0);
+                    if (f1 == std::string::npos) f1 = entry.size();
+                    fields.push_back(entry.substr(f0, f1 - f0));
+                    if (f1 == entry.size()) break;
+                    f0 = f1 + 1;
+                }
+                if (fields.size() >= 5) {
+                    try {
+                        WfCamPref c;
+                        c.path = fields[0];
+                        c.zoomX100 = std::stoi(fields[1]);
+                        c.x = std::stoi(fields[2]);
+                        c.y = std::stoi(fields[3]);
+                        c.focus = std::stoi(fields[4]);
+                        if (shad.wfCams.size() < 16) shad.wfCams.push_back(c);
+                    } catch (...) {}
+                }
+            }
+            if (e1 == raw.size()) break;
+            e0 = e1 + 1;
+        }
+    }
 }
 
 // Apply shadow → live model (call after model construct / load).
@@ -199,6 +321,14 @@ inline void applyUiPrefsToModel(Model& model) {
     model.showThoughts = s.showThoughts;
     model.truncateBodies = s.truncateBodies;
     model.showRaw = s.showRaw;
+    model.actionBodyMode = bodyRenderModeFromName(s.inputBodyFmt);
+    model.resultBodyMode = bodyRenderModeFromName(s.outputBodyFmt);
+    {
+        int p = s.chatFooterPane;
+        if (p < 0) p = 0;
+        if (p > 2) p = 2;
+        model.chatFooterPane = static_cast<chat::ChatFooterPane>(p);
+    }
     model.chatFieldEnabled = s.chatFieldEnabled;
     model.zenMode = s.zenMode;
     model.navPillEnabled = s.navPillEnabled;
@@ -207,6 +337,7 @@ inline void applyUiPrefsToModel(Model& model) {
     model.rememberLastCwd = s.rememberLastCwd;
     model.keepLiveOnCwdChange = s.keepLiveOnCwdChange;
     model.globalSessions = s.globalSessions;
+    model.uiDevMode = s.uiDevMode;
 }
 
 template <typename Model>
@@ -215,6 +346,9 @@ inline void captureUiPrefsFromModel(const Model& model) {
     s.showThoughts = model.showThoughts;
     s.truncateBodies = model.truncateBodies;
     s.showRaw = model.showRaw;
+    s.inputBodyFmt = bodyRenderModeName(model.actionBodyMode);
+    s.outputBodyFmt = bodyRenderModeName(model.resultBodyMode);
+    s.chatFooterPane = static_cast<int>(model.chatFooterPane);
     s.chatFieldEnabled = model.chatFieldEnabled;
     s.zenMode = model.zenMode;
     s.navPillEnabled = model.navPillEnabled;
@@ -223,21 +357,34 @@ inline void captureUiPrefsFromModel(const Model& model) {
     s.rememberLastCwd = model.rememberLastCwd;
     s.keepLiveOnCwdChange = model.keepLiveOnCwdChange;
     s.globalSessions = model.globalSessions;
+    s.uiDevMode = model.uiDevMode;
 }
 
-inline void saveUiPrefs() {
-    std::string path = uiPrefsPath();
-    ensureParentDir(path);
-    std::ofstream out(path, std::ios::trunc);
-    if (!out) return;
+// Cached copies of the name-y gfx values, snapshotted during normal saves so
+// the atexit writer never touches a torn-down gfx/field static at process end.
+inline std::string& cachedUiThemeName() { static std::string s; return s; }
+inline std::string& cachedUiShaderId() { static std::string s; return s; }
+inline void refreshCachedUiNames() {
+    // Snapshot gfx/theme names while their statics are alive (normal saves),
+    // so the atexit writer can rebuild prefs without touching them.
+    cachedUiThemeName() = theme::name();
+    cachedUiShaderId() = gfx::activeFieldId();
+}
+
+inline std::string serializeUiPrefs(const std::string& themeName,
+                                    const std::string& shaderId) {
     const auto& s = uiPrefShadow();
-    out << "{\n"
-        << "  \"theme\": \"" << theme::name() << "\",\n"
-        << "  \"shader\": \"" << gfx::activeFieldId() << "\",\n"
+    std::ostringstream oss;
+    oss << "{\n"
+        << "  \"theme\": \"" << themeName << "\",\n"
+        << "  \"shader\": \"" << shaderId << "\",\n"
         << "  \"shader_enabled\": " << (gfx::fieldEnabled() ? "true" : "false") << ",\n"
         << "  \"show_thoughts\": " << (s.showThoughts ? "true" : "false") << ",\n"
         << "  \"truncate_bodies\": " << (s.truncateBodies ? "true" : "false") << ",\n"
         << "  \"show_raw\": " << (s.showRaw ? "true" : "false") << ",\n"
+        << "  \"input_body_fmt\": \"" << s.inputBodyFmt << "\",\n"
+        << "  \"output_body_fmt\": \"" << s.outputBodyFmt << "\",\n"
+        << "  \"chat_footer_pane\": " << s.chatFooterPane << ",\n"
         << "  \"chat_field_enabled\": " << (s.chatFieldEnabled ? "true" : "false") << ",\n"
         << "  \"zen_mode\": " << (s.zenMode ? "true" : "false") << ",\n"
         << "  \"nav_pill_enabled\": " << (s.navPillEnabled ? "true" : "false") << ",\n"
@@ -245,8 +392,31 @@ inline void saveUiPrefs() {
         << "  \"session_cwd\": \"" << s.sessionCwd << "\",\n"
         << "  \"remember_last_cwd\": " << (s.rememberLastCwd ? "true" : "false") << ",\n"
         << "  \"keep_live_on_cwd_change\": " << (s.keepLiveOnCwdChange ? "true" : "false") << ",\n"
-        << "  \"global_sessions\": " << (s.globalSessions ? "true" : "false") << "\n"
+        << "  \"global_sessions\": " << (s.globalSessions ? "true" : "false") << ",\n"
+        << "  \"ui_dev_mode\": " << (s.uiDevMode ? "true" : "false") << ",\n"
+        << "  \"wf_cams\": \"";
+    for (size_t i = 0; i < s.wfCams.size(); ++i) {
+        const auto& c = s.wfCams[i];
+        if (i) oss << "\x1e";
+        oss << c.path << "\x1f" << c.zoomX100 << "\x1f" << c.x << "\x1f" << c.y << "\x1f"
+            << c.focus;
+    }
+    oss << "\"\n"
         << "}\n";
+    return oss.str();
+}
+
+// Normal save: call gfx/theme (statics alive here), cache names, write.
+inline void writeUiPrefsFile(const std::string& body) {
+    std::string path = uiPrefsPath();
+    ensureParentDir(path);
+    std::ofstream out(path, std::ios::trunc);
+    if (out) out << body;
+}
+
+inline void saveUiPrefs() {
+    refreshCachedUiNames();
+    writeUiPrefsFile(serializeUiPrefs(theme::name(), gfx::activeFieldId()));
 }
 
 inline void persistUiPrefs() { saveUiPrefs(); }

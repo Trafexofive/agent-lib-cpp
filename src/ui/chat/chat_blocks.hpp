@@ -2,6 +2,8 @@
 // Semantic chat block classification and palette primitives.
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <string>
 
 #include "src/ui/theme/cortex_theme.hpp"
@@ -50,6 +52,9 @@ inline ChatBlockKind classifyChatBlock(const std::string& header,
     if (value.rfind("✗ ERROR", 0) == 0) return ChatBlockKind::Error;
     if (value.rfind("THOUGHT", 0) == 0) return ChatBlockKind::Thought;
     if (value.rfind("RAW", 0) == 0) return ChatBlockKind::Raw;
+    if (value.rfind("STATUS", 0) == 0 || value.rfind("⚠ LIMIT", 0) == 0 ||
+        value.rfind("▣ FINALIZE", 0) == 0 || value.rfind("NOTICE", 0) == 0)
+        return ChatBlockKind::Notice;
     if (value.rfind("TOOL", 0) == 0) {
         if (value.find("  read") != std::string::npos || value.find("  grep") != std::string::npos ||
             value.find("  list") != std::string::npos || value.find("  json") != std::string::npos ||
@@ -68,7 +73,8 @@ inline ChatBlockKind classifyChatBlock(const std::string& header,
     return ChatBlockKind::None;
 }
 
-inline inkcell::Color blockBackground(ChatBlockKind kind, bool selected = false) {
+inline inkcell::Color blockBackground(ChatBlockKind kind, bool selected = false,
+                                      uint64_t nowMs = 0) {
     using inkcell::Color;
     Color graphite;
     Color neon;
@@ -90,14 +96,22 @@ inline inkcell::Color blockBackground(ChatBlockKind kind, bool selected = false)
         case ChatBlockKind::None: return theme::panel_bg().bg;
     }
     if (selected) {
-        graphite = Color::rgb(std::min(255, graphite.r + 10), std::min(255, graphite.g + 10), std::min(255, graphite.b + 10));
-        neon = Color::rgb(std::min(255, neon.r + 12), std::min(255, neon.g + 12), std::min(255, neon.b + 12));
+        // Dimmer base lift + soft breath (~1.6s period) so live-loop double-chrome
+        // doesn't scream. lift 18..30.
+        const double phase = (nowMs % 1600) / 1600.0 * 6.283185307179586;
+        const double breath = 0.5 + 0.5 * std::sin(phase);
+        const int lift = 18 + static_cast<int>(12.0 * breath);
+        graphite = Color::rgb(std::min(255, graphite.r + lift), std::min(255, graphite.g + lift + 2),
+                              std::min(255, graphite.b + lift + 4));
+        neon = Color::rgb(std::min(255, neon.r + lift), std::min(255, neon.g + lift + 4),
+                          std::min(255, neon.b + lift + 2));
     }
     return theme::color(graphite, neon);
 }
 
-inline inkcell::Style blockStyle(ChatBlockKind kind, bool header, bool selected = false) {
-    auto style = inkcell::Style::normal().with_bg(blockBackground(kind, selected));
+inline inkcell::Style blockStyle(ChatBlockKind kind, bool header, bool selected = false,
+                                 uint64_t nowMs = 0) {
+    auto style = inkcell::Style::normal().with_bg(blockBackground(kind, selected, nowMs));
     switch (kind) {
         case ChatBlockKind::User:
         case ChatBlockKind::ResultOk: style.fg = theme::green().fg; break;
@@ -119,6 +133,12 @@ inline inkcell::Style blockStyle(ChatBlockKind kind, bool header, bool selected 
         style.fg = theme::text().fg;
     style.bold = header;
     style.dim = kind == ChatBlockKind::Thought || kind == ChatBlockKind::Raw;
+    if (selected) {
+        // Soft selected fg (not pure white — less double-highlight clash with ›).
+        style.fg = theme::color(inkcell::Color::rgb(220, 222, 230), inkcell::Color::rgb(150, 230, 190));
+        style.bold = header;  // only headers bold when selected
+        style.dim = false;
+    }
     return style;
 }
 

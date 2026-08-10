@@ -16,6 +16,7 @@
 #include "inkcell/command.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
 #include "src/ui/chat/chat_blocks.hpp"
+#include "src/ui/chat/chat_footer.hpp"
 #include "src/ui/chat/notification.hpp"
 #include "src/ui/chat/transcript_cache.hpp"
 #include "src/ui/theme/cortex_theme.hpp"
@@ -69,6 +70,13 @@ struct ChatSurfaceModel {
     int completionSelected = -1;  // index highlighted while cycling; -1 = none
     // Optional transient feedback strip (above status). Not owned; may be null.
     const NotificationStack* notifications = nullptr;
+
+    // Selection nav writeback — drawTranscript snaps offset to the real › line
+    // after word-wrap so j/k never loses the highlight (source≠display space).
+    bool* selectionNavPending = nullptr;
+    int* scrollOffsetWriteback = nullptr;
+    bool* stickBottomWriteback = nullptr;
+    int* contentHWriteback = nullptr;
 };
 
 inline std::string suffix(const std::string& id) {
@@ -177,11 +185,14 @@ inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const C
         bar.left_seg(fmtCompactElapsed(elapsed), inkcell::Role::Info);
     if (!m.scopeName.empty())
         bar.left_seg("◀" + m.scopeName, inkcell::Role::Accent);
-    if (m.pendingOps > 0)
+    // Live chips only while the turn is in flight (or cancelling). Sticky actN
+    // after done was reading as a hung turn.
+    const bool liveChips = m.running || state.rfind("cancel", 0) == 0;
+    if (liveChips && m.pendingOps > 0)
         bar.left_seg("pend" + std::to_string(m.pendingOps), inkcell::Role::Warning, true);
-    if (m.actionCount > 0)
+    if (liveChips && m.actionCount > 0)
         bar.left_seg("act" + std::to_string(m.actionCount), inkcell::Role::TextMuted);
-    if (m.resultCount > 0)
+    if (liveChips && m.resultCount > 0)
         bar.left_seg("res" + std::to_string(m.resultCount), inkcell::Role::TextMuted);
     if (m.tokenBytes > 0)
         bar.left_seg(fmtCompactBytes(m.tokenBytes), inkcell::Role::TextMuted);
@@ -733,9 +744,12 @@ inline void materializeViewport(TranscriptWrapCache& cache, const std::vector<st
         cache.viewportH = 0;
         return;
     }
-    // Reuse if same window already painted.
+    // Reuse if same window already painted. Caller must clear viewportOffset
+    // (via syncTranscriptWrapCache) whenever source/version changes — otherwise
+    // streaming would paint stale mashed lines over live content.
     if (cache.viewportOffset == displayOffset && cache.viewportH == height &&
-        !cache.viewportLines.empty()) {
+        !cache.viewportLines.empty() &&
+        cache.viewportLines.size() >= static_cast<size_t>(height)) {
         return;
     }
     int overscan = std::max(4, height / 2);
@@ -803,6 +817,7 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
     int total = 0;
     int offset = 0;
     bool useViewportWindow = false;
+    bool offsetFromSelectionSnap = false;
 
     if (m.transcriptCache) {
         auto& cache = *m.transcriptCache;
@@ -815,19 +830,35 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
             useViewportWindow = true;
             int maxOffset = std::max(0, total - body.h);
             offset = m.followBottom ? maxOffset : std::max(0, std::min(m.scrollOffset, maxOffset));
-            // historyFocused: find › in source and estimate — scan source headers cheaply
-            if (m.historyFocused) {
-                int acc = 0;
-                for (size_t i = 0; i < source.size() && i < cache.sourceLineSpans.size(); ++i) {
+
+            // One-shot snap after j/k: map › source line → display via REAL spans.
+            if (m.selectionNavPending && *m.selectionNavPending && !m.followBottom) {
+                int srcLine = -1;
+                for (size_t i = 0; i < source.size(); ++i) {
                     if (source[i].rfind("› ", 0) == 0) {
-                        offset = std::max(0, std::min(maxOffset, acc - body.h / 3));
+                        srcLine = static_cast<int>(i);
                         break;
                     }
-                    acc += cache.sourceLineSpans[i];
                 }
+                if (srcLine >= 0) {
+                    int selDisp = 0;
+                    for (int i = 0; i < srcLine && i < static_cast<int>(cache.sourceLineSpans.size()); ++i)
+                        selDisp += std::max(1, cache.sourceLineSpans[static_cast<size_t>(i)]);
+                    if (selDisp < offset + 1)
+                        offset = std::max(0, selDisp - 1);
+                    else if (selDisp > offset + body.h - 2)
+                        offset = std::max(0, selDisp - body.h + 2);
+                    offset = std::min(offset, maxOffset);
+                    offsetFromSelectionSnap = true;
+                }
+                *m.selectionNavPending = false;
+                if (m.scrollOffsetWriteback) *m.scrollOffsetWriteback = offset;
+                if (m.stickBottomWriteback) *m.stickBottomWriteback = false;
             }
+
             materializeViewport(cache, source, wrapWidth, offset, body.h, m.agentName);
             displayLinesPtr = &cache.viewportLines;
+            if (m.contentHWriteback) *m.contentHWriteback = total;
         } else {
             displayLinesPtr = &cache.lines;
             total = static_cast<int>(cache.lines.size());
@@ -838,6 +869,33 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
         uncachedLines = wrapTranscript(source, wrapWidth, m.agentName);
         displayLinesPtr = &uncachedLines;
         total = static_cast<int>(uncachedLines.size());
+    }
+
+    // Non-virtual selection snap (same › → display math).
+    if (!useViewportWindow && m.selectionNavPending && *m.selectionNavPending && !m.followBottom &&
+        total > 0 && displayLinesPtr) {
+        int maxOffset = std::max(0, total - body.h);
+        offset = std::max(0, std::min(m.scrollOffset, maxOffset));
+        int selDisp = -1;
+        const auto& dl = *displayLinesPtr;
+        for (int i = 0; i < total; ++i) {
+            if (dl[static_cast<size_t>(i)].rfind("› ", 0) == 0) {
+                selDisp = i;
+                break;
+            }
+        }
+        if (selDisp >= 0) {
+            if (selDisp < offset + 1)
+                offset = std::max(0, selDisp - 1);
+            else if (selDisp > offset + body.h - 2)
+                offset = std::max(0, selDisp - body.h + 2);
+            offset = std::min(offset, maxOffset);
+            offsetFromSelectionSnap = true;
+        }
+        *m.selectionNavPending = false;
+        if (m.scrollOffsetWriteback) *m.scrollOffsetWriteback = offset;
+        if (m.stickBottomWriteback) *m.stickBottomWriteback = false;
+        if (m.contentHWriteback) *m.contentHWriteback = total;
     }
 
     if (total <= 0) {
@@ -889,11 +947,22 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
             bool selected = m.historyFocused && y < static_cast<int>(blockSelected->size()) &&
                             (*blockSelected)[static_cast<size_t>(y)];
             if (kind != ChatBlockKind::None) {
-                auto style = blockStyle(kind, header, selected);
+                auto style = blockStyle(kind, header, selected, m.nowMs);
                 surface.fill({body.x, firstY + y, blockWidth, 1}, " ", style);
-                surface.text({body.x, firstY + y}, header ? "▎" : " ", style);
+                // Selection rail only — drop duplicate › paint clash: strip leading ›
+                // from the displayed string when selected (source keeps › for metadata).
+                std::string paint = line;
+                if (selected && paint.rfind("› ", 0) == 0) paint = "  " + paint.substr(2);
+                if (selected) {
+                    auto rail = theme::selected_style();
+                    rail.bg = style.bg;
+                    // Breath the rail with the same phase as bg.
+                    surface.text({body.x, firstY + y}, "▌", rail);
+                } else {
+                    surface.text({body.x, firstY + y}, header ? "▎" : " ", style);
+                }
                 surface.text({body.x + 1, firstY + y},
-                             inkcell::text::fit_left(line, std::max(1, blockWidth - 1)), style);
+                             inkcell::text::fit_left(paint, std::max(1, blockWidth - 1)), style);
             } else {
                 surface.text({body.x, firstY + y}, inkcell::text::fit_left(line, body.w),
                              theme::text());
@@ -925,15 +994,10 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
     }
 
     int maxOffset = std::max(0, total - body.h);
-    offset = m.followBottom ? maxOffset : std::max(0, std::min(m.scrollOffset, maxOffset));
-    if (m.historyFocused) {
-        for (int i = 0; i < total; ++i) {
-            if (displayLines[static_cast<size_t>(i)].rfind("› ", 0) == 0) {
-                offset = std::max(0, std::min(maxOffset, i - body.h / 3));
-                break;
-            }
-        }
-    }
+    // Preserve operator scroll; j/k snap sets offsetFromSelectionSnap above.
+    if (!offsetFromSelectionSnap)
+        offset = m.followBottom ? maxOffset : std::max(0, std::min(m.scrollOffset, maxOffset));
+    if (m.contentHWriteback) *m.contentHWriteback = total;
     int visible = std::min(body.h, total - offset);
     int firstY = body.y;
     for (int y = 0; y < visible; ++y) {
@@ -943,12 +1007,20 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
         bool header = (*blockHeaders)[static_cast<size_t>(idx)];
         bool selected = m.historyFocused && (*blockSelected)[static_cast<size_t>(idx)];
         if (kind != ChatBlockKind::None) {
-            auto style = blockStyle(kind, header, selected);
+            auto style = blockStyle(kind, header, selected, m.nowMs);
             int blockWidth = std::max(1, body.w - (total > body.h ? 1 : 0));
             surface.fill({body.x, firstY + y, blockWidth, 1}, " ", style);
-            surface.text({body.x, firstY + y}, header ? "▎" : " ", style);
+            std::string paint = line;
+            if (selected && paint.rfind("› ", 0) == 0) paint = "  " + paint.substr(2);
+            if (selected) {
+                auto rail = theme::selected_style();
+                rail.bg = style.bg;
+                surface.text({body.x, firstY + y}, "▌", rail);
+            } else {
+                surface.text({body.x, firstY + y}, header ? "▎" : " ", style);
+            }
             surface.text({body.x + 1, firstY + y},
-                         inkcell::text::fit_left(line, std::max(1, blockWidth - 1)), style);
+                         inkcell::text::fit_left(paint, std::max(1, blockWidth - 1)), style);
         } else {
             surface.text({body.x, firstY + y}, inkcell::text::fit_left(line, body.w), theme::text());
         }
@@ -1154,24 +1226,54 @@ inline void drawCompletionMenu(inkcell::Surface& surface, inkcell::Rect area,
     }
 }
 
-inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, const ChatSurfaceModel& m) {
+// Footer is dynamic height — use footerHeightFor() every frame (can grow).
+// Soft max fraction of frame so transcript never dies.
+inline int chatFooterReserve(const ChatFooterModel* footer, int frameH, int promptH,
+                             int menuH) {
+    if (!footer) return 0;
+    // Leave at least 4 rows for transcript + prompt + menu.
+    const int maxAvail = std::max(1, frameH - promptH - menuH - 4);
+    return footerHeightFor(*footer, maxAvail);
+}
+
+inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, const ChatSurfaceModel& m,
+                            const ChatFooterModel* footer = nullptr) {
     surface.clear(theme::base_bg());
     if (frame.w <= 0 || frame.h <= 0) return;
-    // One flat page, no nested boxes. Leave the app-level page inset to caller.
-    drawHeader(surface, frame, m);
+    // Layout (bottom-up): footer(N dynamic) · prompt · menu · transcript.
     const int promptH = std::max(1, promptBoxHeight(m, frame.w));
-    const int promptY = frame.bottom() - promptH;
-    const int statusY = promptY - 1;
     int menuH = completionMenuHeight(m, frame.w);
-    int menuY = statusY - menuH;
-    // No separator rule — elevated footer is the visual break.
-    // Alerts fold into the status line (right) — no reserved strip row.
-    inkcell::Rect body{frame.x, frame.y + 2, frame.w, std::max(1, menuY - (frame.y + 2))};
+    const int footerH = chatFooterReserve(footer, frame.h, promptH, menuH);
+    const int footerY = frame.bottom() - footerH;
+    const int spacerH = footer ? 1 : 0;  // 1px gap between prompt and footer
+    const int promptY = footerY - promptH - spacerH;
+    int menuY = promptY - menuH;
+    // Legacy thin status only when no footer model (tests / old callers).
+    const int legacyStatusH = footer ? 0 : 1;
+    const int statusY = promptY - legacyStatusH;
+    if (!footer) menuY = statusY - menuH;
+
+    inkcell::Rect body{frame.x, frame.y, frame.w, std::max(1, menuY - frame.y)};
     drawTranscript(surface, body, m);
     if (menuH > 0)
         drawCompletionMenu(surface, {frame.x, menuY, frame.w, menuH}, m);
-    drawStatusLine(surface, {frame.x, statusY, frame.w, 1}, m);
+    if (!footer)
+        drawStatusLine(surface, {frame.x, statusY, frame.w, 1}, m);
     drawPromptBox(surface, {frame.x, promptY, frame.w, promptH}, m);
+    if (footer && spacerH > 0) {
+        // 1px footer-bg band — subtle separation, not a hard rule.
+        // Left accent tick keeps the footer rail visual continuity.
+        auto sepBg = (m.inputFocused && !m.running) ? theme::footer_bg_focus()
+                                                    : theme::footer_bg();
+        surface.fill({frame.x, promptY + promptH, frame.w, spacerH}, " ", sepBg);
+        auto sepAccent = m.failed ? theme::red().with_bg(sepBg.bg)
+                        : m.running ? theme::footer_accent_live()
+                        : m.inputFocused ? theme::footer_accent_focus()
+                                         : theme::footer_accent_idle();
+        surface.put({frame.x, promptY + promptH}, "▌", sepAccent);
+    }
+    if (footer && footerH > 0)
+        drawChatFooter(surface, {frame.x, footerY, frame.w, footerH}, *footer);
 }
 
 }  // namespace cortex::mk3::ui::chat

@@ -42,17 +42,6 @@ inline bool ShellModel::historyNext() {
 }
 
 inline bool ShellModel::submitComposer() {
-    // Explicit policy: never queue mid-turn. Operator must stop first.
-    if (running) {
-        chat::Notification n;
-        n.id = "submit-blocked";
-        n.source = "composer";
-        n.severity = "warn";
-        n.title = "turn live · ctrl-x stop";
-        n.lifetimeMs = 2500;
-        notificationStack.push(std::move(n));
-        return false;
-    }
     if (!atRoot()) {
         chat::Notification n;
         n.id = "submit-blocked";
@@ -69,6 +58,29 @@ inline bool ShellModel::submitComposer() {
     while (start < text.size() && (text[start] == ' ' || text[start] == '\t' || text[start] == '\n')) ++start;
     text = text.substr(start);
     if (text.empty()) return false;
+
+    // Live turn → steer buffer (no warn). Injected at next iteration boundary.
+    if (running) {
+        if (rootAgent) rootAgent->queueSteer(text);
+        else {
+            // No agent ptr — hold for next pendingSubmit when turn ends.
+            if (!pendingSteerBuffer.empty()) pendingSteerBuffer += "\n\n";
+            pendingSteerBuffer += text;
+        }
+        pushRow({TimelineKind::Status, "steer", "⟹ " + text, true});
+        composer.value.clear();
+        composer.cursor = 0;
+        composer.scroll_row = 0;
+        rebuildViews();
+        chat::Notification n;
+        n.id = "steer";
+        n.source = "steer";
+        n.severity = "info";
+        n.title = "steered · injects next step";
+        n.lifetimeMs = 2200;
+        notificationStack.push(std::move(n));
+        return true;
+    }
     // Vet-fix: arm an ephemeral session id at first turn-in-chat so
     // the work the operator just typed lands on disk. Phase 1 removed
     // auto-mint on bare TUI launches, which kept phantom file pairs
@@ -97,9 +109,7 @@ inline bool ShellModel::submitComposer() {
         }
     }
     pendingSubmit = text;
-    if (promptHistory.empty() || promptHistory.back() != text) promptHistory.push_back(text);
-    promptHistoryIndex = static_cast<int>(promptHistory.size());
-    promptHistoryDraft.clear();
+    pushPromptHistory(text);
     pushRow({TimelineKind::User, "you", text, true});
     composer.value.clear();
     composer.cursor = 0;

@@ -1,6 +1,7 @@
 #pragma once
 // UiEvent apply/drain product side-effects (F7). Out-of-line ShellModel methods.
 
+#include <chrono>
 #include <string>
 
 namespace cortex::mk3::ui {
@@ -28,6 +29,7 @@ inline void ShellModel::apply(const UiEvent& e) {
 
     ReduceEffects fx = reduceUiEvent(*this, turn, e, rootAgent, atRoot(), running, selectedBlock);
 
+    const bool wasRunning = running;
     running = turn.running;
     done = turn.done;
     failed = turn.failed;
@@ -36,6 +38,16 @@ inline void ShellModel::apply(const UiEvent& e) {
     finalText = turn.finalText;
     turnStartMs = turn.turnStartMs;
     lastTurnElapsedMs = turn.lastTurnElapsedMs;
+
+    // Turn just ended — flush any UI-side steer buffer into the next submit
+    // (agent.queueSteer already handled live injection when rootAgent was set).
+    if (wasRunning && !running && !pendingSteerBuffer.empty()) {
+        if (pendingSubmit.empty())
+            pendingSubmit = pendingSteerBuffer;
+        else
+            pendingSubmit = pendingSteerBuffer + "\n\n" + pendingSubmit;
+        pendingSteerBuffer.clear();
+    }
 
     // Product side-effects the pure reducer cannot own.
     if (fx.hasNotification) {
@@ -85,6 +97,12 @@ inline void ShellModel::apply(const UiEvent& e) {
             eventLog.push_back("response");
     }
 
+    // Live-lock: only pin to last block when already following the edge.
+    if (e.kind == UiEventKind::Protocol || e.kind == UiEventKind::Token ||
+        e.kind == UiEventKind::Status || e.kind == UiEventKind::TurnDone) {
+        followLiveEdgeIfLocked();
+    }
+
     if (fx.needPersist) persistUiTimeline();
     if (fx.needRebuild) rebuildViews();
     if (fx.needRefreshNested) refreshNested();
@@ -121,6 +139,20 @@ inline void ShellModel::drain(AgentBridge& bridge) {
         enforceRowCap();
     }
     settleAsk(bridge);
+
+    // Live session durability while operator is on Settings/Manifests/etc.
+    // Worker keeps running; without periodic flush the Sessions page and
+    // crash-recovery look dead. Throttle ~2.5s.
+    if (running && !activeSessionId.empty()) {
+        using clock = std::chrono::steady_clock;
+        static clock::time_point lastPersist{};
+        const auto now = clock::now();
+        if (lastPersist.time_since_epoch().count() == 0 ||
+            now - lastPersist >= std::chrono::milliseconds(2500)) {
+            lastPersist = now;
+            persistUiTimeline();
+        }
+    }
 }
 
 

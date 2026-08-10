@@ -89,6 +89,47 @@ inline std::string sanitizeForDisplay(const std::string& text) {
             ++i;
             continue;
         }
+        // Normalize exotic spaces → ASCII ' '. Drop zero-width glue that makes
+        // words join when copied from the terminal (common in LLM streams).
+        if (c == 0xC2 && i + 1 < text.size() &&
+            static_cast<unsigned char>(text[i + 1]) == 0xA0) {
+            // U+00A0 NBSP
+            out.push_back(' ');
+            i += 2;
+            continue;
+        }
+        if (c == 0xE2 && i + 2 < text.size()) {
+            auto b1 = static_cast<unsigned char>(text[i + 1]);
+            auto b2 = static_cast<unsigned char>(text[i + 2]);
+            // U+2000–U+200A various spaces, U+202F NNBSP, U+205F MMSP
+            if (b1 == 0x80 && b2 >= 0x80 && b2 <= 0x8A) {
+                out.push_back(' ');
+                i += 3;
+                continue;
+            }
+            if (b1 == 0x80 && (b2 == 0xAF /*NNBSP*/)) {
+                out.push_back(' ');
+                i += 3;
+                continue;
+            }
+            if (b1 == 0x81 && b2 == 0x9F /*MMSP*/) {
+                out.push_back(' ');
+                i += 3;
+                continue;
+            }
+            // U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ — drop
+            if (b1 == 0x80 && (b2 == 0x8B || b2 == 0x8C || b2 == 0x8D)) {
+                i += 3;
+                continue;
+            }
+        }
+        if (c == 0xEF && i + 2 < text.size() &&
+            static_cast<unsigned char>(text[i + 1]) == 0xBB &&
+            static_cast<unsigned char>(text[i + 2]) == 0xBF) {
+            // BOM
+            i += 3;
+            continue;
+        }
         if (c == '\t') {
             out.push_back(' ');
             ++i;

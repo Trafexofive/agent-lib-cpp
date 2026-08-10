@@ -7,7 +7,40 @@
 #include <string>
 #include <vector>
 
+#include "inkcell/text.hpp"
+
 namespace cortex::mk3::ui {
+
+// Display-line count for one source row (aligned with chat wrap semantics).
+// Kept local to avoid pulling chat_view.hpp into the model include graph.
+inline int countSourceDisplaySpan(const std::string& original, int width) {
+    width = std::max(1, width);
+    if (original.empty()) return 1;
+    // hard-wrap by display width — same family as chat hardWrapUtf8.
+    int columns = 0;
+    int lines = 1;
+    for (size_t i = 0; i < original.size();) {
+        size_t len = 1;
+        unsigned char ch = static_cast<unsigned char>(original[i]);
+        if ((ch & 0xE0) == 0xC0) len = 2;
+        else if ((ch & 0xF0) == 0xE0) len = 3;
+        else if ((ch & 0xF8) == 0xF0) len = 4;
+        if (i + len > original.size()) len = 1;
+        int gw = inkcell::text::display_width(original.substr(i, len));
+        if (gw <= 0) gw = (len == 1 && original[i] == ' ') ? 1 : 0;
+        if (gw == 0) {
+            i += len;
+            continue;
+        }
+        if (columns + gw > width && columns > 0) {
+            ++lines;
+            columns = 0;
+        }
+        columns += gw;
+        i += len;
+    }
+    return std::max(1, lines);
+}
 
 // Emit one root/nested row into transcriptView.lines (+ optional block index).
 // Returns true if the row produced a focusable block.
@@ -55,24 +88,50 @@ inline bool ShellModel::projectOneRow(const TimelineRow& row, int ri, int& focus
             std::string type = row.actionType.empty() ? "ACTION" : row.actionType;
             std::transform(type.begin(), type.end(), type.begin(),
                            [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            // Normalize tool → TOOL, feed → FEED, etc.
             if (type == "AGENT" && !row.actionName.empty()) {
                 label = "AGENT  " + row.actionName;
-                if (!row.actionId.empty()) label += "  #" + row.actionId;
-                if (row.drillable) label += "  ↳";
             } else {
                 label = type;
                 if (!row.actionName.empty()) label += "  " + row.actionName;
-                if (!row.actionId.empty()) label += "  #" + row.actionId;
-                if (row.drillable) label += "  ↳";
             }
+            if (!row.actionId.empty()) label += "  #" + row.actionId;
+            // Rich meta chips from JSON body (path/cmd/url…).
+            {
+                std::string chips = actionBodyMetaChips(row.body);
+                if (!chips.empty()) label += "  ·  " + chips;
+            }
+            if (row.drillable) label += "  ↳";
             break;
         }
-        case TimelineKind::Result:
+        case TimelineKind::Result: {
             label = row.ok ? "✓ RESULT" : "✗ RESULT";
             if (!row.actionName.empty()) label += "  " + row.actionName;
             if (!row.actionId.empty()) label += "  #" + row.actionId;
+            // Meta chips: prefer trailing meta line (…\nms · bytes), else first line.
+            if (!row.body.empty()) {
+                std::string metaLine;
+                size_t lastNl = row.body.find_last_of('\n');
+                if (lastNl != std::string::npos && lastNl + 1 < row.body.size()) {
+                    std::string tail = row.body.substr(lastNl + 1);
+                    if (tail.find("ms") != std::string::npos || tail.find('B') != std::string::npos ||
+                        tail.find("exit") != std::string::npos)
+                        metaLine = tail;
+                }
+                if (metaLine.empty()) {
+                    size_t nl = row.body.find('\n');
+                    metaLine = nl == std::string::npos ? row.body : row.body.substr(0, nl);
+                }
+                if (!metaLine.empty() &&
+                    (metaLine.find("ms") != std::string::npos || metaLine.find('B') != std::string::npos ||
+                     metaLine.find("exit") != std::string::npos || !row.ok)) {
+                    if (metaLine.size() > 52) metaLine = metaLine.substr(0, 50) + "…";
+                    label += "  ·  " + metaLine;
+                }
+            }
             if (row.drillable) label += "  ↳";
             break;
+        }
         case TimelineKind::Response:
         case TimelineKind::Final:
             label = scopeName.empty() ? "CORTEX" : scopeName;
@@ -93,6 +152,9 @@ inline bool ShellModel::projectOneRow(const TimelineRow& row, int ri, int& focus
         case TimelineKind::Status:
             if (row.title == "limit") label = "⚠ LIMIT";
             else if (row.title == "finalize") label = "▣ FINALIZE";
+            else if (row.title == "steer") label = "⟹ STEER";
+            else if (row.title == "timeout") label = "⏱ TIMEOUT";
+            else if (row.title == "error") label = "✗ ERROR";
             else label = "STATUS";
             break;
         case TimelineKind::Stream:
@@ -104,24 +166,53 @@ inline bool ShellModel::projectOneRow(const TimelineRow& row, int ri, int& focus
     }
     transcriptView.lines.push_back(std::string(selected ? "› " : "  ") + label);
     {
-        auto bodyLines = splitDisplayLines(row.body);
-        int shown = 0;
-        int total = 0;
-        for (const auto& line : bodyLines) {
-            if (line.empty() && row.body.empty()) continue;
-            ++total;
-        }
         // Thoughts are operator-secondary; hard-cap tighter so a runaway
         // stream cannot paint 50×wide lines every frame and stall input.
-        const int bodyCap =
-            (row.kind == TimelineKind::Thought) ? 12 : kMaxBodyLines;
-        for (const auto& line : bodyLines) {
-            if (line.empty() && row.body.empty()) continue;
-            if (truncateBodies && shown >= bodyCap) break;
-            transcriptView.lines.push_back("    " + line);
-            ++shown;
+        // Actions/results denser under truncate (ctrl-o); full when expanded.
+        int bodyCap = kMaxBodyLines;
+        if (row.kind == TimelineKind::Thought) bodyCap = 12;
+        else if (truncateBodies && row.kind == TimelineKind::Action) bodyCap = 10;
+        else if (truncateBodies && row.kind == TimelineKind::Result) bodyCap = 14;
+        else if (truncateBodies && row.kind == TimelineKind::Status) bodyCap = 4;
+
+        // Render mode for action/result bodies (pretty / compact / raw).
+        std::string renderedBody = row.body;
+        if (row.kind == TimelineKind::Action)
+            renderedBody = formatActionBodyForChat(row.body, actionBodyMode);
+        else if (row.kind == TimelineKind::Result)
+            renderedBody = formatStoredResultBody(row.body, resultBodyMode);
+        int shown = 0;
+        int total = 0;
+        bool more = false;
+        size_t start = 0;
+        const std::string& body = renderedBody;
+        while (start <= body.size()) {
+            size_t end = body.find('\n', start);
+            if (end == std::string::npos) end = body.size();
+            // Skip a single empty body (no lines).
+            if (!(start == 0 && end == 0 && body.empty())) {
+                ++total;
+                if (!truncateBodies || shown < bodyCap) {
+                    transcriptView.lines.push_back("    " + body.substr(start, end - start));
+                    ++shown;
+                } else {
+                    more = true;
+                    // Keep counting remaining newlines cheaply for the note.
+                    if (truncateBodies) {
+                        size_t p = end;
+                        while (p < body.size()) {
+                            if (body[p] == '\n') ++total;
+                            ++p;
+                        }
+                        // last line after final newline already counted via loop structure
+                        break;
+                    }
+                }
+            }
+            if (end == body.size()) break;
+            start = end + 1;
         }
-        if (truncateBodies && total > shown) {
+        if (truncateBodies && more && total > shown) {
             transcriptView.lines.push_back(
                 "    … (" + std::to_string(total - shown) +
                 " more lines — /truncate off or ↳ drill to expand)");
@@ -158,16 +249,49 @@ inline void ShellModel::finishRebuildScroll() {
     if (focusable <= 0) selectedBlock = 0;
     else selectedBlock = std::max(0, std::min(selectedBlock, focusable - 1));
 
-    if (running && atRoot() && !timelineFocus) {
-        transcriptView.stick_bottom = true;
+    // Live lock policy:
+    //   stick_bottom is the single source of truth for auto-follow.
+    //   We only auto-follow while stick_bottom is set (set when the operator
+    //   is on the last block / scrolls to end). Never force-lock just because
+    //   running && composer-focused — that stole navigation mid-turn.
+    //   ensureSelectionVisible only on explicit selection moves, otherwise
+    //   Ctrl-J/K free-scroll is snapped back every rebuild (last-block fight).
+    if (transcriptView.stick_bottom) {
         transcriptView.scroll_to_end();
-    } else if (timelineFocus && focusable > 0) {
-        transcriptView.stick_bottom = false;
-        ensureSelectionVisible();
-    } else if (transcriptView.stick_bottom) {
-        transcriptView.scroll_to_end();
+        selectionNavPending = false;
+        // Belt: while pinned to live edge, only the selected block may own ›.
+        // Incremental path can leave a stale › on the previous last block.
+        if (timelineFocus && focusable > 0 && selectedBlock >= 0 &&
+            selectedBlock < static_cast<int>(blockRowIndex.size()) &&
+            !transcriptView.lines.empty()) {
+            int wantLine = -1;
+            const int ri = blockRowIndex[static_cast<size_t>(selectedBlock)];
+            if (ri >= 0 && ri < static_cast<int>(rootRowLineStart.size()))
+                wantLine = rootRowLineStart[static_cast<size_t>(ri)];
+            for (int i = 0; i < static_cast<int>(transcriptView.lines.size()); ++i) {
+                auto& line = transcriptView.lines[static_cast<size_t>(i)];
+                if (line.size() < 2) continue;
+                const bool hasMarker = line.rfind("› ", 0) == 0;
+                if (i == wantLine) {
+                    if (!hasMarker && line.rfind("  ", 0) == 0)
+                        line.replace(0, 2, "› ");
+                } else if (hasMarker) {
+                    line.replace(0, 2, "  ");
+                }
+            }
+        }
+    } else if (selectionNavPending && timelineFocus && focusable > 0) {
+        // Do NOT clamp offset here with approximate spans — drawTranscript
+        // snaps to the real › line after word-wrap (see selectionNavPending).
+        // Calling ensureSelectionVisible with hard-wrap math scrolled past the
+        // highlight on upward j/k.
+    } else {
+        transcriptView.clamp();
+        selectionNavPending = false;
     }
-    rebuildInspector();
+    // Inspector is secondary chrome — skip while streaming to save a full
+    // eventLog walk every frame. Rebuild on idle / turn boundaries.
+    if (!running) rebuildInspector();
 }
 
 // Full projection (nested views, filter toggles, selection chrome, load).
@@ -202,7 +326,10 @@ inline void ShellModel::rebuildViewsFull() {
 //     root row count (stable prefix length before this dirty wave)
 //   - projDirtyFrom in (0, rootRows.size()]  (0 forces full)
 inline bool ShellModel::tryRebuildViewsIncremental() {
-    if (!atRoot() || timelineFocus) return false;
+    // Timeline focus used to force full rebuild every stream tick (› chrome).
+    // projectOneRow already paints › from current selectedBlock on the dirty
+    // tail; stable prefix keeps its prior chrome. Allow incremental either way.
+    if (!atRoot()) return false;
     if (projDirtyFrom == 0) return false;
     if (projDirtyFrom > rootRows.size()) return false;
     // Map must describe exactly the stable prefix [0, projDirtyFrom).
@@ -264,9 +391,13 @@ inline void ShellModel::rebuildViews() {
 
     // Cap eviction shifts indices — always full after that.
     // Nested drill uses nestedRows; keep full path.
+    // forceFullProject_: trunc/fmt/selection-index jumps cannot use incremental
+    // (stable prefix would keep old density or stale › chrome).
     bool didInc = false;
-    if (atRoot() && !timelineFocus && projDirtyFrom > 0 &&
-        projDirtyFrom <= rootRows.size() && !rootRowLineStart.empty()) {
+    const bool forceFull = forceFullProject_;
+    forceFullProject_ = false;
+    if (!forceFull && atRoot() && projDirtyFrom > 0 && projDirtyFrom <= rootRows.size() &&
+        !rootRowLineStart.empty()) {
         didInc = tryRebuildViewsIncremental();
     }
     if (!didInc) {
@@ -277,21 +408,42 @@ inline void ShellModel::rebuildViews() {
 }
 
 inline void ShellModel::ensureSelectionVisible() {
-    // Approximate: each block ~3 lines; scroll so selected is mid-view.
-    int line = 0;
-    int focusIdx = 0;
-    const auto& rows = activeRows();
-    for (int ri = 0; ri < static_cast<int>(rows.size()); ++ri) {
-        const auto& row = rows[static_cast<size_t>(ri)];
-        if (row.kind == TimelineKind::Thought && !showThoughts) continue;
-        if (row.kind == TimelineKind::Stream && !showRaw) continue;
-        if (focusIdx == selectedBlock) {
-            transcriptView.offset = std::max(0, line - 1);
-            transcriptView.clamp();
-            return;
-        }
-        line += 1 + static_cast<int>(splitDisplayLines(row.body).size()) + 1;
-        ++focusIdx;
+    // Map selected focusable block → DISPLAY line (wrapped).
+    // transcriptView.offset is display-space (see ScrollViewState::content_h).
+    // Never trust a stale wrap-cache here — recompute spans from source lines.
+    if (selectedBlock < 0 || selectedBlock >= static_cast<int>(blockRowIndex.size()))
+        return;
+    const int ri = blockRowIndex[static_cast<size_t>(selectedBlock)];
+    int sourceLine = -1;
+    if (ri >= 0 && ri < static_cast<int>(rootRowLineStart.size()) &&
+        rootRowLineStart[static_cast<size_t>(ri)] >= 0) {
+        sourceLine = rootRowLineStart[static_cast<size_t>(ri)];
+    }
+    if (sourceLine < 0) return;
+
+    const int wrapW = transcriptWrapCache.width > 0 ? transcriptWrapCache.width : 100;
+    int displayLine = 0;
+    int totalDisplay = 0;
+    const auto& src = transcriptView.lines;
+    for (int i = 0; i < static_cast<int>(src.size()); ++i) {
+        int span = countSourceDisplaySpan(src[static_cast<size_t>(i)], wrapW);
+        if (i < sourceLine) displayLine += span;
+        totalDisplay += span;
+    }
+    transcriptView.content_h = totalDisplay;
+
+    const int vh = std::max(1, transcriptView.viewport_h);
+    const int top = transcriptView.offset;
+    const int bot = top + vh - 1;
+    // Keep a 1-line pad so the selection rail isn't glued to the edge.
+    if (displayLine < top + 1) {
+        transcriptView.stick_bottom = false;
+        transcriptView.offset = std::max(0, displayLine - 1);
+        transcriptView.clamp();
+    } else if (displayLine > bot - 1) {
+        transcriptView.stick_bottom = false;
+        transcriptView.offset = std::max(0, displayLine - vh + 2);
+        transcriptView.clamp();
     }
 }
 

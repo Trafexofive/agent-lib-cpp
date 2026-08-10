@@ -161,7 +161,30 @@ struct TimelineStore {
             body.append(tail);
             row.body = std::move(body);
         }
-        if (!row.body.empty()) row.body = sanitizeForDisplay(row.body);
+        // Thoughts stream many times/sec — full sanitizeForDisplay is UTF-8
+        // validation over the whole body. Skip the heavy pass for pure thought
+        // rows once past a small size; C0 strip is enough for live paint.
+        if (row.body.empty()) return;
+        if (row.kind == TimelineKind::Thought && row.body.size() > 256) {
+            // Strip C0 controls only (keep \n). O(n) single pass, no alloc if clean.
+            std::string out;
+            out.reserve(row.body.size());
+            bool dirty = false;
+            for (unsigned char c : row.body) {
+                if (c == '\r') {
+                    dirty = true;
+                    continue;
+                }
+                if (c < 0x09 || (c > 0x0A && c < 0x20) || c == 0x7F) {
+                    dirty = true;
+                    continue;
+                }
+                out.push_back(static_cast<char>(c));
+            }
+            if (dirty) row.body = std::move(out);
+            return;
+        }
+        row.body = sanitizeForDisplay(row.body);
     }
 };
 

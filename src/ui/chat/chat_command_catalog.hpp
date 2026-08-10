@@ -46,11 +46,22 @@ inline DynamicChatCommand parseDynamicCommandFile(const std::filesystem::path& p
         if (colon == std::string::npos) continue;
         std::string key = trimCommandText(line.substr(0, colon));
         std::string value = trimCommandText(line.substr(colon + 1));
-        if (key == "name" && !value.empty()) out.name = "/" + value;
-        else if (key == "description") out.description = value;
+        if (key == "name" && !value.empty()) {
+            // Strip leading / and any prior :suffix — we re-apply kind suffix below.
+            std::string n = value;
+            if (!n.empty() && n[0] == '/') n = n.substr(1);
+            auto colon = n.find(':');
+            if (colon != std::string::npos) n = n.substr(0, colon);
+            out.name = "/" + n;
+        } else if (key == "description") out.description = value;
         else if (key == "argument-hint") out.argumentHint = value;
     }
     out.body = trimCommandText(text.substr(end + 5));
+    // Canonical suffixes so tab-complete distinguishes skills vs prompts.
+    if (out.kind == "skill" && out.name.find(":skill") == std::string::npos)
+        out.name += ":skill";
+    else if (out.kind == "prompt" && out.name.find(":prompt") == std::string::npos)
+        out.name += ":prompt";
     return out;
 }
 
@@ -62,14 +73,19 @@ inline std::vector<DynamicChatCommand> discoverDynamicChatCommands(
         for (const auto& entry : std::filesystem::recursive_directory_iterator(prompts)) {
             if (!entry.is_regular_file() || entry.path().extension() != ".md" ||
                 entry.path().filename() == "README.md") continue;
-            out.push_back(parseDynamicCommandFile(entry.path(), entry.path().stem().string(), "prompt"));
+            auto cmd = parseDynamicCommandFile(entry.path(), entry.path().stem().string(), "prompt");
+            if (cmd.name.find(":prompt") == std::string::npos) cmd.name += ":prompt";
+            out.push_back(std::move(cmd));
         }
     }
     auto skills = manifestRoot / "skills";
     if (std::filesystem::exists(skills)) {
         for (const auto& entry : std::filesystem::recursive_directory_iterator(skills)) {
             if (!entry.is_regular_file() || entry.path().filename() != "SKILL.md") continue;
-            out.push_back(parseDynamicCommandFile(entry.path(), entry.path().parent_path().filename().string(), "skill"));
+            auto cmd = parseDynamicCommandFile(entry.path(),
+                                              entry.path().parent_path().filename().string(), "skill");
+            if (cmd.name.find(":skill") == std::string::npos) cmd.name += ":skill";
+            out.push_back(std::move(cmd));
         }
     }
     std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
@@ -78,8 +94,18 @@ inline std::vector<DynamicChatCommand> discoverDynamicChatCommands(
 
 inline const DynamicChatCommand* findDynamicChatCommand(
     const std::string& name, const std::vector<DynamicChatCommand>& commands) {
+    // Exact first, then bare name match against /foo:skill or /foo:prompt.
     for (const auto& command : commands)
         if (command.name == name) return &command;
+    std::string bare = name;
+    auto colon = bare.find(':');
+    if (colon != std::string::npos) bare = bare.substr(0, colon);
+    for (const auto& command : commands) {
+        std::string cn = command.name;
+        auto c2 = cn.find(':');
+        if (c2 != std::string::npos) cn = cn.substr(0, c2);
+        if (cn == bare || cn == name) return &command;
+    }
     return nullptr;
 }
 
@@ -99,17 +125,26 @@ inline std::string expandDynamicChatCommand(const DynamicChatCommand& command,
     return body;
 }
 
-inline std::vector<std::string> completeChatCommand(const std::string& prefix) {
+// userFacing: omit debug cmds unless Settings · DEV MODE (or CORTEX_DEV_MODE).
+inline std::vector<std::string> completeChatCommand(const std::string& prefix,
+                                                    bool devMode = false) {
     static const std::vector<std::string> builtins = {
         "/help", "/commands", "/clear", "/thoughts", "/truncate", "/raw", "/theme",
-        "/manifests", "/sessions", "/prompts", "/dump-prompt", "/dp", "/cp-all",
-        "/cp-raw", "/stop", "/cancel", "/quit", "/exit",
+        "/manifests", "/sessions", "/cp-all", "/artifacts", "/art", "/model",
+        "/continue", "/cont", "/stop", "/cancel", "/quit", "/exit",
+    };
+    static const std::vector<std::string> devBuiltins = {
+        "/export-chat", "/export-dump", "/prompts", "/dump-prompt", "/dp", "/cp-raw",
     };
     std::string p = prefix;
     if (p.empty()) p = "/";
     std::vector<std::string> out;
     for (const auto& name : builtins)
         if (name.rfind(p, 0) == 0) out.push_back(name);
+    if (devMode) {
+        for (const auto& name : devBuiltins)
+            if (name.rfind(p, 0) == 0) out.push_back(name);
+    }
     for (const auto& command : discoverDynamicChatCommands())
         if (command.name.rfind(p, 0) == 0) out.push_back(command.name);
     std::sort(out.begin(), out.end());
