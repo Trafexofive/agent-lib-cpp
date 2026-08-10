@@ -354,6 +354,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
     static constexpr int kThoughtOnlyHardCap = 3;
     int thoughtOnlyStreak = 0;
     std::string lastSalvage; // best non-final content this turn (for promote)
+    std::string lastThoughtContent;  // last substantive <thought> this turn
 
 
     const int workCap = std::max(1, config_.iterationCap);
@@ -546,6 +547,12 @@ std::string Agent::runLoop(AgentContext &ctx) {
 
 
         // Tracking state for this iteration's protocol stream.
+        // Reset per-iteration response/thought accumulators so a stale
+        // non-final <response> from an earlier iteration can never win the
+        // final answer over newer content (or a thought-only final). Only the
+        // current iteration's response output is considered for the result.
+        responseOutput_.clear();
+        thoughtOutput_.clear();
         ProtocolStreamState st;
         st.runEpochStart = runEpochStart;
 
@@ -914,6 +921,25 @@ std::string Agent::runLoop(AgentContext &ctx) {
             os << iterationRuntimeOutput;
             iterationOutputs_.push_back(os.str());
         }
+        // Track the last substantive thought — used by the bounded
+        // thought-to-final recovery at turn end (a reasoning model may put
+        // its real answer in <thought> and forget final="true").
+        if (!thoughtOutput_.empty() &&
+            trimCopy(thoughtOutput_).size() > 80) {
+            lastThoughtContent = trimCopy(thoughtOutput_);
+        } else {
+            // Protocol <thought> tag in the raw output — extract its body.
+            std::string raw = iterationRawOutput;
+            size_t open = raw.rfind("<thought>");
+            if (open != std::string::npos) {
+                size_t close = raw.find("</thought>", open);
+                if (close != std::string::npos) {
+                    std::string body =
+                        trimCopy(raw.substr(open + 9, close - open - 9));
+                    if (body.size() > 80) lastThoughtContent = body;
+                }
+            }
+        }
         // DEV_MODE / verbose: rewrite dumps after every iteration so a crash
         // mid-turn still leaves the last LLM-facing prompt on disk.
         if (devMode_ || verbose_ || raw_ || ctx.debug)
@@ -1084,7 +1110,14 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // Iteration budget exhausted (or cancelled path cleared response).
         // Per policy: promote salvage when allowed so small-model turns still
         // leave a usable answer + an honest recovery note in history.
-        if (compPolicy != CompPolicy::Strict && !lastSalvage.empty()) {
+        // Bounded thought-to-final: if the model put its real answer in a
+        // substantive <thought> but forgot final="true", surface that content
+        // as the result rather than a generic 'stopped without final' error.
+        // This is turn-ended recovery, not mid-loop auto-promotion.
+        const std::string thoughtFinal = trimCopy(lastThoughtContent);
+        const bool thoughtIsAnswer = thoughtFinal.size() > 120;
+        if (compPolicy != CompPolicy::Strict &&
+            !lastSalvage.empty() && !thoughtIsAnswer) {
             emitStatus(
                 "[AUTO-PROMOTED @ CAP] No <response final=\"true\"> "
                 "before iteration cap. Promoted salvaged content under "
@@ -1096,6 +1129,13 @@ std::string Agent::runLoop(AgentContext &ctx) {
             fullResponse = lastSalvage;
             responseOutput_ = lastSalvage;
             finishTurn("auto_promote_cap", lastSalvage);
+        } else if (thoughtIsAnswer) {
+            emitStatus(
+                "[THOUGHT-PROMOTED @ CAP] No final=true before cap; "
+                "surfaced the model's substantive closing thought.");
+            fullResponse = thoughtFinal;
+            responseOutput_ = thoughtFinal;
+            finishTurn("thought_promote_cap", thoughtFinal);
         } else {
             fullResponse =
                 "⚠ Agent stopped without emitting <response final=\"true\">. "
