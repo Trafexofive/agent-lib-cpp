@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <deque>
+#include <functional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -20,6 +21,8 @@
 #include "src/session/controller.hpp"
 #include "src/ui/chat/notification.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
+#include "src/ui/chat/block_reader.hpp"
+#include "src/ui/chat/chat_footer.hpp"
 #include "src/ui/chat/transcript_cache.hpp"
 #include "src/ui/components/cmd_palette.hpp"
 #include "src/ui/model/dashboard_model.hpp"
@@ -114,19 +117,38 @@ struct ShellModel : TimelineStore {
     bool keepLiveOnCwdChange = false;
     // OFF = Sessions page/resume scoped to current CWD; ON = all projects.
     bool globalSessions = false;
+    // Settings · DEV MODE — gates debug slash cmds (/export-dump, /dump-prompt…).
+    bool uiDevMode = false;
     // When true, long block bodies are capped (pi-like truncation) with a
     // "… N more lines" note. Toggle via /truncate or CLI --[no-]truncate.
     bool truncateBodies = true;
+    // Action (input) / result (output) body presentation: json | yaml | raw.
+    // Settings · CHAT · INPUT FMT / OUTPUT FMT carousels.
+    BodyRenderMode actionBodyMode = BodyRenderMode::PrettyJson;
+    BodyRenderMode resultBodyMode = BodyRenderMode::PrettyJson;
+    // Cyclable footer under the prompt (Ctrl-F). See chat_footer.hpp.
+    chat::ChatFooterPane chatFooterPane = chat::ChatFooterPane::Live;
     static constexpr int kMaxBodyLines = 50;
     // tokenBytes/actionCount/resultCount/pendingOps live in TimelineStore
     int wakeCount = 0;
     int routeTicks = 0;
     std::string activePage = "Agent";
     std::string pendingSubmit;
+    // /continue — kick another turn with empty user input (no YOU row).
+    bool pendingContinue = false;
+    // Steer text held when running but rootAgent not yet wired (rare).
+    std::string pendingSteerBuffer;
+
+    // Fullscreen child TUI (art / $EDITOR). Wired from repl → Engine.
+    std::function<void()> suspendTui;
+    std::function<void()> resumeTui;
     PendingRoute pendingRoute = PendingRoute::None;
     // Hub Enter on a launchable agent sets this path; REPL tick hot-swaps the
     // live Agent then routes to the chat scene. Cleared after attempt.
     std::string pendingLaunchManifest;
+    // After hub resume requests a manifest hot-swap, load this session onto the
+    // newly built agent (repl tick clears both).
+    std::string pendingResumeSessionId;
     std::string launchError;  // last hot-swap failure (surfaced on Home/app bar)
     // Hub Enter on kind=workflow — REPL tick runs WorkflowEngine on a worker.
     std::string pendingRunWorkflow;
@@ -181,6 +203,8 @@ struct ShellModel : TimelineStore {
     std::string promptHistoryDraft;
 
     bool helpVisible = false;
+    // Enter-on-block full-text reader (Esc/Backspace closes).
+    chat::BlockReaderState blockReader;
     components::CmdPalette cmdPalette;
     std::string pendingPaletteAction;  // set on palette Enter; scenes execute
     bool askActive = false;
@@ -206,6 +230,9 @@ struct ShellModel : TimelineStore {
     std::vector<std::string> agentPath;  // nested sub-agent names from root
     int selectedBlock = 0;               // index into visible focusable blocks
     bool timelineFocus = false;          // false = composer owns keys
+    // Set by selectDelta/selectEdge/focusTimeline; consumed once in finishRebuildScroll
+    // so ensureSelectionVisible does not fight free scroll (Ctrl-J/K) every frame.
+    bool selectionNavPending = false;
     // inkcell FocusManager dogfood (composer/timeline/palette/ask layers).
     // timelineFocus remains the product boolean for projection; keep in sync via focus*().
     inkcell::FocusManager focus;
@@ -215,6 +242,9 @@ struct ShellModel : TimelineStore {
     // projDirtyFrom, rootRowLineStart live in TimelineStore
     bool batchingEvents = false;
     bool viewRebuildPending = false;
+    // One-shot: next rebuildViews must take full path (trunc/fmt/selection chrome).
+    // Public so scenes can force full after filter toggles (thoughts/raw).
+    bool forceFullProject_ = false;
     uint64_t viewRebuildCount = 0;
     uint64_t transcriptVersion = 0;
     mutable chat::TranscriptWrapCache transcriptWrapCache;
@@ -298,11 +328,36 @@ struct ShellModel : TimelineStore {
         if (TimelineStore::enforceRowCap(selectedBlock) > 0) rebuildViews();
     }
 
+    // True when selection is on the live edge (last focusable block).
+    bool selectionOnLiveEdge() const {
+        int n = countFocusable(rootRows, showThoughts);
+        if (n <= 0) return true;
+        return selectedBlock >= n - 1;
+    }
+
+    // Live-stream follow: stick_bottom is the lock. Selecting the last block
+    // sets it; free-scroll (Ctrl-J/K) clears it even if selection stays on last.
+    // Do NOT re-lock from selectionOnLiveEdge alone — that fought scroll unlock.
+    void followLiveEdgeIfLocked() {
+        if (!running || !atRoot()) return;
+        if (!transcriptView.stick_bottom) return;
+        int last = std::max(0, countFocusable(rootRows, showThoughts) - 1);
+        // When a new focusable block appears, selection jumps to the new last.
+        // Incremental project only rewrites the dirty tail — the previous last
+        // keeps its › chrome → double highlight until j/k forces full rebuild.
+        if (selectedBlock != last) {
+            selectedBlock = last;
+            markProjFull();
+        } else {
+            selectedBlock = last;
+        }
+    }
+
     void applyRowBans(TimelineRow row) {
         // Nested drill is a historical view; live updates always land on root.
         appendRoot(std::move(row));
         if (!atRoot()) return;
-        if (running) selectedBlock = std::max(0, countFocusable(rootRows, showThoughts) - 1);
+        followLiveEdgeIfLocked();
         rebuildViews();
     }
 
@@ -336,9 +391,86 @@ struct ShellModel : TimelineStore {
     void selectDelta(int delta) {
         int n = static_cast<int>(blockRowIndex.size());
         if (n <= 0) return;
+        // Selection paint keys off historyFocused — stay in timeline mode.
+        timelineFocus = true;
+        composer.focused = false;
         selectedBlock = std::max(0, std::min(n - 1, selectedBlock + delta));
-        markProjFull();  // › marker moves between blocks
+        // Lock live-follow only when selection sits on the last block.
+        transcriptView.stick_bottom = (selectedBlock >= n - 1);
+        selectionNavPending = true;
+        // Full reproject: › chrome moves on two rows; incremental dirty left
+        // stale markers and fought wrap-cache. Select is rare vs stream.
+        markProjFull();
         rebuildViews();
+    }
+
+    // Jump selection to first/last focusable block (gg / G).
+    void selectEdge(bool toEnd) {
+        int n = static_cast<int>(blockRowIndex.size());
+        if (n <= 0) return;
+        timelineFocus = true;
+        composer.focused = false;
+        selectedBlock = toEnd ? n - 1 : 0;
+        transcriptView.stick_bottom = toEnd;
+        selectionNavPending = true;
+        markProjFull();
+        rebuildViews();
+    }
+
+    // Toggle body truncation and force full wrap-cache rebuild (Ctrl-O / /truncate).
+    void toggleTruncateBodies() {
+        truncateBodies = !truncateBodies;
+        // Truncation changes every projected body — incremental tail rewrite
+        // leaves the stable prefix at the old density (Ctrl-O mid-stream bug).
+        markProjFull();
+        transcriptWrapCache.invalidate();
+        ++transcriptVersion;
+        // If drain is batching, rebuildViews defers — keep force-full flag so
+        // the post-batch rebuild cannot take the incremental path.
+        forceFullProject_ = true;
+        rebuildViews();
+    }
+
+    // Cycle json → yaml → raw for action bodies (Settings · INPUT FMT).
+    void cycleActionBodyMode(int dir = 1) {
+        int m = static_cast<int>(actionBodyMode);
+        m = (m + (dir >= 0 ? 1 : 2)) % 3;
+        actionBodyMode = static_cast<BodyRenderMode>(m);
+        markProjFull();
+        forceFullProject_ = true;
+        transcriptWrapCache.invalidate();
+        ++transcriptVersion;
+        rebuildViews();
+    }
+
+    // Cycle json → yaml → raw for result bodies (Settings · OUTPUT FMT).
+    void cycleResultBodyMode(int dir = 1) {
+        int m = static_cast<int>(resultBodyMode);
+        m = (m + (dir >= 0 ? 1 : 2)) % 3;
+        resultBodyMode = static_cast<BodyRenderMode>(m);
+        markProjFull();
+        forceFullProject_ = true;
+        transcriptWrapCache.invalidate();
+        ++transcriptVersion;
+        rebuildViews();
+    }
+
+    // Prompt-history push: no consecutive duplicate of the exact same entry.
+    void pushPromptHistory(const std::string& text) {
+        if (text.empty()) return;
+        if (!promptHistory.empty() && promptHistory.back() == text) return;
+        promptHistory.push_back(text);
+        promptHistoryIndex = static_cast<int>(promptHistory.size());
+        promptHistoryDraft.clear();
+    }
+
+    // Yank selected block body (easy kinds). Returns empty if nothing to copy.
+    std::string yankSelectedBody() const {
+        const TimelineRow* row = selectedRow();
+        if (!row) return {};
+        // Prefer body; fall back to title for thin rows.
+        if (!row->body.empty()) return row->body;
+        return row->title;
     }
 
     const TimelineRow* selectedRow() const {
@@ -356,21 +488,43 @@ struct ShellModel : TimelineStore {
     void refreshNested();
 
     void focusTimeline() {
+        // Preserve scroll + stick across focus switches. Do not force unlock
+        // stick_bottom — that killed live-follow and broke mid-run nav restore.
+        const int savedOff = transcriptView.offset;
+        const bool savedStick = transcriptView.stick_bottom;
         timelineFocus = true;
         composer.focused = false;
         focus.focus("timeline");
         if (selectedBlock < 0) selectedBlock = 0;
-        markProjFull();  // › selection markers on all blocks
+        selectionNavPending = false;  // don't snap viewport on mere focus flip
+        markProjFull();
         rebuildViews();
+        transcriptView.stick_bottom = savedStick;
+        if (!savedStick) {
+            transcriptView.offset = savedOff;
+            transcriptView.clamp();
+        } else {
+            transcriptView.scroll_to_end();
+        }
     }
 
     void focusComposer() {
         if (!atRoot()) return;  // nested views are browse-only
+        const int savedOff = transcriptView.offset;
+        const bool savedStick = transcriptView.stick_bottom;
         timelineFocus = false;
         composer.focused = true;
         focus.focus("composer");
-        markProjFull();  // clear › markers
+        selectionNavPending = false;
+        markProjFull();
         rebuildViews();
+        transcriptView.stick_bottom = savedStick;
+        if (!savedStick) {
+            transcriptView.offset = savedOff;
+            transcriptView.clamp();
+        } else {
+            transcriptView.scroll_to_end();
+        }
     }
 
     void requestRoute(PendingRoute r) { pendingRoute = r; }

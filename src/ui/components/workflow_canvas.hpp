@@ -21,22 +21,41 @@
 
 namespace cortex::mk3::ui::components {
 
+constexpr float kCanvasMinZoom = 0.4f;
+constexpr float kCanvasMaxZoom = 2.5f;
+constexpr float kCanvasZoomStep = 1.25f;
+
 struct CanvasCamera {
     float x = 0.f;  // world cell at viewport left
     float y = 0.f;  // world cell at viewport top
-    // zoom reserved — cell TUI stays 1:1; pinch later if wanted
-    float zoom = 1.f;
+    float zoom = 1.f;  // world cell -> screen cells
 
     void pan(float dx, float dy) {
         x += dx;
         y += dy;
     }
 
+    // World point at viewport center.
+    void worldCenter(int viewW, int viewH, float& wx, float& wy) const {
+        float z = zoom > 1e-4f ? zoom : 1.f;
+        wx = x + static_cast<float>(viewW) / (2.f * z);
+        wy = y + static_cast<float>(viewH) / (2.f * z);
+    }
+
     void centerOn(float wx, float wy, int viewW, int viewH) {
-        x = wx - static_cast<float>(viewW) * 0.5f;
-        y = wy - static_cast<float>(viewH) * 0.5f;
+        float z = zoom > 1e-4f ? zoom : 1.f;
+        x = wx - static_cast<float>(viewW) / (2.f * z);
+        y = wy - static_cast<float>(viewH) / (2.f * z);
     }
 };
+
+// Zoom anchored at the viewport center (the world point under center stays put).
+inline void zoomAround(CanvasCamera& cam, int viewW, int viewH, float factor) {
+    float wx, wy;
+    cam.worldCenter(viewW, viewH, wx, wy);
+    cam.zoom = std::max(kCanvasMinZoom, std::min(kCanvasMaxZoom, cam.zoom * factor));
+    cam.centerOn(wx, wy, viewW, viewH);
+}
 
 struct CanvasNode {
     std::string id;
@@ -222,19 +241,23 @@ inline void applyRunStatusToGraph(CanvasGraph& g, const model::WorkflowRunState&
 
 // World → screen
 inline void worldToScreen(const CanvasCamera& cam, int wx, int wy, int& sx, int& sy) {
-    sx = static_cast<int>(std::lround(static_cast<float>(wx) - cam.x));
-    sy = static_cast<int>(std::lround(static_cast<float>(wy) - cam.y));
+    float z = cam.zoom > 1e-4f ? cam.zoom : 1.f;
+    sx = static_cast<int>(std::lround((static_cast<float>(wx) - cam.x) * z));
+    sy = static_cast<int>(std::lround((static_cast<float>(wy) - cam.y) * z));
 }
 
 inline void screenToWorld(const CanvasCamera& cam, int sx, int sy, int& wx, int& wy) {
-    wx = static_cast<int>(std::lround(static_cast<float>(sx) + cam.x));
-    wy = static_cast<int>(std::lround(static_cast<float>(sy) + cam.y));
+    float z = cam.zoom > 1e-4f ? cam.zoom : 1.f;
+    wx = static_cast<int>(std::lround(static_cast<float>(sx) / z + cam.x));
+    wy = static_cast<int>(std::lround(static_cast<float>(sy) / z + cam.y));
 }
 
 inline bool nodeVisible(const CanvasCamera& cam, const CanvasNode& n, int vw, int vh) {
     int sx, sy;
     worldToScreen(cam, n.wx, n.wy, sx, sy);
-    if (sx + n.ww < 0 || sy + n.wh < 0) return false;
+    float sw = static_cast<float>(n.ww) * cam.zoom;
+    float sh = static_cast<float>(n.wh) * cam.zoom;
+    if (sx + sw < 0 || sy + sh < 0) return false;
     if (sx >= vw || sy >= vh) return false;
     return true;
 }
@@ -376,8 +399,12 @@ inline void drawNode(inkcell::Surface& s, inkcell::Rect view, const CanvasCamera
     worldToScreen(cam, n.wx, n.wy, sx, sy);
     const int vx = view.x, vy = view.y, vw = view.w, vh = view.h;
 
+    // Scaled box size (zoom-aware), clamped to at least 2x2.
+    const int sw = std::max(2, (int)std::lround((float)n.ww * cam.zoom));
+    const int sh = std::max(2, (int)std::lround((float)n.wh * cam.zoom));
+
     // Clip reject
-    if (sx + n.ww < 0 || sy + n.wh < 0 || sx >= vw || sy >= vh) return;
+    if (sx + sw < 0 || sy + sh < 0 || sx >= vw || sy >= vh) return;
 
     const float phase = tSec > 0.f ? std::fmod(tSec * 0.625f, 1.f) : 0.f;
     const bool pulseOn = phase < 0.55f;
@@ -406,11 +433,10 @@ inline void drawNode(inkcell::Surface& s, inkcell::Rect view, const CanvasCamera
         s.text({vx + x, vy + y}, ch, st.with_bg(bg.bg));
     };
 
-    // Box
-    for (int row = 0; row < n.wh; ++row) {
-        for (int col = 0; col < n.ww; ++col) {
-            const bool edge =
-                row == 0 || row == n.wh - 1 || col == 0 || col == n.ww - 1;
+    // Box — draws at scaled size; label LOD drops when the box is too small.
+    for (int row = 0; row < sh; ++row) {
+        for (int col = 0; col < sw; ++col) {
+            const bool edge = row == 0 || row == sh - 1 || col == 0 || col == sw - 1;
             if (!edge) {
                 put(col, row, " ", bg);
                 continue;
@@ -418,13 +444,13 @@ inline void drawNode(inkcell::Surface& s, inkcell::Rect view, const CanvasCamera
             const char* ch = " ";
             if (row == 0 && col == 0)
                 ch = "╭";
-            else if (row == 0 && col == n.ww - 1)
+            else if (row == 0 && col == sw - 1)
                 ch = "╮";
-            else if (row == n.wh - 1 && col == 0)
+            else if (row == sh - 1 && col == 0)
                 ch = "╰";
-            else if (row == n.wh - 1 && col == n.ww - 1)
+            else if (row == sh - 1 && col == sw - 1)
                 ch = "╯";
-            else if (row == 0 || row == n.wh - 1)
+            else if (row == 0 || row == sh - 1)
                 ch = "─";
             else
                 ch = "│";
@@ -432,27 +458,30 @@ inline void drawNode(inkcell::Surface& s, inkcell::Rect view, const CanvasCamera
         }
     }
 
-    // Status glyph + label
+    // Status glyph + label (LOD — drop text as the node shrinks under zoom).
+    const bool wide = sw >= 12;
+    const bool tall = sh >= 4;
     std::string glyph = model::stepStatusGlyph(n.status);
     auto gst = stepStatusStyle(n.status, selected, pulseOn);
-    put(2, 1, glyph, gst);
+    if (sw >= 3 && (sw >= 6 || !wide)) put(2, std::min(1, sh - 1), glyph, gst);
 
-    std::string title = n.label;
-    put(4, 1, inkcell::text::truncate(title, n.ww - 6),
-        (selected ? theme::bright() : theme::text()));
+    if (wide) {
+        std::string title = n.label;
+        put(4, 1, inkcell::text::truncate(title, std::max(4, sw - 6)),
+            (selected ? theme::bright() : theme::text()));
+    }
+    if (wide && tall) {
+        std::string meta = n.type;
+        if (!n.ref.empty() && n.ref != n.type) meta += " · " + n.ref;
+        put(2, 2, inkcell::text::truncate(meta, std::max(4, sw - 4)), theme::italic_dim());
 
-    // type · ref
-    std::string meta = n.type;
-    if (!n.ref.empty() && n.ref != n.type) meta += " · " + n.ref;
-    put(2, 2, inkcell::text::truncate(meta, n.ww - 4), theme::italic_dim());
-
-    // timing / flags
-    std::string foot;
-    if (n.ms > 0.0) foot = formatStepMs(n.ms);
-    if (n.human) foot += foot.empty() ? "HITL" : " · HITL";
-    if (n.checkpoint) foot += foot.empty() ? "ckpt" : " · ckpt";
-    if (foot.empty()) foot = model::stepStatusLabel(n.status);
-    put(2, 3, inkcell::text::truncate(foot, n.ww - 4), gst);
+        std::string foot;
+        if (n.ms > 0.0) foot = formatStepMs(n.ms);
+        if (n.human) foot += foot.empty() ? "HITL" : " · HITL";
+        if (n.checkpoint) foot += foot.empty() ? "ckpt" : " · ckpt";
+        if (foot.empty()) foot = model::stepStatusLabel(n.status);
+        put(2, 3, inkcell::text::truncate(foot, std::max(4, sw - 4)), gst);
+    }
 }
 
 struct CanvasDrawOpts {
@@ -523,7 +552,41 @@ inline void drawWorkflowCanvas(inkcell::Surface& s, inkcell::Rect view, const Ca
     }
 }
 
-// Fit camera so graph content is framed with padding.
+// Fit the WHOLE graph into the viewport: adjust zoom so every node fits,
+// then point the camera at the graph centre. Because it dollies (changes
+// zoom), the nodes you were looking at stay in view — nothing disappears
+// during the animation. Cap at 1.0 so we never zoom waaay out of a tiny graph.
+// Fit the WHOLE graph into the viewport: adjust zoom so every node fits, then
+// point the camera at the graph centre (= overlay of the workflow). Because it
+// dollies (changes zoom + pans), the nodes you were looking at slide toward
+// the centre and stay in view while zooming out — no blank frames mid-animation
+// when starting on real content. '.' maps here.
+inline void cameraFitGraph(CanvasCamera& cam, const CanvasGraph& g, int viewW, int viewH) {
+    if (g.nodes.empty()) {
+        cam.x = 0;
+        cam.y = 0;
+        return;
+    }
+    int minX = g.nodes[0].wx, minY = g.nodes[0].wy;
+    int maxX = minX + g.nodes[0].ww, maxY = minY + g.nodes[0].wh;
+    for (const auto& n : g.nodes) {
+        minX = std::min(minX, n.wx);
+        minY = std::min(minY, n.wy);
+        maxX = std::max(maxX, n.wx + n.ww);
+        maxY = std::max(maxY, n.wy + n.wh);
+    }
+    const int gw = std::max(1, maxX - minX), gh = std::max(1, maxY - minY);
+    const float pad = 1.6f;
+    float fitZoom = std::min((float)((viewW - 6) / pad) / (float)gw,
+                             (float)((viewH - 6) / pad) / (float)gh);
+    fitZoom = std::max(kCanvasMinZoom, std::min(1.f, fitZoom));
+    cam.zoom = fitZoom;
+    float cx = static_cast<float>(minX + maxX) * 0.5f;
+    float cy = static_cast<float>(minY + maxY) * 0.5f;
+    cam.centerOn(cx, cy, viewW, viewH);
+}
+
+// Fit camera so graph content is framed with padding (zoom unchanged).
 inline void cameraFrameGraph(CanvasCamera& cam, const CanvasGraph& g, int viewW, int viewH) {
     if (g.nodes.empty()) {
         cam.x = 0;

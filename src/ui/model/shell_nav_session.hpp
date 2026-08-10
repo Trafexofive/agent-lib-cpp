@@ -154,11 +154,46 @@ inline bool ShellModel::enterSubAgent(const std::string& name) {
 
 inline bool ShellModel::enterSelected() {
     const TimelineRow* row = selectedRow();
-    if (!row || !row->drillable) return false;
-    return enterSubAgent(row->actionName);
+    if (!row) return false;
+    // Agent actions still drill into nested history (existing contract).
+    if (row->drillable && !row->actionName.empty())
+        return enterSubAgent(row->actionName);
+
+    // Default click: open full-text reader for any body-bearing block.
+    std::string body = row->body.empty() ? row->title : row->body;
+    if (body.empty()) return false;
+
+    std::string title;
+    switch (row->kind) {
+        case TimelineKind::User: title = "you"; break;
+        case TimelineKind::Thought: title = "thought"; break;
+        case TimelineKind::Response:
+        case TimelineKind::Final: title = agentName.empty() ? "response" : agentName; break;
+        case TimelineKind::Result:
+            title = std::string(row->ok ? "result" : "result · error");
+            if (!row->actionName.empty()) title += " · " + row->actionName;
+            break;
+        case TimelineKind::Action:
+            title = row->actionType.empty() ? "action" : row->actionType;
+            if (!row->actionName.empty()) title += " · " + row->actionName;
+            break;
+        case TimelineKind::Error: title = "error"; break;
+        case TimelineKind::Status: title = "status"; break;
+        case TimelineKind::Stream: title = "raw"; break;
+        case TimelineKind::Log: title = row->title.empty() ? "notice" : row->title; break;
+        default: title = row->title.empty() ? "block" : row->title; break;
+    }
+    chat::openBlockReader(blockReader, std::move(title), std::move(body));
+    timelineFocus = true;
+    composer.focused = false;
+    return true;
 }
 
 inline bool ShellModel::goBack() {
+    if (blockReader.open) {
+        chat::closeBlockReader(blockReader);
+        return true;
+    }
     if (agentPath.empty()) return false;
     agentPath.pop_back();
     if (agentPath.empty()) {

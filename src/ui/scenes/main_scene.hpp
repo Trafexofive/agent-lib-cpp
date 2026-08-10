@@ -188,14 +188,8 @@ class MainScene final : public BaseScene {
             // Entry: pill rides up with the hub.
             if (entryLift > 0) pillBottomY += entryLift;
 
-            if (pillReveal > 0.85f && dash.notice.empty() && !dash.searchMode && wantBar) {
-                int hintY = pillBottomY - pillBodyH;
-                if (hintY >= stageTop) {
-                    inkcell::Rect hintRow{page.x, hintY, page.w, 1};
-                    auto hints = hubChromeKeyHints(page.w >= 100 ? 7 : 5);
-                    hints.theme(theme::activeInkcellTheme()).draw(surface, hintRow);
-                }
-            }
+            // (nav-key legend removed — the pill dock already labels every
+            // segment with its key; a duplicate hint row was redundant).
 
             components::drawPillDock(surface, page.x, page.w, pillBottomY, pills,
                                      dash.navigationIndex, dash.navPrevIndex, dash.navAnimT(),
@@ -404,11 +398,21 @@ class MainScene final : public BaseScene {
                 model_->truncateBodies = !model_->truncateBodies;
                 model_->rebuildViews();
                 break;
-            case 5:  // raw
+            case 5:  // INPUT FMT — action body json|yaml|raw
+                model_->cycleActionBodyMode(dir);
+                dash.flashNotice(std::string("input · ") +
+                                 bodyRenderModeName(model_->actionBodyMode));
+                break;
+            case 6:  // OUTPUT FMT — result body json|yaml|raw
+                model_->cycleResultBodyMode(dir);
+                dash.flashNotice(std::string("output · ") +
+                                 bodyRenderModeName(model_->resultBodyMode));
+                break;
+            case 7:  // raw
                 model_->showRaw = !model_->showRaw;
                 model_->rebuildViews();
                 break;
-            case 6:  // chat field bg
+            case 8:  // chat field bg
                 // Vet-fix: independent from hub field on/off; chat-side underlay
                 // persists via ui_prefs alongside theme + chat toggles.
                 model_->chatFieldEnabled = !model_->chatFieldEnabled;
@@ -417,18 +421,18 @@ class MainScene final : public BaseScene {
                                            gfx::activeFieldName()
                                      : std::string("chat · field bg off"));
                 break;
-            case 7:  // zen mode
+            case 9:  // zen mode
                 model_->zenMode = !model_->zenMode;
                 dash.bumpNavActivity();  // show pill when enabling zen
                 dash.flashNotice(model_->zenMode ? "zen · pill auto-hides"
                                                  : "zen off · pill always up");
                 break;
-            case 8:  // nav pill master
+            case 10:  // nav pill master
                 model_->navPillEnabled = !model_->navPillEnabled;
                 if (model_->navPillEnabled) dash.bumpNavActivity();
                 dash.flashNotice(model_->navPillEnabled ? "nav pill on" : "nav pill off");
                 break;
-            case 9: {  // pill hide delay carousel
+            case 11: {  // pill hide delay carousel
                 // 2s · 3s · 5s · 8s · never(0)
                 static const int kDelays[] = {2000, 3000, 5000, 8000, 0};
                 int idx = 1;  // default 3s
@@ -446,7 +450,7 @@ class MainScene final : public BaseScene {
                                         std::to_string(model_->navPillHideMs / 1000) + "s"));
                 break;
             }
-            case 10: {  // session CWD carousel: empty -> HOME -> launch -> empty
+            case 12: {  // session CWD carousel: empty -> HOME -> launch -> empty
                 const char* home = std::getenv("HOME");
                 std::string homeStr = home ? home : "";
                 std::string launch = model_->launchCwd;
@@ -478,27 +482,34 @@ class MainScene final : public BaseScene {
                 }
                 break;
             }
-            case 11: {  // remember last CWD across launches
+            case 13: {  // remember last CWD across launches
                 model_->rememberLastCwd = !model_->rememberLastCwd;
                 dash.flashNotice(model_->rememberLastCwd
                                      ? "cwd · remember last (sticky across launches)"
                                      : "cwd · per-session (launch dir wins)");
                 break;
             }
-            case 12: {  // keep live session when CWD changes
+            case 14: {  // keep live session when CWD changes
                 model_->keepLiveOnCwdChange = !model_->keepLiveOnCwdChange;
                 dash.flashNotice(model_->keepLiveOnCwdChange
                                      ? "cwd · live kept across CWD change"
                                      : "cwd · live killed on CWD change");
                 break;
             }
-            case 13: {  // session list scope: per-project (default) vs global
+            case 15: {  // session list scope: per-project (default) vs global
                 model_->globalSessions = !model_->globalSessions;
                 dash.flashNotice(model_->globalSessions
                                      ? "sessions · global (all projects)"
                                      : "sessions · project (current CWD)");
                 model_->dashboard.refreshSessions(session::SessionManager(),
                                                   model_->globalSessions);
+                break;
+            }
+            case 16: {  // operator dev mode — debug slash cmds
+                model_->uiDevMode = !model_->uiDevMode;
+                dash.flashNotice(model_->uiDevMode
+                                     ? "dev mode on · /export-chat /export-dump /dump-prompt"
+                                     : "dev mode off · debug cmds hidden");
                 break;
             }
             default:

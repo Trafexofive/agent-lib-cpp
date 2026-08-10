@@ -9,6 +9,8 @@
 
 #include <json/json.h>
 
+#include "src/core/agent_catalog.hpp"
+#include "src/providers/factory.hpp"
 #include "src/tools/dispatch.hpp"
 
 namespace cortex::mk3::ui::scenes {
@@ -89,22 +91,11 @@ inline void MainScene::activate() {
             return;
         }
         if (m->kind == "workflow") {
-            // Workflows page is a hub section (nav pill), not a card embed.
-            // Jump there with this workflow selected + canvas ready.
+            // Full workflow page (canvas + run), mirroring the tool page.
             model_->activeWorkflowManifestPath = m->path;
             model_->activeWorkflowName = m->name;
-            dash.manifestFilter = "workflow";
-            dash.refreshManifests();
-            // Select matching index in filtered list
-            for (int i = 0; i < static_cast<int>(dash.manifests.size()); ++i) {
-                if (dash.manifests[static_cast<size_t>(i)].path == m->path) {
-                    dash.manifestIndex = i;
-                    break;
-                }
-            }
-            dash.select(model::DashboardSection::Workflows);
-            dash.wfCanvasFocus = true;
-            dash.flashNotice("workflows · " + m->name);
+            model_->requestRoute(PendingRoute::Workflow);
+            dash.flashNotice("workflow · " + m->name);
             return;
         }
         if (m->kind == "tool") {
@@ -152,24 +143,31 @@ inline void MainScene::activate() {
         return;
     }
     if (dash.section == model::DashboardSection::Workflows) {
-        // On Workflows page, Enter runs the focused workflow (page is the stage).
-        const auto* m = dash.selectedManifest();
-        // Prefer workflow-filtered selection; if facet wrong, pick by name from cache.
-        if (m && m->kind == "workflow") {
-            queueWorkflowRun(*m);
-            return;
-        }
-        // Fallback: first workflow in full discovery matching index
+        // Enter opens the full workflow page (run stays inside the page via ↵/r).
         auto all = catalog::discoverManifests(dash.manifestDir);
         std::vector<catalog::ManifestEntry> wfs;
         for (const auto& e : all)
             if (e.kind == "workflow") wfs.push_back(e);
-        if (!wfs.empty()) {
-            int idx = std::max(0, std::min(dash.manifestIndex, (int)wfs.size() - 1));
-            queueWorkflowRun(wfs[static_cast<size_t>(idx)]);
+        if (wfs.empty())
+            for (const auto& m : dash.manifests)
+                if (m.kind == "workflow") wfs.push_back(m);
+        if (wfs.empty()) {
+            dash.flashNotice("no workflow selected");
             return;
         }
-        dash.flashNotice("no workflow selected");
+        const auto* cur = dash.selectedManifest();
+        int sel = 0;
+        for (int i = 0; i < (int)wfs.size(); ++i)
+            if (cur && wfs[(size_t)i].path == cur->path) {
+                sel = i;
+                break;
+            }
+        sel = std::max(0, std::min(sel, (int)wfs.size() - 1));
+        const auto& m = wfs[(size_t)sel];
+        model_->activeWorkflowManifestPath = m.path;
+        model_->activeWorkflowName = m.name;
+        model_->requestRoute(PendingRoute::Workflow);
+        dash.flashNotice("workflow · " + m.name);
         return;
     }
 }
@@ -278,6 +276,22 @@ inline void MainScene::resumeSelectedSession() {
         model_->dashboard.notice = "agent runtime unavailable";
         return;
     }
+    // Live turn owns the agent slot. Switching sessions mid-turn races history_
+    // and kills the point of "live". Same session → just return to chat.
+    {
+        const auto* sel = model_->dashboard.selectedSession();
+        if (model_->running && sel) {
+            if (!model_->activeSessionId.empty() && sel->id == model_->activeSessionId) {
+                model_->dashboard.flashNotice("live · returning to chat");
+                model_->requestRoute(PendingRoute::Agent);
+                return;
+            }
+            model_->dashboard.flashNotice(
+                "live turn on " + suffix(model_->activeSessionId) +
+                " — stop (x) before resuming another session");
+            return;
+        }
+    }
     // Apply session CWD on resume — operator can change CWD setting, hit
     // resume, and tools in the resumed session inherit the new process CWD.
     std::string cwd = applySessionCwd();
@@ -337,12 +351,53 @@ inline void MainScene::resumeSelectedSession() {
         }
     }
     model_->loadSessionUi(full);
-    // Live Agent config wins header identity after resume (not session file).
-    if (model_->rootAgent) {
-        const auto& c = model_->rootAgent->config();
-        if (!c.name.empty()) model_->agentName = c.name;
-        if (!c.model.empty()) model_->agentModel = c.model;
-        if (!c.provider.empty()) model_->agentProvider = c.provider;
+    // Prefer session identity (agent/provider/model). If the session points at a
+    // different manifest than the live agent, hot-swap so hub resume matches -c.
+    {
+        std::string wantManifest;
+        auto it = full.metadata.find("manifest_path");
+        if (it != full.metadata.end()) wantManifest = it->second;
+        if (wantManifest.empty() && !full.agentName.empty() &&
+            full.agentName != "cortext-builtin-agent" && full.agentName != "cortex") {
+            std::string err;
+            wantManifest = catalog::resolveAgent(full.agentName, "", &err);
+        }
+        if (!wantManifest.empty() && wantManifest != model_->activeManifestPath) {
+            // Full rebuild via repl tick (same path as hub launch) so tools/
+            // subagents/prompts match the session agent — not header-only rename.
+            if (model_->running) {
+                model_->dashboard.flashNotice(
+                    "live turn — stop before resume onto another agent");
+                return;
+            }
+            model_->pendingResumeSessionId = result.sessionId;
+            model_->pendingLaunchManifest = wantManifest;
+            // Stash engine so post-launch apply keeps session model.
+            model_->agentName = full.agentName.empty() ? model_->agentName : full.agentName;
+            model_->agentProvider = full.provider;
+            model_->agentModel = full.model;
+            model_->dashboard.flashNotice("resuming · rebuilding agent…");
+            return;  // repl builds agent then loads session
+        }
+        if (!full.agentName.empty()) model_->agentName = full.agentName;
+        if (!full.model.empty()) model_->agentModel = full.model;
+        if (!full.provider.empty()) model_->agentProvider = full.provider;
+        // Same-manifest resume: apply session engine onto the live agent.
+        if (model_->rootAgent) {
+            const auto& c = model_->rootAgent->config();
+            if (model_->agentName.empty() && !c.name.empty()) model_->agentName = c.name;
+            if (model_->agentModel.empty() && !c.model.empty()) model_->agentModel = c.model;
+            if (model_->agentProvider.empty() && !c.provider.empty())
+                model_->agentProvider = c.provider;
+            if (!full.provider.empty() && !full.model.empty() &&
+                (c.provider != full.provider || c.model != full.model)) {
+                auto p = providers::createProvider(full.provider, full.model);
+                if (p) {
+                    p->setQuietLogs(true);
+                    model_->rootAgent->setProvider(p, full.provider, full.model);
+                }
+            }
+        }
     }
     model_->reannotateDrillable();
     model_->activeSessionId = result.sessionId;

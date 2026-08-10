@@ -125,10 +125,13 @@ struct DashboardState {
     bool hubEntering() const { return hubEntryT() < 1.f; }
 
     // Settings option focus:
-    // 0 theme · 1 field · 2 shader · 3 thoughts · 4 truncate · 5 raw · 6 chat field
-    // 7 zen · 8 nav pill · 9 pill hide delay · 10 cwd · 11 remember cwd · 12 keep live
+    // 0 theme · 1 field · 2 shader · 3 thoughts · 4 truncate
+    // 5 input fmt · 6 output fmt · 7 raw · 8 chat field
+    // 9 zen · 10 nav pill · 11 pill hide · 12 cwd
+    // 13 remember cwd · 14 keep live · 15 session scope · 16 dev mode
     int settingsFocus = 0;
-    static constexpr int settingsOptionCount = 13;
+    // 0..16 inclusive → 17 options (THEME … DEV MODE).
+    static constexpr int settingsOptionCount = 17;
 
     // Inline edit buffer for CWD setting. Entered via `e` on the CWD row.
     // Captures next chars; Backspace deletes; Enter commits (~ expanded);
@@ -167,10 +170,20 @@ struct DashboardState {
     // Workflow infinite canvas (Manifests detail when kind=workflow)
     float wfCamX = 0.f;
     float wfCamY = 0.f;
+    float wfCamZoom = 1.f;
     int wfFocusNode = 0;
     bool wfCanvasFocus = false;  // true: keys pan/select on canvas; false: list
     bool wfCanvasExpanded = false;  // list collapses; canvas owns the stage
     std::string wfCanvasPath;  // path graph was built for (invalidate on change)
+    // Camera intent pending (consumed in draw): zoom step, animated reframes.
+    float wfZoomStep = 0.f;         // +1/-1 pending zoom hop; 0 = none
+    bool wfAnimFramePending = false;  // '.' → animated frame graph
+    bool wfAnimNodePending = false;   // '['/']' → animated focus-node center
+    bool wfAnimActive = false;        // a camera animation is mid-flight
+    float wfAnimFromX = 0.f, wfAnimFromY = 0.f, wfAnimFromZ = 1.f;
+    float wfAnimToX = 0.f, wfAnimToY = 0.f, wfAnimToZ = 1.f;
+    float wfAnimT0 = 0.f;
+    float wfAnimDur = 0.f;
 
     // Kind facet order for 1-9 binding (0/all is unnumbered / `f` or `0`)
     static const std::vector<std::string>& kindFacets() {

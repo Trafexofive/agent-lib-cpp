@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <vector>
 
+#include "src/ui/components/workflow_stage.hpp"
+
 namespace cortex::mk3::ui::scenes {
 
 inline void MainScene::drawAppBar(inkcell::Surface& surface, inkcell::Rect page, layout::DensityTier tier) const {
@@ -88,14 +90,21 @@ inline void MainScene::drawHome(inkcell::Surface& surface, inkcell::Rect frame) 
         nonempty(model_->agentProvider, nonempty(cfg_.provider, "?")) + "/" +
         nonempty(model_->agentModel, nonempty(cfg_.model, "?"));
     const bool live = model_->running;
-    const char* pulse = live ? "● LIVE" : "○ READY";
+    const char* pulse = live ? "● LIVE BG" : "○ READY";
 
     surface.text({frame.x, frame.y}, inkcell::text::truncate(name, frame.w / 2), theme::bright());
     surface.text({frame.x + inkcell::text::display_width(name) + 2, frame.y},
                  pulse, live ? theme::green() : theme::muted());
-    if (frame.h > 1)
+    if (frame.h > 1) {
+        std::string sub = engine;
+        if (live) {
+            sub += "  ·  turn continues on Settings/Manifests/Sessions";
+            if (!model_->activeSessionId.empty())
+                sub += "  ·  " + model_->activeSessionId;
+        }
         surface.text({frame.x, frame.y + 1},
-                     inkcell::text::truncate(engine, frame.w), theme::italic_dim());
+                     inkcell::text::truncate(sub, frame.w), theme::italic_dim());
+    }
 
     int y = frame.y + 3;
 
@@ -327,7 +336,14 @@ inline void MainScene::drawSessions(inkcell::Surface& surface, inkcell::Rect fra
             auto state = active ? theme::green() : theme::dim();
             state.bg = rowBg.bg;
             state.bold = active;
-            std::string badge = active ? "● LIVE" : (s.hasUiTimeline ? "◉ UI" : "◯");
+            // LIVE = this session owns the bg worker turn; OPEN = attached idle.
+            std::string badge = "◯";
+            if (active && model_->running)
+                badge = "● RUN";
+            else if (active)
+                badge = "● OPEN";
+            else if (s.hasUiTimeline)
+                badge = "◉ UI";
             surface.text({frame.x + labelW + 2, y}, badge, state);
 
             // AGENT column
@@ -355,7 +371,11 @@ inline void MainScene::drawSessions(inkcell::Surface& surface, inkcell::Rect fra
             surface.text({frame.x + frame.w - 14, y},
                          inkcell::text::truncate(whenTxt, 14), updSt);
         } else {
-            std::string oneLine = active ? "● " : (s.hasUiTimeline ? "◉ " : "  ");
+            std::string oneLine =
+                (active && model_->running) ? "●RUN "
+                : active                    ? "● "
+                : s.hasUiTimeline           ? "◉ "
+                                            : "  ";
             oneLine += label + "  " + nonempty(s.agentName, "?") + "  " +
                        std::to_string(s.turnCount) + "r  ";
             if (!s.updated.empty()) oneLine += s.updated;
@@ -938,71 +958,74 @@ inline void MainScene::drawRelics(inkcell::Surface& surface, inkcell::Rect frame
 // Dedicated Workflows hub page — list + live canvas stage (not jammed into cards).
 inline void MainScene::drawWorkflows(inkcell::Surface& surface, inkcell::Rect frame) const {
     auto& dash = model_->dashboard;
-    sectionHead(surface, frame, "Workflows",
-                "j/k select · ↵ run · z expand canvas · x stop · r re-run · a manifests");
-
-    int y = frame.y + 4;
-    // Collect workflows from full discovery (not just current facet).
-    std::vector<const catalog::ManifestEntry*> wfs;
     auto all = catalog::discoverManifests(dash.manifestDir);
-    for (const auto& m : all) {
+    std::vector<const catalog::ManifestEntry*> wfs;
+    for (const auto& m : all)
         if (m.kind == "workflow") wfs.push_back(&m);
-    }
-    // Prefer filtered list if user is already on workflow facet in Manifests cache
-    if (wfs.empty()) {
+    if (wfs.empty())
         for (const auto& m : dash.manifests)
             if (m.kind == "workflow") wfs.push_back(&m);
-    }
+
+    auto live = model_->workflowRun.snapshot();
+    bool anyLive = live.live;
+    sectionHead(surface, frame, "Workflows",
+                std::to_string(wfs.size()) + " workflows" +
+                    (anyLive ? "  ·  ● " + std::string(model::runStatusLabel(live.status)) : ""));
 
     if (wfs.empty()) {
-        surface.text({frame.x, y}, "No workflows in manifests/.", theme::amber());
+        surface.text({frame.x, frame.y + 4}, "No workflows in manifests/.", theme::amber());
         return;
     }
 
-    // Keep selection index in range against workflow-only list via manifestIndex
-    // when current selection is a workflow; else default first.
+    int y = frame.y + 4;
     int sel = 0;
     const auto* cur = dash.selectedManifest();
-    for (int i = 0; i < static_cast<int>(wfs.size()); ++i) {
-        if (cur && wfs[static_cast<size_t>(i)]->path == cur->path) {
+    for (int i = 0; i < (int)wfs.size(); ++i)
+        if (cur && wfs[(size_t)i]->path == cur->path) {
             sel = i;
             break;
         }
-    }
 
-    // Split: list left (narrow) + canvas stage right/bottom.
-    const int listW = std::min(36, std::max(18, frame.w / 3));
-    const int listH = std::max(4, frame.bottom() - y - 1);
+    // List: 2-line chrome rows | stage: canvas, 2-col gap, no divider glyph.
+    const int listW = std::min(42, std::max(24, frame.w / 3));
+    int listH = std::max(4, frame.bottom() - y - 1);
+    int vis = std::max(1, listH / 2);
+    int start = std::max(0, std::min(sel - vis / 3, std::max(0, (int)wfs.size() - vis)));
 
-    int visible = listH;
-    int start = std::max(0, std::min(sel - visible / 3,
-                                     std::max(0, static_cast<int>(wfs.size()) - visible)));
-    for (int i = start; i < static_cast<int>(wfs.size()) && (i - start) < visible; ++i) {
-        const auto& m = *wfs[static_cast<size_t>(i)];
+    for (int i = start; i < (int)wfs.size() && (i - start) < vis; ++i) {
+        const auto& m = *wfs[(size_t)i];
         bool selected = (i == sel);
-        auto live = model_->workflowRun.snapshot();
         bool liveHere = live.live && (live.path == m.path || live.name == m.name);
-        std::string line = (selected ? "› " : "  ") + m.name;
-        if (liveHere) line += "  ●";
-        else if (selected) line += "  ↵ run";
-        auto st = selected ? theme::bright() : theme::text();
-        if (liveHere) st = theme::green();
-        surface.text({frame.x, y + (i - start)},
-                     inkcell::text::truncate(line, listW - 1), st);
+        int r0 = y + (i - start) * 2;
+        if (r0 + 1 >= frame.bottom()) break;
+        components::fillRect(surface, {frame.x, r0, listW, 2},
+                             selected ? theme::panel_3() : theme::panel_bg());
+        if (selected)
+            components::accentBar(surface, frame.x, r0, 2, theme::footer_accent_focus());
+        std::string head = (selected ? "› " : "  ") + m.name;
+        surface.text({frame.x + 2, r0}, inkcell::text::truncate(head, listW - 6),
+                     selected ? theme::bright() : theme::text());
+        int steps = 0;
+        {
+            auto& e = workflows::WorkflowEngine::instance().load(m.path);
+            if (e.isValid()) steps = (int)e.manifest().steps.size();
+        }
+        std::string rr = liveHere ? "● live" : (steps > 0 ? std::to_string(steps) + " steps" : "");
+        if (!rr.empty()) {
+            int rw = (int)inkcell::text::display_width(rr);
+            surface.text({frame.right() - 1 - rw, r0}, rr,
+                         liveHere ? theme::green() : theme::dim());
+        }
+        if (!m.summary.empty())
+            surface.text({frame.x + 3, r0 + 1},
+                         inkcell::text::truncate(m.summary, listW - 6), theme::italic_dim());
     }
 
-    // Stage: canvas for selected workflow
-    inkcell::Rect stage{frame.x + listW + 1, y, std::max(12, frame.w - listW - 1),
+    inkcell::Rect stage{frame.x + listW + 2, y, std::max(12, frame.w - listW - 2),
                         frame.bottom() - y};
-    if (stage.w >= 12 && stage.h >= 6 && sel >= 0 &&
-        sel < static_cast<int>(wfs.size())) {
-        // hairline separator
-        for (int yy = y; yy < frame.bottom(); ++yy)
-            surface.text({frame.x + listW, yy}, "│", theme::dim());
-        drawWorkflowStage(surface, stage, *wfs[static_cast<size_t>(sel)], gfx::nowSeconds());
-    }
+    if (stage.w >= 12 && stage.h >= 6 && sel >= 0 && sel < (int)wfs.size())
+        drawWorkflowStage(surface, stage, *wfs[(size_t)sel], gfx::nowSeconds());
 }
-
 inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect frame) const {
     // Title plate
     surface.text({frame.x, frame.y}, "SETTINGS", theme::bright());
@@ -1077,8 +1100,12 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
     section("CHAT");
     option(3, "THOUGHTS", model_->showThoughts ? "ON" : "OFF", "^T", false);
     option(4, "TRUNCATE", model_->truncateBodies ? "ON" : "OFF", "^O", false);
-    option(5, "RAW STREAM", model_->showRaw ? "ON" : "OFF", "^R", false);
-    option(6, "CHAT FIELD",
+    option(5, "INPUT FMT",
+           upperCopy(bodyRenderModeName(model_->actionBodyMode)), "←→", true);
+    option(6, "OUTPUT FMT",
+           upperCopy(bodyRenderModeName(model_->resultBodyMode)), "←→", true);
+    option(7, "RAW STREAM", model_->showRaw ? "ON" : "OFF", "^R", false);
+    option(8, "CHAT FIELD",
            model_->chatFieldEnabled
                ? (gfx::fieldEnabled() ? std::string("ON  · ")
                                           + gfx::activeFieldName()
@@ -1088,14 +1115,14 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
 
     if (y < frame.bottom()) ++y;
     section("CHROME");
-    option(7, "ZEN MODE", model_->zenMode ? "ON" : "OFF", "Z", false);
-    option(8, "NAV PILL", model_->navPillEnabled ? "ON" : "OFF", "", false);
+    option(9, "ZEN MODE", model_->zenMode ? "ON" : "OFF", "Z", false);
+    option(10, "NAV PILL", model_->navPillEnabled ? "ON" : "OFF", "", false);
     {
         std::string hide =
             model_->navPillHideMs <= 0
                 ? "NEVER"
                 : (std::to_string(model_->navPillHideMs / 1000) + "S");
-        option(9, "PILL HIDE", hide, "←→", true);
+        option(11, "PILL HIDE", hide, "←→", true);
     }
 
     if (y < frame.bottom()) ++y;
@@ -1115,11 +1142,15 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
             if (getcwd(buf, sizeof(buf) - 1)) val = buf;
             if (val.empty()) val = "—";
         }
-        option(10, "CWD", val, cwdDash.cwdEditMode ? "⏎ commit" : "e edit · ←→", false);
+        option(12, "CWD", val, cwdDash.cwdEditMode ? "⏎ commit" : "e edit · ←→", false);
     }
-    option(11, "REMEMBER CWD", model_->rememberLastCwd ? "ON" : "OFF", "", false);
-    option(12, "KEEP LIVE", model_->keepLiveOnCwdChange ? "ON" : "OFF", "", false);
-    option(13, "SESSION SCOPE", model_->globalSessions ? "GLOBAL" : "PROJECT", "←→", false);
+    option(13, "REMEMBER CWD", model_->rememberLastCwd ? "ON" : "OFF", "", false);
+    option(14, "KEEP LIVE", model_->keepLiveOnCwdChange ? "ON" : "OFF", "", false);
+    option(15, "SESSION SCOPE", model_->globalSessions ? "GLOBAL" : "PROJECT", "←→", false);
+
+    if (y < frame.bottom()) ++y;
+    section("DEV");
+    option(16, "DEV MODE", model_->uiDevMode ? "ON" : "OFF", "←→", false);
 
     // Single footer — path only, no key encyclopedia
     if (y + 1 < frame.bottom()) {
@@ -1134,122 +1165,6 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
 
 inline void MainScene::drawWorkflowStage(inkcell::Surface& surface, inkcell::Rect frame,
                        const catalog::ManifestEntry& m, float tsec) const {
-    if (frame.w < 12 || frame.h < 6) return;
-
-    auto& engine = workflows::WorkflowEngine::instance();
-    auto& loaded = engine.load(m.path);
-    if (!loaded.isValid()) {
-        surface.text({frame.x, frame.y}, "failed to load workflow", theme::red());
-        surface.text({frame.x, frame.y + 1},
-                     inkcell::text::truncate(m.path, frame.w), theme::dim());
-        return;
-    }
-    const auto& mf = loaded.manifest();
-    auto graph = components::buildCanvasGraph(mf);
-
-    auto run = model_->workflowRun.snapshot();
-    const bool liveHere =
-        (run.live || model::runStatusActive(run.status) ||
-         run.status == model::RunStatus::Succeeded ||
-         run.status == model::RunStatus::Failed ||
-         run.status == model::RunStatus::Cancelled) &&
-        (!run.path.empty() ? run.path == m.path : run.name == m.name);
-    if (liveHere) components::applyRunStatusToGraph(graph, run);
-
-    // Header strip (2 rows)
-    std::string title = m.name;
-    if (!m.version.empty()) title += "  v" + m.version;
-    surface.text({frame.x, frame.y}, inkcell::text::truncate(title, frame.w), theme::bright());
-
-    model::WorkflowTopology topo;
-    model::countTopo(mf.steps, topo);
-    std::string meta = components::topologyLine(topo);
-    if (!m.summary.empty()) meta += "  ·  " + m.summary;
-    if (liveHere) {
-        meta = std::string(model::runStatusLabel(run.status)) + "  ·  " +
-               components::formatRunElapsed(run.elapsedMs) + "  ·  " + meta;
-    }
-    surface.text({frame.x, frame.y + 1}, inkcell::text::truncate(meta, frame.w),
-                 liveHere ? components::runStatusChipStyle(run.status) : theme::italic_dim());
-
-    int bodyTop = frame.y + 3;
-    int eventH = liveHere ? std::min(5, std::max(2, frame.h / 6)) : 0;
-    int canvasH = std::max(4, frame.bottom() - bodyTop - eventH - (liveHere ? 0 : 1));
-    inkcell::Rect canvas{frame.x, bodyTop, frame.w, canvasH};
-
-    // Camera — settle path changes / center sentinel
-    auto& dashMut = const_cast<model::DashboardState&>(model_->dashboard);
-    components::CanvasCamera cam;
-    cam.x = dashMut.wfCamX;
-    cam.y = dashMut.wfCamY;
-    bool needFrame = (dashMut.wfCanvasPath != m.path) || cam.x > 1e8f;
-    if (needFrame) {
-        if (!graph.nodes.empty() && dashMut.wfFocusNode >= 0 &&
-            dashMut.wfFocusNode < static_cast<int>(graph.nodes.size()) && cam.x > 1e8f) {
-            components::cameraCenterNode(
-                cam, graph.nodes[static_cast<size_t>(dashMut.wfFocusNode)], canvas.w,
-                canvas.h);
-        } else {
-            components::cameraFrameGraph(cam, graph, canvas.w, canvas.h);
-        }
-        dashMut.wfCamX = cam.x;
-        dashMut.wfCamY = cam.y;
-        dashMut.wfCanvasPath = m.path;
-        if (dashMut.wfFocusNode >= static_cast<int>(graph.nodes.size()))
-            dashMut.wfFocusNode = 0;
-    }
-    if (dashMut.wfFocusNode < 0) dashMut.wfFocusNode = 0;
-    if (!graph.nodes.empty()) {
-        int n = static_cast<int>(graph.nodes.size());
-        dashMut.wfFocusNode = dashMut.wfFocusNode % n;
-        if (dashMut.wfFocusNode < 0) dashMut.wfFocusNode += n;
-    }
-
-    components::CanvasDrawOpts opt;
-    opt.selected = dashMut.wfFocusNode;
-    opt.tSec = tsec;
-    opt.showChrome = true;
-    if (liveHere && run.currentIdx >= 0 &&
-        run.currentIdx < static_cast<int>(run.steps.size()))
-        opt.currentId = run.steps[static_cast<size_t>(run.currentIdx)].id;
-    opt.statusLine = dashMut.wfCanvasFocus
-                         ? "hjkl pan · [] node · . center · z expand · ↵ run · Esc stop"
-                         : "tab canvas · z expand · ↵ run";
-    if (liveHere && !run.lastError.empty() &&
-        (run.status == model::RunStatus::Failed ||
-         run.status == model::RunStatus::Cancelled))
-        opt.statusLine = run.lastError;
-
-    components::drawWorkflowCanvas(surface, canvas, graph, cam, opt);
-
-    // Live event strip under canvas
-    if (liveHere && eventH > 0) {
-        inkcell::Rect strip{frame.x, canvas.bottom(), frame.w, frame.bottom() - canvas.bottom()};
-        if (strip.h >= 2) {
-            components::hairline(surface, strip.x, strip.y, strip.w, theme::dim());
-            int ey = strip.y + 1;
-            int n = static_cast<int>(run.events.size());
-            int vis = std::max(1, strip.bottom() - ey);
-            int start = n > vis ? n - vis : 0;
-            for (int i = start; i < n && ey < strip.bottom(); ++i) {
-                const auto& ev = run.events[static_cast<size_t>(i)];
-                auto st = theme::dim();
-                if (ev.kind.find("fail") != std::string::npos)
-                    st = theme::red();
-                else if (ev.kind == "step.ok" || ev.kind == "done")
-                    st = theme::green_soft();
-                else if (ev.kind == "step.enter" || ev.kind == "hitl")
-                    st = theme::cyan();
-                else if (ev.kind == "checkpoint" || ev.kind == "emit")
-                    st = theme::amber_soft();
-                std::string line = ev.kind;
-                if (!ev.text.empty()) line += "  " + ev.text;
-                surface.text({strip.x, ey++},
-                             inkcell::text::truncate(line, strip.w), st);
-            }
-        }
-    }
+    components::drawWorkflowDetail(surface, frame, m, *model_, tsec);
 }
-
-
 }  // namespace cortex::mk3::ui::scenes

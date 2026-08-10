@@ -224,6 +224,8 @@ inline std::vector<CmdItem> chatCommands() {
         {"chat.thoughts", "Toggle thoughts", "show/hide model thoughts", "CHAT", "^T"},
         {"chat.truncate", "Toggle truncate", "cap long bodies", "CHAT", "^O"},
         {"chat.raw", "Toggle raw", "protocol dump view", "CHAT", "^R"},
+        {"chat.scroll_down", "Fine scroll down", "transcript +1 line", "CHAT", "^J"},
+        {"chat.scroll_up", "Fine scroll up", "transcript -1 line", "CHAT", "^K"},
         {"chat.clear", "Clear transcript", "wipe current view", "CHAT", "/clear"},
         {"chat.stop", "Stop agent loop", "kill switch", "CHAT", "^X"},
         {"act.theme", "Toggle theme", "graphite ↔ neon", "ACTION", "T"},

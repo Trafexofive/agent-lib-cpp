@@ -224,10 +224,12 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             }
             if (event.code == KeyCode::Character && (event.ch == '[' || event.ch == 'p')) {
                 dash.wfFocusNode = std::max(0, dash.wfFocusNode - 1);
+                dash.wfAnimNodePending = true;
                 return true;
             }
             if (event.code == KeyCode::Character && (event.ch == ']' || event.ch == 'n')) {
                 ++dash.wfFocusNode;
+                dash.wfAnimNodePending = true;
                 return true;
             }
         }
@@ -331,8 +333,8 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             case '.':
                 if (dash.section == model::DashboardSection::Manifests &&
                     workflowSelectionActive()) {
-                    dash.wfCamX = 1e9f;  // sentinel → reframe on next draw
-                    dash.flashNotice("center");
+                    dash.wfAnimFramePending = true;  // animated frame in draw
+                    dash.flashNotice("frame");
                     return true;
                 }
                 break;
@@ -433,7 +435,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             case 'e':
             case 'E':
                 if (dash.section == model::DashboardSection::Settings &&
-                    dash.settingsFocus == 10) {
+                    dash.settingsFocus == 12) {
                     dash.cwdEditMode = true;
                     dash.cwdEditBuffer = model_->sessionCwd;
                     bumpNotice();

@@ -14,19 +14,32 @@
 namespace cortex::mk3::ui {
 
 inline bool sameProtocolEvent(const ProtocolEvent& a, const ProtocolEvent& b) {
-    if (a.kind != b.kind || a.text != b.text) return false;
+    if (a.kind != b.kind) return false;
+    // Streaming kinds grow by append. Size mismatch ⇒ dirty without O(n) memcmp.
+    // Same size ⇒ content equal for append-only streams (thought/status/response).
+    if (a.kind == ProtocolEventKind::THOUGHT || a.kind == ProtocolEventKind::STATUS ||
+        a.kind == ProtocolEventKind::RESPONSE || a.kind == ProtocolEventKind::RETRY) {
+        if (a.text.size() != b.text.size()) return false;
+        // Cheap equality: size-matched stream chunks are identical in practice.
+        // Full compare only for tiny payloads (avoids false-stable on replace).
+        if (a.text.size() <= 96) return a.text == b.text;
+        return true;
+    }
     if (a.kind == ProtocolEventKind::ACTION) {
         return a.action.type == b.action.type && a.action.name == b.action.name &&
-               a.action.id == b.action.id && a.action.body == b.action.body &&
-               a.action.mode == b.action.mode && a.action.modifiers == b.action.modifiers;
+               a.action.id == b.action.id && a.action.body.size() == b.action.body.size() &&
+               a.action.mode == b.action.mode && a.action.modifiers == b.action.modifiers &&
+               (a.action.body.size() <= 96 ? a.action.body == b.action.body : true);
     }
     if (a.kind == ProtocolEventKind::RESULT) {
         return a.result.id == b.result.id && a.result.ok == b.result.ok &&
-               a.result.summary == b.result.summary && a.result.toolName == b.result.toolName &&
+               a.result.summary.size() == b.result.summary.size() &&
+               a.result.toolName == b.result.toolName &&
                a.result.exitCode == b.result.exitCode && a.result.elapsedMs == b.result.elapsedMs &&
-               a.result.outputBytes == b.result.outputBytes;
+               a.result.outputBytes == b.result.outputBytes &&
+               (a.result.summary.size() <= 96 ? a.result.summary == b.result.summary : true);
     }
-    return true;
+    return a.text.size() == b.text.size();
 }
 
 // Diff `current` against `previous`, appending UiEvents for dirty/new slots.
@@ -50,6 +63,17 @@ inline void collectProtocolChanges(std::vector<UiEvent>& out,
     if (rotatedAtZero) previous.clear();
 
     if (previous.size() > current.size()) previous.resize(current.size());
+
+    // Fast path: same count → only the tail event streams (thought/response bytes).
+    // Avoids O(n) walks over stable prefix actions/results every token.
+    if (previous.size() == current.size() && !current.empty()) {
+        const size_t i = current.size() - 1;
+        if (!sameProtocolEvent(current[i], previous[i])) {
+            out.push_back(UiEvent::protocolEvent(current[i], i));
+            previous[i] = current[i];
+        }
+        return;
+    }
 
     for (size_t i = 0; i < current.size(); ++i) {
         if (i >= previous.size() || !sameProtocolEvent(current[i], previous[i])) {

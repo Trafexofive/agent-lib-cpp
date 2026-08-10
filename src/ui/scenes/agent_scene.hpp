@@ -4,8 +4,15 @@
 // (transcript + status + prompt), not the old experimental card UI.
 
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <sstream>
 
 #include "base_scene.hpp"
+#include "src/providers/factory.hpp"
+#include "src/session/controller.hpp"
+#include "src/session/manager.hpp"
+#include "src/ui/chat/block_reader.hpp"
 #include "src/ui/chat/chat_commands.hpp"
 #include "src/ui/chat/chat_io.hpp"
 #include "src/ui/chat/chat_view.hpp"
@@ -90,6 +97,14 @@ class AgentScene final : public BaseScene {
         // drill-back. Esc only dismisses overlays / toggles focus rungs.
         // Navigation: `m` → main, Backspace/h → goBack (when not typing).
         if (event.code == KeyCode::Escape) {
+            if (model_->blockReader.open) {
+                if (model_->blockReader.visual != chat::ReaderVisual::None) {
+                    model_->blockReader.visual = chat::ReaderVisual::None;
+                    return true;
+                }
+                chat::closeBlockReader(model_->blockReader);
+                return true;
+            }
             // Only error/warn/sticky alerts consume Esc. Info pulses (route-in,
             // "no active turn") auto-expire and must not steal focus rungs.
             if (const auto* top = model_->notificationStack.top()) {
@@ -116,6 +131,193 @@ class AgentScene final : public BaseScene {
             }
             // Idle / no rung — still consume so Esc never becomes quit.
             return true;
+        }
+
+        // Block reader owns keys while open (cursor / visual / yank / close).
+        if (model_->blockReader.open) {
+            auto& br = model_->blockReader;
+            const int viewH = std::max(4, model_->transcriptView.viewport_h);
+            // Search input mode: type query, Enter run, Esc cancel.
+            if (br.searchMode) {
+                if (event.code == KeyCode::Escape) {
+                    br.searchMode = false;
+                    br.searchQuery.clear();
+                    return true;
+                }
+                if (event.code == KeyCode::Enter) {
+                    br.lastSearch = br.searchQuery;
+                    br.searchMode = false;
+                    if (!chat::readerSearchStep(br, +1, viewH) && !br.lastSearch.empty()) {
+                        chat::Notification n;
+                        n.id = "reader-search";
+                        n.source = "reader";
+                        n.severity = "warn";
+                        n.lifetimeMs = 1800;
+                        n.title = "no match: " + br.lastSearch;
+                        model_->notificationStack.push(std::move(n));
+                    }
+                    return true;
+                }
+                if (event.code == KeyCode::Backspace) {
+                    if (!br.searchQuery.empty()) br.searchQuery.pop_back();
+                    return true;
+                }
+                if (event.code == KeyCode::Character && !event.ctrl() && event.ch >= 32 &&
+                    event.ch < 127) {
+                    br.searchQuery.push_back(static_cast<char>(event.ch));
+                    return true;
+                }
+                return true;
+            }
+            // Esc: leave visual first, then close.
+            if (event.code == KeyCode::Escape) {
+                if (br.visual != chat::ReaderVisual::None) {
+                    br.visual = chat::ReaderVisual::None;
+                    return true;
+                }
+                chat::closeBlockReader(br);
+                return true;
+            }
+            if (event.code == KeyCode::Backspace) {
+                chat::closeBlockReader(br);
+                return true;
+            }
+            if (event.code == KeyCode::Character && event.ch == '/' && !event.ctrl()) {
+                br.searchMode = true;
+                br.searchQuery.clear();
+                br.visual = chat::ReaderVisual::None;
+                return true;
+            }
+            if (event.code == KeyCode::Character && event.ch == 'n' && !event.ctrl() &&
+                !event.shift()) {
+                if (!chat::readerSearchStep(br, +1, viewH)) {
+                    chat::Notification n;
+                    n.id = "reader-search";
+                    n.source = "reader";
+                    n.severity = "warn";
+                    n.lifetimeMs = 1500;
+                    n.title = br.lastSearch.empty() ? "no search — press /" : "no more matches";
+                    model_->notificationStack.push(std::move(n));
+                }
+                return true;
+            }
+            if (event.code == KeyCode::Character &&
+                (event.ch == 'N' || (event.ch == 'n' && event.shift())) && !event.ctrl()) {
+                if (!chat::readerSearchStep(br, -1, viewH)) {
+                    chat::Notification n;
+                    n.id = "reader-search";
+                    n.source = "reader";
+                    n.severity = "warn";
+                    n.lifetimeMs = 1500;
+                    n.title = br.lastSearch.empty() ? "no search — press /" : "no more matches";
+                    model_->notificationStack.push(std::move(n));
+                }
+                return true;
+            }
+            // Visual mode toggles
+            if (event.code == KeyCode::Character && event.ch == 'v' && !event.ctrl() &&
+                !event.shift()) {
+                if (br.visual == chat::ReaderVisual::Char) {
+                    br.visual = chat::ReaderVisual::None;
+                } else {
+                    br.visual = chat::ReaderVisual::Char;
+                    br.selAnchor = br.cursor;
+                    br.selAnchorCol = br.cursorCol;
+                }
+                return true;
+            }
+            if (event.code == KeyCode::Character &&
+                (event.ch == 'V' || (event.ch == 'v' && event.shift())) && !event.ctrl()) {
+                if (br.visual == chat::ReaderVisual::Line) {
+                    br.visual = chat::ReaderVisual::None;
+                } else {
+                    br.visual = chat::ReaderVisual::Line;
+                    br.selAnchor = br.cursor;
+                    br.selAnchorCol = 0;
+                }
+                return true;
+            }
+            if (event.code == KeyCode::ArrowUp ||
+                (event.code == KeyCode::Character && (event.ch == 'k' || event.ch == 'K') &&
+                 !event.ctrl())) {
+                chat::moveReaderCursor(br, -1, 0, viewH);
+                return true;
+            }
+            if (event.code == KeyCode::ArrowDown ||
+                (event.code == KeyCode::Character && (event.ch == 'j' || event.ch == 'J') &&
+                 !event.ctrl())) {
+                chat::moveReaderCursor(br, 1, 0, viewH);
+                return true;
+            }
+            if (event.code == KeyCode::ArrowLeft ||
+                (event.code == KeyCode::Character && event.ch == 'h' && !event.ctrl() &&
+                 !event.shift())) {
+                chat::moveReaderCursor(br, 0, -1, viewH);
+                return true;
+            }
+            if (event.code == KeyCode::ArrowRight ||
+                (event.code == KeyCode::Character && event.ch == 'l' && !event.ctrl())) {
+                chat::moveReaderCursor(br, 0, 1, viewH);
+                return true;
+            }
+            if (event.code == KeyCode::Character && event.ch == 'w' && !event.ctrl()) {
+                chat::readerWordForward(br, viewH);
+                return true;
+            }
+            if (event.code == KeyCode::Character && event.ch == 'b' && !event.ctrl()) {
+                chat::readerWordBack(br, viewH);
+                return true;
+            }
+            if (event.code == KeyCode::Character && event.ch == 'e' && !event.ctrl()) {
+                chat::readerWordEnd(br, viewH);
+                return true;
+            }
+            if (event.code == KeyCode::PageUp ||
+                (event.code == KeyCode::Character && event.ch == 'u' && !event.ctrl())) {
+                chat::moveReaderCursor(br, -std::max(1, viewH / 2), 0, viewH);
+                return true;
+            }
+            if (event.code == KeyCode::PageDown ||
+                (event.code == KeyCode::Character && event.ch == 'd' && !event.ctrl())) {
+                chat::moveReaderCursor(br, std::max(1, viewH / 2), 0, viewH);
+                return true;
+            }
+            if (event.code == KeyCode::Home ||
+                (event.code == KeyCode::Character && event.ch == 'g' && !event.shift() &&
+                 !event.ctrl())) {
+                br.cursor = 0;
+                br.cursorCol = 0;
+                chat::readerEnsureCursorVisible(br, viewH);
+                return true;
+            }
+            if (event.code == KeyCode::End ||
+                (event.code == KeyCode::Character && event.ch == 'G' && !event.ctrl())) {
+                br.cursor = std::max(0, static_cast<int>(br.lines.size()) - 1);
+                br.cursorCol = 0;
+                chat::readerEnsureCursorVisible(br, viewH);
+                return true;
+            }
+            if (event.code == KeyCode::Character && (event.ch == 'y' || event.ch == 'Y') &&
+                !event.ctrl()) {
+                std::string yank = chat::readerYankText(br);
+                // yy on no visual with count? single y yanks selection or line.
+                // Double-y (yy) yanks whole body when not in visual — use Y for whole.
+                if (event.ch == 'Y' && br.visual == chat::ReaderVisual::None)
+                    yank = br.body;
+                auto copied = chat::copyText(yank, "/tmp/mk3-yank.txt");
+                chat::Notification n;
+                n.id = "yank";
+                n.source = "reader";
+                n.lifetimeMs = 2200;
+                n.severity = copied.copied ? "info" : "warn";
+                n.title = copied.copied
+                              ? (std::string("yanked ") + std::to_string(yank.size()) + "B")
+                              : ("yank → " + copied.destination);
+                model_->notificationStack.push(std::move(n));
+                br.visual = chat::ReaderVisual::None;
+                return true;
+            }
+            return true;  // swallow other keys while reader is up
         }
 
         // Vet-fix: Backspace is NEVER navigation while composer is focused
@@ -160,20 +362,32 @@ class AgentScene final : public BaseScene {
             stopAgentLoop("ctrl-x");
             return true;
         }
-        // Global view toggles that must work while typing in the composer.
+        // Global view toggles / transcript scroll that must work while typing.
         // (plain t/r only fire via keymap when the composer is unfocused).
+        //
+        // Fixed complementary bind (no mode toggle):
+        //   j/k       → block select (history focus only)
+        //   Ctrl-J/K  → fine transcript scroll ±1 (history + composer)
+        //   ↑/↓       → fine transcript scroll ±1 (history focus)
         if (event.code == KeyCode::Character && event.ctrl()) {
             if (event.ch == 't' || event.ch == 'T') {
                 model_->showThoughts = !model_->showThoughts;
                 model_->markProjFull();
+                model_->forceFullProject_ = true;
+                model_->transcriptWrapCache.invalidate();
+                ++model_->transcriptVersion;
                 model_->rebuildViews();
                 persistUiPrefs(*model_);
                 return true;
             }
             if (event.ch == 'o' || event.ch == 'O') {
-                model_->truncateBodies = !model_->truncateBodies;
-                model_->markProjFull();
-                model_->rebuildViews();
+                model_->toggleTruncateBodies();
+                persistUiPrefs(*model_);
+                return true;
+            }
+            // Cycle chat footer pane (live / session / engine) under the prompt.
+            if (event.ch == 'f' || event.ch == 'F') {
+                model_->chatFooterPane = chat::nextFooterPane(model_->chatFooterPane, +1);
                 persistUiPrefs(*model_);
                 return true;
             }
@@ -182,6 +396,16 @@ class AgentScene final : public BaseScene {
                 model_->markProjFull();
                 model_->rebuildViews();
                 persistUiPrefs(*model_);
+                return true;
+            }
+            // Fine scroll — always. Steals TextArea Ctrl-K kill-line; Ctrl-U ok.
+            // scroll_by clears stick_bottom unless at absolute end (unlock mid-run).
+            if (event.ch == 'j' || event.ch == 'J') {
+                model_->transcriptView.scroll_by(1);
+                return true;
+            }
+            if (event.ch == 'k' || event.ch == 'K') {
+                model_->transcriptView.scroll_by(-1);
                 return true;
             }
         }
@@ -213,27 +437,17 @@ class AgentScene final : public BaseScene {
                 return true;
             }
             // Escape handled in the top ladder (no goBack / no main route).
-            // Up/Down scroll the transcript line-by-line (free read scroll through
-            // history). This is the intuitive scroll every chat has; the prior
-            // binding jumped between block markers instead of scrolling.
+            // Complementary binds — no sticky mode, no Tab toggle:
+            //   j/k      block select (+ viewport follows selection)
+            //   Ctrl-J/K fine scroll (global ctrl block; also while typing)
+            //   ↑/↓      fine scroll
+            //   PgUp/Dn  half-page · Home/End ends
             if (event.code == KeyCode::ArrowUp) {
-                model_->transcriptView.scroll_by(-1);
+                model_->transcriptView.scroll_by(-1);  // unlocks stick unless at end
                 return true;
             }
             if (event.code == KeyCode::ArrowDown) {
                 model_->transcriptView.scroll_by(1);
-                return true;
-            }
-            // j/k select transcript blocks (drilldown navigation); Enter drills in.
-            // Plain j/k = step-by-step; Ctrl-J/Ctrl-K = jump to start/end.
-            if (event.code == KeyCode::Character && event.ctrl() &&
-                (event.ch == 'j' || event.ch == 'J')) {
-                model_->transcriptView.scroll_to_start();
-                return true;
-            }
-            if (event.code == KeyCode::Character && event.ctrl() &&
-                (event.ch == 'k' || event.ch == 'K')) {
-                model_->transcriptView.scroll_to_end();
                 return true;
             }
             if (event.code == KeyCode::Character && (event.ch == 'k' || event.ch == 'K')) {
@@ -244,7 +458,61 @@ class AgentScene final : public BaseScene {
                 model_->selectDelta(1);
                 return true;
             }
-            // PageUp/PageDown = half-page scroll; Home/End = top/bottom.
+            // gg = top block, G = bottom block (vim-ish; history/nav mode only)
+            if (event.code == KeyCode::Character && event.ch == 'g' && !event.shift() &&
+                !event.ctrl()) {
+                // double-g: simple sticky — second g within same focus does edge
+                static int64_t lastGms = 0;
+                using clock = std::chrono::steady_clock;
+                const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        clock::now().time_since_epoch())
+                                        .count();
+                if (now - lastGms < 450) {
+                    model_->selectEdge(false);  // gg → top
+                    lastGms = 0;
+                } else {
+                    lastGms = now;
+                    // single g still refreshes nested (legacy)
+                    model_->refreshNested();
+                }
+                return true;
+            }
+            if (event.code == KeyCode::Character && (event.ch == 'G') && !event.ctrl()) {
+                model_->selectEdge(true);  // G → bottom
+                return true;
+            }
+            // Shift-[ / Shift-] → skip 4 blocks (smooth via ensureSelectionVisible)
+            if (event.code == KeyCode::Character && event.shift() && !event.ctrl() &&
+                (event.ch == '{' || event.ch == '[')) {
+                model_->selectDelta(-4);
+                return true;
+            }
+            if (event.code == KeyCode::Character && event.shift() && !event.ctrl() &&
+                (event.ch == '}' || event.ch == ']')) {
+                model_->selectDelta(4);
+                return true;
+            }
+            // y → yank selected block body (clipboard / fallback file)
+            if (event.code == KeyCode::Character && (event.ch == 'y' || event.ch == 'Y') &&
+                !event.ctrl()) {
+                std::string body = model_->yankSelectedBody();
+                chat::Notification n;
+                n.id = "yank";
+                n.source = "yank";
+                n.lifetimeMs = 2500;
+                if (body.empty()) {
+                    n.severity = "info";
+                    n.title = "nothing to yank";
+                } else {
+                    auto copied = chat::copyText(body, "/tmp/mk3-yank.txt");
+                    n.severity = copied.copied ? "info" : "warn";
+                    n.title = copied.copied
+                                  ? ("yanked " + std::to_string(body.size()) + "B")
+                                  : ("yank → " + copied.destination);
+                }
+                model_->notificationStack.push(std::move(n));
+                return true;
+            }
             if (event.code == KeyCode::PageUp) {
                 model_->transcriptView.scroll_by(-std::max(1, model_->transcriptView.viewport_h / 2));
                 return true;
@@ -390,6 +658,30 @@ class AgentScene final : public BaseScene {
             if (model_->showRaw) mode = "raw";
             else mode = model_->showThoughts ? "think" : "clean";
             mode += model_->truncateBodies ? " · trunc" : " · full";
+            mode += " · in:";
+            mode += bodyRenderModeName(model_->actionBodyMode);
+            mode += " · out:";
+            mode += bodyRenderModeName(model_->resultBodyMode);
+            if (model_->rootAgent && model_->rootAgent->config().compaction.enabled)
+                mode += " · cpk";
+            if (model_->uiDevMode) mode += " · dev";
+            // Session identity strip — ends "who am I running" confusion.
+            if (!model_->agentName.empty()) {
+                mode += " · ";
+                mode += model_->agentName;
+            }
+            if (!model_->activeManifestPath.empty()) {
+                auto stem = std::filesystem::path(model_->activeManifestPath)
+                                .parent_path()
+                                .filename()
+                                .string();
+                if (stem.empty() || stem == ".")
+                    stem = std::filesystem::path(model_->activeManifestPath).stem().string();
+                if (!stem.empty() && stem != model_->agentName) {
+                    mode += "/";
+                    mode += stem;
+                }
+            }
             vm.mode = mode;
         }
         vm.running = model_->running;
@@ -447,16 +739,175 @@ class AgentScene final : public BaseScene {
         // Tick expiry before paint; alert folds into status line (right).
         model_->notificationStack.tick();
         vm.notifications = &model_->notificationStack;
+        // j/k selection snap writebacks (draw-side, real wrap spans).
+        vm.selectionNavPending = &model_->selectionNavPending;
+        vm.scrollOffsetWriteback = &model_->transcriptView.offset;
+        vm.stickBottomWriteback = &model_->transcriptView.stick_bottom;
+        vm.contentHWriteback = &model_->transcriptView.content_h;
 
-        // Reserve transcript for header(2) + status(1) + multi-line prompt + menu.
+        // Build cyclable footer (under prompt). No top header.
+        chat::ChatFooterModel foot;
+        foot.pane = model_->chatFooterPane;
+        foot.running = vm.running;
+        foot.failed = vm.failed;
+        foot.inputFocused = vm.inputFocused;
+        foot.nowMs = vm.nowMs;
+        foot.turnElapsedMs = vm.turnElapsedMs;
+        foot.actionCount = vm.actionCount;
+        foot.resultCount = vm.resultCount;
+        foot.pendingOps = vm.pendingOps;
+        foot.tokenBytes = vm.tokenBytes;
+        foot.agentName = model_->agentName;
+        foot.provider = vm.provider;
+        foot.model = vm.model;
+        foot.sessionId = vm.sessionId;
+        foot.path = vm.path;
+        foot.themeName = theme::name();
+        foot.bodyFmt = std::string("in:") + bodyRenderModeName(model_->actionBodyMode) +
+                       " · out:" + bodyRenderModeName(model_->resultBodyMode) +
+                       (model_->truncateBodies ? " · trunc" : " · full");
+        if (!model_->activeManifestPath.empty()) {
+            auto stem = std::filesystem::path(model_->activeManifestPath)
+                            .parent_path().filename().string();
+            if (stem.empty() || stem == ".")
+                stem = std::filesystem::path(model_->activeManifestPath).stem().string();
+            foot.manifestStem = stem;
+        }
+        // Context pressure + iteration + history from agent config.
+        foot.ctxMaxTokens = 128000;
+        foot.ctxCompactAt = 60000;
+        foot.ctxUsedTokens = std::max(0, vm.tokenBytes / 3);
+        foot.iterCurrent = vm.actionCount;  // rough proxy; replaced below if agent is live
+        foot.iterMax = 180;
+        foot.historyUsed = 0;
+        foot.historyMax = 1700;
+        if (model_->rootAgent) {
+            const auto& c = model_->rootAgent->config();
+            foot.compactEnabled = c.compaction.enabled;
+            if (c.compaction.modelContextTokens > 0)
+                foot.ctxMaxTokens = c.compaction.modelContextTokens;
+            if (c.compaction.triggerContextTokens > 0)
+                foot.ctxCompactAt = c.compaction.triggerContextTokens;
+            foot.iterMax = c.iterationCap;
+            foot.iterCurrent = model_->actionCount;  // actions dispatched this turn
+            foot.historyMax = c.historyCap;
+            foot.historyUsed = static_cast<int>(model_->rootAgent->history().size());
+            size_t est = 0;
+            for (const auto& h : model_->rootAgent->history())
+                est += (h.size() + 3) / 4;
+            est += 4000;
+            if (est > 0) foot.ctxUsedTokens = static_cast<int>(est);
+            if (!model_->rootAgent->lastCompactNote().empty())
+                foot.compactedRecently = true;
+        } else if (model_->tokenBytes > 0) {
+            foot.ctxUsedTokens = std::max(foot.ctxUsedTokens, model_->tokenBytes / 3 + 2000);
+        }
+        // Phase from live timeline tail.
+        foot.phaseKey = "ready";
+        foot.phaseDetail.clear();
+        if (model_->failed) foot.phaseKey = "fail";
+        else if (!model_->running && model_->status == "waiting human input")
+            foot.phaseKey = "ask";
+        else if (model_->running) {
+            if (model_->status.rfind("cancel", 0) == 0) foot.phaseKey = "cancel";
+            else {
+                foot.phaseKey = "wait";  // default until we see structure
+                int scanned = 0;
+                for (auto it = model_->rootRows.rbegin();
+                     it != model_->rootRows.rend() && scanned < 12; ++it, ++scanned) {
+                    if (it->kind == TimelineKind::Thought) {
+                        foot.phaseKey = "think";
+                        break;
+                    }
+                    if (it->kind == TimelineKind::Response) {
+                        foot.phaseKey = "reply";
+                        break;
+                    }
+                    if (it->kind == TimelineKind::Action) {
+                        foot.phaseKey = "act";
+                        const std::string& n = it->actionName;
+                        auto chip = [&](const std::string& body) -> std::string {
+                            // basename of path= or first short token
+                            auto p = body.find("\"path\"");
+                            if (p == std::string::npos) p = body.find("path");
+                            // try JSON path via simple scan
+                            auto k = body.find("\"path\":");
+                            if (k == std::string::npos) k = body.find("\"path\": ");
+                            std::string s;
+                            auto extract = [&](const char* key) {
+                                std::string pat = std::string("\"") + key + "\":\"";
+                                auto at = body.find(pat);
+                                if (at == std::string::npos) return std::string();
+                                at += pat.size();
+                                auto end = body.find('"', at);
+                                if (end == std::string::npos) return std::string();
+                                return body.substr(at, end - at);
+                            };
+                            s = extract("path");
+                            if (s.empty()) s = extract("command");
+                            if (s.empty()) s = extract("pattern");
+                            if (s.empty()) s = extract("query");
+                            if (s.size() > 28) {
+                                auto slash = s.find_last_of('/');
+                                if (slash != std::string::npos) s = s.substr(slash + 1);
+                                if (s.size() > 28) s = s.substr(0, 26) + "…";
+                            }
+                            return s;
+                        };
+                        std::string detail = chip(it->body);
+                        if (n == "fs_read" || n == "read" || n.find("read") != std::string::npos) {
+                            foot.phaseDetail = detail.empty() ? "reading" : ("reading " + detail);
+                        } else if (n == "fs_write" || n == "write") {
+                            foot.phaseDetail = detail.empty() ? "writing" : ("writing " + detail);
+                        } else if (n == "exec" || n == "bash" || n == "shell") {
+                            foot.phaseDetail = detail.empty() ? "running command" : ("exec " + detail);
+                        } else if (n == "grep" || n == "search") {
+                            foot.phaseDetail = detail.empty() ? "searching" : ("search " + detail);
+                        } else if (n == "list" || n == "ls") {
+                            foot.phaseDetail = detail.empty() ? "listing" : ("list " + detail);
+                        } else if (n == "ask" || n.find("ask") != std::string::npos) {
+                            foot.phaseKey = "ask";
+                            foot.phaseDetail = "card";
+                        } else if (!n.empty()) {
+                            foot.phaseDetail = n;
+                        }
+                        break;
+                    }
+                    if (it->kind == TimelineKind::Result) {
+                        // Just finished a tool — if no newer thought, still acting/recovering
+                        if (!it->ok) {
+                            foot.phaseKey = "act";
+                            foot.phaseDetail = "recovering";
+                        }
+                        // keep scanning for thought/action above
+                        continue;
+                    }
+                }
+            }
+        }
+        foot.turnCount = 0;
+        for (const auto& r : model_->rootRows)
+            if (r.kind == TimelineKind::User) ++foot.turnCount;
+
+        // Reserve: footer(N dynamic) + prompt + menu — NO header.
+        // Footer can grow any frame (extraLines / live phase); recompute always.
         int menuH = chat::completionMenuHeight(vm, p.w);
         const int promptH = chat::promptBoxHeight(vm, p.w);
+        const int footerH = chat::chatFooterReserve(&foot, p.h, promptH, menuH);
+        const int spacerH = 1;  // 1px gap between prompt and footer
         model_->transcriptView.viewport_h =
-            std::max(1, p.h - 2 /*header*/ - 1 /*status*/ - promptH - menuH - 1 /*pad*/);
+            std::max(1, p.h - footerH - promptH - menuH - spacerH);
+        // Keep scroll math in DISPLAY space (wrap total), not source-line count.
+        if (model_->transcriptWrapCache.totalDisplayLines > 0)
+            model_->transcriptView.content_h = model_->transcriptWrapCache.totalDisplayLines;
         if (model_->transcriptView.stick_bottom) model_->transcriptView.scroll_to_end();
         else model_->transcriptView.clamp();
 
-        chat::drawChatSurface(surface, p, vm);
+        chat::drawChatSurface(surface, p, vm, &foot);
+
+        // drawChatSurface refreshes wrap cache — publish height for next clamp/j/k.
+        if (model_->transcriptWrapCache.totalDisplayLines > 0)
+            model_->transcriptView.content_h = model_->transcriptWrapCache.totalDisplayLines;
 
         if (model_->askActive)
             chat::drawAskDialog(surface, p, model_->askDialog, model_->askInput.value,
@@ -465,6 +916,75 @@ class AgentScene final : public BaseScene {
             chat::drawHelpOverlay(surface, p);
         // Palette above help/ask chrome
         components::drawCmdPalette(surface, p, model_->cmdPalette);
+        // Block reader on top of everything except (none) — full-page read mode.
+        if (model_->blockReader.open)
+            chat::drawBlockReader(surface, p, model_->blockReader);
+    }
+
+    void handleModelCommand(const std::string& spec) {
+        auto curProv = model_->agentProvider;
+        auto curModel = model_->agentModel;
+        if (model_->rootAgent) {
+            const auto& c = model_->rootAgent->config();
+            if (!c.provider.empty()) curProv = c.provider;
+            if (!c.model.empty()) curModel = c.model;
+        }
+        if (spec.empty()) {
+            std::vector<std::string> lines;
+            lines.push_back("current  " + curProv + "/" + curModel);
+            lines.push_back("usage    /model <provider>/<model>");
+            lines.push_back("         /model <model>     (keeps provider)");
+            lines.push_back("providers");
+            for (const auto& p : providers::availableProviders())
+                lines.push_back("  " + p + "  default=" + providers::defaultProviderModel(p));
+            model_->appendNotice("model", lines);
+            return;
+        }
+        if (model_->running) {
+            model_->appendNotice("model", {"turn live — stop first (ctrl-x), then /model"});
+            return;
+        }
+        if (!model_->rootAgent) {
+            model_->appendNotice("model", {"no live agent"});
+            return;
+        }
+        std::string prov = curProv;
+        std::string mod = spec;
+        size_t slash = spec.find('/');
+        if (slash != std::string::npos) {
+            prov = spec.substr(0, slash);
+            mod = spec.substr(slash + 1);
+        }
+        if (prov.empty() || mod.empty()) {
+            model_->appendNotice("model", {"expected /model provider/model or /model model"});
+            return;
+        }
+        auto next = providers::createProvider(prov, mod);
+        if (!next) {
+            model_->appendNotice("model", {"unknown provider: " + prov,
+                                           "try /model for the list"});
+            return;
+        }
+        next->setQuietLogs(true);
+        model_->rootAgent->setProvider(next, prov, mod);
+        model_->agentProvider = prov;
+        model_->agentModel = mod;
+        // Persist onto the session so --continue keeps the switch.
+        if (!model_->activeSessionId.empty()) {
+            try {
+                session::SessionManager sm;
+                if (sm.exists(model_->activeSessionId)) {
+                    auto s = sm.load(model_->activeSessionId);
+                    s.provider = prov;
+                    s.model = mod;
+                    s.metadata["provider"] = prov;
+                    s.metadata["model"] = mod;
+                    sm.save(s);
+                }
+            } catch (...) {
+            }
+        }
+        model_->appendNotice("model", {"switched → " + prov + "/" + mod});
     }
 
    private:
@@ -480,10 +1000,16 @@ class AgentScene final : public BaseScene {
             persistUiPrefs(*model_);
             return;
         }
+        if (id == "chat.scroll_down") {
+            model_->transcriptView.scroll_by(1);
+            return;
+        }
+        if (id == "chat.scroll_up") {
+            model_->transcriptView.scroll_by(-1);
+            return;
+        }
         if (id == "chat.truncate") {
-            model_->truncateBodies = !model_->truncateBodies;
-            model_->markProjFull();
-            model_->rebuildViews();
+            model_->toggleTruncateBodies();
             persistUiPrefs(*model_);
             return;
         }
@@ -639,19 +1165,36 @@ class AgentScene final : public BaseScene {
         }
     }
 
+    bool slashDevMode() const {
+        if (model_->uiDevMode) return true;
+        if (model_->rootAgent && model_->rootAgent->devMode()) return true;
+        if (const char* e = std::getenv("CORTEX_DEV_MODE")) {
+            std::string v = e;
+            if (!(v.empty() || v == "0" || v == "false" || v == "FALSE"))
+                return true;
+        }
+        return false;
+    }
+
     bool runSlashCommand() {
         const std::string command = model_->composer.value;
         if (command.empty() || command[0] != '/') return false;
+
+        // History: keep slash (+ args). No consecutive exact duplicate.
+        model_->pushPromptHistory(chat::trimCommandText(command));
 
         chat::ChatCommandContext ctx;
         ctx.manifestPath = cfg_.manifestPath;
         ctx.harnessPath = cfg_.harnessPath;
         ctx.systemPromptPath = cfg_.systemPromptPath;
         ctx.personaPath = cfg_.personaPath;
+        if (model_->rootAgent && !model_->rootAgent->config().userPath.empty())
+            ctx.userPath = model_->rootAgent->config().userPath;
         ctx.toolCount = cfg_.toolCount;
         ctx.feedCount = cfg_.feedCount;
         ctx.relicCount = cfg_.relicCount;
         ctx.subAgentCount = cfg_.subAgentCount;
+        ctx.devMode = slashDevMode();
         auto result = chat::executeChatCommand(command, ctx);
         if (!result.handled) return false;
 
@@ -659,6 +1202,24 @@ class AgentScene final : public BaseScene {
         model_->composer.cursor = 0;
         if (result.quit) model_->requestRoute(PendingRoute::Quit);
         if (result.stopLoop) stopAgentLoop("slash");
+        if (result.continueLoop) {
+            if (model_->running) {
+                model_->appendNotice("continue", {"already running"});
+            } else if (!model_->rootAgent) {
+                model_->appendNotice("continue", {"no live agent"});
+            } else if (model_->rootAgent->history().empty()) {
+                model_->appendNotice("continue", {"nothing to continue — empty history"});
+            } else {
+                // Silent kick: empty prompt, no YOU row (agent skips User: push).
+                if (model_->activeSessionId.empty()) {
+                    model_->activeSessionId = session::mintSessionId();
+                    session::activeSession().set(model_->activeSessionId,
+                                                 session::activeSession().isEphemeral());
+                }
+                model_->pendingContinue = true;
+                model_->status = "continuing";
+            }
+        }
         if (result.clearTranscript) model_->clearTranscript();
         bool prefsDirty = false;
         if (result.toggleThoughts) {
@@ -668,9 +1229,7 @@ class AgentScene final : public BaseScene {
             prefsDirty = true;
         }
         if (result.toggleTruncate) {
-            model_->truncateBodies = !model_->truncateBodies;
-            model_->markProjFull();
-            model_->rebuildViews();
+            model_->toggleTruncateBodies();
             prefsDirty = true;
         }
         if (result.toggleRaw) {
@@ -690,6 +1249,54 @@ class AgentScene final : public BaseScene {
             auto messages = chat::dumpPrompts(model_->rootAgent ? model_->rootAgent->iterationPrompts()
                                                                 : std::vector<std::string>{});
             model_->appendNotice("dump prompt", messages);
+        }
+        if (result.exportChat) {
+            std::ostringstream hdr;
+            hdr << "# cortex-mk3 chat export\n"
+                << "# agent=" << model_->agentName
+                << " provider=" << model_->agentProvider
+                << " model=" << model_->agentModel << "\n"
+                << "# session=" << (model_->activeSessionId.empty() ? "(none)"
+                                                                   : model_->activeSessionId)
+                << "\n"
+                << "# source=timeline rows (structured markdown, full bodies)\n";
+            auto copied = chat::exportTimelineMarkdown(model_->rootRows, hdr.str());
+            model_->appendNotice("export chat",
+                                 {copied.copied ? "wrote " + copied.destination
+                                                : "failed " + copied.destination});
+        }
+        if (result.exportDump) {
+            if (!model_->rootAgent) {
+                model_->appendNotice("export dump", {"no live agent — launch one first"});
+            } else {
+                model_->rootAgent->dumpSessionArtifacts(/*force=*/true);
+                std::string dir = model_->rootAgent->lastDevDumpDir();
+                model_->appendNotice(
+                    "export dump",
+                    {dir.empty() ? "dump wrote (path unknown — see .cortex/dev/)"
+                                 : ("wrote " + dir +
+                                    " (iterations.md raw.md history.md protocol.md)"),
+                     "no agent.yml runtime.dev_mode required"});
+            }
+        }
+        if (result.openArtifacts) {
+            if (model_->suspendTui) model_->suspendTui();
+            int rc = chat::launchArtFullscreen(result.artifactsArgs,
+                                              /*manageScreen=*/!static_cast<bool>(model_->suspendTui));
+            if (model_->resumeTui) model_->resumeTui();
+            // Silent on success — no toast spam. Only surface real failures.
+            if (rc != 0) {
+                model_->appendNotice("artifacts",
+                                     {"art exited " + std::to_string(rc),
+                                      "need ~/.pi/agent/bin/art ?"});
+            }
+            model_->transcriptWrapCache.invalidate();
+            ++model_->transcriptVersion;
+            model_->markProjFull();
+            model_->rebuildViews();
+        }
+        if (result.switchModel) {
+            handleModelCommand(result.modelSpec);
         }
         if (result.copyAll) {
             auto copied = chat::copyText(chat::joinLines(model_->transcriptView.lines), "/tmp/mk3-cp-all.txt");
@@ -742,8 +1349,14 @@ class AgentScene final : public BaseScene {
             model_->notificationStack.push(std::move(n));
         }
         if (model_->running) {
-            model_->status = std::string("cancelling (") + reason + ")";
+            model_->status = "cancelling";
             g_running = false;
+            // Optimistic UI settle — don't wait for TurnDone to drop sticky chips.
+            // Worker still unwinds; TurnDone will confirm running=false.
+            model_->pendingActionIds.clear();
+            model_->pendingOps = 0;
+            model_->actionCount = 0;
+            model_->resultCount = 0;
             chat::Notification n;
             n.id = "cancel";
             n.source = "cancel";
@@ -752,7 +1365,6 @@ class AgentScene final : public BaseScene {
             n.lifetimeMs = 2800;
             model_->notificationStack.push(std::move(n));
             // Keep transcript clean — status line + alert carry the signal.
-            // (appendNotice used to spam a Log row on every ctrl-c.)
         } else if (!model_->askActive) {
             chat::Notification n;
             n.id = "cancel";
@@ -789,7 +1401,7 @@ class AgentScene final : public BaseScene {
 
         // Fresh match set when stem changed.
         if (model_->tabMatches.empty() || model_->tabStem != prefix) {
-            model_->tabMatches = chat::completeChatCommand(prefix);
+            model_->tabMatches = chat::completeChatCommand(prefix, slashDevMode());
             model_->tabStem = prefix;
             model_->tabMatchIndex = -1;
         }
@@ -813,7 +1425,7 @@ class AgentScene final : public BaseScene {
             model_->composer.value = lcp;
             model_->composer.cursor = static_cast<int>(lcp.size());
             model_->tabStem = lcp;
-            model_->tabMatches = chat::completeChatCommand(lcp);
+            model_->tabMatches = chat::completeChatCommand(lcp, slashDevMode());
             model_->tabMatchIndex = -1;  // highlight none until cycle
             return;
         }

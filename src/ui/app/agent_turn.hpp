@@ -55,25 +55,32 @@ inline void runAgentTurn(AgentBridge &bridge, Agent &agent,
             });
         size_t rawSeen = 0;
         std::vector<ProtocolEvent> previousEvents;
+        // Match engine input_poll_ms (33) — publishing faster than the UI can
+        // drain is pure wake-storm + full-row reproject cost.
+        constexpr auto kUiCoalesce = std::chrono::milliseconds(33);
         auto lastUiFlush =
-            std::chrono::steady_clock::now() - std::chrono::milliseconds(16);
+            std::chrono::steady_clock::now() - kUiCoalesce;
         auto onToken = [&](const std::string &token, bool finalChunk) {
-            // Stream-as-fast-as-parse: never delay a closed (or provisional)
-            // protocol event. Only coalesce pure byte heartbeats (~60fps).
             const auto &cur = agent.protocolEvents();
+            // O(1) dirty: size change or tail mutation only (stream grows tail).
             bool protocolDirty = cur.size() != previousEvents.size();
-            if (!protocolDirty) {
-                for (size_t i = 0; i < cur.size(); ++i) {
-                    if (i >= previousEvents.size() ||
-                        !sameProtocolEvent(cur[i], previousEvents[i])) {
-                        protocolDirty = true;
-                        break;
-                    }
+            bool hardEvent = protocolDirty;  // new/removed slot (action/result/retry)
+            if (!protocolDirty && !cur.empty()) {
+                const size_t i = cur.size() - 1;
+                if (i < previousEvents.size() &&
+                    !sameProtocolEvent(cur[i], previousEvents[i])) {
+                    protocolDirty = true;
+                    // Tail text growth (thought/response) is soft — throttle.
+                    // Kind changes on the tail are hard (shouldn't happen often).
+                    hardEvent = cur[i].kind != previousEvents[i].kind ||
+                                cur[i].kind == ProtocolEventKind::ACTION ||
+                                cur[i].kind == ProtocolEventKind::RESULT ||
+                                cur[i].kind == ProtocolEventKind::RETRY;
                 }
             }
             auto now = std::chrono::steady_clock::now();
-            if (!finalChunk && !protocolDirty &&
-                now - lastUiFlush < std::chrono::milliseconds(16))
+            if (!finalChunk && !hardEvent &&
+                now - lastUiFlush < kUiCoalesce)
                 return;
             lastUiFlush = now;
             std::vector<UiEvent> batch;
@@ -91,14 +98,22 @@ inline void runAgentTurn(AgentBridge &bridge, Agent &agent,
                 batch.push_back(UiEvent::token(raw.substr(rawSeen)));
                 rawSeen = raw.size();
             }
-            collectProtocolChanges(batch, agent.protocolEvents(),
-                                   previousEvents);
+            if (protocolDirty || finalChunk)
+                collectProtocolChanges(batch, cur, previousEvents);
             if (!batch.empty())
                 bridge.publishMany(std::move(batch));
         };
         std::string result =
             agent.prompt(prompt, onToken, sessionId, ephemeral);
         onToken("", true);
+        // Surface compaction if it fired during this turn's prompt builds.
+        {
+            std::string cnote = agent.takeCompactUiPending();
+            if (!cnote.empty()) {
+                bridge.publish(UiEvent::notification(
+                    "compact", "info", cnote, 0, 0, "compact:last"));
+            }
+        }
         UiEvent end;
         end.kind = UiEventKind::TurnDone;
         // Normalize abort leftovers if prompt returned a curl-ish cancel

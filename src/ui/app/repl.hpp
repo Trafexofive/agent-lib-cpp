@@ -167,6 +167,9 @@ inline int runInkcellRepl(const InkcellAppConfig &cfg, Agent &agent,
     bool startAtDashboard = cfg.manifestPath.empty() &&
                             cfg.initialPrompt.empty() && cfg.sessionId.empty();
     auto app = makeInkcellApp(cfg, bridge, model, startAtDashboard);
+    // Fullscreen child TUI (art) — suspend/resume alt-screen + force full frame.
+    model->suspendTui = [&app]() { app.engine().suspend_for_child(); };
+    model->resumeTui = [&app]() { app.engine().resume_after_child(); };
     const bool exitOnDone = cfg.ephemeral;
     // drain + pendingRoute in installCoalescedTick; hub/worker logic in extra
     // (runs first).
@@ -263,6 +266,14 @@ inline int runInkcellRepl(const InkcellAppConfig &cfg, Agent &agent,
                     model.dashboard.notice =
                         "already live · " + model.agentName;
                     model.requestRoute(PendingRoute::Agent);
+                } else if (model.running ||
+                           workerBusy.load(std::memory_order_acquire)) {
+                    // Live session keeps the worker. Do NOT joinWorker() here —
+                    // that was killing bg turns when browsing manifests/settings
+                    // and launching something else. Operator must stop first.
+                    model.dashboard.flashNotice(
+                        "live turn · " + model.agentName +
+                        " — stop (x / Ctrl-C) before launching another agent");
                 } else {
                     joinWorker();
                     std::string err;
@@ -275,14 +286,72 @@ inline int runInkcellRepl(const InkcellAppConfig &cfg, Agent &agent,
                         AgentConfig loaded = next->config();
                         slot->owned = std::move(next);
                         applyLiveIdentity(loaded, path);
+                        // Hub resume onto different agent: load session history
+                        // + ui_timeline after rebuild (see pendingResumeSessionId).
+                        if (!model.pendingResumeSessionId.empty()) {
+                            const std::string sid = model.pendingResumeSessionId;
+                            model.pendingResumeSessionId.clear();
+                            try {
+                                session::SessionManager sm;
+                                if (sm.exists(sid)) {
+                                    auto full = sm.load(sid);
+                                    slot->get().loadSession(sid);
+                                    slot->get().loadStateCheckpoint(sid);
+                                    // Prefer session engine over agent.yml primary.
+                                    if (!full.provider.empty() && !full.model.empty()) {
+                                        auto p = providers::createProvider(
+                                            full.provider, full.model);
+                                        if (p) {
+                                            p->setQuietLogs(true);
+                                            slot->get().setProvider(
+                                                p, full.provider, full.model);
+                                            model.agentProvider = full.provider;
+                                            model.agentModel = full.model;
+                                        }
+                                    }
+                                    if (!full.agentName.empty())
+                                        model.agentName = full.agentName;
+                                    model.loadSessionUi(full);
+                                    model.activeSessionId = sid;
+                                    model.reannotateDrillable();
+                                }
+                            } catch (const std::exception& ex) {
+                                model.dashboard.flashNotice(
+                                    std::string("resume load failed: ") + ex.what());
+                            }
+                        }
                         flushGuard.rebind(slot->get(), model.activeSessionId);
                         model.requestRoute(PendingRoute::Agent);
                     }
                 }
             }
 
-            if (!model.pendingSubmit.empty() &&
+            // /continue — empty prompt, silent history resume (no YOU row).
+            if (model.pendingContinue &&
                 !workerBusy.load(std::memory_order_acquire)) {
+                model.pendingContinue = false;
+                model.pendingSubmit.clear();  // continue wins over stale text
+                workerBusy.store(true, std::memory_order_release);
+                model.running = true;
+                model.done = false;
+                model.failed = false;
+                model.status = "running";
+                joinWorker();
+                std::string sid = model.activeSessionId;
+                worker = std::thread(
+                    [slot, &bridge, sid, noSession, &workerBusy]() {
+                        std::atomic<bool> done{false};
+                        // Empty prompt → agent skips User: push when history lives.
+                        runAgentTurn(bridge, slot->get(), std::string(), sid,
+                                     noSession, done);
+                        while (!done.load(std::memory_order_acquire))
+                            std::this_thread::sleep_for(
+                                std::chrono::milliseconds(5));
+                        g_running = true;
+                        workerBusy.store(false, std::memory_order_release);
+                    });
+            } else if (!model.pendingSubmit.empty() &&
+                       !workerBusy.load(std::memory_order_acquire)) {
                 std::string prompt = model.pendingSubmit;
                 model.pendingSubmit.clear();
                 chat::savePromptHistory(model.promptHistory);

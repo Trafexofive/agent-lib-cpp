@@ -68,7 +68,9 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
                 turn.raw.clear();
                 turn.done = false;
                 turn.failed = false;
-                if (!turn.running) turn.turnStartMs = nowMs();
+                // Always (re)arm the live timer if missing — fixes sticky 0ms
+                // when running was already true without a start stamp.
+                if (!turn.running || turn.turnStartMs <= 0) turn.turnStartMs = nowMs();
                 store.timelineState = PageState::Loading;
             }
             turn.status = e.text;
@@ -79,23 +81,46 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
             store.appendRoot({TimelineKind::Log, "log", e.text, true});
             if (atRoot) fx.needRebuild = true;
             break;
-        case UiEventKind::Error:
-            turn.failed = true;
+        case UiEventKind::Error: {
+            // Operator cancel surfaces as cancelled, not a hard error row.
+            const bool isCancel =
+                e.text == "cancelled" || e.text == "[cancelled]" ||
+                e.text.find("cancelled") != std::string::npos ||
+                e.text.find("ABORTED_BY_CALLBACK") != std::string::npos ||
+                e.text.find("Operation was aborted") != std::string::npos;
             turn.running = false;
             if (turn.turnStartMs > 0) {
                 turn.lastTurnElapsedMs = nowMs() - turn.turnStartMs;
                 turn.turnStartMs = 0;
             }
-            turn.status = "error";
-            store.timelineState = PageState::Error;
-            store.appendRoot({TimelineKind::Error, "error", e.text, false});
+            store.pendingActionIds.clear();
+            store.pendingOps = 0;
+            store.actionCount = 0;
+            if (isCancel) {
+                turn.failed = false;
+                turn.status = "cancelled";
+                store.timelineState = PageState::Populated;
+                // No Error row — cancel is an operator action, not a fault.
+            } else {
+                turn.failed = true;
+                turn.status = "error";
+                store.timelineState = PageState::Error;
+                store.appendRoot({TimelineKind::Error, "error", e.text, false});
+            }
             if (atRoot) fx.needRebuild = true;
             break;
+        }
         case UiEventKind::Notification:
             fx.hasNotification = true;
             fx.notification = e;
             break;
         case UiEventKind::Token:
+            if (!turn.running) {
+                turn.running = true;
+                if (turn.turnStartMs <= 0) turn.turnStartMs = nowMs();
+                if (turn.status.empty() || turn.status == "ready" || turn.status == "idle")
+                    turn.status = "agent running";
+            }
             turn.raw += e.text;
             store.tokenBytes += static_cast<int>(e.text.size());
             if (turn.showRaw) {
@@ -107,6 +132,12 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
             if (!atRoot) fx.needRefreshNested = true;
             break;
         case UiEventKind::Protocol: {
+            if (!turn.running) {
+                turn.running = true;
+                if (turn.turnStartMs <= 0) turn.turnStartMs = nowMs();
+                if (turn.status.empty() || turn.status == "ready" || turn.status == "idle")
+                    turn.status = "agent running";
+            }
             const auto& pe = e.protocol;
             if (pe.kind == ProtocolEventKind::RETRY) {
                 store.clearProtocolEpoch();
@@ -164,9 +195,9 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
                 store.upsertProtocol(e.protocolIndex, std::move(row));
             }
             if (atRoot) {
-                if (turn.running || runningStickSelect)
-                    selectedBlock =
-                        std::max(0, TimelineStore::countFocusable(store.rootRows) - 1);
+                // Selection pin / stick_bottom live-lock is owned by ShellModel
+                // (followLiveEdgeIfLocked). Do not force selectedBlock here.
+                (void)runningStickSelect;
                 fx.needRebuild = true;
             } else {
                 fx.needRefreshNested = true;
@@ -180,17 +211,34 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
                 turn.lastTurnElapsedMs = nowMs() - turn.turnStartMs;
                 turn.turnStartMs = 0;
             }
-            bool cancelled = e.text == "[cancelled]";
+            const bool cancelled =
+                e.text == "[cancelled]" || e.text == "cancelled" ||
+                e.text.find("cancelled") != std::string::npos ||
+                e.text.find("Operation was aborted") != std::string::npos ||
+                e.text.find("ABORTED_BY_CALLBACK") != std::string::npos;
+            if (cancelled) turn.failed = false;
             turn.status = cancelled ? "cancelled" : turn.failed ? "failed" : "done";
             turn.finalText = e.text;
             store.timelineState = e.text.empty() ? PageState::Empty : PageState::Populated;
             bool hasResponse = false;
             for (const auto& row : store.rootRows)
-                if (row.kind == TimelineKind::Response) hasResponse = true;
-            if (!hasResponse && !e.text.empty())
-                store.appendRoot({TimelineKind::Final, "final", e.text, !turn.failed});
+                if (row.kind == TimelineKind::Response || row.kind == TimelineKind::Final)
+                    hasResponse = true;
+            // Always close the chat with a visible terminal block — including
+            // cancel — so a stop never looks like a silent hang. Prefer the
+            // protocol RESPONSE when present; otherwise paint Final from TurnDone.
+            if (!hasResponse && !e.text.empty()) {
+                std::string body = e.text;
+                if (cancelled && body != "[cancelled]" &&
+                    body.find("cancelled") != std::string::npos)
+                    body = "[cancelled by operator]";
+                store.appendRoot(
+                    {TimelineKind::Final, cancelled ? "cancelled" : "final", body,
+                     !turn.failed || cancelled});
+            }
             store.pendingActionIds.clear();
             store.pendingOps = 0;
+            store.actionCount = 0;  // actN is per-turn, not sticky across done
             if (rootAgent) {
                 for (auto& row : store.rootRows) {
                     if ((row.kind == TimelineKind::Action && row.actionType == "agent") ||
