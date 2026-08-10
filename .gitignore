@@ -91,3 +91,6 @@ runs/
 # Example compiled binaries (never commit build artifacts)
 examples/*_example
 examples/c_agent
+
+# Local jsoncpp shared lib (never commit binaries; use system -ljsoncpp)
+libjsoncpp.so*
