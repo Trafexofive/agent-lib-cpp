@@ -36,25 +36,15 @@ Living document tracking Cortex-Prime MK3 agent-lib status, priorities, decision
 
 ## 2. Priority Queue
 
-### Active design track — Manifest `compaction` (brainstorm)
+### Manifest `compaction` — **SHIPPED (MVP)**
 
-Long-horizon / autonomous jobs need **smart, dynamic compaction** — not just a blunt `history_cap`. Goal: save tokens, protect the context window, keep load-bearing state, drop noise.
+Canonical: `docs/manifests/compaction.md`  
+Hybrid of minimal + recommended + profile sugar.  
+`max_turns_per_cycle` default **15** (dumb seatbelt not reclamped every turn).
 
-**Operator sketch (input):**
-```yaml
-compaction:
-  trigger:
-    context_window: 60k   # tokens | percentage
-  compaction_conf:        # better name TBD
-    tags:                 # keep / clean / truncate policies per tag/kind
-```
+**Still open (phase 1b+):** LLM summarize, artifact-graph archive sink, subagent child_before_return enforcement, real tokenizer, `/compact` slash command.
 
-**Status:** design only — 5 candidate shapes drafted for denoise/align/filter.  
-**Artifact:** `compaction-manifest-drafts-v0` (`art-mrtruq0y-v877xz`)  
-**Depends on:** context economy / plans builtin (daily-driver bar item e)  
-**Do not implement** until operator picks a shape (or hybrid).
-
-**Post-compact next track (2026-03-27):** askcards + builtins finalize → ship `manifest-expert` → then main-menu redesign. Compaction schema lands with context-economy work.
+**Artifact (design ancestry):** `compaction-manifest-drafts-v0`
 
 > **SHORT-TERM HARD GOAL (added 2026-07-17):** Get Cortex-Prime MK3 to **pi-level daily-driver capability** — the threshold where it can be trusted as a primary agent harness for real work, not just demos. Until that threshold clears, use Cortex instances as **sub-agents spawned from pi** (test phase): pi orchestrates, Cortex executes delegated tasks, failures feed back into gap closure. Full gap analysis + integration plan: artifact `cortex-pi-level-gap-analysis`.
 >
