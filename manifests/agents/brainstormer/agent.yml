@@ -7,16 +7,15 @@ tags: [agent, ideation, creative, coordinator, launchable, prod]
 
 cognitive_engine:
   primary:
-    # provider: xai
-    # model: grok-4.5
-    provider: opencode
-    model: deepseek-v4-flash-free
+    provider: opencode-go
+    model: deepseek-v4-pro
+    thinking_level: minimal
     parameters:
-      temperature: 0.8
+      temperature: 0.36
       max_tokens: 32768
   fallback:
-    provider: deepseek
-    model: deepseek-v4-pro
+    provider: opencode
+    model: deepseek-v4-flash-free
     parameters:
       temperature: 0.7
       max_tokens: 32768
@@ -28,12 +27,13 @@ context:
 
 prompt_building:
   runtime_capabilities:
+    input_schemas: true
     return_schemas: true
     usage_examples: true
 
 runtime:
   max_iterations: 12
-  history_cap: 80
+  history_cap: 1180
   mode: normal
   subagents:
     persistence: session
@@ -51,5 +51,4 @@ import:
     - working_directory
   agents:
     - discovery
-    - critic
   env: []
