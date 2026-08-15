@@ -109,12 +109,11 @@ inline void MainScene::drawHome(inkcell::Surface& surface, inkcell::Rect frame) 
     int y = frame.y + 3;
 
     // ── KPI strip (real counts only) ─────────────────────────────
-    int agents = 0, tools = 0, feeds = 0, other = 0;
+    int agents = 0, tools = 0, feeds = 0;
     for (const auto& m : model_->dashboard.manifests) {
         if (m.kind == "agent") ++agents;
         else if (m.kind == "tool") ++tools;
         else if (m.kind == "feed") ++feeds;
-        else ++other;
     }
     int sessN = static_cast<int>(model_->dashboard.sessions.size());
     int toolN = model_->rootAgent ? static_cast<int>(model_->rootAgent->toolNames().size()) : 0;

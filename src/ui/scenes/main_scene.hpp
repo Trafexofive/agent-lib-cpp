@@ -129,7 +129,6 @@ class MainScene final : public BaseScene {
         gfx::drawFieldBg(surface, full, tvar, tsec);
 
         // App bar height: 2 rows when shown, 0 in deep zen.
-        const int barH = wantBar ? 2 : 0;
         if (wantBar) {
             // Slide bar in from above during entry / zen resurface.
             inkcell::Rect barPage = page;

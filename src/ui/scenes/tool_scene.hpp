@@ -1022,7 +1022,7 @@ class ToolScene final : public BaseScene {
         s.text({x, y}, inkcell::text::truncate(hint, w), st);
     }
 
-    void drawHelp(inkcell::Surface& s, int x, int bottom, int w) const {
+    void drawHelp(inkcell::Surface& s, int x, int bottom, int /*w*/) const {
         std::vector<std::string> rows = {
             "TOOL KEYS", "",
             "tab          form ⇄ output focus", "j / k        field / scroll lines",

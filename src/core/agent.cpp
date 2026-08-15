@@ -343,11 +343,10 @@ std::string Agent::runLoop(AgentContext &ctx) {
         return CompPolicy::Recover; // normal default
     };
     const CompPolicy compPolicy = resolveCompPolicy();
-    const int promoteAfter =
-        config_.bareRecoveryPromoteAfter >= 0
-            ? config_.bareRecoveryPromoteAfter
-            : (compPolicy == CompPolicy::Promote ? 2 : 1000000);
-    int bareRecoveryCount = 0;
+    // NOTE: runtime.bare_promote_after (bareRecoveryPromoteAfter) is parsed
+    // but currently vestigial — the thought-only nudge/stop uses the fixed
+    // kThoughtOnlySoftCap/HardCap below, not this knob.
+
     // Consecutive generations with content but no tool action and no final.
     // Soft nudge at kThoughtOnlySoftCap; hard stop at kThoughtOnlyHardCap.
     // Multi-thought inside ONE generation is fine (not counted per-tag).
@@ -1915,7 +1914,7 @@ workflows::WorkflowResult Agent::handleWorkflowDelegate(
     // discarded.
     rt.executeParallelRace =
         [this, &rt](const std::vector<workflows::WorkflowStep> &steps,
-                    const std::map<std::string, Json::Value> &symbols)
+                    const std::map<std::string, Json::Value> & /*symbols*/)
         -> Json::Value {
         std::mutex mtx;
         std::condition_variable cv;
