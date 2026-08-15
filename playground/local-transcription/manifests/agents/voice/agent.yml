@@ -1,0 +1,40 @@
+kind: Agent
+name: voice
+version: "0.1"
+summary: "Voice-interactive agent — wake word → STT → ephemeral run → TTS. Every <response> is spoken."
+category: agent
+tags: [voice, playground, low-latency]
+
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.6
+      max_tokens: 200  # voice: cap the spoken answer so TTS finishes fast
+    thinking: true  # matches default agent; separates reasoning channel from final response
+  # Used once on hard 403/RegionError/transient net after primary retries.
+  fallback:
+    provider: opencode
+    model: deepseek-v4-flash-free
+
+context:
+  harness: ../../../../../manifests/harness/default.md
+  system: ./system-prompts/system.md
+  persona: ../../../../../manifests/persona/default.md
+
+runtime:
+  # Voice = one question, one answer. No tool loops, no session bookkeeping.
+  max_iterations: 5
+  history_cap: 12
+  max_turns_per_cycle: 1
+  mode: normal
+  ephemeral: true   # exit when the turn finishes (CLI --ephemeral not needed)
+  no_session: true  # never persist — utterance sessions are disposable
+
+# No tools for v1: pure spoken Q&A. Fewer round trips = lower latency.
+# The system_clock feed gives the agent the current time (voice asks it).
+import:
+  tools: []
+  agents: []
+  feeds: [system_clock]
