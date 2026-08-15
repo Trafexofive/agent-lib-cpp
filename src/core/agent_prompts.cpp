@@ -71,6 +71,30 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
         ss << "  </system_prompt>\n";
     }
 
+    // Reasoning policy — thinking_level hint + hard requireThought rule.
+    if (!config_.thinkingLevel.empty() || config_.requireThought) {
+        ss << "  <reasoning_policy";
+        if (!config_.thinkingLevel.empty())
+            ss << " level=\"" << xmlAttr(config_.thinkingLevel) << "\"";
+        ss << ">\n";
+        if (config_.thinkingLevel == "minimal") {
+            ss << "    Act over deliberating: keep <thought> to one short line "
+                  "only when it genuinely changes the next step. Do not "
+                  "narrate plans.\n";
+        } else if (config_.thinkingLevel == "low") {
+            ss << "    Think briefly: a short <thought> before actions is "
+                  "enough. Skip deep deliberation.\n";
+        } else if (config_.thinkingLevel == "high") {
+            ss << "    Think thoroughly: reason through the plan in <thought> "
+                  "BEFORE any <action>. Weigh tradeoffs, then act.\n";
+        }
+        if (config_.requireThought) {
+            ss << "    Hard rule: emit at least one <thought> before each "
+                  "<action>.\n";
+        }
+        ss << "  </reasoning_policy>\n";
+    }
+
     // Live skill laws (import.skills → SKILL.md). Absent = not claimed.
     auto skillIt = env_.find("__SKILLS_XML__");
     if (skillIt != env_.end() && !skillIt->second.empty()) {

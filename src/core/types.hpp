@@ -218,6 +218,10 @@ struct AgentConfig {
     // don't natively emit thinking tokens (e.g. minimax-m3) and for
     // users who want visible reasoning in the TUI.
     bool requireThought = false;
+    // thinking_level: minimal|low|medium|high — reasoning-budget hint injected
+    // into the system prompt as a <reasoning_policy> directive. Empty = off
+    // (default behavior). Complements requireThought (hard rule).
+    std::string thinkingLevel;
     // Manifest runtime defaults (CLI flags override when explicitly set).
     // noSession  → do not load/save session for this agent run
     // ephemeral  → prefer exit-on-done / one-shot lifecycle at the app layer

@@ -342,6 +342,20 @@ class ManifestLoader {
             std::string think = ManifestYaml::get(*engine, "thinking");
             if (think == "true" || think == "1" || think == "yes")
                 cfg.requireThought = true;
+            // thinking_level: minimal|low|medium|high — reasoning-budget hint.
+            // Accepted under cognitive_engine.thinking_level (sibling of
+            // thinking) or cognitive_engine.primary.thinking_level (as the
+            // operator often writes it).
+            std::string thinkLevel = ManifestYaml::get(*engine, "thinking_level");
+            if (thinkLevel.empty() && primary)
+                thinkLevel = ManifestYaml::get(*primary, "thinking_level");
+            if (!thinkLevel.empty()) {
+                for (char& c : thinkLevel)
+                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (thinkLevel == "minimal" || thinkLevel == "low" ||
+                    thinkLevel == "medium" || thinkLevel == "high")
+                    cfg.thinkingLevel = thinkLevel;
+            }
         }
 
         // Context block — prompt paths + runtime config
