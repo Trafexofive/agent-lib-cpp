@@ -19,7 +19,12 @@ CXXFLAGS  += $(foreach dir,$(INC_DIRS),-I$(dir))
 # Source files (exclude test files)
 SRCS := $(shell find $(SRC_DIR) -name '*.cpp' ! -path '*/testing/*' ! -name 'call_tool.cpp')
 OBJS := $(SRCS:%.cpp=$(BUILD_DIR)/%.o)
-DEPS := $(OBJS:.o=.d) $(BUILD_DIR)/main.d $(BUILD_DIR)/server_main.d
+# Test objects need transitive header deps too — include their .d files so a
+# core header change (types.hpp, workflow.hpp, ...) recompiles them. Without
+# this, a stale test .o linked against a fresh agent.o is an ABI mismatch
+# (silent stack/heap corruption).
+TEST_SRCS := $(shell find $(SRC_DIR)/testing -name '*.cpp')
+DEPS := $(OBJS:.o=.d) $(TEST_SRCS:$(SRC_DIR)/%.cpp=$(BUILD_DIR)/%.d) $(BUILD_DIR)/main.d $(BUILD_DIR)/server_main.d
 
 # Targets
 BIN_CLI    := cortex-mk3
