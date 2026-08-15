@@ -1,0 +1,80 @@
+kind: Agent
+name: network_security_expert
+version: "0.1.0"
+summary: "Network & infrastructure security specialist — topology, exposure, service discovery, TLS"
+
+cognitive_engine:
+  primary:
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.55
+      max_tokens: 32768
+
+context:
+  harness: ../../../../../manifests/harness/small.md
+  system: ./system-prompts/system.md
+  persona: ./system-prompts/persona.md
+
+runtime:
+  max_iterations: 12
+  history_cap: 60
+  max_turns_per_cycle: 15
+  action_timeout_sec: 60
+  # Stream stall cutoff: if the upstream sends ZERO bytes for this many
+  # seconds, abort the generation and let retry/recovery run — stops the
+  # "spinner frozen, nothing inserted" hang without punishing slow-but-moving
+  # models. 0 = rely on curl LOW_SPEED alone (no progress-based cutoff).
+  # throttling:
+  #   stall_timeout_sec: 45
+
+prompt_building:
+  runtime_capabilities:
+    input_schemas: true
+    return_schemas: false
+    usage_examples: false
+
+sandbox:
+  mode: process
+  network: out
+  readonly: false
+  # Passive recon (dig/whois) un-gated; active scanning (nmap) contract-gated.
+  allowed_commands:
+    [
+      bash,
+      python3,
+      which,
+      nmap,
+      nc,
+      ncat,
+      ping,
+      dig,
+      whois,
+      curl,
+      jq,
+      ip,
+      ls,
+      cat,
+      grep,
+      head,
+      tail,
+      find,
+    ]
+  allowed_hosts: ["*"]
+  bind:
+    - ../../ctx:/workspace/ctx
+
+compaction:
+  enabled: true
+  profile: balanced
+  trigger: { context_tokens: 40000, context_pct: 0.65, turns: 15 }
+  output:
+    mode: summarize_rules
+    archive: { enabled: true, sink: file, format: markdown }
+
+import:
+  tools: [ask_tool, exec, fs_read, grep, list, json, web_fetch]
+  files:
+    - ../../prompts/finding-contract.md
+    - ../../prompts/engagement-rules.md
+  env: []

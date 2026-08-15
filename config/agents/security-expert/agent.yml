@@ -1,0 +1,105 @@
+kind: Agent
+name: security-expert
+version: "0.0.1"
+summary: "Generalist security expert + orchestrator — triage, recon, delegation to specialists, findings synthesis"
+
+cognitive_engine:
+  primary:
+    # provider: xai
+    # model: grok-4.5
+    # provider: opencode-go
+    # model: grok-4.5
+
+    provider: deepseek
+    model: deepseek-v4-flash
+    parameters:
+      temperature: 0.55
+      max_tokens: 32768
+
+# Split PE: harness = wire laws, persona = identity, system = mission + gates.
+context:
+  harness: ../../../manifests/harness/default.md
+  system: ./system-prompts/system.md
+  persona: ./system-prompts/persona.md
+
+runtime:
+  max_iterations: 25 # orchestration rounds need headroom
+  history_cap: 180 # dumb seatbelt — never replaced by compaction
+  max_turns_per_cycle: 40 # reclamp every N user turns
+  action_timeout_sec: 160
+
+prompt_building:
+  runtime_capabilities:
+    input_schemas: true
+    return_schemas: false
+    usage_examples: true
+
+# Trust: locked default + user-grant escalation (see prompts/engagement-rules.md).
+# Process mode: mechanical floor is allowed_commands/allowed_hosts/readonly;
+# the authorization contract in PE is the real gate. Docker jail = deferred
+# escalation for hostile targets.
+sandbox:
+  mode: process
+  network: out
+  readonly: false
+  allowed_commands:
+    [bash, python3, ls, cat, grep, head, tail, find, file, strings, curl, jq]
+  # allowed_hosts: ["*"] # web_fetch gated by engagement-rules contract
+  bind:
+    - ./ctx:/workspace/ctx # shared engagement ledger across the fleet
+
+# Long-horizon campaign machinery (balanced + archive).
+compaction:
+  enabled: true
+  profile: balanced
+  trigger:
+    context_tokens: 60000
+    context_pct: 0.65
+    turns: 15
+  cooldown:
+    min_turns: 2
+    min_seconds: 30
+  policy:
+    default: { keep: tail, keep_last: 30, truncate_chars: 2000 }
+    tags:
+      user: { keep: all }
+      thought: { keep: none }
+      action: { keep: tail, keep_last: 12, truncate_chars: 1200 }
+      result: { keep: tail, keep_last: 12, truncate_chars: 1000 }
+      response: { keep: tail, keep_last: 4, truncate_chars: 4000 }
+      agent: { keep: tail, keep_last: 12, truncate_chars: 4000 }
+    never_drop: [pin, open_ask]
+  output:
+    mode: summarize_rules
+    archive:
+      enabled: true
+      sink: file
+      format: markdown
+  subagents:
+    inherit: true # future grandchildren inherit campaign compaction
+    child_before_return: true
+
+import:
+  tools:
+    - ask_tool
+    - exec
+    - fs_read
+    - fs_write
+    - grep
+    - list
+    - json
+    - web_fetch
+  feeds:
+    - system_clock
+    - working_directory
+  agents:
+    # - ./agents/binary_exploitation_expert/agent.yml
+    # - ./agents/web_app_security_expert/agent.yml
+    - ./agents/network_security_expert/agent.yml
+    # - ./agents/osint_recon_expert/agent.yml
+    # - ./agents/threat_intel_reader/agent.yml
+  files:
+    - ./prompts/finding-contract.md
+    - ./prompts/engagement-rules.md
+    - ./prompts/scope-checklist.md
+  env: []

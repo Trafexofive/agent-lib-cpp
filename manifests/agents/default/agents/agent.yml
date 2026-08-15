@@ -1,9 +1,9 @@
 kind: Agent
-name: default
+name: default-sub-agent
 version: "2.0"
-summary: Primary general agent — deepseek primary, curated built-in tools
+summary: Primary general RO sub-agent —  NO exec, NO fs_write
 category: agent
-tags: [agent, launchable, prod]
+tags: [sub-agent, launchable, prod]
 
 cognitive_engine:
   primary:
@@ -23,11 +23,11 @@ cognitive_engine:
     model: deepseek-v4-flash-free
 
 context:
-  harness: ../../harness/default.md
-  system: ../../system/default.md
-  persona: ../../persona/default.md
+  harness: ../../../harness/default.md
+  system: ../../../system/default.md
+  persona: ../../../persona/default.md
   # Operator ground-truth (USER.md). Injected as <user_context> in the system block.
-  user: ./USER.md
+  # user: ./USER.md
 
 runtime:
   max_iterations: 180
@@ -53,7 +53,7 @@ runtime:
     profile: balanced
 
     trigger:
-      context_tokens: 160k # also: context_window
+      context_tokens: 60k # also: context_window
       context_pct: 0.65 # needs model_context_tokens
       turns: 15 # user turns since last compact
       model_context_tokens: 128000 # window size for context_pct
@@ -107,14 +107,14 @@ runtime:
 
 import:
   tools:
-    - exec
+    # - exec
     - grep
     - list
     - fs_read
-    - ../../tools/tree/tool.yml
-    - ../../tools/squeezer/tool.yml
+    - ../../../tools/tree/tool.yml
+    - ../../../tools/squeezer/tool.yml
     # - ../../../playground/diagram-junky/manifests/tools/diagram-render/tool.yml
-    - fs_write
+    # - fs_write
     - json
     - web_fetch
     - sleep
@@ -125,6 +125,5 @@ import:
     - ask_tool
   # Built-in relics: none. Runtime checkpointing belongs in the core runtime,
   # not as stdlib relic manifests.
-  agents: ["./agents/agent.yml"]
   feeds: []
   env: []

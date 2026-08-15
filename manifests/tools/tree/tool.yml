@@ -1,0 +1,88 @@
+# tools/tree/tool.yml
+kind: Tool
+name: tree
+version: "1.0"
+summary: "Gitignore-aware recursive directory scanner. Readonly."
+description: >
+  Walks a directory tree respecting .gitignore and common noise excludes
+  (.git, node_modules, __pycache__, venv, build/dist). Returns either an
+  ascii tree string or a structured JSON node tree, plus dir/file/size
+  stats. Use before any deeper inspection to scope what actually exists
+  and avoid burning budget on irrelevant subtrees.
+category: filesystem
+tags: [discovery, readonly, structure]
+state: stable
+
+implementation:
+  runtime: python3
+  entrypoint: ./src/main.py
+  timeout: 30
+  input_type: json
+
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "Directory to scan."
+    max_depth:
+      type: integer
+      default: 6
+      description: "Max recursion depth from path."
+    include_hidden:
+      type: boolean
+      default: false
+      description: "Include dotfiles/dotdirs not covered by .gitignore."
+    gitignore:
+      type: boolean
+      default: true
+      description: "Respect .gitignore patterns found at path root."
+    extensions:
+      type: array
+      items: { type: string }
+      description: "Only include files with these extensions (no dot). Omit for all."
+    exclude:
+      type: array
+      items: { type: string }
+      description: "Additional glob patterns to exclude, on top of defaults."
+    max_entries:
+      type: integer
+      default: 2000
+      description: "Hard cap on total entries walked; sets truncated:true if hit."
+    format:
+      type: string
+      enum: [tree, json]
+      default: tree
+      description: "tree = ascii string. json = structured node tree for programmatic use."
+
+output_schema:
+  type: object
+  required: [success]
+  properties:
+    success: { type: boolean }
+    root: { type: string }
+    tree:
+      description: "String (format:tree) or object (format:json)."
+    stats:
+      type: object
+      properties:
+        dirs: { type: integer }
+        files: { type: integer }
+        total_size: { type: integer }
+    truncated:
+      type: boolean
+      description: "True if max_entries or max_depth cut off part of the walk."
+    error: { type: string }
+
+examples:
+  - description: "Quick ascii map of a repo, respecting .gitignore"
+    params:
+      path: "."
+      format: tree
+  - description: "Structured scan of only source files for downstream tooling"
+    params:
+      path: "src"
+      extensions: ["py", "c", "h"]
+      format: json
+      max_depth: 4

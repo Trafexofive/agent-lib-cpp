@@ -1,0 +1,64 @@
+kind: Agent
+name: temperature-bench
+version: "1.0"
+summary: "Manifest specialist for finetuning and benchmarking agent performence across a range of temperature in order to detect and optimize for the actual job that agent needs to do."
+
+cognitive_engine:
+  primary:
+    provider: xai
+    model: grok-4.5
+    parameters:
+      temperature: 0.56
+      max_tokens: 32768
+
+context:
+  # system: |
+  # ""
+  # system: ./system-prompts/tool-expert.md
+  # persona: ./system-prompts/tool-expert.md
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false
+    usage_examples: false
+
+sandbox:
+  mode: process
+  allowed_commands:
+    [
+      python3,
+      bash,
+      cat,
+      ls,
+      grep,
+      head,
+      tail,
+      find,
+      yaml,
+      yq,
+      chmod,
+      test,
+      cortex-mk3,
+    ]
+  allowed_paths:
+    ["./", "../../harness/", "../../manifests/", "TARGET_AGENT_PATH/"]
+  allowed_hosts: []
+  readonly: false
+  network: out
+
+runtime:
+  max_iterations: 8
+  history_cap: 50
+
+import:
+  tools:
+    - exec
+    - grep
+    - list
+    - fs_read
+    - fs_write
+    - json
+    - ask_tool
+  feeds: []
+  agents: [reader]
+  env: []

@@ -1,0 +1,82 @@
+kind: Agent
+name: Morpheus
+version: "2.0"
+summary: The Father Of all agents — Daily Driver
+
+cognitive_engine:
+  # will use more powerful models later
+  primary:
+    provider: xai
+    model: grok-4.5
+    parameters:
+      temperature: 0.8
+      max_tokens: 65536
+  thinking: true
+  fallback:
+    provider: deepseek
+    model: deepseek-v4-pro
+
+prompt_building:
+  runtime_capabilities:
+    return_schemas: false # controls <returns>
+    usage_examples: false # controls <examples>
+
+runtime:
+  max_iterations: 130 # every tool call AND OR user query
+  # Dumb tail seatbelt on prompt history (session keeps full history).
+  history_cap: 1140
+  # Recompute that window at most every N user turns (default 15). 1 = every turn.
+  max_turns_per_cycle: 15
+  # max_cycle: 3 # when the LLM doesnt want to stop or when it forgets final=true the harness 'continues', those are cycles
+  ## Next ones have yet to come:
+  #agency: base | low | high | autonomous
+
+# Smart context economy — see docs/manifests/compaction.md
+# Absent/enabled:false = off. history_cap still applies.
+compaction:
+  enabled: true
+  profile: balanced                 # light | balanced | aggressive | archive_first
+  trigger:
+    context_tokens: 80000           # also: 80k
+    context_pct: 0.65               # needs model_context_tokens to fire
+    turns: 15                       # user turns since last compact
+  cooldown:
+    min_turns: 2
+  overrides:
+    tags:
+      result: { keep_last: 20 }     # keep more tool memory than balanced default
+    never_drop: [pin, open_ask]
+  output:
+    mode: summarize_rules           # drop | summarize_rules
+    archive:
+      enabled: true
+      sink: file                    # file | artifact | none → .cortex/compact/<session>/
+      format: markdown
+  subagents:
+    inherit: true
+    child_before_return: true
+
+# setup: "./setup/base/action_calls.protocol" # execute protocol action calls first thing and fill up the context, this is good for making sure even dumber models dont fail tool calling but also very good for narrowing down and helping in domain specific usecases.
+
+import:
+  tools:
+    - exec
+    - grep
+    - list
+    - fs_read
+    - fs_write
+    - json
+    - web_fetch
+    - sleep
+    # - context_pin
+    - context_peek
+    # - context_unpin
+    - ask_tool
+  # Built-in relics: none. Runtime checkpointing belongs in the core runtime,
+  # not as stdlib relic manifests.
+  feeds:
+    - ./poc/tools/morpheus_dashboard/feed.yml
+  env: []
+  agents:
+    - default # manifests/ global
+    - ../cortex-manifest-expert/agent.yml # config/ path-scoped

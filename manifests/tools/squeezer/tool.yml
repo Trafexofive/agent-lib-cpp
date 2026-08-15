@@ -1,0 +1,88 @@
+# tools/squeezer/tool.yml
+kind: Tool
+name: squeezer
+version: "1.0"
+summary: "Strips function/method bodies; returns a signature-only Functional Map."
+description: >
+  Given a file or directory, extracts imports/signatures/type declarations
+  while dropping implementation bodies. Python is parsed via ast (exact,
+  best_effort:false). C/C++/JS/TS/Go use regex heuristics and are always
+  tagged best_effort:true so downstream agents can weight confidence.
+  Files with unsupported extensions are reported with skipped_reason,
+  never silently dropped. Use this before a full body read to cheaply
+  map surface area across a tree.
+category: discovery
+tags: [discovery, readonly, functional-map, signatures]
+state: stable
+
+implementation:
+  runtime: python3
+  entrypoint: ./src/main.py
+  timeout: 45
+  input_type: json
+
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "File or directory to squeeze."
+    recursive:
+      type: boolean
+      default: true
+      description: "If path is a directory, recurse into subdirectories."
+    languages:
+      type: array
+      items:
+        type: string
+        enum: [python, c, cpp, javascript, typescript, go]
+      description: "Restrict to these languages. Omit for all supported."
+    max_files:
+      type: integer
+      default: 200
+      description: "Hard cap on files processed in one call."
+
+output_schema:
+  type: object
+  required: [success]
+  properties:
+    success: { type: boolean }
+    root: { type: string }
+    files:
+      type: array
+      items:
+        type: object
+        properties:
+          path: { type: string }
+          language: { type: string }
+          imports:
+            type: array
+            items: { type: string }
+          signatures:
+            type: array
+            items: { type: string }
+          best_effort:
+            type: boolean
+            description: "true = regex heuristic, false = exact (python ast)."
+          skipped_reason:
+            type: string
+            description: "Present instead of imports/signatures if the file couldn't be processed."
+    stats:
+      type: object
+      properties:
+        files_processed: { type: integer }
+        files_skipped: { type: integer }
+        total_signatures: { type: integer }
+    error: { type: string }
+
+examples:
+  - description: "Functional map of a single Python module"
+    params:
+      path: "src/harness/dispatcher.py"
+      recursive: false
+  - description: "Map an entire C source tree, C/C++ only"
+    params:
+      path: "src"
+      languages: [c, cpp]
+      max_files: 500

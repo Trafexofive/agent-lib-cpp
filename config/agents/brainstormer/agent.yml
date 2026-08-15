@@ -1,64 +1,55 @@
 kind: Agent
-name: coder
-version: "1.1"
-summary: Specialized Brainstorming Agent
+name: brainstormer
+version: "1.0"
+summary: Ideation coordinator — expands options, grounds them, kills weak ones, ships a ranked proposal.
+category: agent
+tags: [agent, ideation, creative, coordinator, launchable, prod]
 
 cognitive_engine:
   primary:
-    # provider: openai-codex
-    # model: gpt-5.5
-    provider: opencode
-    model: deepseek-v4-flash-free
-    # provider: opencode-go
-    # model: minimax-m3
     # provider: xai
     # model: grok-4.5
+    provider: opencode
+    model: deepseek-v4-flash-free
     parameters:
-      temperature: 0.85
-      max_tokens: 65536
+      temperature: 0.36
+      max_tokens: 32768
   fallback:
     provider: deepseek
     model: deepseek-v4-pro
     parameters:
-      temperature: 0.25
-      max_tokens: 65536
+      temperature: 0.7
+      max_tokens: 32768
 
 context:
   harness: ../../harness/default.md
-  # harness: ../../harness/big.md
   system: ./system.md
   persona: ./persona.md
 
 prompt_building:
   runtime_capabilities:
-    return_schemas: false
-    usage_examples: false
+    return_schemas: true
+    usage_examples: true
 
 runtime:
-  max_iterations: 250
-  history_cap: 1180
-  dev_mode: true # dumps iterations.md/raw.md/history.md → ~/.cortex/dev/<session>/ + CWD
-  # (or export CORTEX_DEV_MODE=1 for lazy live tests without editing this file)
+  max_iterations: 12
+  history_cap: 80
+  mode: normal
   subagents:
     persistence: session
 
 import:
   tools:
-    - exec
-    - grep
     - list
+    - grep
     - fs_read
-    - fs_write
-    - json
-    # - context_pin
     - context_peek
-    # - context_unpin
-    - ask_tool
     - web_fetch
+    - ask_tool
+    - json
   feeds:
     - working_directory
   agents:
-    - reader
-    - tester
-    - reviewer
+    - discovery
+    - critic
   env: []
