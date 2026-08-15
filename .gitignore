@@ -47,6 +47,13 @@ poc/
 *.log
 runs/
 
+# Python virtualenvs + model weights (never commit large/regenerable binaries)
+.venv/
+venv/
+*.onnx
+playground/local-transcription/wake-model/
+playground/local-transcription/wake-refs/
+
 # Session handoff / audit artifacts (per-session, never commit)
 .artifacts/
 
