@@ -70,6 +70,21 @@ clean:
 
 -include $(DEPS)
 
+# ── Iteration cap → <harness> tag + [LIMIT] block test ──
+ITERCAP_TEST_SRC := src/testing/iteration_cap_test.cpp
+ITERCAP_TEST_OBJ := $(BUILD_DIR)/testing/iteration_cap_test.o
+ITERCAP_TEST_BIN := $(BUILD_DIR)/iteration-cap-test
+
+$(ITERCAP_TEST_OBJ): $(ITERCAP_TEST_SRC) src/core/agent.hpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(ITERCAP_TEST_BIN): $(OBJS) $(ITERCAP_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(ITERCAP_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-iteration-cap: $(ITERCAP_TEST_BIN)
+	./$(ITERCAP_TEST_BIN)
+
 # ── Parser unit test ──
 PARSER_TEST_SRC := src/testing/parser_test.cpp
 PARSER_TEST_OBJ := $(BUILD_DIR)/testing/parser_test.o
