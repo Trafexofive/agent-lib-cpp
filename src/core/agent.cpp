@@ -371,6 +371,22 @@ std::string Agent::runLoop(AgentContext &ctx) {
             ctx.onToken("", false);
     };
 
+    // max_iterations limit → inform the LLM via a runtime <harness> tag
+    // (harness.md documents it as runtime-injected) and the operator via a
+    // TUI Status block. "per session, not per cycle" is satisfied by
+    // ctx.iteration being scoped to this prompt() call; a reprompt restarts
+    // the loop at 1, which resets the budget to 0.
+    auto emitLimitNote = [&](const std::string &reason,
+                             const std::string &detail) {
+        history_.push_back("<harness limit=\"" + reason + "\">\n" + detail +
+                           "\n</harness>");
+        protocolEvents_.push_back(
+            {ProtocolEventKind::STATUS,
+             "[LIMIT] " + reason + " — " + detail, {}, {}});
+        if (ctx.onToken)
+            ctx.onToken("", false);
+    };
+
     // Unified terminal bookkeeping — every stop path must leave BOTH the
     // LLM context (history_) and the chat stream (protocolEvents_) with an
     // honest closing block. Callers still set fullResponse themselves.
@@ -414,13 +430,11 @@ std::string Agent::runLoop(AgentContext &ctx) {
             finalizationTurn = true;
             ctx.iteration = workCap + 1;
             limitReason = "max_iterations=" + std::to_string(workCap);
-            emitStatus("[LIMIT] " + limitReason +
-                       " reached without <response final=\"true\">. "
-                       "Entering FINALIZATION turn — tools disabled; emit "
-                       "final reply now.");
-            emitStatus("[FINALIZE] This is your last turn. Output ONLY:\n"
-                       "  <response final=\"true\">…your answer…</response>\n"
-                       "Do not call tools. Do not emit bare text.");
+            emitLimitNote(limitReason,
+                          "iteration budget exhausted without "
+                          "<response final=\"true\">. Entering FINALIZATION "
+                          "turn — tools disabled; emit the best honest final "
+                          "answer now.");
         }
 
         if (finalizationTurn && finalizationDone)
@@ -472,17 +486,23 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // Soft warning on last WORK turn (tools still allowed).
         if (!finalizationTurn && ctx.iteration == workCap) {
             msgs.push_back(ChatMessage::user(
-                "[LIMIT WARNING] This is work iteration " +
-                std::to_string(workCap) + "/" + std::to_string(workCap) +
-                ". After this turn the runtime will force a FINALIZATION turn "
-                "with tools disabled. Prefer <response final=\"true\"> now if "
-                "you have enough evidence; otherwise finish critical tools "
-                "quickly."));
+                "<harness note=\"limit_warning\" limit=\"max_iterations=" +
+                std::to_string(workCap) + "\">\n"
+                "This is work iteration " + std::to_string(workCap) + "/" +
+                std::to_string(workCap) +
+                ". After this turn the runtime will force a FINALIZATION "
+                "turn with tools disabled. Prefer <response final=\"true\"> "
+                "now if you have enough evidence; otherwise finish critical "
+                "tools quickly.\n</harness>"));
         }
         // Hard finalization prompt — no tools, must close.
         if (finalizationTurn) {
+            // Injected as a runtime <harness> tag so the model sees the limit
+            // as harness-side state (harness.md), not a generic user message.
             std::ostringstream fin;
-            fin << "[FINALIZATION TURN] " << limitReason
+            fin << "<harness limit=\"" << limitReason
+                << "\" status=\"finalization\">\n"
+                << limitReason
                 << " exhausted. Tools are DISABLED this turn.\n"
                 << "Emit exactly:\n"
                 << "<response final=\"true\">\n"
@@ -498,6 +518,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     fin << lastSalvage;
                 fin << "\n----- END SALVAGE -----\n";
             }
+            fin << "\n</harness>";
             msgs.push_back(ChatMessage::user(fin.str()));
         }
 
@@ -1430,8 +1451,17 @@ void Agent::handleProtocolEvent(AgentContext &ctx, ProtocolStreamState &st,
             typeStr = "tool";
             break;
         }
+        // Provisional actions (open-tag-only, body not yet streamed) carry an
+        // empty `{}` params object. Serializing that to "{}" produced a bogus
+        // body that the headless byte-delta renderer then mis-diffed: it treats
+        // a same-id merge as a prefix-append, so "{}" → full JSON emitted the
+        // body minus its leading `{"` (corrupt action display). Leave the
+        // provisional body empty so the merge is a clean append.
+        const bool provisional =
+            ev.metadata.count("provisional") &&
+            ev.metadata.at("provisional") == "true";
         std::string body = ev.action->content;
-        if (body.empty() && !ev.action->params.isNull()) {
+        if (body.empty() && !ev.action->params.isNull() && !provisional) {
             Json::StreamWriterBuilder wb;
             wb["indentation"] = "";
             body = Json::writeString(wb, ev.action->params);
