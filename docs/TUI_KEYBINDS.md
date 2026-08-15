@@ -47,10 +47,31 @@ If `run -p/--prompt` is used without `--repl`, MK3 runs one-shot mode instead of
 
 ## Scrolling and redraw
 
+### Inkcell agent chat (current)
+
+Complementary binds — **no mode toggle**:
+
 | Key | Action |
 |---|---|
-| `PageUp`, `Ctrl-O`, `Alt-K` | Scroll output/history up |
-| `PageDown`, `Ctrl-G`, `Alt-J` | Scroll output/history down |
+| **`j` / `k`** | Block select (history focus); viewport follows selection |
+| **`Ctrl-J` / `Ctrl-K`** | Fine scroll transcript ±1 line (history **and** while typing) |
+| **`gg` / `G`** | Select first / last block |
+| **`Shift-[` / `Shift-]`** (or `{` / `}`) | Skip ±4 blocks |
+| **`y`** | Yank selected block body (clipboard or `/tmp/mk3-yank.txt`) |
+| `↑` / `↓` | Fine scroll ±1 (history focus) |
+| `PageUp` / `PageDown` | Half-page scroll |
+| `Home` / `End` | Jump transcript top / bottom |
+| **`Ctrl-O`** | Toggle body truncate (forces full rewrap) |
+
+Note: `Ctrl-J` is LF on classic TTYs; inkcell decodes it as `j`+Ctrl (distinct from Enter/`\r`).  
+`Ctrl-K` in chat steals TextArea kill-to-EOL; `Ctrl-U` still kills-to-start.
+
+### Legacy REPL notes
+
+| Key | Action |
+|---|---|
+| `PageUp`, `Alt-K` | Scroll output/history up |
+| `PageDown`, `Alt-J` | Scroll output/history down |
 | `Ctrl-L` | Clear/redraw the screen |
 | Terminal resize | Recalculates layout and redraws |
 

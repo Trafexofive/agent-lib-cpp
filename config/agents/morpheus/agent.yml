@@ -6,14 +6,8 @@ summary: The Father Of all agents — Daily Driver
 cognitive_engine:
   # will use more powerful models later
   primary:
-    # provider: openrouter
-    # model: minimax/minimax-m3
-    # provider: deepseek
-    # model: deepseek-v4-pro
-    provider: openai-codex
-    model: gpt-5.5
-    # model: z-ai/glm-5.2
-    # model: cohere/north-mini-code:free
+    provider: xai
+    model: grok-4.5
     parameters:
       temperature: 0.8
       max_tokens: 65536
@@ -21,8 +15,6 @@ cognitive_engine:
   fallback:
     provider: deepseek
     model: deepseek-v4-pro
-    # provider: openrouter
-    # model: nex-2
 
 prompt_building:
   runtime_capabilities:
@@ -30,17 +22,41 @@ prompt_building:
     usage_examples: false # controls <examples>
 
 runtime:
-  max_iterations: 30 # every tool call AND OR user query
-  history_cap: 40 # for now this is simple but it will tie in with the context management later
-  max_cycle: 3 # when the LLM doesnt want to stop or when it forgets final=true the harness 'continues', those are cycles
+  max_iterations: 130 # every tool call AND OR user query
+  # Dumb tail seatbelt on prompt history (session keeps full history).
+  history_cap: 1140
+  # Recompute that window at most every N user turns (default 15). 1 = every turn.
+  max_turns_per_cycle: 15
+  # max_cycle: 3 # when the LLM doesnt want to stop or when it forgets final=true the harness 'continues', those are cycles
   ## Next ones have yet to come:
   #agency: base | low | high | autonomous
-  # compacting:
-    
-  
 
-setup: "./setup/base/action_calls.protocol" # execute protocol action calls first thing and fill up the context, this is good for making sure even dumber models dont fail tool calling but also very good for narrowing down and helping in domain specific usecases.
-  
+# Smart context economy — see docs/manifests/compaction.md
+# Absent/enabled:false = off. history_cap still applies.
+compaction:
+  enabled: true
+  profile: balanced                 # light | balanced | aggressive | archive_first
+  trigger:
+    context_tokens: 80000           # also: 80k
+    context_pct: 0.65               # needs model_context_tokens to fire
+    turns: 15                       # user turns since last compact
+  cooldown:
+    min_turns: 2
+  overrides:
+    tags:
+      result: { keep_last: 20 }     # keep more tool memory than balanced default
+    never_drop: [pin, open_ask]
+  output:
+    mode: summarize_rules           # drop | summarize_rules
+    archive:
+      enabled: true
+      sink: file                    # file | artifact | none → .cortex/compact/<session>/
+      format: markdown
+  subagents:
+    inherit: true
+    child_before_return: true
+
+# setup: "./setup/base/action_calls.protocol" # execute protocol action calls first thing and fill up the context, this is good for making sure even dumber models dont fail tool calling but also very good for narrowing down and helping in domain specific usecases.
 
 import:
   tools:

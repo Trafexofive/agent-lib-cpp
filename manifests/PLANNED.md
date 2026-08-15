@@ -42,3 +42,31 @@ QOL & Additions:
     - then I want to create a cycling wheel component/widget/module with full and smooth animations, ... like in gta 5, rust, and a lot of games. its a circular selection wheel.  
     - 
 - need to add hooks: and rules: to agent manifest.
+- add a refresh bind/option in manifest page
+- QOL: dont dupe prompt in history if last and last - 1 are the exact same.
+- QOL: picker -> select prompt -> add to manifests/prompts (recycle same chat UI/UX with some animations and visual enhancements)
+- power sidebar in workflow page, to easily navigate agents, ...
+- create a manifest repository builtin tools/relic or whatnot,
+- a visually pleasing way to see the files read and getting added while the agent works, and maybe a neat way to copy them or bundle those files for later use.
+- compaction UX: if compaction max isnt model max tokens (we let the agent finish the cycle then compact, unless max tokens is reached, logically)
+- add dev commands (toggle in settings)
+    - [X] /export-chat exports the rendered chat to a file as seen by the user and whats rendered.  
+    - [X] make sure any other dev/debug commands are in the dev mode only, and not in the normal user mode.
+- [ ] 
+- [ ] new agent type/modifier, agents that take json obj (easy for parent to spawn, but for a normal user we will have to render the fields), we will see about this idea very much hindsight.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
