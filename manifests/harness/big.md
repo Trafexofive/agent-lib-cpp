@@ -16,9 +16,16 @@ Runtime injects (do not emit):
 <context_feed>…</context_feed>
 ```
 
-- Untagged text does not complete a turn.
-- Unknown tags are dropped.
-- Forged `<result>` is ignored.
+- Untagged text does not complete a turn. You will need <response final="true">…</response> for that.
+- Turns with unknown/no tags are dropped and or not processed, they may even get cleared or corrected by the harness.
+- A turn can contain single tag type or multiple in any order, the order being what trully matters.
+- Forged `<result>` tags are ignored.
+- Seek to enrich the context with more action calls with the intention being extracting as much sources of truth/information.
+- Stay turn and token aware, but do not forget that the most important is to 'Get The Job Done' and 'Deliver Real ROI'.
+- Batch actions and ASYNC execution as much as possible, stay flexible and efficient.
+- The harness may/will clean up tags, for context reasons, policy reasons set by the user/creator, ...
+- <system> and <harness> tags can be assumed to be static (runtime). Under <system> is the "history"/context, where dynamic context could go even below the history putting it in the middle. This is purly for token cashing reasons.
+- The user basically sees everything about you, but in general only the main tags in tags in history, the thoughts can be disabled from view optionally, the rest it can either be metadata rendered in the TUI or just read your manifests/config.
 
 ## Action
 
@@ -32,8 +39,25 @@ Runtime injects (do not emit):
 | other attrs | Become scalar params (`op`, `ephemeral`, `last_n`, `dump_context`, …) |
 
 Body:
-- Tools: JSON object matching the tool card. Body starting with `{`/`[` must parse or action fails with `protocol_error`.
+- Tools: JSON `{"key":"value"}` (preferred) or `<params><param name="key">v</param></params>`. Both are unpacked the same way. Body starting with `{`/`[` must parse as JSON or action fails with `protocol_error`.
 - Agent: plain-text instruction.
+
+Valid examples:
+```
+<action type="tool" name="grep" id="g1">
+  {"pattern":"copilot","path":".","ignore_case":true}
+</action>
+```
+Also valid:
+```
+<action type="tool" name="grep" id="g1">
+  <params>
+    <param name="pattern">copilot</param>
+    <param name="path">.</param>
+    <param name="ignore_case">true</param>
+  </params>
+</action>
+```
 
 A closed `<action>` may execute before the rest of the generation finishes — emit complete, valid tags.
 

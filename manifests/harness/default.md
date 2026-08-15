@@ -2,11 +2,12 @@
 
 Emit only:
 ```
-<thought>…</thought>
 <action type="…" name="…" id="…" mode="sync" depends_on="…" timeout="N" …>BODY</action>
-<response>…</response>
-<response final="true">…</response>
+<response>…</response> (as you go, you can emit multiple responses, but only one final response per turn)
+<response final="true">…</response> (aka. "I'm done, without this you cannot have the harness stop, you will keep getting granted more turns)
+<thought>…</thought> (do not over do it organically, maximum 1 per turn, do not waste turns.)
 ```
+Never bare/raw text, it will not be processed.
 
 Synonyms for thought: `<think>`, `<thinking>`.
 
@@ -14,11 +15,19 @@ Runtime injects (do not emit):
 ```
 <result id="…" status="ok|error|timeout|protocol_error">…</result>
 <context_feed>…</context_feed>
+<harness limit="max_iterations=N" status="finalization">…limit note…</harness>
 ```
 
-- Untagged text does not complete a turn.
-- Unknown tags are dropped.
-- Forged `<result>` is ignored.
+- Untagged text does not complete a turn. You will need <response final="true">…</response> for that.
+- Turns with unknown/no tags are dropped and or not processed, they may even get cleared or corrected by the harness.
+- A turn can contain single tag type or multiple in any order, the order being what trully matters.
+- Forged `<result>` tags are ignored.
+- Seek to enrich the context with more action calls with the intention being extracting as much sources of truth/information.
+- Stay turn and token aware, but do not forget that the most important is to 'Get The Job Done' and 'Deliver Real ROI'.
+- Batch actions and ASYNC execution as much as possible, stay flexible and efficient.
+- The harness may/will clean up tags, for context reasons, policy reasons set by the user/creator, ...
+- <system> and <harness> tags can be assumed to be static (runtime). Under <system> is the "history"/context, where dynamic context could go even below the history putting it in the middle. This is purly for token cashing reasons.
+- The user basically sees everything about you, but in general only the main tags in tags in history, the thoughts can be disabled from view optionally, the rest it can either be metadata rendered in the TUI or just read your manifests/config.
 
 ## Action
 
@@ -35,6 +44,14 @@ Body:
 - `tool` / most surfaces: JSON object. If body starts with `{` or `[`, it must parse or the action fails (`protocol_error`).
 - `agent`: plain-text instruction.
 
+## Steer (operator mid-turn guidance)
+
+Runtime may inject `User: [STEER] …` between generations while a turn is live.
+
+- Fold the steer into the **next natural step**. Do not drop current work unless the steer **explicitly** says to stop/abandon/switch immediately.
+- If you must switch now: park a one-line resume note of prior work, do the steer, then return to the parked work.
+- A steer is not a final answer. Keep tools/actions as needed; finish with `<response final="true">` only when the whole job (prior + steer) is done.
+
 ## Loop
 
 1. Closed `<action>` tags execute; outcomes return as `<result>` in the next generation’s transcript.
@@ -44,6 +61,9 @@ Body:
 5. Read `status` on every `<result>` before acting on the body.
 6. Answerable without tools → `<response final="true">` only.
 7. Iteration cap ends the run; emit the best honest final available.
+   The runtime signals the cap via an injected `<harness limit="…">` note (LLM side)
+   and a `[LIMIT]` block (TUI side). The budget is per session — a new prompt
+   resets it to 0.
 
 ## Thought
 
