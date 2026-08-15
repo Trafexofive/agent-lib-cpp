@@ -1,0 +1,62 @@
+kind: Tool
+name: get_data_source_desc
+version: "1.0"
+summary: "List and describe the structured data sources available to the discovery agent."
+description: >
+  Read-only catalog of structured data sources (academic, encyclopedic,
+  finance, code). Returns each source's id, domain, category, endpoint,
+  auth requirement, rate limit, freshness, query parameters, and output shape
+  — so the discovery agent can route a structured-data query to the right
+  source before falling back to general web search. Optionally filter by
+  category or describe a single source id.
+category: discovery
+tags: [discovery, readonly, data-source, catalog, recon]
+state: stable
+
+implementation:
+  runtime: python3
+  entrypoint: ./src/main.py
+  timeout: 30
+  input_type: json
+
+input_schema:
+  type: object
+  properties:
+    source_id:
+      type: string
+      description: "Optional single source id to describe (arxiv, crossref, openalex, wikipedia, yahoo, github)."
+    category:
+      type: string
+      description: "Optional category filter (academic, encyclopedic, finance, code)."
+
+output_schema:
+  type: object
+  required: [success]
+  properties:
+    success: { type: boolean }
+    count: { type: integer }
+    sources:
+      type: array
+      items:
+        type: object
+        properties:
+          id: { type: string }
+          name: { type: string }
+          domain: { type: string }
+          category: { type: string }
+          description: { type: string }
+          endpoint: { type: string }
+          auth: { type: string }
+          rate_limit: { type: string }
+          freshness: { type: string }
+          query_params: { type: object }
+          output: { type: string }
+    error: { type: string }
+
+examples:
+  - description: "Describe all data sources"
+    params: {}
+  - description: "Describe just the finance source"
+    params: { source_id: "yahoo" }
+  - description: "List academic sources"
+    params: { category: "academic" }

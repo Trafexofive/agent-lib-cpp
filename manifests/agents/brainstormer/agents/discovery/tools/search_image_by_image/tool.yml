@@ -1,0 +1,72 @@
+kind: Tool
+name: search_image_by_image
+version: "1.0"
+summary: "Reverse image lookup: fingerprint an image and find near-duplicates locally."
+description: >
+  Read-only reverse image search for the discovery agent. Accepts an image
+  URL or local path, computes a perceptual fingerprint (dHash), dimensions,
+  dominant color, and format. Optionally scans a local corpus directory for
+  near-duplicates (hamming distance) and — when SEARXNG_URL is set — queries
+  the self-hosted reverse-image backend. No external SaaS key required; the
+  local fingerprint path always works and is genuinely useful for dedup and
+  "have we seen this before" recon.
+category: discovery
+tags: [discovery, readonly, image, reverse-search, fingerprint, visual, recon]
+state: stable
+
+implementation:
+  runtime: python3
+  entrypoint: ./src/main.py
+  timeout: 90
+  input_type: json
+
+input_schema:
+  type: object
+  required: [image]
+  properties:
+    image:
+      type: string
+      description: "Image URL (http/https) or local file path."
+    corpus_dir:
+      type: string
+      description: "Optional local directory to scan for near-duplicates."
+    max_hamming:
+      type: integer
+      default: 10
+      description: "Max hamming distance for a local near-duplicate match (0..64)."
+    limit:
+      type: integer
+      default: 10
+      description: "Max near-duplicate hits returned."
+
+output_schema:
+  type: object
+  required: [success]
+  properties:
+    success: { type: boolean }
+    fingerprint:
+      type: object
+      properties:
+        dhash: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+        format: { type: string }
+        mode: { type: string }
+        dominant_color: { type: string }
+    near_duplicates:
+      type: array
+      items:
+        type: object
+        properties:
+          path: { type: string }
+          hamming: { type: integer }
+    remote:
+      type: array
+      description: "Reverse-image results from SearXNG when configured."
+    error: { type: string }
+
+examples:
+  - description: "Fingerprint an image by URL"
+    params: { image: "https://example.com/photo.jpg" }
+  - description: "Find near-duplicates in a local corpus"
+    params: { image: "./screenshots/unknown.png", corpus_dir: "./screenshots", max_hamming: 12 }

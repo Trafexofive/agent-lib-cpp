@@ -1,0 +1,52 @@
+kind: Tool
+name: web_open_url
+version: "1.0"
+summary: "Fetch a URL and extract readable text content (title + body + metadata)."
+description: >
+  Read-only page fetch for the discovery agent. Downloads a URL, follows
+  redirects, and extracts the readable main content (trafilatura, with a
+  bs4 fallback), stripping navigation/ads/boilerplate. Returns title, final
+  URL (post-redirect), content type, status, and bounded text. Honors the
+  read-only directive: no cookies persisted, no writes, GET only.
+category: discovery
+tags: [discovery, readonly, web, fetch, extract, recon]
+state: stable
+
+implementation:
+  runtime: python3
+  entrypoint: ./src/main.py
+  timeout: 60
+  input_type: json
+
+input_schema:
+  type: object
+  required: [url]
+  properties:
+    url:
+      type: string
+      description: "http(s) URL to fetch and extract."
+    max_chars:
+      type: integer
+      default: 30000
+      description: "Cap on extracted text length (1..200000)."
+
+output_schema:
+  type: object
+  required: [success]
+  properties:
+    success: { type: boolean }
+    title: { type: string }
+    url: { type: string }
+    final_url: { type: string }
+    content_type: { type: string }
+    status: { type: integer }
+    content: { type: string }
+    length: { type: integer }
+    truncated: { type: boolean }
+    error: { type: string }
+
+examples:
+  - description: "Extract a docs page"
+    params: { url: "https://docs.rs/tokio/latest/tokio/" }
+  - description: "Extract with a tighter cap"
+    params: { url: "https://example.com/article", max_chars: 8000 }

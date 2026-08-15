@@ -1,0 +1,101 @@
+{
+  "$comment": "Read-only data-source catalog for the discovery agent. Each entry is a structured, no-key (or public-key) REST source queried directly — no managed local service. get_data_source_desc renders this; get_data_source dispatches to the matching adapter in data_sources.py.",
+  "sources": [
+    {
+      "id": "arxiv",
+      "name": "arXiv",
+      "domain": "arxiv.org",
+      "category": "academic",
+      "description": "Preprints in physics, math, CS, and related fields. Query by title/abstract/author/all.",
+      "endpoint": "https://export.arxiv.org/api/query",
+      "auth": "none",
+      "rate_limit": "1 req / 3s (polite)",
+      "freshness": "daily",
+      "query_params": {
+        "query": "string — arxiv search query, e.g. 'all:transformers' or 'ti:diffusion'",
+        "max_results": "integer — number of results (1..100)"
+      },
+      "output": "list of {title, url, authors, summary, published}"
+    },
+    {
+      "id": "crossref",
+      "name": "Crossref",
+      "domain": "crossref.org",
+      "category": "academic",
+      "description": "Scholarly metadata and DOI resolution across publishers.",
+      "endpoint": "https://api.crossref.org/works",
+      "auth": "none",
+      "rate_limit": "~50 req/s (public)",
+      "freshness": "near real-time",
+      "query_params": {
+        "query": "string — bibliographic search terms",
+        "rows": "integer — number of results (1..100)"
+      },
+      "output": "list of {title, url, container_title, issued, authors}"
+    },
+    {
+      "id": "openalex",
+      "name": "OpenAlex",
+      "domain": "openalex.org",
+      "category": "academic",
+      "description": "Open scholarly index: works, authors, institutions, concepts. Full-text search.",
+      "endpoint": "https://api.openalex.org/works",
+      "auth": "none (optional polite email)",
+      "rate_limit": "10 req/s, 100k/day",
+      "freshness": "daily",
+      "query_params": {
+        "query": "string — full-text / title search",
+        "per_page": "integer — results per page (1..200)"
+      },
+      "output": "list of {title, url, publication_year, cited_by_count, doi}"
+    },
+    {
+      "id": "wikipedia",
+      "name": "Wikipedia",
+      "domain": "wikipedia.org",
+      "category": "encyclopedic",
+      "description": "Encyclopedic entity descriptions and full-text search.",
+      "endpoint": "https://en.wikipedia.org/w/api.php",
+      "auth": "none",
+      "rate_limit": "generous (public)",
+      "freshness": "live",
+      "query_params": {
+        "query": "string — search term (title or fulltext)",
+        "mode": "enum [summary, search, fulltext]",
+        "limit": "integer — results (search mode)"
+      },
+      "output": "list of {title, url, extract, pageid}"
+    },
+    {
+      "id": "yahoo",
+      "name": "Yahoo Finance",
+      "domain": "finance.yahoo.com",
+      "category": "finance",
+      "description": "Current quote and 1-day OHLC for equities, ETFs, forex, crypto, and indices. Ticker conventions: 'AAPL', 'BTC-USD', 'EURUSD=X', '^GSPC'. No key, but unofficial (may rate-limit — retry once).",
+      "endpoint": "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+      "auth": "none (requires a browser User-Agent)",
+      "rate_limit": "moderate; retry once on 429",
+      "freshness": "near real-time (delayed ~15 min for equities)",
+      "query_params": {
+        "symbol": "string — e.g. 'AAPL', 'BTC-USD', 'EURUSD=X', '^GSPC'"
+      },
+      "output": "{symbol, name, currency, exchange, price, previous_close, open, day_high, day_low, volume, market_time}"
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "domain": "github.com",
+      "category": "code",
+      "description": "Repository and code search across public GitHub.",
+      "endpoint": "https://api.github.com/search/repositories",
+      "auth": "none (optional GITHUB_TOKEN raises rate limit)",
+      "rate_limit": "10 req/min unauth, 30 req/min auth",
+      "freshness": "near real-time",
+      "query_params": {
+        "query": "string — repo search query, e.g. 'terminal tui in:name'",
+        "per_page": "integer — results per page (1..100)"
+      },
+      "output": "list of {full_name, url, description, stars, language, updated_at}"
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+kind: Tool
+name: web_search
+version: "1.0"
+summary: "Search the public web and return ranked results (title, url, snippet)."
+description: >
+  Read-only web search for the discovery agent. Prefers a self-hosted SearXNG
+  instance (SEARXNG_URL env) and falls back to DuckDuckGo's HTML endpoint —
+  no API key, no SaaS dependency. Returns ranked results with title, resolved
+  URL, and snippet, plus the backend actually used so the caller can weight
+  confidence.
+category: discovery
+tags: [discovery, readonly, web, search, recon]
+state: stable
+
+implementation:
+  runtime: python3
+  entrypoint: ./src/main.py
+  timeout: 60
+  input_type: json
+
+input_schema:
+  type: object
+  required: [query]
+  properties:
+    query:
+      type: string
+      description: "Search query. Use date operators (e.g. 'after:2024') for time-sensitive recon."
+    num_results:
+      type: integer
+      default: 10
+      description: "Number of results to return (1..30)."
+
+output_schema:
+  type: object
+  required: [success]
+  properties:
+    success: { type: boolean }
+    backend: { type: string, description: "searxng | duckduckgo" }
+    query: { type: string }
+    count: { type: integer }
+    results:
+      type: array
+      items:
+        type: object
+        properties:
+          title: { type: string }
+          url: { type: string }
+          snippet: { type: string }
+    error: { type: string }
+
+examples:
+  - description: "Basic recon search"
+    params: { query: "Rust async runtime internals", num_results: 8 }
+  - description: "Time-scoped search"
+    params: { query: "zero knowledge proofs after:2024", num_results: 10 }

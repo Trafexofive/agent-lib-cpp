@@ -1,16 +1,17 @@
 kind: Agent
 name: discovery
 version: "1.0"
-summary: Read-only landscape scout — prior art, constraints, repo/web evidence for ideation.
+
+summary: RO Specialized Discovery/Recon Agent.
 category: specialist
-tags: [agent, nested, discovery, research, parent:brainstormer]
+tags: [sub-agent, nested, discovery, research, recon, web]
 
 cognitive_engine:
   primary:
     provider: opencode
     model: deepseek-v4-flash-free
     parameters:
-      temperature: 0.8
+      temperature: 0.55
       max_tokens: 24576
   fallback:
     provider: deepseek
@@ -20,27 +21,38 @@ cognitive_engine:
       max_tokens: 24576
 
 context:
-  harness: ../../../../harness/big.md
+  harness: ../../../../harness/default.md
   system: ./system.md
   persona: ./persona.md
 
 prompt_building:
   runtime_capabilities:
+    input_schemas: true
     return_schemas: true
     usage_examples: true
 
 runtime:
-  max_iterations: 18
-  history_cap: 140
+  max_iterations: 1000
+  history_cap: 500
   mode: normal
 
 import:
   tools:
+    # file-system inspection (read-only)
     - list
     - grep
+    - tree
+    - squeezer
     - fs_read
     - context_peek
-    - web_fetch
+    # web / visual / structured discovery (custom, local, read-only)
+    - ./tools/web_search/tool.yml
+    - ./tools/web_open_url/tool.yml
+    - ./tools/search_image_by_text/tool.yml
+    - ./tools/search_image_by_image/tool.yml
+    - ./tools/get_data_source_desc/tool.yml
+    - ./tools/get_data_source/tool.yml
+    - ./tools/ipython/tool.yml
   feeds:
     - working_directory
   env: []

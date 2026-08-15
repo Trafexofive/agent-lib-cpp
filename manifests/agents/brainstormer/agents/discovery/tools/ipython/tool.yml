@@ -1,0 +1,53 @@
+kind: Tool
+name: ipython
+version: "1.0"
+summary: "Run a read-only Python snippet to analyze already-retrieved data locally."
+description: >
+  Read-only Python analysis for the discovery agent — the ONLY execution the
+  agent is allowed (no shell, no exec). Runs a snippet in a restricted
+  namespace with a safe-builtins whitelist and a hard timeout; `os`,
+  `subprocess`, `open`, and `__import__` are unavailable, so it cannot write
+  files, spawn processes, or touch the network. numpy and stdlib data modules
+  (json, math, statistics, re, collections, itertools, datetime) are
+  pre-imported for crunching retrieved JSON, tabular, or text results.
+  Captured stdout and the value of a trailing expression are returned.
+category: discovery
+tags: [discovery, readonly, analysis, python, compute, sandboxed]
+state: stable
+
+implementation:
+  runtime: python3
+  entrypoint: ./src/main.py
+  timeout: 120
+  input_type: json
+
+input_schema:
+  type: object
+  required: [code]
+  properties:
+    code:
+      type: string
+      description: "Python snippet to execute. Use np/json/math/statistics/re/collections/itertools/datetime which are pre-imported. No open/os/subprocess/__import__."
+    timeout_sec:
+      type: integer
+      default: 10
+      description: "Hard timeout for the snippet (1..60)."
+
+output_schema:
+  type: object
+  required: [success]
+  properties:
+    success: { type: boolean }
+    output:
+      type: string
+      description: "Captured stdout from the snippet."
+    result:
+      type: string
+      description: "repr of a trailing expression value, if the snippet ended in one."
+    error: { type: string }
+
+examples:
+  - description: "Summarize numbers"
+    params: { code: "import statistics\nprint(statistics.mean([1,2,3,4,5]))" }
+  - description: "Compute with numpy on retrieved data"
+    params: { code: "a = np.array([3,1,4,1,5,9])\na.mean(), a.std()" }

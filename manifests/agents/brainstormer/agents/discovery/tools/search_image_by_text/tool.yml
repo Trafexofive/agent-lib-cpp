@@ -1,0 +1,59 @@
+kind: Tool
+name: search_image_by_text
+version: "1.0"
+summary: "Search for images by a text/concept query and return image URLs + metadata."
+description: >
+  Read-only image search by text for the discovery agent. Prefers a
+  self-hosted SearXNG images category when SEARXNG_URL is set; otherwise uses
+  the Wikimedia Commons API (free, no key, structured). Returns image URL,
+  thumbnail, dimensions, MIME type, source page, and license where available —
+  enough to confirm a visual match and cite the origin without downloading.
+category: discovery
+tags: [discovery, readonly, image, search, visual, recon]
+state: stable
+
+implementation:
+  runtime: python3
+  entrypoint: ./src/main.py
+  timeout: 60
+  input_type: json
+
+input_schema:
+  type: object
+  required: [query]
+  properties:
+    query:
+      type: string
+      description: "Concept/text describing the image to find (e.g. 'Eiffel Tower night')."
+    limit:
+      type: integer
+      default: 10
+      description: "Max image results (1..30)."
+
+output_schema:
+  type: object
+  required: [success]
+  properties:
+    success: { type: boolean }
+    backend: { type: string }
+    count: { type: integer }
+    results:
+      type: array
+      items:
+        type: object
+        properties:
+          title: { type: string }
+          url: { type: string }
+          thumb_url: { type: string }
+          width: { type: integer }
+          height: { type: integer }
+          mime: { type: string }
+          license: { type: string }
+          description_url: { type: string }
+    error: { type: string }
+
+examples:
+  - description: "Find images of a landmark"
+    params: { query: "Eiffel Tower night", limit: 8 }
+  - description: "Find a product/logo image"
+    params: { query: "Arch Linux logo", limit: 5 }

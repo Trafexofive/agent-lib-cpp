@@ -1,0 +1,66 @@
+kind: Tool
+name: get_data_source
+version: "1.0"
+summary: "Query a structured data source (arxiv, crossref, openalex, wikipedia, yahoo, github)."
+description: >
+  Read-only query against a dedicated structured data source. Route here first
+  for finance, academic, encyclopedic, or code discovery — it is more precise
+  and citable than general web search. Choose the source by id and pass its
+  documented query params (see get_data_source_desc). All adapters are public,
+  no-key REST GETs; no mutation, no credentials required.
+category: discovery
+tags: [discovery, readonly, data-source, query, structured, recon]
+state: stable
+
+implementation:
+  runtime: python3
+  entrypoint: ./src/main.py
+  timeout: 60
+  input_type: json
+
+input_schema:
+  type: object
+  required: [source]
+  properties:
+    source:
+      type: string
+      enum: [arxiv, crossref, openalex, wikipedia, yahoo, github]
+      description: "Data source id to query."
+    query:
+      type: string
+      description: "Search term / symbol / title (source-dependent)."
+    mode:
+      type: string
+      enum: [summary, search, fulltext]
+      default: search
+      description: "wikipedia only: summary = lead extract, search = title search, fulltext = body search."
+    max_results:
+      type: integer
+      default: 10
+      description: "Result cap (arxiv/crossref/openalex/github)."
+
+output_schema:
+  type: object
+  required: [success]
+  properties:
+    success: { type: boolean }
+    source: { type: string }
+    count: { type: integer }
+    results:
+      type: array
+      items:
+        type: object
+        description: "Source-specific result objects."
+    error: { type: string }
+
+examples:
+  - description: "Search academic preprints"
+    params: { source: "arxiv", query: "all:diffusion models", max_results: 5 }
+  - description: "Crossref bibliographic search"
+    params: { source: "crossref", query: "attention is all you need", max_results: 5 }
+  - description: "Wikipedia lead summary"
+    params: { source: "wikipedia", query: "Transformer (machine learning model)", mode: "summary" }
+  - description: "Finance quote"
+    params: { source: "yahoo", query: "AAPL" }
+  - description: "GitHub repo search"
+    params: { source: "github", query: "terminal tui in:name", max_results: 8 }
