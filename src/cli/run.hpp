@@ -14,6 +14,7 @@
 #include "src/core/sandbox_launcher.hpp"
 #include "src/providers/factory.hpp"
 #include "src/sandbox/policy.hpp"
+#include "src/ui/app/headless_turn.hpp"
 #include "src/ui/app/mk3_tui_app.hpp"
 
 namespace cortex::mk3::cli {
@@ -619,6 +620,8 @@ static int cmdRun(CliConfig& cli) {
     agent.setEnv("__TOOL_ANSI__", cli.toolAnsi ? "true" : "false");
     if (cli.raw)
         agent.setRaw(true);
+    if (cli.noAnsi)
+        cli.toolAnsi = false;  // --no-ansi implies no ANSI in tool results too
     if (cli.verbose)
         agent.setVerbose(true);
     // Manifest runtime.dev_mode (or DEV_MODE) — auto full iteration dumps.
@@ -694,7 +697,14 @@ static int cmdRun(CliConfig& cli) {
         if (!cli.noSession && !promptSessionId.empty())
             persistSessionMetadata(promptSessionId, cli, acfg);
 
+        // --ephemeral -p → headless: no TUI, stream rendered blocks to stdout.
+        //   --raw → raw model token stream. --no-ansi → strip escapes.
+        if (cli.ephemeral) {
+            return ui::runHeadlessOneShot(agent, cli.prompt, cli.raw, cli.noAnsi);
+        }
+
         // Native inkcell App (experimental; inkcell alias already normalized).
+        // -p without --ephemeral seeds the interactive REPL.
         if (cli.tuiMode == "experimental") {
             ui::InkcellAppConfig icfg;
             icfg.agentName = acfg.name;
@@ -714,12 +724,6 @@ static int cmdRun(CliConfig& cli) {
             icfg.ephemeral = cli.ephemeral;  // exit-on-done only
             icfg.showThoughts = cli.showThoughts;
             icfg.truncateBodies = cli.truncateBodies;
-            // -p + experimental:
-            //   --ephemeral → run turn, exit when done
-            //   otherwise  → seed prompt into interactive REPL (multi-turn)
-            if (cli.ephemeral) {
-                return ui::runInkcellOneShot(icfg, agent, cli.prompt, promptSessionId, cli.noSession);
-            }
             icfg.initialPrompt = cli.prompt;
             return ui::runInkcellRepl(icfg, agent, promptSessionId, cli.noSession);
         }

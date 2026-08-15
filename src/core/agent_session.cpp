@@ -70,20 +70,23 @@ static std::set<std::string> stringSetFromJson(const Json::Value& root) {
 std::string Agent::devDumpDirectory() const {
     // Always under .cortex/dev — never bare $CORTEX_HOME/dev (that polluted
     // the repo root as agent-lib-cpp/dev/ and confused operators).
-    // Priority: CWD/.cortex/dev → $CORTEX_HOME/.cortex/dev → ~/.cortex/dev
+    // Priority: $CORTEX_HOME/.cortex/dev → ~/.cortex/dev → CWD/.cortex/dev.
+    // CWD was first historically ("lazy open") but that dropped 33MB+ dumps
+    // into working trees; home-first keeps repos clean. Bare-CWD copies stay
+    // opt-in via CORTEX_DEV_CWD_COPIES=1 (see dumpSessionArtifacts).
     std::error_code ec;
     fs::path base;
-    fs::path cwd = fs::current_path(ec);
-    if (!ec)
-        base = cwd / ".cortex" / "dev";
-    if (base.empty()) {
-        if (const char* ch = std::getenv("CORTEX_HOME")) {
-            if (ch[0] != '\0') base = fs::path(ch) / ".cortex" / "dev";
-        }
+    if (const char* ch = std::getenv("CORTEX_HOME")) {
+        if (ch[0] != '\0') base = fs::path(ch) / ".cortex" / "dev";
     }
     if (base.empty()) {
         const char* userHome = std::getenv("HOME");
-        base = fs::path(userHome ? userHome : ".") / ".cortex" / "dev";
+        if (userHome && userHome[0])
+            base = fs::path(userHome) / ".cortex" / "dev";
+    }
+    if (base.empty()) {
+        fs::path cwd = fs::current_path(ec);
+        if (!ec) base = cwd / ".cortex" / "dev";
     }
     std::string id = lastSessionId_;
     if (id.empty())

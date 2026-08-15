@@ -66,6 +66,7 @@ struct CliConfig {
     bool truncateBodies = true;   // --no-truncate for full bodies
     bool raw = false;
     bool toolAnsi = true;
+    bool noAnsi = false;  // --no-ansi: strip escapes from headless output (implies --no-tool-ansi)
     bool replMode = false;
     std::string tuiMode;  // experimental (alias: inkcell); default: experimental (MK3_TUI / config)
     std::string sessionName;    // --name <name>: human-readable session label
@@ -135,6 +136,7 @@ Global flags:
   --debug              Enable debug output
   --raw                Pipe-clean output (no formatting, no banner)
   --no-tool-ansi       Strip ANSI/color escapes from tool result rendering
+  --no-ansi            Strip ANSI from headless --ephemeral output (implies --no-tool-ansi)
   -c, --continue       Continue previous session
   -r, --resume         Select a session to resume
   --session <id>       Use specific session id
@@ -326,6 +328,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"debug", no_argument, 0, 'D'},
                                        {"raw", no_argument, 0, 1003},
                                        {"no-tool-ansi", no_argument, 0, 1004},
+                                       {"no-ansi", no_argument, 0, 1005},
                                        {"tui", required_argument, 0, 1002},
                                        {"dry-run", no_argument, 0, 'n'},
                                        {"help", no_argument, 0, 'h'},
@@ -471,6 +474,9 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 break;
             case 1004:
                 cli.toolAnsi = false;
+                break;
+            case 1005:
+                cli.noAnsi = true;
                 break;
             case 1002:
                 if (std::strcmp(optarg, "legacy") == 0) {

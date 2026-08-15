@@ -3,9 +3,12 @@
 // agent-lib-MK3 — Session Manager
 // JSON session files under a STABLE data root (not CWD):
 //   $CORTEX_SESSIONS_DIR
-//   else $CORTEX_HOME/sessions
+//   else $CORTEX_HOME/.cortex/sessions
 //   else $XDG_DATA_HOME/cortex/sessions
 //   else ~/.cortex/sessions
+// CORTEX_HOME is a *parent* root (like $HOME): data lands under
+// $CORTEX_HOME/.cortex — never bare $CORTEX_HOME/sessions, which polluted
+// working trees when CORTEX_HOME pointed at a repo.
 // Process-local write lock serializes load-merge-save across Agent / UI / atexit.
 // =============================================================================
 
@@ -29,8 +32,11 @@ inline std::recursive_mutex& ioMutex() {
 
 // Stable cortex data root — never CWD (CWD changes break sessions across repos).
 inline std::filesystem::path cortexDataRoot() {
+    // CORTEX_HOME is the parent of .cortex (same shape as ~/.cortex). Bare
+    // $CORTEX_HOME/sessions + /state leaked into repos when CORTEX_HOME was
+    // set to a project dir — always append the .cortex subdir.
     if (const char* ch = std::getenv("CORTEX_HOME"); ch && ch[0])
-        return std::filesystem::path(ch);
+        return std::filesystem::path(ch) / ".cortex";
     if (const char* xdg = std::getenv("XDG_DATA_HOME"); xdg && xdg[0])
         return std::filesystem::path(xdg) / "cortex";
     const char* home = std::getenv("HOME");
