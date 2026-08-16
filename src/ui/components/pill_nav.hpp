@@ -78,18 +78,20 @@ inline PillTheme pillTheme(bool dockFocused) {
 inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
                         const std::vector<PillItem>& items, int current, int previous, float animT,
                         bool dockFocused) {
-    if (items.empty() || pageW < 28) return 0;
+    if (items.empty() || pageW < 16) return 0;
 
     const PillTheme T = pillTheme(dockFocused);
-    const int dockH = 3;
+    int innerComfort = 0;
+    for (const auto& it : items)
+        innerComfort += inkcell::text::display_width("  " + it.key + " " + it.label + "  ");
+    const bool compact = innerComfort + 4 > pageW - 2;
+    const int dockH = compact ? 2 : 3;
 
-    // Labels always show key for texture/discoverability
-    std::vector<std::string> labels;
     std::vector<int> widths;
     int inner = 0;
     for (const auto& it : items) {
-        std::string lab = "  " + it.key + " " + it.label + "  ";
-        labels.push_back(lab);
+        std::string lab = compact ? (it.key + " " + it.label)
+                                  : ("  " + it.key + " " + it.label + "  ");
         int w = inkcell::text::display_width(lab);
         widths.push_back(w);
         inner += w;
@@ -100,13 +102,6 @@ inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
     int boxX = pageX + std::max(0, (pageW - boxW) / 2);
     int boxY = bottomY - (dockH - 1);
     inkcell::Rect box{boxX, boxY, boxW, dockH};
-
-    // Drop shadow (depth)
-    auto sh = inkcell::Style::normal().with_bg(T.shadow).with_fg(T.shadow);
-    if (box.bottom() <= s.bounds().bottom()) {
-        s.fill({box.x + 1, std::min(box.bottom(), s.bounds().bottom() - 1), std::max(1, box.w - 1), 1},
-               " ", sh);
-    }
 
     auto shell = inkcell::Style::normal().with_bg(T.shellBg).with_fg(T.border);
     s.fill(box, " ", shell);
@@ -119,7 +114,7 @@ inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
     }
 
     int cx0 = box.x + 1;
-    int cyLabel = box.y + 1;
+    int cyLabel = compact ? box.y : box.y + 1;
     int contentW = box.w - 2;
 
     struct SegGeom {
@@ -152,14 +147,17 @@ inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
     thumbSt.bold = true;
     s.fill({thumbX, cyLabel, thumbW, 1}, " ", thumbSt);
 
-    // Bottom track glow under thumb (texture)
-    std::string bar;
-    for (int i = 0; i < thumbW; ++i) bar += "▀";
-    auto trackSt = inkcell::Style::normal().with_bg(T.shellBg).with_fg(T.thumb);
-    s.text({thumbX, box.y + 2}, bar, trackSt);
-    // restore corners
-    s.text({box.x, box.y + 2}, "╰", shell.with_fg(T.border));
-    s.text({box.right() - 1, box.y + 2}, "╯", shell.with_fg(T.border));
+    if (!compact) {
+        std::string bar;
+        for (int i = 0; i < thumbW; ++i) bar += "▀";
+        auto trackSt = inkcell::Style::normal().with_bg(T.shellBg).with_fg(T.thumb);
+        s.text({thumbX, box.y + 2}, bar, trackSt);
+        s.text({box.x, box.y + 2}, "╰", shell.with_fg(T.border));
+        s.text({box.right() - 1, box.y + 2}, "╯", shell.with_fg(T.border));
+    } else {
+        s.text({box.x, box.y + 1}, "╰", shell.with_fg(T.border));
+        s.text({box.right() - 1, box.y + 1}, "╯", shell.with_fg(T.border));
+    }
     // side borders on label row
     s.text({box.x, cyLabel}, "│", shell.with_fg(T.border));
     s.text({box.right() - 1, cyLabel}, "│", shell.with_fg(T.border));
@@ -177,8 +175,10 @@ inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
         int x = g.x0;
         auto bg = on ? T.activeBg : T.shellBg;
         auto pad = inkcell::Style::normal().with_bg(bg).with_fg(on ? T.activeFg : T.idleFg);
-        s.text({x, cyLabel}, "  ", pad);
-        x += 2;
+        if (!compact) {
+            s.text({x, cyLabel}, "  ", pad);
+            x += 2;
+        }
 
         auto keySt = inkcell::Style::normal().with_bg(bg);
         if (on) {
