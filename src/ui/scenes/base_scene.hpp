@@ -18,6 +18,10 @@ class BaseScene : public inkcell::Scene {
 
     void on_enter() override { model_->routeTo(name()); }
 
+    void on_tick(uint64_t) override {
+        model_->tickRoute();
+    }
+
     void update(inkcell::Tick, inkcell::Action action) override {
         model_->drain(bridge_);
         if (bridge_.askPending() && model_->askDialog.done()) {
@@ -27,7 +31,6 @@ class BaseScene : public inkcell::Scene {
             model_->closeModalFocus("ask");
             model_->status = model_->running ? "agent running" : model_->status;
         }
-        model_->tickRoute();
         if (action.is("shell.toggle_raw")) {
             model_->showRaw = !model_->showRaw;
             model_->markProjFull();
