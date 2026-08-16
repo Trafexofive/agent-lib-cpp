@@ -78,19 +78,30 @@ inline PillTheme pillTheme(bool dockFocused) {
 inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
                         const std::vector<PillItem>& items, int current, int previous, float animT,
                         bool dockFocused) {
-    if (items.empty() || pageW < 28) return 0;
+    if (items.empty() || pageW < 12) return 0;
 
     const PillTheme T = pillTheme(dockFocused);
     const int dockH = 3;
+    const int budget = std::max(8, pageW - 4);
+    auto seg = [&](const PillItem& it, int mode, bool cur) {
+        if (mode == 2 && !cur) return std::string(" ") + it.key + " ";
+        if (mode >= 1) return std::string(" ") + it.key + " " + it.label + " ";
+        return std::string("  ") + it.key + " " + it.label + "  ";
+    };
+    auto innerOf = [&](int mode) {
+        int n = 0;
+        for (int i = 0; i < static_cast<int>(items.size()); ++i)
+            n += inkcell::text::display_width(seg(items[static_cast<size_t>(i)], mode, i == current));
+        return n;
+    };
+    int mode = 0;
+    if (innerOf(0) > budget) mode = 1;
+    if (innerOf(1) > budget) mode = 2;
 
-    // Labels always show key for texture/discoverability
-    std::vector<std::string> labels;
     std::vector<int> widths;
     int inner = 0;
-    for (const auto& it : items) {
-        std::string lab = "  " + it.key + " " + it.label + "  ";
-        labels.push_back(lab);
-        int w = inkcell::text::display_width(lab);
+    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+        int w = inkcell::text::display_width(seg(items[static_cast<size_t>(i)], mode, i == current));
         widths.push_back(w);
         inner += w;
     }
@@ -170,8 +181,9 @@ inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
         int x = g.x0;
         auto bg = on ? T.activeBg : T.shellBg;
         auto pad = inkcell::Style::normal().with_bg(bg).with_fg(on ? T.activeFg : T.idleFg);
-        s.text({x, cyLabel}, "  ", pad);
-        x += 2;
+        const bool tight = (mode != 0);
+        s.text({x, cyLabel}, tight ? " " : "  ", pad);
+        x += tight ? 1 : 2;
 
         auto keySt = inkcell::Style::normal().with_bg(bg);
         if (on) {
@@ -179,26 +191,27 @@ inline int drawPillDock(inkcell::Surface& s, int pageX, int pageW, int bottomY,
             keySt.bold = true;
         } else {
             keySt.fg = T.keyFg;
-            keySt.italic = true;  // shortcut keys italic — texture
+            keySt.italic = true;
         }
         s.text({x, cyLabel}, it.key, keySt);
         x += inkcell::text::display_width(it.key);
-
-        s.text({x, cyLabel}, " ", pad);
-        x += 1;
-
-        auto labSt = inkcell::Style::normal().with_bg(bg);
-        if (on) {
-            labSt.fg = T.activeFg;
-            labSt.bold = true;
-        } else if (i == current) {
-            labSt.fg = lerpColor(T.idleFg, T.activeBg, 0.55f);
-            labSt.bold = true;
-        } else {
-            labSt.fg = T.idleFg;
-            labSt.dim = true;
+        const bool showLab = (mode != 2) || (i == current);
+        if (showLab) {
+            s.text({x, cyLabel}, " ", pad);
+            x += 1;
+            auto labSt = inkcell::Style::normal().with_bg(bg);
+            if (on) {
+                labSt.fg = T.activeFg;
+                labSt.bold = true;
+            } else if (i == current) {
+                labSt.fg = lerpColor(T.idleFg, T.activeBg, 0.55f);
+                labSt.bold = true;
+            } else {
+                labSt.fg = T.idleFg;
+                labSt.dim = true;
+            }
+            s.text({x, cyLabel}, it.label, labSt);
         }
-        s.text({x, cyLabel}, it.label, labSt);
     }
 
     return dockH;
