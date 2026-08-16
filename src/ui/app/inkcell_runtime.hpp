@@ -149,8 +149,13 @@ inline void installCoalescedTick(inkcell::App& app, AgentBridge& bridge,
                                  const std::shared_ptr<ShellModel>& model,
                                  TickHook extra = {}) {
     app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([]() {});
-    app.engine().on_tick([model, &bridge, &app, extra = std::move(extra)](inkcell::Tick) {
+    app.engine().skip_idle_draw(true);
+    app.engine().on_tick([model, &bridge, &app, extra = std::move(extra)](inkcell::Tick t) {
         model->drain(bridge);
+        if (model->running || model->routeTicks > 0) {
+            if (t.clock) t.clock->mark();
+            else app.engine().clock().mark();
+        }
         // Extra first so hub launch/submit can set pendingRoute same frame.
         if (extra) extra(app, *model, bridge);
         const PendingRoute route = model->pendingRoute;

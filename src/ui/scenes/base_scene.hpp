@@ -18,8 +18,9 @@ class BaseScene : public inkcell::Scene {
 
     void on_enter() override { model_->routeTo(name()); }
 
-    void on_tick(uint64_t) override {
+    void on_tick(inkcell::Tick t) override {
         model_->tickRoute();
+        if (t.clock && (model_->running || model_->routeTicks > 0)) t.clock->mark();
     }
 
     void update(inkcell::Tick, inkcell::Action action) override {
