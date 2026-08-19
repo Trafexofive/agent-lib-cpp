@@ -842,14 +842,19 @@ class AgentScene final : public BaseScene {
             if (c.compaction.triggerContextTokens > 0)
                 foot.ctxCompactAt = c.compaction.triggerContextTokens;
             foot.iterMax = c.iterationCap;
-            foot.iterCurrent = model_->actionCount;
+            // Real loop generation (not actionCount — that lied as i 1/1800).
+            int li = live->liveIteration();
+            foot.iterCurrent = li > 0 ? li : 0;
             foot.historyMax = c.historyCap;
             foot.historyUsed = static_cast<int>(live->history().size());
+            // Rough token estimate: history chars/4 + live stream + system overhead.
             size_t est = 0;
             for (const auto& h : live->history())
                 est += (h.size() + 3) / 4;
-            est += 4000;
-            if (est > 0) foot.ctxUsedTokens = static_cast<int>(est);
+            est += static_cast<size_t>(std::max(0, model_->tokenBytes) + 3) / 4;
+            est += 6000;  // system/harness/tools card overhead
+            foot.ctxUsedTokens = static_cast<int>(est);
+            if (foot.ctxMaxTokens <= 0) foot.ctxMaxTokens = 128000;
             if (!live->lastCompactNote().empty())
                 foot.compactedRecently = true;
         } else if (model_->tokenBytes > 0) {

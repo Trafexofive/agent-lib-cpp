@@ -86,12 +86,14 @@ inline std::string phaseVerb(const std::string& key, const std::string& detail) 
 // Half-block meter — filled cells use phase hue, empty use deep plate.
 inline void drawUnitBar(inkcell::Surface& s, int x, int y, int width, float pct,
                         inkcell::Style on, inkcell::Style off) {
-    width = std::max(4, std::min(16, width));
+    width = std::max(8, std::min(16, width));
     pct = std::max(0.f, std::min(1.f, pct));
-    int filled = static_cast<int>(std::round(pct * width));
-    if (pct > 0.f && filled == 0) filled = 1;
+    int filled = static_cast<int>(std::floor(static_cast<double>(pct) * width + 1e-9));
+    if (pct > 0.02f && filled == 0) filled = 1;
+    if (pct <= 0.f) filled = 0;
+    // █ filled / ░ empty — same glyph family so width is stable; hues differ hard.
     for (int i = 0; i < width; ++i)
-        s.put({x + i, y}, "▀", i < filled ? on : off);
+        s.put({x + i, y}, i < filled ? "█" : "░", i < filled ? on : off);
 }
 
 inline std::string fmtTok(int n) {
@@ -348,118 +350,201 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             }
         }
 
-        // ROW 1 — truth line (open queue / last result / status / idle who)
+        // ROW 1 — NOW: plain English what the turn is doing.
+        // Right: context pressure (used/max + █░ bar). Dev must read this cold.
         if (box.h >= 2) {
-            std::string mid;
+            std::string now;
             auto mst = text;
-            if (live && !f.openLine.empty()) {
-                mid = f.openLine;
-                mst = amber;
-            } else if (!f.statusHint.empty() &&
-                       (live || f.statusHint.find('[') != std::string::npos)) {
-                mid = f.statusHint;
-                mst = (f.statusHint.find("FAIL") != std::string::npos ||
-                       f.statusHint.find("ERROR") != std::string::npos ||
-                       f.statusHint.find("403") != std::string::npos)
-                          ? warn
-                      : f.statusHint.find("FALLBACK") != std::string::npos ? amber
-                      : f.statusHint.find("TIMEOUT") != std::string::npos  ? warn
-                                                                           : cyan;
-            } else if (!f.lastResultLine.empty()) {
-                mid = f.lastResultLine;
-                mst = (mid.find("✗") != std::string::npos) ? warn : green;
-            } else if (live && f.phaseKey == "wait") {
-                mid = "awaiting provider tokens…";
-                mst = cyan;
-            } else if (live && f.phaseKey == "think") {
-                mid = "streaming thought";
-                mst = violet;
+            if (f.failed) {
+                now = "FAILED";
+                if (!f.statusHint.empty()) {
+                    now += " — ";
+                    now += f.statusHint;
+                }
+                mst = warn;
             } else if (live && f.phaseKey == "delegate") {
-                mid = f.phaseDetail.empty() ? "child agent running…"
-                                            : ("child " + f.phaseDetail + " running…");
+                now = "RUNNING child agent";
+                if (!f.phaseDetail.empty()) {
+                    now += " ";
+                    now += f.phaseDetail;
+                } else if (!f.focusLine.empty()) {
+                    now += " ";
+                    now += f.focusLine;
+                }
+                now += " — parent blocked until join";
                 mst = violet;
             } else if (live && f.phaseKey == "act") {
-                mid = f.phaseDetail.empty() ? "tool running…" : f.phaseDetail;
-                mst = amber;
-            } else {
-                // idle identity — still useful
-                mid = f.agentName.empty() ? "cortex" : f.agentName;
-                if (!f.provider.empty() || !f.model.empty()) {
-                    mid += "  ·  ";
-                    mid += f.provider.empty() ? "?" : f.provider;
-                    mid += "/";
-                    mid += f.model.empty() ? "?" : f.model;
+                now = "RUNNING tool";
+                if (!f.phaseDetail.empty()) {
+                    now += " ";
+                    now += f.phaseDetail;
+                } else if (!f.focusLine.empty()) {
+                    now += " ";
+                    now += f.focusLine;
                 }
+                if (f.pendingOps > 1) {
+                    now += "  (+";
+                    now += std::to_string(f.pendingOps - 1);
+                    now += " more open)";
+                }
+                mst = amber;
+            } else if (live && f.phaseKey == "wait") {
+                now = "WAITING on model (no open tools) — TTFT / stream";
+                if (!f.provider.empty() || !f.model.empty()) {
+                    now += " · ";
+                    now += f.provider.empty() ? "?" : f.provider;
+                    now += "/";
+                    now += f.model.empty() ? "?" : f.model;
+                }
+                mst = cyan;
+            } else if (live && f.phaseKey == "think") {
+                now = "STREAMING thought tokens";
+                mst = violet;
+            } else if (live && f.phaseKey == "reply") {
+                now = "STREAMING final reply";
+                mst = green;
+            } else if (live && f.phaseKey == "ask") {
+                now = "BLOCKED on you — answer the card";
+                mst = violet;
+            } else if (live && !f.openLine.empty()) {
+                now = "OPEN  ";
+                now += f.openLine;
+                mst = amber;
+            } else if (!f.statusHint.empty() &&
+                       (f.statusHint.find('[') != std::string::npos ||
+                        f.statusHint.find("FALLBACK") != std::string::npos)) {
+                now = f.statusHint;
+                mst = (f.statusHint.find("ERROR") != std::string::npos ||
+                       f.statusHint.find("403") != std::string::npos ||
+                       f.statusHint.find("TIMEOUT") != std::string::npos)
+                          ? warn
+                          : amber;
+            } else if (!f.lastResultLine.empty()) {
+                now = "LAST  ";
+                now += f.lastResultLine;
+                mst = (now.find("✗") != std::string::npos) ? warn : green;
+            } else if (live) {
+                now = "LIVE — phase unknown (bug if this sticks)";
+                mst = warn;
+            } else {
+                now = "IDLE";
                 if (f.turnCount > 0) {
-                    mid += "  ·  ";
-                    mid += std::to_string(f.turnCount);
-                    mid += f.turnCount == 1 ? " turn" : " turns";
+                    now += " · ";
+                    now += std::to_string(f.turnCount);
+                    now += f.turnCount == 1 ? " user turn done" : " user turns done";
+                }
+                if (!f.lastResultLine.empty()) {
+                    now += " · last ";
+                    now += f.lastResultLine;
                 }
                 mst = dim;
             }
             mst.bg = bg.bg;
+            mst.bold = live || f.failed;
 
-            int ceil = std::max(1, f.ctxCompactAt > 0 ? f.ctxCompactAt : f.ctxMaxTokens);
-            float pct = static_cast<float>(std::max(0, f.ctxUsedTokens)) /
-                        static_cast<float>(ceil);
+            // Context vs model window (not compact trigger — that lied at 1%).
+            const int win = std::max(1, f.ctxMaxTokens > 0 ? f.ctxMaxTokens : 128000);
+            const int used = std::max(0, f.ctxUsedTokens);
+            float pct = static_cast<float>(used) / static_cast<float>(win);
             if (pct > 1.f) pct = 1.f;
-            const int barW = 10;
-            const bool showBar = true;  // always — context is load-bearing
-            int reserve = showBar ? barW + 6 : 2;
-            surface.text({x0, box.y + 1},
-                         inkcell::text::truncate(mid, std::max(8, innerW - reserve)), mst);
-            if (showBar) {
-                auto on = pct >= 0.85f ? warn : pct >= 0.55f ? amber : cyan;
-                on.bg = bg.bg;
-                auto off = dim;
-                off.fg = theme::color(inkcell::Color::rgb(38, 40, 50),
-                                      inkcell::Color::rgb(22, 30, 46));
-                int bx = rightEdge - barW - 1;
-                // pct label left of bar
-                std::string pl = std::to_string(static_cast<int>(pct * 100)) + "%";
-                int plw = inkcell::text::display_width(pl);
-                surface.text({std::max(x0, bx - plw - 1), box.y + 1}, pl, dim);
-                drawUnitBar(surface, bx, box.y + 1, barW, pct, on, off);
-            }
+            const int barW = 12;
+            // "ctx 4.2k/128k " + bar + " 3%"
+            std::string ctxL = "ctx ";
+            ctxL += fmtTok(used);
+            ctxL += "/";
+            ctxL += fmtTok(win);
+            std::string pctL = std::to_string(static_cast<int>(std::lround(pct * 100.0)));
+            pctL += "%";
+            int ctxW = inkcell::text::display_width(ctxL);
+            int pctW = inkcell::text::display_width(pctL);
+            int rightBlock = ctxW + 1 + barW + 1 + pctW;
+            int maxNow = std::max(10, innerW - rightBlock - 2);
+
+            surface.text({x0, box.y + 1}, inkcell::text::truncate(now, maxNow), mst);
+
+            int rx = rightEdge - rightBlock;
+            if (rx < x0 + maxNow + 1) rx = x0 + maxNow + 1;
+            auto ctxSt = dim;
+            ctxSt.bg = bg.bg;
+            surface.text({rx, box.y + 1}, ctxL, ctxSt);
+            auto on = pct >= 0.85f ? warn : pct >= 0.60f ? amber : green;
+            on.bg = bg.bg;
+            on.bold = true;
+            auto off = inkcell::Style::normal().with_bg(bg.bg);
+            off.fg = theme::color(inkcell::Color::rgb(55, 58, 68),
+                                  inkcell::Color::rgb(35, 45, 65));
+            drawUnitBar(surface, rx + ctxW + 1, box.y + 1, barW, pct, on, off);
+            auto pst = pct >= 0.85f ? warn : pct >= 0.60f ? amber : dim;
+            pst.bg = bg.bg;
+            surface.text({rx + ctxW + 1 + barW + 1, box.y + 1}, pctL, pst);
         }
 
-        // ROW 2 — meters (always multi-tone chips)
+        // ROW 2 — developer counters (scannable, labeled, no mystery chips)
         if (box.h >= 3) {
             int x = x0;
             auto chip = [&](const std::string& s, inkcell::Style st) {
                 if (s.empty() || x >= rightEdge - 4) return;
                 if (x > x0) {
-                    surface.text({x, box.y + 2}, " · ", dim);
-                    x += 3;
+                    surface.text({x, box.y + 2}, "  ", dim);
+                    x += 2;
                 }
                 st.bg = bg.bg;
                 std::string t = inkcell::text::truncate(s, rightEdge - x - 2);
                 surface.text({x, box.y + 2}, t, st);
                 x += inkcell::text::display_width(t);
             };
-            auto num = text;
-            num.bold = true;
+            auto lab = dim;
+            auto val = bright;
+            val.bold = true;
 
-            chip("act " + std::to_string(std::max(0, f.actionCount)), amber);
-            chip("res " + std::to_string(std::max(0, f.resultCount)), green);
-            if (f.tokenBytes > 0) chip(footerFmtBytes(f.tokenBytes), cyan);
-            if (f.iterMax > 0)
-                chip("i " + std::to_string(f.iterCurrent) + "/" +
-                         std::to_string(f.iterMax),
-                     num);
-            if (f.historyMax > 0)
-                chip("h " + std::to_string(f.historyUsed) + "/" +
-                         std::to_string(f.historyMax),
-                     dim);
-            if (f.compactedRecently) chip("compacted", amber);
-            if (!f.model.empty())
-                chip(f.model, cyan);
-            else if (!f.provider.empty())
-                chip(f.provider, dim);
-            if (!f.manifestStem.empty()) chip(f.manifestStem, dim);
+            // turn N = user prompts this session
+            chip("turn", lab);
+            chip(std::to_string(std::max(0, f.turnCount)), val);
+            // req/iter = agent loop generations this turn / cap
+            chip("iter", lab);
+            {
+                std::string iv = std::to_string(std::max(0, f.iterCurrent));
+                iv += "/";
+                iv += std::to_string(std::max(0, f.iterMax));
+                chip(iv, f.iterMax > 200 ? warn : val);
+            }
+            // tools: completed results / dispatched actions · pending
+            chip("tools", lab);
+            {
+                std::string tv = std::to_string(std::max(0, f.resultCount));
+                tv += "/";
+                tv += std::to_string(std::max(0, f.actionCount));
+                if (f.pendingOps > 0) {
+                    tv += " open=";
+                    tv += std::to_string(f.pendingOps);
+                }
+                chip(tv, f.pendingOps > 0 ? amber : val);
+            }
+            if (f.childPending > 0) {
+                chip("child", lab);
+                chip(std::to_string(f.childPending), violet);
+            }
+            chip("stream", lab);
+            chip(footerFmtBytes(std::max(0, f.tokenBytes)), cyan);
+            chip("hist", lab);
+            {
+                std::string hv = std::to_string(std::max(0, f.historyUsed));
+                hv += "/";
+                hv += std::to_string(std::max(0, f.historyMax));
+                chip(hv, dim);
+            }
+            if (f.compactedRecently) chip("COMPACTED", amber);
+            if (f.queuedSteer > 0) chip("STEER", amber);
 
-            std::string sid = suffix8(f.sessionId);
-            if (!sid.empty()) putRight(2, sid, dim);
+            // model right-aligned
+            std::string who;
+            if (!f.model.empty()) who = f.model;
+            else if (!f.provider.empty()) who = f.provider;
+            if (!f.agentName.empty()) {
+                if (!who.empty()) who = f.agentName + "/" + who;
+                else who = f.agentName;
+            }
+            if (!who.empty()) putRight(2, who, cyan);
         }
         return;
     }

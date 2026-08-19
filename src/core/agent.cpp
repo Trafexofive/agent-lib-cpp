@@ -433,6 +433,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
     // disabled) so the model always gets an honest last chance to emit
     // final=true.
     for (ctx.iteration = 1;; ctx.iteration++) {
+        liveIteration_.store(ctx.iteration, std::memory_order_relaxed);
         if (!g_running) {
             fullResponse = "[cancelled]";
             emitHarness("CANCEL",
@@ -1257,6 +1258,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
         }
     }
 
+    liveIteration_.store(0, std::memory_order_relaxed);
     if (ctx.raw && !rawOutput.empty()) {
         return rawOutput;
     }

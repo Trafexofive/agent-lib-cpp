@@ -105,6 +105,10 @@ class Agent {
     const std::string& responseOutput() const {
         return responseOutput_;
     }
+    // Current agent-loop generation (1..cap) while prompt() is running; 0 idle.
+    int liveIteration() const {
+        return liveIteration_.load(std::memory_order_relaxed);
+    }
     const std::string& thoughtOutput() const {
         return thoughtOutput_;
     }
@@ -373,6 +377,7 @@ class Agent {
     bool bareTextReminded_ = false;  // one-time bare-text warning, persists across turns
     std::string rawLlOutput_;        // raw LLM stream (all tokens)
     std::string responseOutput_;     // sanitized response text
+    std::atomic<int> liveIteration_{0};  // 1..cap while runLoop; 0 idle
     std::string thoughtOutput_;      // thought content (hidden in FULL)
     std::string lastPrompt_;         // last built prompt for /prompts
     std::vector<std::string>
