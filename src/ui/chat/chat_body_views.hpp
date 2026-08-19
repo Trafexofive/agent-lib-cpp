@@ -194,6 +194,15 @@ inline void drawTranscriptCompact(inkcell::Surface& surface, inkcell::Rect body,
                 title += " #";
                 title += r.actionId;
             }
+            // Surface ms= from result teaser when present in body/title meta
+            auto msAt = r.body.find("ms=");
+            if (msAt == std::string::npos) msAt = r.title.find("ms=");
+            // often first line of formatted result is short meta
+            if (!r.body.empty() && r.body.find("ms") != std::string::npos &&
+                r.body.size() < 80) {
+                title += " · ";
+                title += oneLine(r.body, 24);
+            }
         } else if (r.kind == TimelineKind::User) {
             title = oneLine(r.body.empty() ? r.title : r.body, 60);
         } else if (r.kind == TimelineKind::Status) {

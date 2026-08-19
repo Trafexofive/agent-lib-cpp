@@ -100,7 +100,7 @@ inline int runInkcellOneShot(const InkcellAppConfig &cfg, Agent &agent,
         requestRunStop(RunStopKind::Operator);
     if (worker.joinable())
         worker.join();
-    g_running = true;
+    clearRunStop();
     flushGuard.finish(model);
     return rc;
 }
@@ -395,7 +395,7 @@ inline int runInkcellRepl(const InkcellAppConfig &cfg, Agent &agent,
     joinWorker();
     joinWfWorker();
     chat::savePromptHistory(model->promptHistory);
-    g_running = true;
+    clearRunStop();
     // Vet-fix: snapshot UI timeline BEFORE agent history flush so the
     // on-disk session carries the exact live blocks (thoughts/actions/
     // results), not only User/Agent records. Then flush agent history_
