@@ -352,7 +352,7 @@ class MainScene final : public BaseScene {
         // CWD on their next call, activeSessionId is preserved.
         if (!model_->keepLiveOnCwdChange &&
             model_->running && !model_->activeSessionId.empty()) {
-            g_running.store(false, std::memory_order_release);
+            requestRunStop(RunStopKind::Operator);
             model_->running = false;
             model_->status = "stopped";
             session::activeSession().clear();

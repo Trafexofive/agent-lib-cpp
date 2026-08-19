@@ -32,6 +32,29 @@ namespace dispatch { class ActionDispatcher; }
 
 extern std::atomic<bool> g_running;
 
+// Why g_running flipped false — distinguishes operator cancel from wall kills.
+enum class RunStopKind : uint8_t {
+    None = 0,
+    Operator = 1,   // Ctrl-C/X, slash stop, TUI stopAgentLoop
+    ExternalSignal = 2,  // SIGTERM / external `timeout` / kill
+    StreamAbort = 3,     // provider callback abort without operator stop
+};
+extern std::atomic<uint8_t> g_stop_kind;  // RunStopKind
+
+inline void requestRunStop(RunStopKind kind) {
+    g_stop_kind.store(static_cast<uint8_t>(kind), std::memory_order_release);
+    g_running.store(false, std::memory_order_release);
+}
+inline RunStopKind currentRunStopKind() {
+    return static_cast<RunStopKind>(
+        g_stop_kind.load(std::memory_order_acquire));
+}
+inline void clearRunStop() {
+    g_stop_kind.store(static_cast<uint8_t>(RunStopKind::None),
+                      std::memory_order_release);
+    g_running.store(true, std::memory_order_release);
+}
+
 // ProtocolAction / ProtocolResult / ProtocolEventKind / ProtocolEvent:
 // defined in protocol/events.hpp (included above). Agent remains the runtime.
 
@@ -284,6 +307,10 @@ class Agent {
     // ---- Accessors ----
     const AgentConfig& config() const {
         return config_;
+    }
+    void setActionTimeoutSec(int sec) {
+        if (sec > 0)
+            config_.actionTimeoutSec = sec;
     }
     void setIterationCap(int cap) {
         config_.iterationCap = cap;

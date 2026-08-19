@@ -459,7 +459,7 @@ inline void MainScene::killLiveSession() {
     }
     // 1. signal worker to stop. Next iteration check will exit before
     // a new prompt() round, and the bridge publishes TurnDone.
-    g_running = false;
+    requestRunStop(RunStopKind::Operator);
     // 2. clear live flags synchronously so the hub reflects the state
     // immediately (the worker may take a moment to publish TurnDone).
     model_->running = false;

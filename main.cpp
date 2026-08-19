@@ -22,8 +22,14 @@ namespace fs = std::filesystem;
 // Signal handler
 // ═══════════════════════════════════════════════════════════════════════
 void signalHandler(int sig) {
-    if (sig != SIGWINCH)
-        cortex::mk3::g_running = false;
+    if (sig == SIGWINCH)
+        return;
+    // SIGTERM = external wall (`timeout`, systemd, kill) — not operator Ctrl-C.
+    // SIGINT = operator interrupt at process level.
+    if (sig == SIGTERM)
+        cortex::mk3::requestRunStop(cortex::mk3::RunStopKind::ExternalSignal);
+    else
+        cortex::mk3::requestRunStop(cortex::mk3::RunStopKind::Operator);
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -32,6 +32,7 @@
 namespace cortex::mk3 {
 
 std::atomic<bool> g_running{true};
+std::atomic<uint8_t> g_stop_kind{static_cast<uint8_t>(RunStopKind::None)};
 
 // ── XML attribute escaping ──────────────────────────────────────────────
 
@@ -269,6 +270,12 @@ Json::Value Agent::inspectContext(int lastN) const {
 // ═══════════════════════════════════════════════════════════════════════
 
 std::string Agent::runLoop(AgentContext &ctx) {
+    // Fresh turn: clear prior stop kind. Operator/SIGTERM set it again as needed.
+    if (g_running.load(std::memory_order_acquire))
+        g_stop_kind.store(static_cast<uint8_t>(RunStopKind::None),
+                          std::memory_order_release);
+    else if (currentRunStopKind() == RunStopKind::None)
+        requestRunStop(RunStopKind::Operator);
     std::string fullResponse;
     std::string rawOutput;
     // Continuation = this Agent already has transcript from a prior prompt().
@@ -435,12 +442,24 @@ std::string Agent::runLoop(AgentContext &ctx) {
     for (ctx.iteration = 1;; ctx.iteration++) {
         liveIteration_.store(ctx.iteration, std::memory_order_relaxed);
         if (!g_running) {
-            fullResponse = "[cancelled]";
-            emitHarness("CANCEL",
-                        "Operator stopped the turn (Ctrl-C). Pending tools/children "
-                        "should halt; do not continue the cancelled plan.",
-                        "limit");
-            finishTurn("cancel", "[cancelled by operator]");
+            const auto sk = currentRunStopKind();
+            if (sk == RunStopKind::ExternalSignal) {
+                fullResponse = "[timed out]";
+                emitHarness("TIMEOUT",
+                            "External signal (SIGTERM / wall timeout / kill) stopped "
+                            "the process. This is NOT an operator Ctrl-C cancel. "
+                            "Pending tools/children were interrupted.",
+                            "limit");
+                finishTurn("timeout", "[timed out · external signal]");
+            } else {
+                fullResponse = "[cancelled]";
+                emitHarness("CANCEL",
+                            "Operator stopped the turn (Ctrl-C/X). Pending "
+                            "tools/children should halt; do not continue the "
+                            "cancelled plan.",
+                            "limit");
+                finishTurn("cancel", "[cancelled by operator]");
+            }
             break;
         }
 
@@ -733,14 +752,39 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 if (!g_running || msg == "cancelled" ||
                     msg.find("cancelled") != std::string::npos ||
                     msg.find("ABORTED_BY_CALLBACK") != std::string::npos) {
-                    fullResponse = "[cancelled]";
-                    emitHarness("CANCEL",
-                                "Operator stopped the turn (Ctrl-C / stream "
-                                "abort). Halt the plan; do not continue.",
-                                "limit");
-                    finishTurn("cancel", "[cancelled by operator]");
-                    iterationOutputs_.push_back("[cancelled]");
-                    break;  // leave generateStream retry loop → outer cancel path
+                    const auto sk = currentRunStopKind();
+                    if (sk == RunStopKind::ExternalSignal ||
+                        msg.find("Operation too slow") != std::string::npos) {
+                        fullResponse = "[timed out]";
+                        emitHarness("TIMEOUT",
+                                    "Stream/process stopped by external signal or "
+                                    "stall abort — not operator cancel.",
+                                    "limit");
+                        finishTurn("timeout", "[timed out · stream/signal]");
+                        iterationOutputs_.push_back("[timed out]");
+                    } else if (sk == RunStopKind::Operator ||
+                               msg == "cancelled" ||
+                               msg.find("cancelled") != std::string::npos) {
+                        fullResponse = "[cancelled]";
+                        emitHarness("CANCEL",
+                                    "Operator stopped the turn (Ctrl-C/X / stream "
+                                    "abort). Halt the plan; do not continue.",
+                                    "limit");
+                        finishTurn("cancel", "[cancelled by operator]");
+                        iterationOutputs_.push_back("[cancelled]");
+                    } else {
+                        // Unknown abort — stream stall callback without stop kind.
+                        if (sk == RunStopKind::None)
+                            requestRunStop(RunStopKind::StreamAbort);
+                        fullResponse = "[aborted]";
+                        emitHarness("ABORT",
+                                    "Stream aborted (callback/stall). Not a clean "
+                                    "operator cancel. reason: " + msg,
+                                    "limit");
+                        finishTurn("abort", "[aborted · stream]");
+                        iterationOutputs_.push_back("[aborted]");
+                    }
+                    break;  // leave generateStream retry loop → outer stop path
                 }
                 // Transport / HTTP failures after the provider's own retries.
                 // Classify so the operator AND the next LLM turn see a clear,
@@ -901,8 +945,17 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // Cancelled mid-stream / provider hard-fail: leave the outer iteration
         // loop cleanly. Without this we fall into empty-response / salvage
         // recovery and paint a fake "empty response" error after Ctrl-X.
-        if (!g_running || fullResponse == "[cancelled]") {
-            fullResponse = "[cancelled]";
+        if (!g_running || fullResponse == "[cancelled]" ||
+            fullResponse == "[timed out]" || fullResponse == "[aborted]" ||
+            fullResponse.rfind("[timed out", 0) == 0 ||
+            fullResponse.rfind("[cancelled", 0) == 0 ||
+            fullResponse.rfind("[aborted", 0) == 0) {
+            if (fullResponse.empty() || fullResponse == "[cancelled]") {
+                if (currentRunStopKind() == RunStopKind::ExternalSignal)
+                    fullResponse = "[timed out]";
+                else if (fullResponse.empty())
+                    fullResponse = "[cancelled]";
+            }
             break;
         }
         if (fullResponse.rfind("Error: ", 0) == 0) {
@@ -1408,10 +1461,16 @@ Json::Value Agent::handleAgentDelegate(AgentContext &ctx,
     // only for this call's agent object (sub-agent is reused — clamp stays,
     // which is correct for nested thrash prevention).
     {
-        constexpr int kDelegatedChildIterCap = 48;
+        constexpr int kDelegatedChildIterCap = 32;
         int cur = it->second->config().iterationCap;
         if (cur <= 0 || cur > kDelegatedChildIterCap)
             it->second->setIterationCap(kDelegatedChildIterCap);
+        // Wall: action timeout attr or parent actionTimeoutSec, floor 60s ceiling 600s.
+        int wall = action.timeout > 0 ? action.timeout : config_.actionTimeoutSec;
+        if (wall <= 0) wall = 180;
+        if (wall < 60) wall = 60;
+        if (wall > 600) wall = 600;
+        it->second->setActionTimeoutSec(wall);
     }
     // Stream the child's progress to the parent's UI so it stays alive
     // (byte counter + spinner) during the synchronous sub-agent call.

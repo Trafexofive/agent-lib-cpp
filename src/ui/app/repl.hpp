@@ -97,7 +97,7 @@ inline int runInkcellOneShot(const InkcellAppConfig &cfg, Agent &agent,
     }
 
     if (!done.load(std::memory_order_acquire))
-        g_running = false;
+        requestRunStop(RunStopKind::Operator);
     if (worker.joinable())
         worker.join();
     g_running = true;

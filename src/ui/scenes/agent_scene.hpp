@@ -1662,7 +1662,7 @@ class AgentScene final : public BaseScene {
         }
         if (model_->running) {
             model_->status = "cancelling";
-            g_running = false;
+            requestRunStop(RunStopKind::Operator);
             // Optimistic UI settle — don't wait for TurnDone to drop sticky chips.
             // Must clear running here: if TurnDone is slow/lost, the next Enter
             // would take the steer path and never paint a YOU row.

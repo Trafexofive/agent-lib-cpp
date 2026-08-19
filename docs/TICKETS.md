@@ -23,15 +23,16 @@ Evidence dumps under `.cortex/dev/ephemeral-*` and
 | T-FOOTER | 6-row live footer instrument | `de93e55` |
 | T-CANVAS | Ctrl-O stream/compact/canvas + timelineRows | body views |
 | T-BRAND | README + .desktop + master force | `bd8d2cd`… |
+| T-TIMEOUT-CANCEL | SIGTERM/wall → TIMEOUT harness not CANCEL | `ephemeral-1953397` |
+| T-DEFAULT-PROMPT-BLOAT | fat catalog cards-only (tools ~4.3KB) | `ephemeral-1963512` 4329B |
+| T-SUBAGENT-WALL | delegated iter cap 32 + action timeout wall | agent.cpp seatbelt |
 
 ### Open — P0
 
 | ID | Ticket | Symptom (dump) | Acceptance |
 |----|--------|----------------|------------|
 | **T-DUP-STREAM** | Model streams same action id twice in one gen (full+full or hollow+full). History stores both tags. | `1905044` list×2; `1923837` list×2; pre-fix grep `{}`+full | One execute; optional collapse duplicate tags in rendered history; hollow `{}` never executes |
-| **T-TIMEOUT-CANCEL** | Wall `timeout(1)` / SIGTERM painted as operator CANCEL harness | `1910320` history CANCEL while protocol has agent RESULT ok | Distinct `TIMEOUT` vs operator cancel; dump history matches protocol |
-| **T-SUBAGENT-WALL** | Sync coder child can exceed headless test budgets; join honesty under kill | `1910320` 200s kill mid-child; protocol RESULT ok + CANCEL race | Configurable child wall; parent RESULT reflects kill; one-worker PE holds |
-| **T-DEFAULT-PROMPT-BLOAT** | `-m default` iter1 tools blob ~52KB vs builtin ~9KB | `1910320` tools[0]=52286 | Cap usage_examples / schema depth for default loadout |
+| **T-DUP-STREAM** | (still open) Model streams same action id twice | history dual tags | collapse / single execute |
 
 ### Open — P1
 

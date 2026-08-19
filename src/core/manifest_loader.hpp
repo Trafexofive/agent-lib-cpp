@@ -1319,7 +1319,14 @@ class ManifestLoader {
             const char* e = std::getenv("CORTEX_TOOL_FULL");
             return e && e[0] && std::string(e) != "0" && std::string(e) != "false";
         }();
-        const bool fullInput = includeInputSchemas || forceFull;
+        // Large loadouts (default agent ~13 tools + novels) blow iter-1 context.
+        // Cards only + short desc; full JSON/examples require CORTEX_TOOL_FULL=1
+        // or a lean catalog (≤8 tools).
+        const bool fatCatalog = schemas.size() > 8;
+        const bool fullInput =
+            (includeInputSchemas || forceFull) && (!fatCatalog || forceFull);
+        const bool useExamples = includeExamples && !fatCatalog;
+        const size_t kDescCap = fatCatalog ? size_t(120) : size_t(720);
         std::ostringstream ss;
         std::string toolPad(baseIndent, ' ');
         std::string fieldPad(baseIndent + 4, ' ');
@@ -1328,7 +1335,6 @@ class ManifestLoader {
             if (!s.description.empty()) {
                 // Cap wall-of-text PE in the hot prompt; full tool.yml still on disk.
                 std::string desc = s.description;
-                const size_t kDescCap = 720;
                 if (desc.size() > kDescCap)
                     desc = desc.substr(0, kDescCap - 1) + "…";
                 ss << fieldPad << "<description>" << desc << "</description>\n";
@@ -1355,7 +1361,7 @@ class ManifestLoader {
                 ss << fieldPad << "<returns>\n"
                    << indentBlock(prettyJson(s.outputSchema), baseIndent + 8) << fieldPad
                    << "</returns>\n";
-            if (includeExamples && !s.examples.empty())
+            if (useExamples && !s.examples.empty())
                 ss << fieldPad << "<examples>\n"
                    << indentBlock(prettyJson(s.examples), baseIndent + 8) << fieldPad
                    << "</examples>\n";
