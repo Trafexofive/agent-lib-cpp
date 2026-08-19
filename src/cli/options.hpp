@@ -146,6 +146,7 @@ Global flags:
   --quiet-session      Suppress the resume banner (printed to stderr)
   --no-session         Don't load/save a session record
   --ephemeral          Exit when the agent turn finishes
+  --headless           Alias of --ephemeral (stdout stream, no interactive hub)
   --tui <experimental|inkcell>
                        TUI backend (env: MK3_TUI). Default: experimental.
                        inkcell = alias of experimental (native inkcell App).
@@ -349,6 +350,7 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                                        {"quiet-session", no_argument, 0, 1013},
                                        {"no-session", no_argument, 0, 'e'},
                                        {"ephemeral", no_argument, 0, 1035},
+                                       {"headless", no_argument, 0, 1036},
                                        {"repl", no_argument, 0, 'E'},
                                        {"thoughts", no_argument, 0, 1030},
                                        {"no-thoughts", no_argument, 0, 1031},
@@ -549,6 +551,11 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 break;
             case 1035:
                 cli.ephemeral = true;  // exit when turn finishes — NOT the same as --no-session
+                break;
+            case 1036:
+                // Headless one-shot: stream to stdout, exit on turn end.
+                // Keeps session unless combined with --no-session / --ephemeral alone.
+                cli.ephemeral = true;
                 break;
             case 'E':
                 cli.replMode = true;
