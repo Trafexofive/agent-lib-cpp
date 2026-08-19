@@ -36,6 +36,9 @@ Evidence dumps under `.cortex/dev/ephemeral-*` and
 
 ### Open — P1
 
+Shipped mid-grind: `--headless` (`5ea6f2b`), CLI free-token (`3008514`), one-worker dump `2167980`.
+
+
 | ID | Ticket | Notes |
 |----|--------|-------|
 | **T-ONE-WORKER** | PE shipped; need live proof one agent only on light scout | PE in `harness/default.md`; re-run C2 with ≥10min wall |
