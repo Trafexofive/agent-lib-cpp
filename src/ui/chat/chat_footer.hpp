@@ -1,11 +1,12 @@
 #pragma once
-// Chat footer — cabinet plate under the prompt.
-// Craft bar: elevated surface, accent rail, sparse fields. Not a status dump.
+// Chat footer — live instrument plate under the prompt.
 //
-// Live layout (2–3 rows):
-//   ▌  ⠼  waiting on coder                 1m24s
-//   ▌  default · x-ai/grok-4.6    ▀▀▀▀░░░░  ·  hist 6
-// Session / Engine are the same plate language, thinner content.
+// Always 3 rows (cabinet, not a status crumb):
+//   ▌ LIVE  ⠼ waiting on model · list #x          1m24s · 2 open
+//   ▌ ✓ tree #t1  21ms · 1.7KB   OR   2 open: tree, coder
+//   ▌ act 4 · res 3 · 12KB · i 2/48 · ctx ███░░ 62% · grok-4.6   ···
+//
+// Pane cycle (^F): Live | Session | Engine — same plate language.
 
 #include <algorithm>
 #include <cmath>
@@ -23,7 +24,7 @@ namespace cortex::mk3::ui::chat {
 
 inline const char* footerSpinner(uint64_t nowMs) {
     static const char* kFrames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
-    return kFrames[(nowMs / 90) % 10];
+    return kFrames[(nowMs / 80) % 10];
 }
 
 inline std::string footerFmtBytes(int bytes) {
@@ -46,15 +47,12 @@ inline std::string footerFmtElapsed(int64_t ms) {
     int secs = static_cast<int>(ms / 1000);
     int m = secs / 60;
     int s = secs % 60;
-    return std::to_string(m) + "m" + (s < 10 ? "0" : "") + std::to_string(s) + "s";
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%d:%02d", m, s);
+    return buf;
 }
 
-enum class ChatFooterPane : uint8_t {
-    Live = 0,
-    Session = 1,
-    Engine = 2,
-    Count = 3
-};
+enum class ChatFooterPane : uint8_t { Live = 0, Session = 1, Engine = 2, Count = 3 };
 
 inline const char* footerPaneName(ChatFooterPane p) {
     switch (p) {
@@ -71,27 +69,24 @@ inline ChatFooterPane nextFooterPane(ChatFooterPane p, int dir = 1) {
     return static_cast<ChatFooterPane>(i);
 }
 
-// Honest short verbs. No synonym carousel — that read as noise, not life.
 inline std::string phaseVerb(const std::string& key, const std::string& detail) {
-    std::string v;
-    if (key == "think") v = "thinking";
-    else if (key == "act") v = detail.empty() ? "working" : detail;
-    else if (key == "wait") v = "waiting on model";
-    else if (key == "delegate")
-        v = detail.empty() ? "waiting on child" : (std::string("waiting on ") + detail);
-    else if (key == "reply") v = "replying";
-    else if (key == "ask") v = "waiting for you";
-    else if (key == "ready") v = "ready";
-    else if (key == "cancel") v = "stopping";
-    else if (key == "fail") v = "failed";
-    else v = key.empty() ? "ready" : key;
-    return v;
+    if (key == "think") return "thinking";
+    if (key == "act") return detail.empty() ? "tool" : detail;
+    if (key == "wait") return "waiting on model";
+    if (key == "delegate")
+        return detail.empty() ? "waiting on child" : ("child · " + detail);
+    if (key == "reply") return "replying";
+    if (key == "ask") return "your move";
+    if (key == "ready") return "ready";
+    if (key == "cancel") return "stopping";
+    if (key == "fail") return "failed";
+    return key.empty() ? "ready" : key;
 }
 
-// Tetris-style unit bar (▀ cells), not a █░ wall of glyphs.
+// Half-block meter — filled cells use phase hue, empty use deep plate.
 inline void drawUnitBar(inkcell::Surface& s, int x, int y, int width, float pct,
                         inkcell::Style on, inkcell::Style off) {
-    width = std::max(4, std::min(20, width));
+    width = std::max(4, std::min(16, width));
     pct = std::max(0.f, std::min(1.f, pct));
     int filled = static_cast<int>(std::round(pct * width));
     if (pct > 0.f && filled == 0) filled = 1;
@@ -119,30 +114,17 @@ inline void joinChip(std::string& out, const std::string& chip) {
     out += chip;
 }
 
-// Legacy name kept for call sites that still pass a synonym key.
-inline const char* phaseSynonym(const std::string& key, uint64_t /*nowMs*/) {
-    if (key == "think") return "thinking";
-    if (key == "act") return "working";
-    if (key == "wait") return "waiting on model";
-    if (key == "delegate") return "waiting on child";
-    if (key == "reply") return "replying";
-    if (key == "ask") return "waiting for you";
-    if (key == "ready") return "ready";
-    if (key == "cancel") return "stopping";
-    if (key == "fail") return "failed";
-    return key.c_str();
+inline const char* phaseSynonym(const std::string& key, uint64_t) {
+    return phaseVerb(key, {}).c_str();  // detail-less
 }
 
-// Old block bar kept for any external caller.
 inline std::string pressureBar(float pct, int width) {
     width = std::max(4, std::min(24, width));
     pct = std::max(0.f, std::min(1.f, pct));
     int filled = static_cast<int>(std::round(pct * width));
     if (pct > 0.f && filled == 0) filled = 1;
     std::string s;
-    s.reserve(static_cast<size_t>(width) * 3);
-    for (int i = 0; i < width; ++i)
-        s += (i < filled) ? "█" : "░";
+    for (int i = 0; i < width; ++i) s += (i < filled) ? "█" : "░";
     return s;
 }
 
@@ -168,6 +150,11 @@ struct ChatFooterModel {
     int historyMax = 1700;
     std::string phaseKey = "ready";
     std::string phaseDetail;
+    std::string focusLine;       // current tool/agent focus
+    std::string lastResultLine;  // last completed result one-liner
+    std::string openLine;        // open queue summary
+    std::string statusHint;      // last STATUS/LIMIT/FALLBACK tail
+    int childPending = 0;
     std::string agentName;
     std::string provider;
     std::string model;
@@ -177,137 +164,108 @@ struct ChatFooterModel {
     std::string bodyFmt;
     std::string themeName;
     int turnCount = 0;
+    int queuedSteer = 0;
     std::vector<std::string> extraLines;
 };
 
-// Idle: 2 rows (verb + who). Live with pressure: 3.
-inline int footerBaseRows(const ChatFooterModel& f) {
-    if (!f.running && !f.failed) return 2;
-    return 3;
-}
+// Always 3 rows — plate needs room for phase + truth + meters.
+inline int footerBaseRows(const ChatFooterModel&) { return 3; }
 
 inline int footerHeightFor(const ChatFooterModel& f, int maxAvail) {
     if (maxAvail < 1) return 0;
     int want = footerBaseRows(f) + static_cast<int>(f.extraLines.size());
-    if (want > 8) want = 8;
+    if (want > 6) want = 6;
     if (want < 1) want = 1;
     return std::min(want, maxAvail);
 }
 
-inline constexpr int kChatFooterHMin = 1;
-inline constexpr int kChatFooterHTypical = 2;
-
-inline inkcell::Style footerDimAccent(const inkcell::Style& bg) {
-    auto s = theme::footer_accent_idle();
-    s.bg = bg.bg;
-    s.dim = true;
-    return s;
-}
+inline constexpr int kChatFooterHMin = 2;
+inline constexpr int kChatFooterHTypical = 3;
 
 inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
                            const ChatFooterModel& f) {
-    if (box.h < 1 || box.w < 8) return;
+    if (box.h < 1 || box.w < 12) return;
 
     const bool focus = f.inputFocused && !f.running;
     const bool live = f.running && !f.failed;
     auto bg = focus ? theme::footer_bg_focus() : theme::footer_bg();
-
-    // Plate
-    components::elevatedFill(surface, box, focus || live);
-
-    // Top hairline — separates prompt from plate (cabinet edge).
-    {
-        auto rule = theme::footer_dim();
-        rule.bg = bg.bg;
-        rule.dim = true;
-        components::hairline(surface, box.x + 1, box.y, std::max(0, box.w - 1), rule);
+    // Live plate slightly lifted
+    if (live) {
+        bg = inkcell::Style::normal().with_bg(theme::color(
+            inkcell::Color::rgb(24, 26, 32), inkcell::Color::rgb(12, 18, 30)));
     }
 
-    // Phase-colored rail — the plate's identity, not one green forever.
-    auto phaseAccent = [&]() -> inkcell::Style {
+    components::fillRect(surface, box, bg);
+
+    // Top edge — brighter hairline (cabinet shelf under prompt)
+    {
+        auto edge = inkcell::Style::normal().with_bg(bg.bg);
+        edge.fg = theme::color(inkcell::Color::rgb(55, 60, 72),
+                               inkcell::Color::rgb(40, 70, 100));
+        components::hairline(surface, box.x, box.y, box.w, edge);
+    }
+    // Second micro-edge for depth
+    if (box.h >= 2) {
+        auto edge2 = inkcell::Style::normal().with_bg(bg.bg);
+        edge2.fg = theme::color(inkcell::Color::rgb(32, 34, 42),
+                                inkcell::Color::rgb(18, 28, 42));
+        edge2.dim = true;
+        // only first cell row already filled; skip second hairline to save rows
+        (void)edge2;
+    }
+
+    // ── Phase rail (full height) ─────────────────────────────────────
+    auto mk = [&](int r, int g, int b, int nr, int ng, int nb) {
         auto s = inkcell::Style::normal().with_bg(bg.bg);
+        s.fg = theme::color(inkcell::Color::rgb(r, g, b), inkcell::Color::rgb(nr, ng, nb));
         s.bold = true;
-        if (f.failed || f.phaseKey == "fail") {
-            s.fg = theme::color(inkcell::Color::rgb(220, 95, 100),
-                                inkcell::Color::rgb(255, 95, 115));
-            return s;
-        }
-        if (f.phaseKey == "delegate") {
-            s.fg = theme::color(inkcell::Color::rgb(175, 125, 220),
-                                inkcell::Color::rgb(220, 130, 255));
-            return s;
-        }
-        if (f.phaseKey == "think") {
-            s.fg = theme::color(inkcell::Color::rgb(130, 140, 200),
-                                inkcell::Color::rgb(150, 160, 255));
-            return s;
-        }
-        if (f.phaseKey == "act") {
-            s.fg = theme::color(inkcell::Color::rgb(210, 155, 80),
-                                inkcell::Color::rgb(255, 185, 70));
-            return s;
-        }
-        if (f.phaseKey == "wait") {
-            s.fg = theme::color(inkcell::Color::rgb(100, 175, 200),
-                                inkcell::Color::rgb(90, 220, 255));
-            return s;
-        }
-        if (f.phaseKey == "reply") {
-            s.fg = theme::color(inkcell::Color::rgb(120, 190, 150),
-                                inkcell::Color::rgb(100, 235, 160));
-            return s;
-        }
-        if (f.phaseKey == "ask") {
-            s.fg = theme::color(inkcell::Color::rgb(200, 130, 190),
-                                inkcell::Color::rgb(245, 140, 235));
-            return s;
-        }
-        if (f.phaseKey == "cancel") {
-            s.fg = theme::color(inkcell::Color::rgb(200, 140, 90),
-                                inkcell::Color::rgb(245, 170, 80));
-            return s;
-        }
-        if (live) return theme::footer_accent_live().with_bg(bg.bg);
-        if (focus) return theme::footer_accent_focus().with_bg(bg.bg);
-        return footerDimAccent(bg);
+        return s;
     };
-    auto accent = phaseAccent();
+    inkcell::Style accent = mk(70, 70, 78, 40, 52, 72);
+    if (f.failed || f.phaseKey == "fail")
+        accent = mk(230, 90, 100, 255, 95, 115);
+    else if (f.phaseKey == "delegate")
+        accent = mk(185, 120, 230, 220, 130, 255);
+    else if (f.phaseKey == "think")
+        accent = mk(140, 145, 210, 160, 165, 255);
+    else if (f.phaseKey == "act")
+        accent = mk(220, 160, 70, 255, 185, 70);
+    else if (f.phaseKey == "wait")
+        accent = mk(90, 185, 210, 80, 230, 255);
+    else if (f.phaseKey == "reply")
+        accent = mk(110, 200, 150, 100, 240, 165);
+    else if (f.phaseKey == "ask")
+        accent = mk(210, 130, 200, 245, 140, 235);
+    else if (f.phaseKey == "cancel")
+        accent = mk(210, 150, 80, 245, 175, 80);
+    else if (live)
+        accent = mk(120, 195, 145, 100, 235, 160);
+    else if (focus)
+        accent = mk(120, 175, 190, 90, 220, 255);
+
     if (live) {
-        const double phase = (f.nowMs % 2200) / 2200.0 * 6.283185307179586;
-        const double breath = 0.55 + 0.45 * std::sin(phase);
-        accent.dim = breath < 0.65;
-        accent.bold = true;
+        const double ph = (f.nowMs % 1800) / 1800.0 * 6.283185307179586;
+        accent.dim = (0.5 + 0.5 * std::sin(ph)) < 0.4;
     }
     components::accentBar(surface, box.x, box.y, box.h, accent);
 
-    auto bright = theme::footer_bright();
-    bright.bg = bg.bg;
-    auto dim = theme::footer_dim();
-    dim.bg = bg.bg;
-    auto text = theme::footer_text();
-    text.bg = bg.bg;
-    auto liveSt = accent;  // verb matches rail phase hue
-    liveSt.bg = bg.bg;
-    liveSt.bold = true;
-    auto cyanSoft = inkcell::Style::normal()
-                        .with_fg(theme::color(inkcell::Color::rgb(110, 160, 175),
-                                              inkcell::Color::rgb(90, 200, 230)))
-                        .with_bg(bg.bg);
-    auto violet = inkcell::Style::normal()
-                      .with_fg(theme::color(inkcell::Color::rgb(180, 155, 203),
-                                            inkcell::Color::rgb(219, 130, 255)))
-                      .with_bg(bg.bg);
-    violet.bold = true;
+    auto bright = theme::footer_bright().with_bg(bg.bg);
+    auto dim = theme::footer_dim().with_bg(bg.bg);
+    dim.dim = false;  // readable secondary
+    dim.fg = theme::color(inkcell::Color::rgb(130, 132, 145),
+                          inkcell::Color::rgb(120, 135, 160));
+    auto text = theme::footer_text().with_bg(bg.bg);
+    auto cyan = mk(100, 175, 195, 90, 220, 255);
+    cyan.bold = false;
+    auto amber = theme::amber().with_bg(bg.bg);
+    auto green = theme::green().with_bg(bg.bg);
+    auto warn = theme::footer_warn().with_bg(bg.bg);
+    auto violet = mk(185, 150, 220, 220, 150, 255);
 
     const int x0 = box.x + 2;
-    const int innerW = std::max(1, box.w - 3);
     const int rightEdge = box.right() - 1;
+    const int innerW = std::max(1, box.w - 3);
 
-    auto putLeft = [&](int row, const std::string& s, inkcell::Style st, int maxW = 0) {
-        if (row < 0 || row >= box.h || s.empty()) return;
-        int w = maxW > 0 ? maxW : innerW;
-        surface.text({x0, box.y + row}, inkcell::text::truncate(s, w), st);
-    };
     auto putRight = [&](int row, const std::string& s, inkcell::Style st) {
         if (row < 0 || row >= box.h || s.empty()) return;
         int ww = inkcell::text::display_width(s);
@@ -315,153 +273,243 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         surface.text({x, box.y + row}, inkcell::text::truncate(s, innerW), st);
     };
 
-    // Pane dots — quiet, not "live ^F" chrome noise.
-    auto paneDots = [&](int row) {
-        if (row < 0 || row >= box.h) return;
-        std::string dots;
-        for (int i = 0; i < 3; ++i)
-            dots += (static_cast<int>(f.pane) == i) ? "●" : "·";
-        putRight(row, dots, dim);
+    // ── Pane tab strip (left of row 0 content) ───────────────────────
+    auto paintPaneTabs = [&](int row, int& cursorX) {
+        static const char* names[] = {"LIVE", "SESS", "ENG"};
+        for (int i = 0; i < 3; ++i) {
+            bool on = static_cast<int>(f.pane) == i;
+            auto st = on ? accent : dim;
+            st.bg = bg.bg;
+            st.bold = on;
+            std::string lab = on ? (std::string("[") + names[i] + "]") : names[i];
+            surface.text({cursorX, box.y + row}, lab, st);
+            cursorX += inkcell::text::display_width(lab) + 1;
+        }
+        surface.text({cursorX, box.y + row}, " ", dim);
+        cursorX += 1;
     };
 
+    // ═════════════════════════════════════════════════════════════════
     if (f.pane == ChatFooterPane::Live) {
-        // ── Row 0: glyph + verb … clock ─────────────────────────────
+        // ROW 0 — tabs · spinner · verb · focus ………… clock · open
         {
-            std::string verb = phaseVerb(f.phaseKey, f.phaseDetail);
+            int x = x0;
+            paintPaneTabs(0, x);
+            const int contentLeft = x;
+
             std::string glyph = live ? std::string(footerSpinner(f.nowMs))
                                : f.failed ? "✗"
                                : focus    ? "›"
                                           : "○";
-            std::string left = glyph + "  " + verb;
-            auto st = f.failed                         ? theme::footer_warn()
-                      : f.phaseKey == "delegate"       ? violet
-                      : live                           ? liveSt
-                      : focus                          ? bright
-                                                       : text;
-            st.bg = bg.bg;
+            auto gst = f.failed ? warn
+                       : f.phaseKey == "delegate" ? violet
+                       : f.phaseKey == "act"      ? amber
+                       : f.phaseKey == "think"    ? violet
+                       : f.phaseKey == "wait"     ? cyan
+                       : f.phaseKey == "reply"    ? green
+                       : live                     ? accent
+                       : focus                    ? bright
+                                                  : text;
+            gst.bg = bg.bg;
+            gst.bold = true;
+
+            std::string left = glyph + "  " + phaseVerb(f.phaseKey, f.phaseDetail);
+            if (!f.focusLine.empty() && f.phaseKey != "ready" &&
+                f.focusLine != f.phaseDetail) {
+                left += "  ·  ";
+                left += f.focusLine;
+            }
 
             std::string right;
-            if (live || f.turnElapsedMs > 0) right = footerFmtElapsed(f.turnElapsedMs);
+            if (live || f.turnElapsedMs > 0)
+                right = footerFmtElapsed(f.turnElapsedMs);
             if (live && f.pendingOps > 0) {
                 if (!right.empty()) right += "  ·  ";
-                right += std::to_string(f.pendingOps);
-                right += " open";
+                right += std::to_string(f.pendingOps) + " open";
             }
+            if (f.childPending > 0) {
+                if (!right.empty()) right += "  ·  ";
+                right += std::to_string(f.childPending) + " child";
+            }
+            if (f.queuedSteer > 0) {
+                if (!right.empty()) right += "  ·  ";
+                right += "steer";
+            }
+
             int rightW = right.empty() ? 0 : inkcell::text::display_width(right) + 2;
-            putLeft(0, left, st, std::max(8, innerW - rightW - 4));
-            if (!right.empty()) putRight(0, right, dim);
+            int maxL = std::max(8, rightEdge - contentLeft - rightW - 1);
+            surface.text({contentLeft, box.y},
+                         inkcell::text::truncate(left, maxL), gst);
+            if (!right.empty()) {
+                auto rst = live ? amber : dim;
+                rst.bg = bg.bg;
+                rst.bold = live;
+                putRight(0, right, rst);
+            }
         }
 
-        // ── Row 1: agent (bright) · model (cyan) + pressure bar ─────
+        // ROW 1 — truth line (open queue / last result / status / idle who)
         if (box.h >= 2) {
-            int ceil = std::max(1, f.ctxCompactAt > 0 ? f.ctxCompactAt : f.ctxMaxTokens);
-            int used = std::max(0, f.ctxUsedTokens);
-            float pct = static_cast<float>(used) / static_cast<float>(ceil);
-            if (pct > 1.f) pct = 1.f;
-            const bool showBar = live || pct >= 0.35f || f.compactedRecently;
-            const int barW = 10;
-            int reserve = showBar ? (barW + 4) : 6;
-            int maxWho = std::max(10, innerW - reserve);
+            std::string mid;
+            auto mst = text;
+            if (live && !f.openLine.empty()) {
+                mid = f.openLine;
+                mst = amber;
+            } else if (!f.statusHint.empty() &&
+                       (live || f.statusHint.find('[') != std::string::npos)) {
+                mid = f.statusHint;
+                mst = (f.statusHint.find("FAIL") != std::string::npos ||
+                       f.statusHint.find("ERROR") != std::string::npos ||
+                       f.statusHint.find("403") != std::string::npos)
+                          ? warn
+                      : f.statusHint.find("FALLBACK") != std::string::npos ? amber
+                      : f.statusHint.find("TIMEOUT") != std::string::npos  ? warn
+                                                                           : cyan;
+            } else if (!f.lastResultLine.empty()) {
+                mid = f.lastResultLine;
+                mst = (mid.find("✗") != std::string::npos) ? warn : green;
+            } else if (live && f.phaseKey == "wait") {
+                mid = "awaiting provider tokens…";
+                mst = cyan;
+            } else if (live && f.phaseKey == "think") {
+                mid = "streaming thought";
+                mst = violet;
+            } else if (live && f.phaseKey == "delegate") {
+                mid = f.phaseDetail.empty() ? "child agent running…"
+                                            : ("child " + f.phaseDetail + " running…");
+                mst = violet;
+            } else if (live && f.phaseKey == "act") {
+                mid = f.phaseDetail.empty() ? "tool running…" : f.phaseDetail;
+                mst = amber;
+            } else {
+                // idle identity — still useful
+                mid = f.agentName.empty() ? "cortex" : f.agentName;
+                if (!f.provider.empty() || !f.model.empty()) {
+                    mid += "  ·  ";
+                    mid += f.provider.empty() ? "?" : f.provider;
+                    mid += "/";
+                    mid += f.model.empty() ? "?" : f.model;
+                }
+                if (f.turnCount > 0) {
+                    mid += "  ·  ";
+                    mid += std::to_string(f.turnCount);
+                    mid += f.turnCount == 1 ? " turn" : " turns";
+                }
+                mst = dim;
+            }
+            mst.bg = bg.bg;
 
-            // Multi-tone identity: name bright · provider muted · model cyan
+            int ceil = std::max(1, f.ctxCompactAt > 0 ? f.ctxCompactAt : f.ctxMaxTokens);
+            float pct = static_cast<float>(std::max(0, f.ctxUsedTokens)) /
+                        static_cast<float>(ceil);
+            if (pct > 1.f) pct = 1.f;
+            const int barW = 10;
+            const bool showBar = true;  // always — context is load-bearing
+            int reserve = showBar ? barW + 6 : 2;
+            surface.text({x0, box.y + 1},
+                         inkcell::text::truncate(mid, std::max(8, innerW - reserve)), mst);
+            if (showBar) {
+                auto on = pct >= 0.85f ? warn : pct >= 0.55f ? amber : cyan;
+                on.bg = bg.bg;
+                auto off = dim;
+                off.fg = theme::color(inkcell::Color::rgb(38, 40, 50),
+                                      inkcell::Color::rgb(22, 30, 46));
+                int bx = rightEdge - barW - 1;
+                // pct label left of bar
+                std::string pl = std::to_string(static_cast<int>(pct * 100)) + "%";
+                int plw = inkcell::text::display_width(pl);
+                surface.text({std::max(x0, bx - plw - 1), box.y + 1}, pl, dim);
+                drawUnitBar(surface, bx, box.y + 1, barW, pct, on, off);
+            }
+        }
+
+        // ROW 2 — meters (always multi-tone chips)
+        if (box.h >= 3) {
             int x = x0;
-            auto paintChip = [&](const std::string& s, inkcell::Style st) {
-                if (s.empty() || x >= x0 + maxWho) return;
-                int room = x0 + maxWho - x;
-                std::string t = inkcell::text::truncate(s, room);
-                surface.text({x, box.y + 1}, t, st);
+            auto chip = [&](const std::string& s, inkcell::Style st) {
+                if (s.empty() || x >= rightEdge - 4) return;
+                if (x > x0) {
+                    surface.text({x, box.y + 2}, " · ", dim);
+                    x += 3;
+                }
+                st.bg = bg.bg;
+                std::string t = inkcell::text::truncate(s, rightEdge - x - 2);
+                surface.text({x, box.y + 2}, t, st);
                 x += inkcell::text::display_width(t);
             };
-            auto sep = [&]() {
-                if (x + 3 >= x0 + maxWho) return;
-                surface.text({x, box.y + 1}, " · ", dim);
-                x += 3;
-            };
-            if (!f.agentName.empty()) paintChip(f.agentName, bright);
-            if (!f.provider.empty()) {
-                if (x > x0) sep();
-                paintChip(f.provider, dim);
-            }
-            if (!f.model.empty()) {
-                if (x > x0) sep();
-                paintChip(f.model, cyanSoft);
-            }
-            if (x == x0)
-                paintChip(f.themeName.empty() ? "cortex" : f.themeName, dim);
+            auto num = text;
+            num.bold = true;
 
-            if (showBar) {
-                auto on = pct >= 0.85f ? theme::footer_warn()
-                          : pct >= 0.55f ? theme::amber()
-                                         : theme::cyan_soft();
-                on.bg = bg.bg;
-                on.bold = pct >= 0.55f;
-                auto off = dim;
-                off.fg = theme::color(inkcell::Color::rgb(42, 44, 54),
-                                      inkcell::Color::rgb(24, 32, 48));
-                int bx = rightEdge - barW - 1;
-                if (bx > x0 + 12)
-                    drawUnitBar(surface, bx, box.y + 1, barW, pct, on, off);
-            } else {
-                paneDots(1);
-            }
-        }
+            chip("act " + std::to_string(std::max(0, f.actionCount)), amber);
+            chip("res " + std::to_string(std::max(0, f.resultCount)), green);
+            if (f.tokenBytes > 0) chip(footerFmtBytes(f.tokenBytes), cyan);
+            if (f.iterMax > 0)
+                chip("i " + std::to_string(f.iterCurrent) + "/" +
+                         std::to_string(f.iterMax),
+                     num);
+            if (f.historyMax > 0)
+                chip("h " + std::to_string(f.historyUsed) + "/" +
+                         std::to_string(f.historyMax),
+                     dim);
+            if (f.compactedRecently) chip("compacted", amber);
+            if (!f.model.empty())
+                chip(f.model, cyan);
+            else if (!f.provider.empty())
+                chip(f.provider, dim);
+            if (!f.manifestStem.empty()) chip(f.manifestStem, dim);
 
-        // ── Row 2 (live only): quiet hist · session ──────────────────
-        if (box.h >= 3) {
-            std::string left;
-            if (f.historyMax > 0) {
-                left = "hist ";
-                left += std::to_string(std::max(0, f.historyUsed));
-                left += "/";
-                left += std::to_string(f.historyMax);
-            }
-            if (f.compactEnabled && f.compactedRecently) joinChip(left, "compacted");
-            putLeft(2, left, dim);
-            std::string right = suffix8(f.sessionId);
-            if (!right.empty()) putRight(2, right, dim);
-            else paneDots(2);
+            std::string sid = suffix8(f.sessionId);
+            if (!sid.empty()) putRight(2, sid, dim);
         }
         return;
     }
 
+    // ── Session pane ─────────────────────────────────────────────────
     if (f.pane == ChatFooterPane::Session) {
-        putLeft(0, f.sessionId.empty() ? "no session" : f.sessionId, bright);
-        paneDots(0);
+        int x = x0;
+        paintPaneTabs(0, x);
+        surface.text({x, box.y},
+                     inkcell::text::truncate(
+                         f.sessionId.empty() ? "no session" : f.sessionId,
+                         rightEdge - x - 1),
+                     bright);
         if (box.h >= 2) {
-            std::string p = f.path.empty() ? "root" : f.path;
-            putLeft(1, p, text);
+            std::string p = f.path.empty() ? "(cwd)" : f.path;
+            surface.text({x0, box.y + 1}, inkcell::text::truncate(p, innerW), text);
         }
         if (box.h >= 3) {
             std::string m = "turns " + std::to_string(f.turnCount);
-            if (f.actionCount > 0) joinChip(m, "act " + std::to_string(f.actionCount));
-            if (f.resultCount > 0) joinChip(m, "res " + std::to_string(f.resultCount));
+            joinChip(m, "act " + std::to_string(f.actionCount));
+            joinChip(m, "res " + std::to_string(f.resultCount));
             if (f.tokenBytes > 0) joinChip(m, footerFmtBytes(f.tokenBytes));
-            putLeft(2, m, dim);
+            surface.text({x0, box.y + 2}, inkcell::text::truncate(m, innerW), dim);
         }
         return;
     }
 
-    // Engine
+    // ── Engine pane ──────────────────────────────────────────────────
     {
+        int x = x0;
+        paintPaneTabs(0, x);
         std::string eng = (f.provider.empty() ? "?" : f.provider) + "/" +
                           (f.model.empty() ? "?" : f.model);
-        putLeft(0, eng, bright);
-        paneDots(0);
+        surface.text({x, box.y}, inkcell::text::truncate(eng, rightEdge - x - 1), bright);
         if (box.h >= 2) {
-            putLeft(1, f.bodyFmt.empty() ? "fmt default" : f.bodyFmt, text);
+            surface.text({x0, box.y + 1},
+                         inkcell::text::truncate(
+                             f.bodyFmt.empty() ? "fmt default" : f.bodyFmt, innerW),
+                         text);
         }
         if (box.h >= 3) {
             std::string c = f.compactEnabled ? "compact on" : "compact off";
             joinChip(c, "win " + fmtTok(f.ctxMaxTokens));
-            if (f.iterMax > 0) {
-                joinChip(c, std::to_string(f.iterCurrent) + "/" + std::to_string(f.iterMax));
-            }
-            putLeft(2, c, dim);
+            if (f.iterMax > 0)
+                joinChip(c, std::to_string(f.iterCurrent) + "/" +
+                                std::to_string(f.iterMax));
+            joinChip(c, f.themeName.empty() ? "theme" : f.themeName);
+            surface.text({x0, box.y + 2}, inkcell::text::truncate(c, innerW), dim);
         }
     }
-
-    for (int i = 0; i < box.h && i < static_cast<int>(f.extraLines.size()); ++i)
-        putLeft(i, f.extraLines[static_cast<size_t>(i)], dim);
 }
 
 }  // namespace cortex::mk3::ui::chat

@@ -981,6 +981,97 @@ class AgentScene final : public BaseScene {
         for (const auto& r : model_->rootRows)
             if (r.kind == TimelineKind::User) ++foot.turnCount;
 
+        // ── Instrument feed (footer was empty without this) ───────────
+        foot.queuedSteer = vm.queuedSteer;
+        foot.focusLine.clear();
+        foot.openLine.clear();
+        foot.lastResultLine.clear();
+        foot.statusHint.clear();
+        foot.childPending = 0;
+        {
+            const auto& rows = model_->activeRows();
+            std::vector<std::string> openBits;
+            openBits.reserve(8);
+            for (const auto& r : rows) {
+                if (r.kind != TimelineKind::Action || r.actionId.empty()) continue;
+                if (!model_->pendingActionIds.count(r.actionId)) continue;
+                std::string bit =
+                    r.actionName.empty() ? r.actionType : r.actionName;
+                if (bit.empty()) bit = "tool";
+                bit += " #";
+                bit += r.actionId;
+                openBits.push_back(bit);
+                if (r.actionType == "agent" ||
+                    (model_->rootAgent && !r.actionName.empty() &&
+                     model_->rootAgent->hasSubAgent(r.actionName)))
+                    ++foot.childPending;
+            }
+            if (!openBits.empty()) {
+                foot.openLine = std::to_string(openBits.size()) + " open: ";
+                for (size_t i = 0; i < openBits.size() && i < 3; ++i) {
+                    if (i) foot.openLine += ", ";
+                    foot.openLine += openBits[i];
+                }
+                if (openBits.size() > 3) foot.openLine += "…";
+                foot.focusLine = openBits.back();
+            } else if (!foot.phaseDetail.empty() &&
+                       (foot.phaseKey == "act" || foot.phaseKey == "delegate")) {
+                foot.focusLine = foot.phaseDetail;
+            }
+            // Newest completed result / status for the truth row.
+            for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
+                if (it->kind == TimelineKind::Result) {
+                    std::string line = it->ok ? "✓ " : "✗ ";
+                    if (!it->actionName.empty())
+                        line += it->actionName;
+                    else
+                        line += "result";
+                    if (!it->actionId.empty()) {
+                        line += " #";
+                        line += it->actionId;
+                    }
+                    // First non-empty body line as payload teaser
+                    std::string body = it->body;
+                    auto nl = body.find('\n');
+                    if (nl != std::string::npos) body = body.substr(0, nl);
+                    // strip leading spaces
+                    size_t b0 = body.find_first_not_of(" \t");
+                    if (b0 != std::string::npos) body = body.substr(b0);
+                    if (!body.empty() && body != "tree" && body != "list") {
+                        if (body.size() > 48) body = body.substr(0, 46) + "…";
+                        line += "  ·  ";
+                        line += body;
+                    } else if (!it->title.empty()) {
+                        line += "  ·  ";
+                        line += it->title;
+                    }
+                    foot.lastResultLine = line;
+                    break;
+                }
+                if (it->kind == TimelineKind::Status) {
+                    std::string s = it->body.empty() ? it->title : it->body;
+                    auto nl = s.find('\n');
+                    if (nl != std::string::npos) s = s.substr(0, nl);
+                    if (s.size() > 96) s = s.substr(0, 94) + "…";
+                    foot.statusHint = s;
+                    // keep scanning for a Result if Status is older noise
+                    if (foot.lastResultLine.empty() &&
+                        (s.find('[') != std::string::npos || s.rfind("LIMIT", 0) == 0 ||
+                         s.find("FALLBACK") != std::string::npos ||
+                         s.find("TIMEOUT") != std::string::npos))
+                        break;
+                    continue;
+                }
+            }
+            // Prefer fresh status over stale result when live fallback/timeout.
+            if (!foot.statusHint.empty() &&
+                (foot.statusHint.find("FALLBACK") != std::string::npos ||
+                 foot.statusHint.find("TIMEOUT") != std::string::npos ||
+                 foot.statusHint.find("CANCEL") != std::string::npos ||
+                 foot.statusHint.find("403") != std::string::npos))
+                foot.lastResultLine.clear();  // truth row shows statusHint
+        }
+
         // Reserve: footer(N dynamic) + prompt + menu — NO header.
         // Footer can grow any frame (extraLines / live phase); recompute always.
         int menuH = chat::completionMenuHeight(vm, p.w);
