@@ -19,11 +19,8 @@ namespace cortex::mk3 {
 
 // Collapse stream stutter: same action id emitted twice in one generation
 // (hollow {} then full, or full then full). Keep the last body per id.
+// Manual scan — avoid regex word-boundary (easy to corrupt in sources).
 inline std::string collapseDuplicateActionTags(const std::string &s) {
-    static const std::regex actRe(
-        R"(<action[^>]*id="([^"]+)"[^>]*>[\s\S]*?</action>)",
-        std::regex::ECMAScript);
-    std::smatch m;
     struct Hit {
         size_t begin = 0;
         size_t end = 0;
@@ -31,15 +28,38 @@ inline std::string collapseDuplicateActionTags(const std::string &s) {
         std::string tag;
     };
     std::vector<Hit> hits;
-    std::string::const_iterator it = s.cbegin();
-    while (std::regex_search(it, s.cend(), m, actRe)) {
-        Hit h;
-        h.begin = static_cast<size_t>(m[0].first - s.cbegin());
-        h.end = static_cast<size_t>(m[0].second - s.cbegin());
-        h.id = m[1].str();
-        h.tag = m[0].str();
-        hits.push_back(std::move(h));
-        it = m[0].second;
+    const std::string open = "<action";
+    const std::string close = "</action>";
+    size_t pos = 0;
+    while (pos < s.size()) {
+        size_t a = s.find(open, pos);
+        if (a == std::string::npos)
+            break;
+        size_t gt = s.find('>', a);
+        if (gt == std::string::npos)
+            break;
+        size_t c = s.find(close, gt + 1);
+        if (c == std::string::npos)
+            break;
+        size_t endPos = c + close.size();
+        std::string head = s.substr(a, gt - a + 1);
+        std::string id;
+        size_t idk = head.find("id=\"");
+        if (idk != std::string::npos) {
+            size_t id0 = idk + 4;
+            size_t id1 = head.find('"', id0);
+            if (id1 != std::string::npos)
+                id = head.substr(id0, id1 - id0);
+        }
+        if (!id.empty()) {
+            Hit h;
+            h.begin = a;
+            h.end = endPos;
+            h.id = id;
+            h.tag = s.substr(a, endPos - a);
+            hits.push_back(std::move(h));
+        }
+        pos = endPos;
     }
     if (hits.size() < 2)
         return s;
