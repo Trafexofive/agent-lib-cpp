@@ -1265,8 +1265,8 @@ inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, cons
     int menuH = completionMenuHeight(m, frame.w);
     const int footerH = chatFooterReserve(footer, frame.h, promptH, menuH);
     const int footerY = frame.bottom() - footerH;
-    const int spacerH = footer ? 1 : 0;  // 1px gap between prompt and footer
-    const int promptY = footerY - promptH - spacerH;
+    // No dead spacer band — footer plate owns the join (top hairline).
+    const int promptY = footerY - promptH;
     int menuY = promptY - menuH;
     // Legacy thin status only when no footer model (tests / old callers).
     const int legacyStatusH = footer ? 0 : 1;
@@ -1280,18 +1280,6 @@ inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, cons
     if (!footer)
         drawStatusLine(surface, {frame.x, statusY, frame.w, 1}, m);
     drawPromptBox(surface, {frame.x, promptY, frame.w, promptH}, m);
-    if (footer && spacerH > 0) {
-        // 1px footer-bg band — subtle separation, not a hard rule.
-        // Left accent tick keeps the footer rail visual continuity.
-        auto sepBg = (m.inputFocused && !m.running) ? theme::footer_bg_focus()
-                                                    : theme::footer_bg();
-        surface.fill({frame.x, promptY + promptH, frame.w, spacerH}, " ", sepBg);
-        auto sepAccent = m.failed ? theme::red().with_bg(sepBg.bg)
-                        : m.running ? theme::footer_accent_live()
-                        : m.inputFocused ? theme::footer_accent_focus()
-                                         : theme::footer_accent_idle();
-        surface.put({frame.x, promptY + promptH}, "▌", sepAccent);
-    }
     if (footer && footerH > 0)
         drawChatFooter(surface, {frame.x, footerY, frame.w, footerH}, *footer);
 }

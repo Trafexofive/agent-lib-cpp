@@ -975,9 +975,8 @@ class AgentScene final : public BaseScene {
         int menuH = chat::completionMenuHeight(vm, p.w);
         const int promptH = chat::promptBoxHeight(vm, p.w);
         const int footerH = chat::chatFooterReserve(&foot, p.h, promptH, menuH);
-        const int spacerH = 1;  // 1px gap between prompt and footer
         model_->transcriptView.viewport_h =
-            std::max(1, p.h - footerH - promptH - menuH - spacerH);
+            std::max(1, p.h - footerH - promptH - menuH);
         // Keep scroll math in DISPLAY space (wrap total), not source-line count.
         if (model_->transcriptWrapCache.totalDisplayLines > 0)
             model_->transcriptView.content_h = model_->transcriptWrapCache.totalDisplayLines;
