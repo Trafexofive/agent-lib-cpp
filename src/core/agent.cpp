@@ -1596,11 +1596,12 @@ void Agent::publishCleanThought(ProtocolStreamState &st, const std::string &rawA
         st.thoughtEventIdx = static_cast<size_t>(-1);
         return;
     }
-    // Soft cap cleaned thought text published to the UI.
-    constexpr size_t kThoughtPubCap = 12 * 1024;
+    // Soft cap cleaned thought text published to the UI (not the LLM history).
+    // 12KB was clipping long reasoning mid-audit; keep more for operator scroll.
+    constexpr size_t kThoughtPubCap = 64 * 1024;
     if (cleaned.size() > kThoughtPubCap)
-        cleaned = cleaned.substr(0, kThoughtPubCap - 32) +
-                  "\n… [thought truncated for UI]";
+        cleaned = cleaned.substr(0, kThoughtPubCap - 48) +
+                  "\n…[thought UI safety; full stream in dump raw/iterations]";
     thoughtOutput_ = cleaned; // authoritative cleaned form for this run
     if (st.thoughtEventIdx != static_cast<size_t>(-1) &&
         st.thoughtEventIdx < protocolEvents_.size() &&

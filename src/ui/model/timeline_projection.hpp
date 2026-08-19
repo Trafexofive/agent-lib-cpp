@@ -319,14 +319,23 @@ inline bool ShellModel::projectOneRow(const TimelineRow& row, int ri, int& focus
             ++focusIdx;
             return true;
         }
-        // Thoughts are operator-secondary; hard-cap tighter so a runaway
-        // stream cannot paint 50×wide lines every frame and stall input.
-        // Actions/results denser under truncate (ctrl-o); full when expanded.
+        // Density: truncateBodies ON = short cards; OFF = near-full body
+        // (store safety still caps pathological dumps at 256KB).
         int bodyCap = kMaxBodyLines;
-        if (row.kind == TimelineKind::Thought) bodyCap = 12;
-        else if (truncateBodies && row.kind == TimelineKind::Action) bodyCap = 10;
-        else if (truncateBodies && row.kind == TimelineKind::Result) bodyCap = 14;
-        else if (truncateBodies && row.kind == TimelineKind::Status) bodyCap = 4;
+        if (!truncateBodies) {
+            bodyCap = 100000;  // effectively full for normal results
+        } else if (row.kind == TimelineKind::Thought) {
+            bodyCap = 16;
+        } else if (row.kind == TimelineKind::Action) {
+            bodyCap = 10;
+        } else if (row.kind == TimelineKind::Result) {
+            bodyCap = 14;
+        } else if (row.kind == TimelineKind::Status) {
+            bodyCap = 4;
+        } else if (row.kind == TimelineKind::Response ||
+                   row.kind == TimelineKind::Final) {
+            bodyCap = 40;
+        }
 
         // Render mode for action/result bodies (pretty / compact / raw).
         std::string renderedBody = row.body;

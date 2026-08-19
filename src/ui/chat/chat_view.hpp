@@ -461,7 +461,9 @@ inline std::vector<std::string> hardWrapUtf8(const std::string& value, int width
     // Hard ceiling: a 12 KiB tool-plan thought must not become 200+ wrap
     // rows (and then be re-wrapped every tick). Keep a short prefix + note.
     constexpr size_t kMaxWrapSrc = 2048;
-    constexpr int kMaxWrapRows = 48;
+    // Was 48 — long result paragraphs hit "truncated for chat" mid-wrap while
+    // the store still held full text. Projection line-caps own density.
+    constexpr int kMaxWrapRows = 400;
     std::string src = value;
     bool clipped = false;
     if (src.size() > kMaxWrapSrc) {

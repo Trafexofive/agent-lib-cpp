@@ -35,7 +35,9 @@ struct TimelineStore {
     std::vector<int> rootRowLineStart;
 
     static constexpr int kRootRowCap = 600;
-    static constexpr std::size_t kBodyCap = 8 * 1024;
+    // Was 8KB — permanently mangled scouts/results with "truncated for chat".
+    // Safety only; normal rows stay whole. Display density = truncateBodies.
+    static constexpr std::size_t kBodyCap = 256 * 1024;
 
     void clear() {
         rootRows.clear();
@@ -144,21 +146,21 @@ struct TimelineStore {
     }
 
     static void clampAndSanitize(TimelineRow& row) {
+        // Safety rail only — do NOT permanently mangle operator-visible bodies
+        // at 8KB. Display density is controlled by truncateBodies + projection
+        // line caps / wrap. Hard-cap pathological dumps so the store can't OOM.
         if (row.body.size() > kBodyCap) {
-            std::string head = row.body.substr(0, kBodyCap - 80);
-            std::string tail;
-            if (row.body.size() > kBodyCap + 256) {
-                tail = row.body.substr(row.body.size() - 256, 256);
-            } else {
-                tail = row.body.substr(kBodyCap - 80);
-            }
+            const size_t keepHead = kBodyCap - 512;
+            const size_t keepTail = 384;
             std::string body;
             body.reserve(kBodyCap);
-            body.append(head);
-            body.append("\n\n  … [truncated for chat — row was ");
+            body.append(row.body, 0, keepHead);
+            body.append("\n…[store safety ");
             body.append(std::to_string(row.body.size()));
-            body.append(" bytes] …\n\n");
-            body.append(tail);
+            body.append("B → ");
+            body.append(std::to_string(kBodyCap));
+            body.append("B; za/expand or export dump for full]…\n");
+            body.append(row.body, row.body.size() - keepTail, keepTail);
             row.body = std::move(body);
         }
         // Thoughts stream many times/sec — full sanitizeForDisplay is UTF-8
