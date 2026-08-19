@@ -1051,6 +1051,37 @@ void test_chat_subagent_result_shows_final_no_auto_enter() {
     check(model.atRoot(), "back at root after goBack");
 }
 
+
+void test_cancel_keeps_user_prompt() {
+    ShellModel model;
+    model.composer.value = "do the thing";
+    model.composer.cursor = static_cast<int>(model.composer.value.size());
+    check(model.submitComposer(), "submit arms turn");
+    bool hasYou = false;
+    for (const auto& r : model.rootRows)
+        if (r.kind == TimelineKind::User && r.body.find("do the thing") != std::string::npos)
+            hasYou = true;
+    check(hasYou, "YOU row present immediately after submit");
+
+    model.apply(UiEvent::status("agent running"));
+    hasYou = false;
+    for (const auto& r : model.rootRows)
+        if (r.kind == TimelineKind::User && r.body.find("do the thing") != std::string::npos)
+            hasYou = true;
+    check(hasYou, "YOU row survives agent-running status");
+
+    UiEvent cancelled;
+    cancelled.kind = UiEventKind::TurnDone;
+    cancelled.text = "[cancelled]";
+    model.apply(cancelled);
+    hasYou = false;
+    for (const auto& r : model.rootRows)
+        if (r.kind == TimelineKind::User && r.body.find("do the thing") != std::string::npos)
+            hasYou = true;
+    check(hasYou, "YOU row survives cancel TurnDone");
+    check(model.status == "cancelled" && !model.running, "cancel terminal state");
+}
+
 void test_sanitize_blocks_binary_and_cleans_response() {
     // Binary blob (ELF-ish NUL + high non-UTF8 density) must collapse.
     std::string bin;
@@ -1133,6 +1164,7 @@ int main() {
     test_chat_multi_turn_does_not_clobber();
     test_chat_empty_thoughts_not_rendered();
     test_chat_subagent_result_shows_final_no_auto_enter();
+    test_cancel_keeps_user_prompt();
     test_sanitize_blocks_binary_and_cleans_response();
     std::cout << "\n" << (failures == 0 ? "all passed" : "failures: " + std::to_string(failures)) << "\n";
     return failures == 0 ? 0 : 1;

@@ -1535,7 +1535,9 @@ class AgentScene final : public BaseScene {
             model_->status = "cancelling";
             g_running = false;
             // Optimistic UI settle — don't wait for TurnDone to drop sticky chips.
-            // Worker still unwinds; TurnDone will confirm running=false.
+            // Must clear running here: if TurnDone is slow/lost, the next Enter
+            // would take the steer path and never paint a YOU row.
+            model_->running = false;
             model_->pendingActionIds.clear();
             model_->pendingOps = 0;
             model_->actionCount = 0;

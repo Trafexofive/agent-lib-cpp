@@ -71,7 +71,10 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
                 // Always (re)arm the live timer if missing — fixes sticky 0ms
                 // when running was already true without a start stamp.
                 if (!turn.running || turn.turnStartMs <= 0) turn.turnStartMs = nowMs();
-                store.timelineState = PageState::Loading;
+                // Keep Populated when YOU/prior rows already exist — Loading
+                // made cancel-before-token looks like an empty chat.
+                store.timelineState = store.rootRows.empty() ? PageState::Loading
+                                                            : PageState::Populated;
             }
             turn.status = e.text;
             turn.running = isRunningStatus;
@@ -224,6 +227,49 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
             for (const auto& row : store.rootRows)
                 if (row.kind == TimelineKind::Response || row.kind == TimelineKind::Final)
                     hasResponse = true;
+            // Cancel with no YOU row (steer-misroute / lost submit): recover the
+            // operator prompt from agent history so interrupt never erases it.
+            if (cancelled && rootAgent) {
+                bool hasUser = false;
+                for (const auto& row : store.rootRows)
+                    if (row.kind == TimelineKind::User) {
+                        hasUser = true;
+                        break;
+                    }
+                if (!hasUser) {
+                    std::string prompt;
+                    const auto& hist = rootAgent->history();
+                    for (auto it = hist.rbegin(); it != hist.rend(); ++it) {
+                        if (it->rfind("User: ", 0) == 0) {
+                            prompt = it->substr(6);
+                            break;
+                        }
+                    }
+                    if (!prompt.empty()) {
+                        // Sit before trailing cancel chrome (status/final/response).
+                        size_t at = store.rootRows.size();
+                        while (at > 0) {
+                            auto k = store.rootRows[at - 1].kind;
+                            if (k == TimelineKind::Status || k == TimelineKind::Final ||
+                                k == TimelineKind::Response || k == TimelineKind::Thought ||
+                                k == TimelineKind::Stream)
+                                --at;
+                            else
+                                break;
+                        }
+                        TimelineRow u;
+                        u.kind = TimelineKind::User;
+                        u.title = "you";
+                        u.body = std::move(prompt);
+                        u.ok = true;
+                        store.rootRows.insert(store.rootRows.begin() +
+                                                  static_cast<std::ptrdiff_t>(at),
+                                              std::move(u));
+                        store.timelineState = PageState::Populated;
+                        store.markProjFull();
+                    }
+                }
+            }
             // Always close the chat with a visible terminal block — including
             // cancel — so a stop never looks like a silent hang. Prefer the
             // protocol RESPONSE when present; otherwise paint Final from TurnDone.

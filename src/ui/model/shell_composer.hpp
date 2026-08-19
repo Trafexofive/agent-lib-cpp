@@ -108,21 +108,16 @@ inline bool ShellModel::submitComposer() {
     // file when the worker saves at TurnDone or atexit flushes.
     if (activeSessionId.empty()) {
         // Unified mint (F6): same scheme as CLI / hub create / hub fork.
-        // Arm unconditionally; --no-session suppresses disk at flush time.
         activeSessionId = session::mintSessionId();
         session::activeSession().set(activeSessionId, session::activeSession().isEphemeral());
         dashboard.notice = std::string("armed ") + activeSessionId;
-        // Vet-fix: seed the typed prompt into the agent's history_
-        // and persist immediately. Otherwise the operator's typed
-        // prompt disappears when the TUI exits between submit and
-        // prompt() landing a record — and `recover session` shows
-        // an empty chat. seedUserPrompt is idempotent with prompt()'s
-        // own push (it dedupes by trailing-equality), so the worker's
-        // subsequent save still produces a clean record set.
-        if (rootAgent && !session::activeSession().isEphemeral()) {
-            rootAgent->seedUserPrompt(text);
-            rootAgent->saveSession(activeSessionId);
-        }
+    }
+    // Always seed history_ on submit — not only first arm. Cancel before
+    // prompt() used to leave agent history without the User: line when the
+    // session id already existed (second+ turns, or re-entry).
+    if (rootAgent && !session::activeSession().isEphemeral()) {
+        rootAgent->seedUserPrompt(text);
+        rootAgent->saveSession(activeSessionId);
     }
     pendingSubmit = text;
     pushPromptHistory(text);
