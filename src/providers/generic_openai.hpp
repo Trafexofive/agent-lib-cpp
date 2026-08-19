@@ -271,6 +271,7 @@ class GenericOpenAIClient : public ILlmProvider {
         // "spinner spins forever" hang). Free models legitimately pause seconds
         // between tokens, so the cutoff is generous and manifest-configurable.
         std::chrono::steady_clock::time_point lastChunk{std::chrono::steady_clock::now()};
+        std::chrono::steady_clock::time_point lastHeartbeat{std::chrono::steady_clock::now()};
         // stallTimeoutSec: 0 = no progress-based cutoff (LOW_SPEED governs);
         // >0 = abort if zero bytes arrive for this many seconds.
         int stallTimeoutSec = 0;

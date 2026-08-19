@@ -124,36 +124,12 @@ struct DashboardState {
 
     bool hubEntering() const { return hubEntryT() < 1.f; }
 
-    // Settings option focus:
-    // 0 theme · 1 field · 2 shader · 3 thoughts · 4 truncate
-    // 5 input fmt · 6 output fmt · 7 raw · 8 chat field
-    // 9 zen · 10 nav pill · 11 pill hide · 12 cwd
-    // 13 remember cwd · 14 keep live · 15 session scope · 16 dev mode
-    int settingsFocus = 0;
-    // 0 DISPLAY · 1 CHAT · 2 CHROME · 3 SESSION · 4 DEV
-    int settingsCat = 0;
-    // 0..16 inclusive → 17 options (THEME … DEV MODE).
-    static constexpr int settingsOptionCount = 17;
-    static constexpr int settingsCatCount = 5;
-    static int settingsCatFor(int focus) {
-        if (focus <= 2) return 0;
-        if (focus <= 8) return 1;
-        if (focus <= 11) return 2;
-        if (focus <= 15) return 3;
-        return 4;
-    }
-    static int settingsCatFirst(int cat) {
-        static const int k[] = {0, 3, 9, 12, 16};
-        if (cat < 0) cat = 0;
-        if (cat > 4) cat = 4;
-        return k[cat];
-    }
-    static int settingsCatLast(int cat) {
-        static const int k[] = {2, 8, 11, 15, 16};
-        if (cat < 0) cat = 0;
-        if (cat > 4) cat = 4;
-        return k[cat];
-    }
+    // Settings focus = row index into kSettingsRows (headers not focusable).
+    // See settings_table.hpp. Scroll offset for the cabinet list.
+    int settingsFocus = 1;  // first item under LOOK
+    int settingsScroll = 0;
+    // Legacy name kept for a few call sites — equals kSettingsRowN.
+    static constexpr int settingsOptionCount = 32;
 
     // Inline edit buffer for CWD setting. Entered via `e` on the CWD row.
     // Captures next chars; Backspace deletes; Enter commits (~ expanded);

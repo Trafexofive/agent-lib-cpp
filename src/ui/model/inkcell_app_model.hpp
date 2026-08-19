@@ -96,6 +96,8 @@ struct ShellModel : TimelineStore {
     // surface stays crisp unless the operator opts in. Hub field on/off is
     // shared via gfx:: and this is the chat-side gate.
     bool chatFieldEnabled = false;
+    // When true, streaming keeps selection/scroll on the live edge.
+    bool autoFollowLive = true;
     // Hub chrome prefs (Settings · CHROME).
     // zenMode: pill auto-hides after navPillHideMs of idle nav; reappears on g/s/a/?/dock.
     bool zenMode = false;
@@ -339,6 +341,7 @@ struct ShellModel : TimelineStore {
     // sets it; free-scroll (Ctrl-J/K) clears it even if selection stays on last.
     // Do NOT re-lock from selectionOnLiveEdge alone — that fought scroll unlock.
     void followLiveEdgeIfLocked() {
+        if (!autoFollowLive) return;
         if (!running) return;
         if (!transcriptView.stick_bottom) return;
         int last = std::max(0, countFocusable(activeRows(), showThoughts) - 1);

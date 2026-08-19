@@ -884,6 +884,12 @@ class AgentScene final : public BaseScene {
                         }
                     }
                 }
+                // No open tools → not "list foo"; waiting on the model.
+                // Stale last-Action verb made multi-minute LLM waits look like a hung tool.
+                if (foot.phaseKey != "delegate" && model_->pendingOps <= 0) {
+                    foot.phaseKey = "wait";
+                    foot.phaseDetail.clear();
+                }
                 int scanned = 0;
                 for (auto it = phaseRows.rbegin();
                      it != phaseRows.rend() && scanned < 12 &&
@@ -897,7 +903,12 @@ class AgentScene final : public BaseScene {
                         foot.phaseKey = "reply";
                         break;
                     }
+                    // Only paint tool verb if that action is still pending.
                     if (it->kind == TimelineKind::Action) {
+                        if (!it->actionId.empty() &&
+                            !model_->pendingActionIds.count(it->actionId)) {
+                            continue;  // completed tool — keep scanning / stay on wait
+                        }
                         const std::string& n = it->actionName;
                         if (it->actionType == "agent" ||
                             (model_->rootAgent && !n.empty() &&

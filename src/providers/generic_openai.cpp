@@ -369,11 +369,14 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
             // turns with "CURL error: Timeout was reached" while the operator
             // touched nothing. Ctrl-C still aborts via abortCheckCb/g_running.
             //
-            // No total wall-clock cap (0). Low-speed only trips on a truly
-            // dead pipe: 90s with under 1 byte/s.
+            // No total wall-clock cap (0). Low-speed trips on a dead pipe.
+            // Align with streamStallTimeoutSec when set (default 45); else 90.
             curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
             curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 0L);
-            curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 90L);
+            long lowSpeed =
+                ctx.stallTimeoutSec > 0 ? static_cast<long>(ctx.stallTimeoutSec) : 90L;
+            if (lowSpeed < 15L) lowSpeed = 15L;
+            curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, lowSpeed);
             curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
         } else {
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCb);
@@ -722,11 +725,20 @@ int GenericOpenAIClient::abortCheckCb(void* clientp, curl_off_t, curl_off_t, cur
         return 1;  // abort
     if (clientp) {
         auto* ctx = static_cast<StreamCtx*>(clientp);
+        auto now = std::chrono::steady_clock::now();
         if (ctx->stallTimeoutSec > 0 &&
-            std::chrono::steady_clock::now() - ctx->lastChunk >
-                std::chrono::seconds(ctx->stallTimeoutSec)) {
+            now - ctx->lastChunk > std::chrono::seconds(ctx->stallTimeoutSec)) {
             ctx->finishReason = "stream_stall";
             return 1;  // abort — stream silent past cutoff
+        }
+        // Heartbeat while waiting on first/next token so the TUI can keep
+        // the spinner honest (phase "waiting on model") without fake tools.
+        if (ctx->cb && now - ctx->lastHeartbeat > std::chrono::seconds(2)) {
+            ctx->lastHeartbeat = now;
+            try {
+                ctx->cb("", false);
+            } catch (...) {
+            }
         }
     }
     return 0;

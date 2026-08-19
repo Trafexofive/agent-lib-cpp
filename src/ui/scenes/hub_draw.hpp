@@ -2,6 +2,8 @@
 // Hub dashboard draw panels — out-of-line MainScene methods (hub peel).
 // Included at the bottom of main_scene.hpp after MainScene is complete.
 
+#include "src/ui/model/settings_table.hpp"
+#include "src/ui/chat/chat_footer.hpp"
 #include <algorithm>
 #include <string>
 #include <unistd.h>
@@ -1026,22 +1028,33 @@ inline void MainScene::drawWorkflows(inkcell::Surface& surface, inkcell::Rect fr
         drawWorkflowStage(surface, stage, *wfs[(size_t)sel], gfx::nowSeconds());
 }
 inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect frame) const {
-    // Title plate
+    using model::kSettingsRows;
+    using model::kSettingsRowN;
+    using model::SettingsRowKind;
+    using model::SettingsOpt;
+    using model::settingsOptAt;
+    using model::settingsIsCarousel;
+    using model::settingsBindHint;
+    using model::settingsRowFocusable;
+
+    auto& dash = model_->dashboard;
+    if (!settingsRowFocusable(dash.settingsFocus))
+        dash.settingsFocus = model::settingsFirstFocus();
+
+    // Title
     surface.text({frame.x, frame.y}, "SETTINGS", theme::bright());
-    surface.text({frame.x + 10, frame.y}, "OPTIONS",
-                 theme::italic_dim());
+    surface.text({frame.x + 10, frame.y}, "cabinet", theme::italic_dim());
 
     int y = frame.y + 2;
-    // Live preview strip — what the field actually is right now
-    int previewH = std::min(5, std::max(3, frame.h / 6));
-    if (y + previewH + 8 < frame.bottom()) {
+    // Field preview strip (compact)
+    int previewH = std::min(4, std::max(2, frame.h / 8));
+    if (y + previewH + 6 < frame.bottom()) {
         inkcell::Rect prev{frame.x, y, frame.w, previewH};
         if (gfx::fieldEnabled()) {
             gfx::drawFieldBg(surface, prev, gfx::themeVariantIndex(), gfx::nowSeconds());
         } else {
             surface.fill(prev, " ", theme::base_bg());
         }
-        // Overlay label on preview
         std::string tag = gfx::fieldEnabled()
                               ? std::string("FIELD  ·  ") + gfx::activeFieldName()
                               : std::string("FIELD  ·  OFF");
@@ -1052,137 +1065,103 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
         y = prev.bottom() + 1;
     }
 
-    const int cat = model::DashboardState::settingsCatFor(dashFocus());
-    model_->dashboard.settingsCat = cat;
-    static const char* kCats[] = {"DISPLAY", "CHAT", "CHROME", "SESSION", "DEV"};
-    // Category rail — one row of pills. Active is accent.
-    {
-        int x = frame.x;
-        for (int i = 0; i < 5 && x < frame.right() - 4; ++i) {
-            bool on = (i == cat);
-            auto st = on ? theme::cyan() : theme::muted();
-            if (on) st.bold = true;
-            std::string lab = on ? std::string("[") + kCats[i] + "]" : kCats[i];
-            surface.text({x, y}, lab, st);
-            x += inkcell::text::display_width(lab) + 2;
+    const int listTop = y;
+    const int listBot = frame.bottom() - 1;
+    const int vis = std::max(1, listBot - listTop);
+
+    // Scroll so focus is visible
+    int focus = dash.settingsFocus;
+    if (focus >= dash.settingsScroll + vis) dash.settingsScroll = focus - vis + 1;
+    if (focus < dash.settingsScroll) dash.settingsScroll = focus;
+    if (dash.settingsScroll < 0) dash.settingsScroll = 0;
+    if (dash.settingsScroll > std::max(0, kSettingsRowN - vis))
+        dash.settingsScroll = std::max(0, kSettingsRowN - vis);
+
+    auto valueFor = [&](SettingsOpt o) -> std::string {
+        switch (o) {
+            case SettingsOpt::Theme: return upperCopy(theme::name());
+            case SettingsOpt::Field: return gfx::fieldEnabled() ? "ON" : "OFF";
+            case SettingsOpt::Shader:
+                return gfx::fieldEnabled() ? upperCopy(gfx::activeFieldName()) : std::string("—");
+            case SettingsOpt::Thoughts: return model_->showThoughts ? "ON" : "OFF";
+            case SettingsOpt::Truncate: return model_->truncateBodies ? "ON" : "OFF";
+            case SettingsOpt::InputFmt: return upperCopy(bodyRenderModeName(model_->actionBodyMode));
+            case SettingsOpt::OutputFmt: return upperCopy(bodyRenderModeName(model_->resultBodyMode));
+            case SettingsOpt::Raw: return model_->showRaw ? "ON" : "OFF";
+            case SettingsOpt::ChatField:
+                return model_->chatFieldEnabled
+                           ? (gfx::fieldEnabled() ? std::string("ON · ") + gfx::activeFieldName()
+                                                  : std::string("ON · hub off"))
+                           : "OFF";
+            case SettingsOpt::FooterPane:
+                return upperCopy(chat::footerPaneName(
+                    static_cast<chat::ChatFooterPane>(model_->chatFooterPane)));
+            case SettingsOpt::AutoFollow: return model_->autoFollowLive ? "ON" : "OFF";
+            case SettingsOpt::Zen: return model_->zenMode ? "ON" : "OFF";
+            case SettingsOpt::NavPill: return model_->navPillEnabled ? "ON" : "OFF";
+            case SettingsOpt::PillHide:
+                return model_->navPillHideMs <= 0
+                           ? "NEVER"
+                           : (std::to_string(model_->navPillHideMs / 1000) + "S");
+            case SettingsOpt::Cwd: {
+                if (model_->dashboard.cwdEditMode)
+                    return model_->dashboard.cwdEditBuffer + "█";
+                if (!model_->sessionCwd.empty()) return model_->sessionCwd;
+                char buf[1024] = {0};
+                if (getcwd(buf, sizeof(buf) - 1)) return buf;
+                return "—";
+            }
+            case SettingsOpt::RememberCwd: return model_->rememberLastCwd ? "ON" : "OFF";
+            case SettingsOpt::KeepLive: return model_->keepLiveOnCwdChange ? "ON" : "OFF";
+            case SettingsOpt::SessionScope: return model_->globalSessions ? "GLOBAL" : "PROJECT";
+            case SettingsOpt::DevMode: return model_->uiDevMode ? "ON" : "OFF";
+            default: return "?";
         }
-        ++y;
-        if (y < frame.bottom()) ++y;
-    }
-
-    // Section labels (legacy; rail is the category)
-    auto section = [&](const char* /*name*/) {};
-
-    // Game-style option row:  [▸] LABEL ……… ◂ VALUE ▸   bind
-    auto option = [&](int idx, const char* label, const std::string& value, const char* bind,
-                      bool carousel) {
-        if (y >= frame.bottom()) return;
-        bool foc = (dashFocus() == idx);
-        auto rowBg = foc ? theme::panel_3() : theme::panel_2();
-        surface.fill({frame.x, y, frame.w, 1}, " ", rowBg);
-        if (foc)
-            surface.text({frame.x, y}, "▌",
-                         theme::cyan().with_bg(rowBg.bg));
-
-        auto labSt = (foc ? theme::bright() : theme::muted()).with_bg(rowBg.bg);
-        surface.text({frame.x + 2, y}, inkcell::text::truncate(label, 16), labSt);
-
-        // Value — centered carousel or toggle glyph
-        std::string val = value;
-        if (carousel) val = "◂  " + value + "  ▸";
-        int vw = inkcell::text::display_width(val);
-        int vx = frame.x + std::max(20, (frame.w - vw) / 2);
-        auto valSt = (foc ? theme::bright() : theme::text()).with_bg(rowBg.bg);
-        if (foc) valSt.bold = true;
-        surface.text({vx, y}, inkcell::text::truncate(val, frame.w - 24), valSt);
-
-        // Bind chip right
-        auto bindSt = theme::italic_accent().with_bg(rowBg.bg);
-        int bw = inkcell::text::display_width(bind);
-        surface.text({frame.right() - bw - 1, y}, bind, bindSt);
-        ++y;
     };
 
-    if (cat == 0) {
-    section("DISPLAY");
-    option(0, "THEME", upperCopy(theme::name()), "T / ←→", true);
-    option(1, "FIELD", gfx::fieldEnabled() ? "ON" : "OFF", "B", false);
-    option(2, "SHADER",
-           gfx::fieldEnabled() ? upperCopy(gfx::activeFieldName()) : std::string("—"),
-           "S / ←→", true);
-    }
-
-    if (cat == 1) {
-    section("CHAT");
-    option(3, "THOUGHTS", model_->showThoughts ? "ON" : "OFF", "^T", false);
-    option(4, "TRUNCATE", model_->truncateBodies ? "ON" : "OFF", "^O", false);
-    option(5, "INPUT FMT",
-           upperCopy(bodyRenderModeName(model_->actionBodyMode)), "←→", true);
-    option(6, "OUTPUT FMT",
-           upperCopy(bodyRenderModeName(model_->resultBodyMode)), "←→", true);
-    option(7, "RAW STREAM", model_->showRaw ? "ON" : "OFF", "^R", false);
-    option(8, "CHAT FIELD",
-           model_->chatFieldEnabled
-               ? (gfx::fieldEnabled() ? std::string("ON  · ")
-                                          + gfx::activeFieldName()
-                                        : std::string("ON  ·  hub off"))
-               : "OFF",
-           "B / S", true);
-    }
-
-    if (cat == 2) {
-    section("CHROME");
-    option(9, "ZEN MODE", model_->zenMode ? "ON" : "OFF", "Z", false);
-    option(10, "NAV PILL", model_->navPillEnabled ? "ON" : "OFF", "", false);
-    {
-        std::string hide =
-            model_->navPillHideMs <= 0
-                ? "NEVER"
-                : (std::to_string(model_->navPillHideMs / 1000) + "S");
-        option(11, "PILL HIDE", hide, "←→", true);
-    }
-    }
-
-    if (cat == 3) {
-    section("SESSION");
-    // CWD row — show live value or current process CWD when unset.
-    // Inline edit mode replaces value with the buffer + cursor.
-    {
-        const auto& cwdDash = model_->dashboard;
-        std::string val;
-        if (cwdDash.cwdEditMode) {
-            val = cwdDash.cwdEditBuffer + "█";
-        } else if (!model_->sessionCwd.empty()) {
-            val = model_->sessionCwd;
-        } else {
-            // resolve live process CWD for honest display
-            char buf[1024] = {0};
-            if (getcwd(buf, sizeof(buf) - 1)) val = buf;
-            if (val.empty()) val = "—";
+    for (int row = 0; row < vis; ++row) {
+        int i = dash.settingsScroll + row;
+        if (i >= kSettingsRowN) break;
+        const auto& sr = kSettingsRows[i];
+        inkcell::Rect line{frame.x, listTop + row, frame.w, 1};
+        if (sr.kind == SettingsRowKind::Head) {
+            auto st = theme::violet();
+            st.bold = true;
+            surface.fill(line, " ", theme::base_bg());
+            surface.text({line.x + 1, line.y}, sr.head ? sr.head : "", st);
+            continue;
         }
-        option(12, "CWD", val, cwdDash.cwdEditMode ? "⏎ commit" : "e edit · ←→", false);
-    }
-    option(13, "REMEMBER CWD", model_->rememberLastCwd ? "ON" : "OFF", "", false);
-    option(14, "KEEP LIVE", model_->keepLiveOnCwdChange ? "ON" : "OFF", "", false);
-    option(15, "SESSION SCOPE", model_->globalSessions ? "GLOBAL" : "PROJECT", "←→", false);
+        bool on = (i == focus);
+        auto bg = on ? theme::panel_3() : theme::panel_2();
+        surface.fill(line, " ", bg);
+        if (on)
+            surface.put({line.x, line.y}, "▌", theme::cyan().with_bg(bg.bg));
+        auto labSt = (on ? theme::bright() : theme::muted()).with_bg(bg.bg);
+        if (on) labSt.bold = true;
+        surface.text({line.x + 2, line.y},
+                     inkcell::text::truncate(sr.label ? sr.label : "?", 18), labSt);
+        std::string val = valueFor(sr.opt);
+        if (settingsIsCarousel(sr.opt) && on) val = "◂ " + val + " ▸";
+        int vw = inkcell::text::display_width(val);
+        auto valSt = (on ? theme::bright() : theme::text()).with_bg(bg.bg);
+        if (on) valSt.bold = true;
+        surface.text({std::max(line.x + 22, line.right() - vw - 10), line.y},
+                     inkcell::text::truncate(val, line.w - 24), valSt);
+        auto bindSt = theme::italic_dim().with_bg(bg.bg);
+        const char* bh = settingsBindHint(sr.opt);
+        int bw = inkcell::text::display_width(bh);
+        surface.text({line.right() - bw - 1, line.y}, bh, bindSt);
     }
 
-    if (cat == 4) {
-    section("DEV");
-    option(16, "DEV MODE", model_->uiDevMode ? "ON" : "OFF", "←→", false);
-    }
-
-    // Single footer — path only, no key encyclopedia
-    if (y + 1 < frame.bottom()) {
-        y = frame.bottom() - 1;
-        surface.text({frame.x, y},
+    if (listBot < frame.bottom()) {
+        surface.text({frame.x, listBot},
                      inkcell::text::truncate(
-                         std::string("Tab/[ ] category  ·  j/k row  ·  h/l cycle  ·  ") +
-                             uiPrefsPath(),
+                         std::string("j/k move  ·  h/l or enter cycle  ·  ") + uiPrefsPath(),
                          frame.w),
                      theme::italic_dim());
     }
 }
+
 
 inline void MainScene::drawWorkflowStage(inkcell::Surface& surface, inkcell::Rect frame,
                        const catalog::ManifestEntry& m, float tsec) const {

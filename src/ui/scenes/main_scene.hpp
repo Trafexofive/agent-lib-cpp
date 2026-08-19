@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "base_scene.hpp"
+#include "src/ui/model/settings_table.hpp"
 #include "src/core/agent.hpp"
 #include "src/session/controller.hpp"
 #include "src/session/manager.hpp"
@@ -378,68 +379,79 @@ class MainScene final : public BaseScene {
 
     void nudgeSetting(int dir) {
         auto& dash = model_->dashboard;
-        switch (dash.settingsFocus) {
-            case 0:  // theme
+        using model::SettingsOpt;
+        using model::settingsOptAt;
+        if (!model::settingsRowFocusable(dash.settingsFocus))
+            dash.settingsFocus = model::settingsFirstFocus();
+        const SettingsOpt opt = settingsOptAt(dash.settingsFocus);
+        switch (opt) {
+            case SettingsOpt::Theme:
                 theme::toggle();
                 break;
-            case 1:  // field on/off
+            case SettingsOpt::Field:
                 gfx::toggleFieldEnabled();
                 break;
-            case 2:  // shader carousel
+            case SettingsOpt::Shader:
                 if (!gfx::fieldEnabled()) gfx::setFieldEnabled(true);
                 gfx::cycleField(dir >= 0 ? 1 : -1);
                 break;
-            case 3:  // thoughts
+            case SettingsOpt::Thoughts:
                 model_->showThoughts = !model_->showThoughts;
                 model_->rebuildViews();
                 break;
-            case 4:  // truncate
+            case SettingsOpt::Truncate:
                 model_->truncateBodies = !model_->truncateBodies;
                 model_->rebuildViews();
                 break;
-            case 5:  // INPUT FMT — action body json|yaml|raw
+            case SettingsOpt::InputFmt:
                 model_->cycleActionBodyMode(dir);
                 dash.flashNotice(std::string("input · ") +
                                  bodyRenderModeName(model_->actionBodyMode));
                 break;
-            case 6:  // OUTPUT FMT — result body json|yaml|raw
+            case SettingsOpt::OutputFmt:
                 model_->cycleResultBodyMode(dir);
                 dash.flashNotice(std::string("output · ") +
                                  bodyRenderModeName(model_->resultBodyMode));
                 break;
-            case 7:  // raw
+            case SettingsOpt::Raw:
                 model_->showRaw = !model_->showRaw;
                 model_->rebuildViews();
                 break;
-            case 8:  // chat field bg
-                // Vet-fix: independent from hub field on/off; chat-side underlay
-                // persists via ui_prefs alongside theme + chat toggles.
+            case SettingsOpt::ChatField:
                 model_->chatFieldEnabled = !model_->chatFieldEnabled;
                 dash.flashNotice(model_->chatFieldEnabled
                                      ? std::string("chat · field bg on — ") +
                                            gfx::activeFieldName()
                                      : std::string("chat · field bg off"));
                 break;
-            case 9:  // zen mode
+            case SettingsOpt::FooterPane: {
+                model_->chatFooterPane = chat::nextFooterPane(model_->chatFooterPane, dir);
+                dash.flashNotice(std::string("footer · ") +
+                                 chat::footerPaneName(model_->chatFooterPane));
+                break;
+            }
+            case SettingsOpt::AutoFollow:
+                model_->autoFollowLive = !model_->autoFollowLive;
+                dash.flashNotice(model_->autoFollowLive
+                                     ? "live follow · on"
+                                     : "live follow · off");
+                break;
+            case SettingsOpt::Zen:
                 model_->zenMode = !model_->zenMode;
-                dash.bumpNavActivity();  // show pill when enabling zen
+                dash.bumpNavActivity();
                 dash.flashNotice(model_->zenMode ? "zen · pill auto-hides"
                                                  : "zen off · pill always up");
                 break;
-            case 10:  // nav pill master
+            case SettingsOpt::NavPill:
                 model_->navPillEnabled = !model_->navPillEnabled;
                 if (model_->navPillEnabled) dash.bumpNavActivity();
                 dash.flashNotice(model_->navPillEnabled ? "nav pill on" : "nav pill off");
                 break;
-            case 11: {  // pill hide delay carousel
-                // 2s · 3s · 5s · 8s · never(0)
+            case SettingsOpt::PillHide: {
                 static const int kDelays[] = {2000, 3000, 5000, 8000, 0};
-                int idx = 1;  // default 3s
+                int idx = 1;
                 for (int i = 0; i < 5; ++i)
-                    if (kDelays[i] == model_->navPillHideMs) {
-                        idx = i;
-                        break;
-                    }
+                    if (kDelays[i] == model_->navPillHideMs) { idx = i; break; }
                 idx = (idx + (dir >= 0 ? 1 : 4)) % 5;
                 model_->navPillHideMs = kDelays[idx];
                 dash.bumpNavActivity();
@@ -449,7 +461,7 @@ class MainScene final : public BaseScene {
                                         std::to_string(model_->navPillHideMs / 1000) + "s"));
                 break;
             }
-            case 12: {  // session CWD carousel: empty -> HOME -> launch -> empty
+            case SettingsOpt::Cwd: {
                 const char* home = std::getenv("HOME");
                 std::string homeStr = home ? home : "";
                 std::string launch = model_->launchCwd;
@@ -466,9 +478,6 @@ class MainScene final : public BaseScene {
                 }
                 std::string resolved = applySessionCwd();
                 if (!model_->sessionCwd.empty()) {
-                    // If the chdir target equals where we already were
-                    // (e.g. launching from HOME, cycling to HOME is a no-op),
-                    // tell the operator to use e instead of guessing.
                     if (!resolved.empty() && resolved == before) {
                         dash.flashNotice("cwd · already at " + resolved + " · e to edit");
                     } else {
@@ -481,21 +490,19 @@ class MainScene final : public BaseScene {
                 }
                 break;
             }
-            case 13: {  // remember last CWD across launches
+            case SettingsOpt::RememberCwd:
                 model_->rememberLastCwd = !model_->rememberLastCwd;
                 dash.flashNotice(model_->rememberLastCwd
                                      ? "cwd · remember last (sticky across launches)"
                                      : "cwd · per-session (launch dir wins)");
                 break;
-            }
-            case 14: {  // keep live session when CWD changes
+            case SettingsOpt::KeepLive:
                 model_->keepLiveOnCwdChange = !model_->keepLiveOnCwdChange;
                 dash.flashNotice(model_->keepLiveOnCwdChange
                                      ? "cwd · live kept across CWD change"
                                      : "cwd · live killed on CWD change");
                 break;
-            }
-            case 15: {  // session list scope: per-project (default) vs global
+            case SettingsOpt::SessionScope:
                 model_->globalSessions = !model_->globalSessions;
                 dash.flashNotice(model_->globalSessions
                                      ? "sessions · global (all projects)"
@@ -503,14 +510,12 @@ class MainScene final : public BaseScene {
                 model_->dashboard.refreshSessions(session::SessionManager(),
                                                   model_->globalSessions);
                 break;
-            }
-            case 16: {  // operator dev mode — debug slash cmds
+            case SettingsOpt::DevMode:
                 model_->uiDevMode = !model_->uiDevMode;
                 dash.flashNotice(model_->uiDevMode
                                      ? "dev mode on · /export-chat /export-dump /dump-prompt"
                                      : "dev mode off · debug cmds hidden");
                 break;
-            }
             default:
                 break;
         }

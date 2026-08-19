@@ -255,7 +255,10 @@ struct AgentConfig {
     // a stalled stream (let curl LOW_SPEED alone govern). >0 = abort a
     // streaming generation that sends zero bytes for this many seconds
     // (true stall — not slow-but-moving models). Never hardcoded in the codec.
-    int streamStallTimeoutSec = 0;  // 0 = inherit provider/LOW_SPEED default
+    // Abort a stream that delivers zero bytes for this many seconds (TTFT hang).
+    // 0 = only libcurl LOW_SPEED (90s). Default 45s so free-tier stalls surface
+    // instead of a multi-minute "list examples" spinner lie.
+    int streamStallTimeoutSec = 45;
     // Dumb tail window on history lines fed into the prompt. Compaction does
     // not replace this — it is the hard ceiling / seatbelt.
     int historyCap = 40;

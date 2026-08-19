@@ -40,6 +40,8 @@ struct UiPrefState {
     // Chat-side field underlay. Inherits shared gfx::activeFieldIndex; this
     // is the on/off gate for the chat surface specifically.
     bool chatFieldEnabled = false;
+    // Stick transcript to live edge while the agent streams.
+    bool autoFollowLive = true;
     // Hub chrome: zen hides the floating nav pill until nav keys are used.
     bool zenMode = false;
     // Master switch — off removes the pill entirely (stage fills the bottom).
@@ -265,6 +267,7 @@ inline void loadUiPrefs() {
         shad.chatFooterPane = jsonGetInt(body, "chat_footer_pane", 0);
     }
     shad.chatFieldEnabled = jsonGetBool(body, "chat_field_enabled", false);
+    shad.autoFollowLive = jsonGetBool(body, "auto_follow_live", true);
     shad.zenMode = jsonGetBool(body, "zen_mode", false);
     shad.navPillEnabled = jsonGetBool(body, "nav_pill_enabled", true);
     shad.navPillHideMs = jsonGetInt(body, "nav_pill_hide_ms", 3000);
@@ -330,6 +333,7 @@ inline void applyUiPrefsToModel(Model& model) {
         model.chatFooterPane = static_cast<chat::ChatFooterPane>(p);
     }
     model.chatFieldEnabled = s.chatFieldEnabled;
+    model.autoFollowLive = s.autoFollowLive;
     model.zenMode = s.zenMode;
     model.navPillEnabled = s.navPillEnabled;
     model.navPillHideMs = s.navPillHideMs;
@@ -350,6 +354,7 @@ inline void captureUiPrefsFromModel(const Model& model) {
     s.outputBodyFmt = bodyRenderModeName(model.resultBodyMode);
     s.chatFooterPane = static_cast<int>(model.chatFooterPane);
     s.chatFieldEnabled = model.chatFieldEnabled;
+    s.autoFollowLive = model.autoFollowLive;
     s.zenMode = model.zenMode;
     s.navPillEnabled = model.navPillEnabled;
     s.navPillHideMs = model.navPillHideMs;
@@ -386,6 +391,7 @@ inline std::string serializeUiPrefs(const std::string& themeName,
         << "  \"output_body_fmt\": \"" << s.outputBodyFmt << "\",\n"
         << "  \"chat_footer_pane\": " << s.chatFooterPane << ",\n"
         << "  \"chat_field_enabled\": " << (s.chatFieldEnabled ? "true" : "false") << ",\n"
+        << "  \"auto_follow_live\": " << (s.autoFollowLive ? "true" : "false") << ",\n"
         << "  \"zen_mode\": " << (s.zenMode ? "true" : "false") << ",\n"
         << "  \"nav_pill_enabled\": " << (s.navPillEnabled ? "true" : "false") << ",\n"
         << "  \"nav_pill_hide_ms\": " << s.navPillHideMs << ",\n"

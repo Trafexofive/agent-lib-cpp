@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include "inkcell/key.hpp"
+#include "src/ui/model/settings_table.hpp"
 
 namespace cortex::mk3::ui::scenes {
 
@@ -235,32 +236,15 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
         }
 
         if (dash.section == model::DashboardSection::Settings) {
-            dash.settingsCat = model::DashboardState::settingsCatFor(dash.settingsFocus);
-            if (event.code == KeyCode::Tab ||
-                (event.code == KeyCode::Character && event.ch == ']' && !event.ctrl())) {
-                dash.settingsCat =
-                    (dash.settingsCat + 1) % model::DashboardState::settingsCatCount;
-                dash.settingsFocus = model::DashboardState::settingsCatFirst(dash.settingsCat);
-                return true;
-            }
-            if (event.code == KeyCode::BackTab ||
-                (event.code == KeyCode::Character && event.ch == '[' && !event.ctrl())) {
-                dash.settingsCat =
-                    (dash.settingsCat + model::DashboardState::settingsCatCount - 1) %
-                    model::DashboardState::settingsCatCount;
-                dash.settingsFocus = model::DashboardState::settingsCatFirst(dash.settingsCat);
-                return true;
-            }
+            // Cabinet list: j/k step focusable rows only (headers skipped).
+            if (!model::settingsRowFocusable(dash.settingsFocus))
+                dash.settingsFocus = model::settingsFirstFocus();
             if (up) {
-                int first = model::DashboardState::settingsCatFirst(dash.settingsCat);
-                int last = model::DashboardState::settingsCatLast(dash.settingsCat);
-                dash.settingsFocus = dash.settingsFocus <= first ? last : dash.settingsFocus - 1;
+                dash.settingsFocus = model::settingsStep(dash.settingsFocus, -1);
                 return true;
             }
             if (down) {
-                int last = model::DashboardState::settingsCatLast(dash.settingsCat);
-                int first = model::DashboardState::settingsCatFirst(dash.settingsCat);
-                dash.settingsFocus = dash.settingsFocus >= last ? first : dash.settingsFocus + 1;
+                dash.settingsFocus = model::settingsStep(dash.settingsFocus, +1);
                 return true;
             }
             if (left) {
@@ -316,11 +300,11 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             int d = event.ch - '0';
             if (d == 0) {
                 gfx::setFieldEnabled(false);
-                dash.settingsFocus = 1;
+                dash.settingsFocus = model::settingsFirstFocus();
             } else if (d >= 1 && d <= gfx::fieldCount()) {
                 gfx::setFieldEnabled(true);
                 gfx::setFieldIndex(d - 1);
-                dash.settingsFocus = 2;
+                dash.settingsFocus = model::settingsFirstFocus();
             }
             persistUiPrefs(*model_);
             return true;
@@ -367,7 +351,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             case 'S':
                 // On Settings: S cycles shader. Elsewhere: Sessions jump.
                 if (dash.section == model::DashboardSection::Settings) {
-                    dash.settingsFocus = 2;
+                    dash.settingsFocus = model::settingsFirstFocus();
                     if (!gfx::fieldEnabled()) gfx::setFieldEnabled(true);
                     else gfx::cycleField(1);
                     persistUiPrefs(*model_);
@@ -436,7 +420,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             case 'b':
             case 'B':  // toggle field on/off (global)
                 gfx::toggleFieldEnabled();
-                if (dash.section == model::DashboardSection::Settings) dash.settingsFocus = 1;
+                if (dash.section == model::DashboardSection::Settings) dash.settingsFocus = model::settingsFirstFocus();
                 persistUiPrefs(*model_);
                 return true;
             case 'n':
@@ -452,7 +436,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             case 'e':
             case 'E':
                 if (dash.section == model::DashboardSection::Settings &&
-                    dash.settingsFocus == 12) {
+                    model::settingsOptAt(dash.settingsFocus) == model::SettingsOpt::Cwd) {
                     dash.cwdEditMode = true;
                     dash.cwdEditBuffer = model_->sessionCwd;
                     bumpNotice();
@@ -511,7 +495,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                 model_->zenMode = !model_->zenMode;
                 dash.bumpNavActivity();
                 if (dash.section == model::DashboardSection::Settings)
-                    dash.settingsFocus = 7;
+                    dash.settingsFocus = model::settingsFirstFocus();
                 dash.flashNotice(model_->zenMode ? "zen on · pill auto-hides"
                                                  : "zen off · pill always up");
                 persistUiPrefs(*model_);
@@ -522,7 +506,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                 return true;
             case 'T':
                 theme::toggle();
-                if (dash.section == model::DashboardSection::Settings) dash.settingsFocus = 0;
+                if (dash.section == model::DashboardSection::Settings) dash.settingsFocus = model::settingsFirstFocus();
                 persistUiPrefs(*model_);
                 return true;
             case 'q':
