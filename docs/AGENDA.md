@@ -24,7 +24,7 @@ Living document tracking Cortex-Prime MK3 agent-lib status, priorities, decision
 | Metadata headers | Deployed — `✓ 234ms exit:0 12.3KB` per action |
 | raw.md / iterations.md dumps | Deployed — PROMPT + RESPONSE + LLM RAW OUTPUT + TOOL RESULTS |
 | Crash: `free(): invalid pointer` | Fixed — threads joined on destructor |
-| **Spinner/live typing during LLM** | **Still blocked** — provider path is `curl_easy_perform` (`src/providers/generic_openai.cpp`). Tool exec is **not** the same problem. |
+| **Spinner/live typing during LLM** | **Shipped (TUI)** — experimental TUI runs the agent on a worker (`repl.hpp`); curl blocks the worker, not the Engine. Typing/stream drain work. Remaining: free-tier TTFT, honest phase/footer (2026-08-19). |
 | **LLM protocol compliance** | CANON shipped 2026-07-10. **Do not quote 60% as current** — remeasure before citing. |
 | **Global agent selection / any-CWD** | **Shipped** — `manifests/` + `config/agents/`; bare `-m` manager + ownership trees |
 | **TUI (builtin / `src/tui`)** | **Oracle only** — `--tui legacy`. Do not invest. |
@@ -92,12 +92,12 @@ Only `<response final="true">` completes normally. Authority: `docs/protocol/CAN
 
 | Metric | Target | Current |
 |--------|--------|---------|
-| Spinner update rate | 30fps during LLM call | 0fps (blocked by curl) |
-| Time to first token display | <100ms after SSE arrives | ~1ms (callback fires inline) |
+| Spinner update rate | ~30fps while running (Clock.mark) | OK on experimental TUI |
+| Time to first token display | <100ms after SSE arrives | coalesce ≤16–33ms + TTFT |
 | Render frame time | <500µs | ~200-500µs estimated |
-| Simple "ping" roundtrip | <2s total | ~3-8s (LLM + network) |
-| Tool result stream latency | <50ms from output line to display | ~1ms (harvest per token) |
-| Typing responsiveness during streaming | Instant | Blocked (curl_easy_perform) |
+| Simple "ping" roundtrip | <2s total | network-bound |
+| Tool result stream latency | <50ms from output line to display | OK |
+| Typing responsiveness during streaming | Instant | OK — worker holds curl |
 
 ---
 
@@ -105,7 +105,7 @@ Only `<response final="true">` completes normally. Authority: `docs/protocol/CAN
 
 | Debt | Impact | Mitigation |
 |------|--------|------------|
-| `curl_easy_perform` blocks main thread | Spinner freezes, can't type during LLM | Ctrl+C via `CURLOPT_XFERINFOFUNCTION`. Next: curl_multi / worker thread |
+| `curl_easy_perform` on **worker** (TUI) | Not a UI freeze | Optional curl_multi later for multi-stream; not blocking daily driver |
 | No thread-safe protocol vectors | Data race **when** async LLM lands | Mutex before async, not before |
 | LLM emits bare text outside tags | Extra API calls until correction | CANON §2 retry. Remeasure — do not cite old 60% |
 | Tests exist (`test-parser`, `test-protocol`, `test-ui-model`, session/epoch) | `test-ui-model` has known expectation drift | Fix tests or product; do not ignore red |
