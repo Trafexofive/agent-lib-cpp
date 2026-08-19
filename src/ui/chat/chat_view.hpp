@@ -1244,8 +1244,11 @@ inline void drawCompletionMenu(inkcell::Surface& surface, inkcell::Rect area,
 inline int chatFooterReserve(const ChatFooterModel* footer, int frameH, int promptH,
                              int menuH) {
     if (!footer) return 0;
-    // Leave at least 4 rows for transcript + prompt + menu.
-    const int maxAvail = std::max(1, frameH - promptH - menuH - 4);
+    // Daily-driver footer wants 5–6 rows. Keep ≥8 transcript rows when the
+    // glass is tall; on short terms still hand the instrument a real plate.
+    const int transcriptFloor = frameH >= 28 ? 8 : (frameH >= 20 ? 5 : 3);
+    const int maxAvail =
+        std::max(3, frameH - promptH - menuH - transcriptFloor);
     return footerHeightFor(*footer, maxAvail);
 }
 
