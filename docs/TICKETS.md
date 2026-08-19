@@ -60,6 +60,26 @@ Shipped mid-grind: `--headless` (`5ea6f2b`), CLI free-token (`3008514`), one-wor
 | **T-PRODUCT-CHROME** | Beyond README/.desktop |
 | **T-EXPORT-ORDER** | Chat export vs protocol event order drift |
 
+---
+
+## Board — Settings SPA / categories / persistency (TODO)
+
+**Audit:** `docs/AUDITS/REPORTS/2026-08-19-settings-spa-audit.md`
+
+Operator ask: **settings category + options overhaul**, **persistency**, **SPA audit**.
+
+| ID | Priority | Ticket | Acceptance |
+|----|----------|--------|------------|
+| **T-SET-IA** | P1 | Re-IA categories; rename opaque labels (INPUT/OUTPUT FMT, FIELD vs CHAT FIELD) | Spec + `settings_table` + draw |
+| **T-SET-BODYVIEW** | P0 | Cabinet row for body view stream/compact/canvas (prefs already exist) | ui.json round-trip + Settings ←→ |
+| **T-SET-PERSIST-V** | P1 | `ui_schema_version` + atomic write (tmp+rename) | Crash-safe save |
+| **T-SET-SPA** | P1 | Two-pane SPA: category rail + option list + focus help | h/l or tab categories; j/k options |
+| **T-SET-ENGINE** | P2 | ENGINE category: provider/model/fallback surface | Display + picker deep-link |
+| **T-SET-FOCUS-PERSIST** | P2 | Persist settingsFocus / scroll | Reopen same row |
+| **T-SET-TESTS** | P1 | Sync `settingsOptionCount` vs `kSettingsRowN`; unit table | test-ui-model green |
+
+**Baseline findings:** `chatBodyMode` persists but has **no Settings row**; no schema version; flat list not SPA; engine knobs absent from cabinet.
+
 ### Live dump log (append-only)
 
 | Dump | Model | Result |

@@ -17,8 +17,9 @@ enum class SettingsOpt : int {
     OutputFmt,
     Raw,
     ChatField,
-    FooterPane,   // NEW — default chat footer pane
-    AutoFollow,   // NEW — stick to live edge while streaming
+    FooterPane,   // default chat footer pane
+    BodyView,     // stream · compact · canvas (Ctrl-O)
+    AutoFollow,   // stick to live edge while streaming
     Zen,
     NavPill,
     PillHide,
@@ -54,6 +55,7 @@ inline constexpr SettingsRow kSettingsRows[] = {
     {SettingsRowKind::Item, SettingsOpt::Raw, nullptr, "RAW STREAM"},
     {SettingsRowKind::Item, SettingsOpt::ChatField, nullptr, "CHAT FIELD"},
     {SettingsRowKind::Item, SettingsOpt::FooterPane, nullptr, "FOOTER PANE"},
+    {SettingsRowKind::Item, SettingsOpt::BodyView, nullptr, "BODY VIEW"},
     {SettingsRowKind::Item, SettingsOpt::AutoFollow, nullptr, "LIVE FOLLOW"},
 
     {SettingsRowKind::Head, SettingsOpt::Count, "CHROME", nullptr},
@@ -110,6 +112,7 @@ inline bool settingsIsCarousel(SettingsOpt o) {
         case SettingsOpt::Cwd:
         case SettingsOpt::SessionScope:
         case SettingsOpt::FooterPane:
+        case SettingsOpt::BodyView:
             return true;
         default:
             return false;

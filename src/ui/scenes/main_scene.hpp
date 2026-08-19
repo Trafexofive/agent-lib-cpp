@@ -430,6 +430,14 @@ class MainScene final : public BaseScene {
                                  chat::footerPaneName(model_->chatFooterPane));
                 break;
             }
+            case SettingsOpt::BodyView: {
+                int b = model_->chatBodyMode;
+                b = (b + (dir >= 0 ? 1 : 2)) % 3;
+                model_->chatBodyMode = b;
+                static const char* kN[] = {"stream", "compact", "canvas"};
+                dash.flashNotice(std::string("body · ") + kN[b] + "  (ctrl-o)");
+                break;
+            }
             case SettingsOpt::AutoFollow:
                 model_->autoFollowLive = !model_->autoFollowLive;
                 dash.flashNotice(model_->autoFollowLive

@@ -1096,6 +1096,12 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
             case SettingsOpt::FooterPane:
                 return upperCopy(chat::footerPaneName(
                     static_cast<chat::ChatFooterPane>(model_->chatFooterPane)));
+            case SettingsOpt::BodyView: {
+                static const char* kN[] = {"STREAM", "COMPACT", "CANVAS"};
+                int b = model_->chatBodyMode;
+                if (b < 0 || b > 2) b = 0;
+                return kN[b];
+            }
             case SettingsOpt::AutoFollow: return model_->autoFollowLive ? "ON" : "OFF";
             case SettingsOpt::Zen: return model_->zenMode ? "ON" : "OFF";
             case SettingsOpt::NavPill: return model_->navPillEnabled ? "ON" : "OFF";
