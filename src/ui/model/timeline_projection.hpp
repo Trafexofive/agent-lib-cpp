@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,64 @@ inline int countSourceDisplaySpan(const std::string& original, int width) {
         i += len;
     }
     return std::max(1, lines);
+}
+
+// Compact live well under a spawned child — same height budget as truncated
+// tool results (14). Drill for the full chat. Never dump the child's protocol.
+inline void appendChildWell(std::vector<std::string>& lines, Agent* child,
+                            const std::string& name, bool live, int maxLines) {
+    maxLines = std::max(4, std::min(maxLines, 14));
+    const std::string nm = name.empty() ? "subagent" : name;
+    std::string head = "    ┌ " + nm + (live ? "  ·  LIVE" : "  ·  done");
+    if (child) {
+        const auto& evs = child->protocolEvents();
+        int acts = 0, ress = 0;
+        std::string last;
+        for (const auto& pe : evs) {
+            if (pe.kind == ProtocolEventKind::ACTION) {
+                ++acts;
+                last = pe.action.name.empty() ? pe.action.type : pe.action.name;
+            } else if (pe.kind == ProtocolEventKind::RESULT) {
+                ++ress;
+            } else if (pe.kind == ProtocolEventKind::THOUGHT && last.empty()) {
+                last = "thinking";
+            } else if (pe.kind == ProtocolEventKind::RESPONSE) {
+                last = "reply";
+            }
+        }
+        if (!last.empty()) head += "  ·  " + last;
+        lines.push_back(head);
+        int used = 1;
+        char meta[80];
+        std::snprintf(meta, sizeof(meta), "    │  act%d · res%d · hist %zu", acts, ress,
+                      child->history().size());
+        lines.push_back(meta);
+        ++used;
+        // Tail of last few actions — one token each, no bodies.
+        int room = maxLines - used - 1;
+        std::vector<std::string> tail;
+        for (auto it = evs.rbegin(); it != evs.rend() && static_cast<int>(tail.size()) < room; ++it) {
+            if (it->kind != ProtocolEventKind::ACTION && it->kind != ProtocolEventKind::RESULT)
+                continue;
+            std::string t;
+            if (it->kind == ProtocolEventKind::ACTION)
+                t = std::string("    │  ▸ ") + (it->action.name.empty() ? it->action.type : it->action.name);
+            else
+                t = std::string(it->result.ok ? "    │  ✓ " : "    │  ✗ ") + it->result.toolName;
+            if (t.size() > 56) t = t.substr(0, 54) + "…";
+            tail.push_back(std::move(t));
+        }
+        std::reverse(tail.begin(), tail.end());
+        for (auto& t : tail) {
+            lines.push_back(std::move(t));
+            ++used;
+        }
+        lines.push_back(live ? "    └ ↳  enter · live" : "    └ ↳  enter");
+    } else {
+        lines.push_back(head);
+        lines.push_back("    │  (no instance yet)");
+        lines.push_back("    └ ↳  enter");
+    }
 }
 
 // Emit one root/nested row into transcriptView.lines (+ optional block index).
@@ -168,6 +227,18 @@ inline bool ShellModel::projectOneRow(const TimelineRow& row, int ri, int& focus
     {
         if (row.collapsed) {
             transcriptView.lines.push_back("    ▸ collapsed · za to expand");
+            transcriptView.lines.push_back("");
+            ++focusIdx;
+            return true;
+        }
+        const bool childRow =
+            (row.kind == TimelineKind::Action || row.kind == TimelineKind::Result) &&
+            (row.actionType == "agent" ||
+             (rootAgent && !row.actionName.empty() && rootAgent->hasSubAgent(row.actionName)));
+        if (childRow) {
+            Agent* ch = rootAgent ? rootAgent->getSubAgent(row.actionName) : nullptr;
+            bool live = !row.actionId.empty() && pendingActionIds.count(row.actionId);
+            appendChildWell(transcriptView.lines, ch, row.actionName, live, 14);
             transcriptView.lines.push_back("");
             ++focusIdx;
             return true;

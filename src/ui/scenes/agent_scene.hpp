@@ -60,6 +60,27 @@ class AgentScene final : public BaseScene {
             model_->status = "ready";
     }
 
+    void on_tick(inkcell::Tick t) override {
+        BaseScene::on_tick(t);
+        if (!model_->running) return;
+        if (!model_->atRoot()) {
+            model_->refreshNested();
+            return;
+        }
+        if (model_->pendingOps <= 0) return;
+        // Parent still has in-flight children — rebuild so the compact well
+        // reflects live act/res without waiting for a parent protocol event.
+        using clock = std::chrono::steady_clock;
+        const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                clock::now().time_since_epoch())
+                                .count();
+        if (now - model_->lastNestedRefreshMs < 200) return;
+        model_->lastNestedRefreshMs = now;
+        model_->markProjFull();
+        model_->rebuildViews();
+        if (t.clock) t.clock->mark();
+    }
+
     bool on_key(const inkcell::KeyEvent& event) override {
         using inkcell::KeyCode;
 
@@ -667,8 +688,8 @@ class AgentScene final : public BaseScene {
         // Live agent identity — never paint frozen InkcellAppConfig. Session
         // resume used to leave cfg_ as stale opencode-go/flash while the
         // running Agent was x-ai/grok-4.5 (or whatever -m loaded).
-        if (model_->rootAgent) {
-            const auto& c = model_->rootAgent->config();
+        if (Agent* ident = model_->currentAgent() ? model_->currentAgent() : model_->rootAgent) {
+            const auto& c = ident->config();
             vm.provider = !c.provider.empty() ? c.provider : model_->agentProvider;
             vm.model = !c.model.empty() ? c.model : model_->agentModel;
         } else {
@@ -785,7 +806,10 @@ class AgentScene final : public BaseScene {
         foot.resultCount = vm.resultCount;
         foot.pendingOps = vm.pendingOps;
         foot.tokenBytes = vm.tokenBytes;
-        foot.agentName = model_->agentName;
+        if (Agent* ident = model_->currentAgent())
+            foot.agentName = ident->name();
+        else
+            foot.agentName = model_->agentName;
         foot.provider = vm.provider;
         foot.model = vm.model;
         foot.sessionId = vm.sessionId;
@@ -809,23 +833,24 @@ class AgentScene final : public BaseScene {
         foot.iterMax = 180;
         foot.historyUsed = 0;
         foot.historyMax = 1700;
-        if (model_->rootAgent) {
-            const auto& c = model_->rootAgent->config();
+        if (Agent* live = model_->currentAgent() ? model_->currentAgent()
+                                                 : model_->rootAgent) {
+            const auto& c = live->config();
             foot.compactEnabled = c.compaction.enabled;
             if (c.compaction.modelContextTokens > 0)
                 foot.ctxMaxTokens = c.compaction.modelContextTokens;
             if (c.compaction.triggerContextTokens > 0)
                 foot.ctxCompactAt = c.compaction.triggerContextTokens;
             foot.iterMax = c.iterationCap;
-            foot.iterCurrent = model_->actionCount;  // actions dispatched this turn
+            foot.iterCurrent = model_->actionCount;
             foot.historyMax = c.historyCap;
-            foot.historyUsed = static_cast<int>(model_->rootAgent->history().size());
+            foot.historyUsed = static_cast<int>(live->history().size());
             size_t est = 0;
-            for (const auto& h : model_->rootAgent->history())
+            for (const auto& h : live->history())
                 est += (h.size() + 3) / 4;
             est += 4000;
             if (est > 0) foot.ctxUsedTokens = static_cast<int>(est);
-            if (!model_->rootAgent->lastCompactNote().empty())
+            if (!live->lastCompactNote().empty())
                 foot.compactedRecently = true;
         } else if (model_->tokenBytes > 0) {
             foot.ctxUsedTokens = std::max(foot.ctxUsedTokens, model_->tokenBytes / 3 + 2000);
@@ -841,9 +866,10 @@ class AgentScene final : public BaseScene {
             else {
                 foot.phaseKey = "wait";  // default until we see structure
                 // Children in flight beat a parent thought / stale tool verb.
+                const auto& phaseRows = model_->activeRows();
                 if (model_->pendingOps > 0) {
-                    for (auto it = model_->rootRows.rbegin();
-                         it != model_->rootRows.rend(); ++it) {
+                    for (auto it = phaseRows.rbegin();
+                         it != phaseRows.rend(); ++it) {
                         if (it->kind != TimelineKind::Action || it->actionId.empty()) continue;
                         if (!model_->pendingActionIds.count(it->actionId)) continue;
                         const bool child =
@@ -859,8 +885,8 @@ class AgentScene final : public BaseScene {
                     }
                 }
                 int scanned = 0;
-                for (auto it = model_->rootRows.rbegin();
-                     it != model_->rootRows.rend() && scanned < 12 &&
+                for (auto it = phaseRows.rbegin();
+                     it != phaseRows.rend() && scanned < 12 &&
                      foot.phaseKey != "delegate";
                      ++it, ++scanned) {
                     if (it->kind == TimelineKind::Thought) {
