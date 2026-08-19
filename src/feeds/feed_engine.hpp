@@ -590,17 +590,15 @@ class FeedEngine {
             return true;
         if (!output.empty() && std::filesystem::exists(output))
             return true;
-        std::string cmd = command;
-        if (!cwd.empty())
-            cmd = "cd " + shellEscape(cwd) + " && " + cmd;
-        FILE* p = popen((cmd + " 2>&1").c_str(), "r");
-        if (!p)
-            return false;
-        char buf[1024];
-        while (fgets(buf, sizeof(buf), p)) {
-        }
-        int rc = pclose(p);
-        return rc == 0 && (output.empty() || std::filesystem::exists(output));
+        process::Spec spec;
+        spec.shell = true;
+        spec.command = command;
+        spec.cwd = cwd;
+        spec.timeoutMs = 120000;
+        spec.maxStdout = 64 * 1024;
+        spec.maxStderr = 64 * 1024;
+        process::Result pr = process::run(spec);
+        return pr.success() && (output.empty() || std::filesystem::exists(output));
     }
 
     static std::string runScriptWithEnvStatic(const std::string& runtime, const std::string& script,

@@ -1,13 +1,12 @@
 // src/tools/builtins/common.hpp — shared helpers for native builtin tools
 #pragma once
 
-#include <sys/wait.h>
-
-#include <cstdio>
+#include <algorithm>
 #include <sstream>
 #include <string>
 
 #include "../../core/types.hpp"
+#include "../../utils/process.hpp"
 
 namespace cortex::mk3::tools::builtins {
 
@@ -44,15 +43,17 @@ inline std::string shellEscape(const std::string& input) {
 }
 
 inline int runCmd(const std::string& cmd, std::string& output, int timeoutSec = 30) {
-    std::string fullCmd = "timeout " + std::to_string(timeoutSec) + " " + cmd + " 2>&1";
-    FILE* pipe = popen(fullCmd.c_str(), "r");
-    if (!pipe)
-        return -1;
-    char buf[256];
-    while (fgets(buf, sizeof(buf), pipe))
-        output += buf;
-    int rc = pclose(pipe);
-    return WIFEXITED(rc) ? WEXITSTATUS(rc) : -1;
+    process::Spec spec;
+    spec.shell = true;
+    spec.command = cmd;
+    spec.timeoutMs = std::max(1, timeoutSec) * 1000;
+    spec.maxStdout = 512 * 1024;
+    spec.maxStderr = 256 * 1024;
+    process::Result pr = process::run(spec);
+    output = pr.stdoutText + pr.stderrText;
+    if (pr.timedOut)
+        return 124;
+    return pr.exitCode;
 }
 
 }  // namespace cortex::mk3::tools::builtins

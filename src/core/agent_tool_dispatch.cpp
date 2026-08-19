@@ -137,21 +137,18 @@ static Json::Value ensureToolBuilt(const tools::Tool& tool) {
     if (!tool.buildOutput().empty() && fs::exists(tool.buildOutput()))
         return ok;
 
-    std::string cmd = tool.buildCommand();
-    if (!tool.buildCwd().empty())
-        cmd = "cd " + shellEscapeArg(tool.buildCwd()) + " && " + cmd;
-    auto start = std::chrono::steady_clock::now();
-    FILE* p = popen((cmd + " 2>&1").c_str(), "r");
-    std::string output;
-    if (p) {
-        char buf[4096];
-        while (fgets(buf, sizeof(buf), p))
-            output += buf;
-    }
-    int rc = p ? pclose(p) : -1;
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::steady_clock::now() - start)
-                       .count();
+    // Never popen a build — an unbounded compile hangs the agent loop.
+    process::Spec bspec;
+    bspec.shell = true;
+    bspec.command = tool.buildCommand();
+    bspec.cwd = tool.buildCwd();
+    bspec.timeoutMs = 120000;
+    bspec.maxStdout = 256 * 1024;
+    bspec.maxStderr = 256 * 1024;
+    process::Result bpr = process::run(bspec);
+    std::string output = bpr.stdoutText + bpr.stderrText;
+    int rc = bpr.timedOut ? 124 : bpr.exitCode;
+    auto elapsed = bpr.elapsedMs;
     if (rc == 0 && (tool.buildOutput().empty() || fs::exists(tool.buildOutput())))
         return ok;
 
@@ -355,7 +352,11 @@ Json::Value Agent::executeScriptTool(const tools::Tool& tool, const Json::Value&
 
     // Per-tool timeout from tool.yml, else agent actionTimeoutSec.
     int timeoutSec = tool.timeoutSec() > 0 ? tool.timeoutSec() : config_.actionTimeoutSec;
-    int timeoutMs = std::max(1, timeoutSec) * 1000;
+    if (timeoutSec <= 0)
+        timeoutSec = 30;
+    if (timeoutSec > 600)
+        timeoutSec = 600;
+    int timeoutMs = timeoutSec * 1000;
 
     process::Spec spec;
     spec.shell = false;

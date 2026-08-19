@@ -130,7 +130,12 @@ Result run(const Spec& spec) {
             usleep(100000);
             if (waitpid(pid, &status, WNOHANG) == 0) {
                 kill(-pid, SIGKILL);
-                waitpid(pid, &status, 0);
+                // Bounded reap — D-state / uninterruptible NFS must not hang us.
+                for (int i = 0; i < 20; ++i) {
+                    if (waitpid(pid, &status, WNOHANG) == pid)
+                        break;
+                    usleep(50000);
+                }
             }
             result.timedOut = true;
             childDone = true;

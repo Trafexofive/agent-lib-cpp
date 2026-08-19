@@ -8,8 +8,9 @@
 #include <unistd.h>
 
 #include <chrono>
-#include <cstdio>
 #include <ctime>
+
+#include "../utils/process.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -101,57 +102,40 @@ FeedResult pollWorkingDirectory() {
     std::ostringstream ss;
     ss << "CWD: " << cwd;
 
-    // Git detection
-    std::string gitCmd = "git -C " + std::string(cwd) + " rev-parse --show-toplevel 2>/dev/null";
-    FILE* gp = popen(gitCmd.c_str(), "r");
-    if (gp) {
-        char gitRoot[4096] = {};
-        if (fgets(gitRoot, sizeof(gitRoot), gp)) {
-            std::string root(gitRoot);
-            if (!root.empty() && root.back() == '\n')
-                root.pop_back();
-            ss << "\nGit repo: " << root;
+    auto gitOut = [](const std::string& cmd) -> std::string {
+        process::Spec spec;
+        spec.shell = true;
+        spec.command = cmd;
+        spec.timeoutMs = 2000;
+        spec.maxStdout = 4096;
+        spec.maxStderr = 256;
+        process::Result pr = process::run(spec);
+        if (!pr.success())
+            return {};
+        std::string s = pr.stdoutText;
+        while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
+            s.pop_back();
+        return s;
+    };
 
-            // Branch
-            std::string brCmd = "git -C " + root + " rev-parse --abbrev-ref HEAD 2>/dev/null";
-            FILE* bp = popen(brCmd.c_str(), "r");
-            if (bp) {
-                char branch[256] = {};
-                if (fgets(branch, sizeof(branch), bp)) {
-                    std::string br(branch);
-                    if (!br.empty() && br.back() == '\n')
-                        br.pop_back();
-                    ss << " | Branch: " << br;
-                }
-                pclose(bp);
-            }
-
-            // Dirty
-            std::string dirtyCmd = "git -C " + root + " diff --quiet 2>/dev/null; echo $?";
-            FILE* dp = popen(dirtyCmd.c_str(), "r");
-            if (dp) {
-                char d[4] = {};
-                if (fgets(d, sizeof(d), dp)) {
-                    ss << " | Dirty: " << (d[0] == '0' ? "no" : "yes");
-                }
-                pclose(dp);
-            }
-
-            // Commit
-            std::string hashCmd = "git -C " + root + " rev-parse --short HEAD 2>/dev/null";
-            FILE* hp = popen(hashCmd.c_str(), "r");
-            if (hp) {
-                char hash[41] = {};
-                if (fgets(hash, sizeof(hash), hp)) {
-                    std::string h(hash);
-                    if (!h.empty() && h.back() == '\n')
-                        h.pop_back();
-                    ss << " | Commit: " << h;
-                }
-                pclose(hp);
-            }
-        }
-        pclose(gp);
+    std::string root = gitOut("git -C " + std::string(cwd) + " rev-parse --show-toplevel");
+    if (!root.empty()) {
+        ss << "\nGit repo: " << root;
+        std::string br = gitOut("git -C " + root + " rev-parse --abbrev-ref HEAD");
+        if (!br.empty())
+            ss << " | Branch: " << br;
+        process::Spec dirtySpec;
+        dirtySpec.shell = true;
+        dirtySpec.command = "git -C " + root + " diff --quiet";
+        dirtySpec.timeoutMs = 2000;
+        dirtySpec.maxStdout = 64;
+        dirtySpec.maxStderr = 64;
+        process::Result dirty = process::run(dirtySpec);
+        if (!dirty.timedOut)
+            ss << " | Dirty: " << (dirty.exitCode == 0 ? "no" : "yes");
+        std::string hash = gitOut("git -C " + root + " rev-parse --short HEAD");
+        if (!hash.empty())
+            ss << " | Commit: " << hash;
     }
 
     r.summary = ss.str();

@@ -1,14 +1,13 @@
 #pragma once
 // Chat copy/export helpers with deterministic local fallback.
 
-#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <string>
-#include <unistd.h>
 #include <vector>
 
 #include "src/ui/model/timeline_codec.hpp"
+#include "src/utils/process.hpp"
 
 namespace cortex::mk3::ui::chat {
 
@@ -18,15 +17,16 @@ struct CopyResult {
 };
 
 inline bool pipeText(const char* command, const std::string& text) {
-    // Vet-fix: route BOTH ends through /dev/null so a clipboard helper
-    // that hangs or prints status to stderr (wl-copy, xclip, win32yank)
-    // cannot leak its output into the TUI's foreground terminal.
-    // We only care whether the write succeeded, not the helper's chatter.
-    FILE* pipe = ::popen(command, "w");
-    if (!pipe) return false;
-    size_t written = std::fwrite(text.data(), 1, text.size(), pipe);
-    int rc = ::pclose(pipe);
-    return written == text.size() && rc == 0;
+    // Bounded write — wl-copy/xclip can hang forever if the compositor is gone.
+    process::Spec spec;
+    spec.shell = true;
+    spec.command = command;
+    spec.stdinText = text;
+    spec.timeoutMs = 1500;
+    spec.maxStdout = 256;
+    spec.maxStderr = 256;
+    process::Result pr = process::run(spec);
+    return pr.success();
 }
 
 inline CopyResult copyText(const std::string& text, const std::string& fallbackPath) {

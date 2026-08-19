@@ -132,14 +132,15 @@ class AgentBridge {
         event.json = params;
         publish(std::move(event));
 
-        // Optional timeout_sec on params (tool.yml default 120). 0 = wait forever.
+        // Optional timeout_sec on params (tool.yml default 120). 0 / missing → 120.
+        // Never wait forever — a hung ask dialog used to stall the agent loop.
         int timeoutSec = 120;
         if (params.isMember("timeout_sec") && params["timeout_sec"].isNumeric())
             timeoutSec = params["timeout_sec"].asInt();
         else if (params.isMember("timeout") && params["timeout"].isNumeric())
             timeoutSec = params["timeout"].asInt();
-        if (timeoutSec < 0)
-            timeoutSec = 0;
+        if (timeoutSec <= 0)
+            timeoutSec = 120;
 
         std::unique_lock<std::mutex> lock(askMu_);
         bool answered = true;
