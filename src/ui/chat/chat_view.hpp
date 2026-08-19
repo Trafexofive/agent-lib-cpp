@@ -1249,7 +1249,11 @@ inline int chatFooterReserve(const ChatFooterModel* footer, int frameH, int prom
     return footerHeightFor(*footer, maxAvail);
 }
 
+}  // namespace cortex::mk3::ui::chat
+
 #include "src/ui/chat/chat_body_views.hpp"
+
+namespace cortex::mk3::ui::chat {
 
 inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, const ChatSurfaceModel& m,
                             const ChatFooterModel* footer = nullptr) {
