@@ -613,22 +613,96 @@ static CliConfig parseArgs(int argc, char* argv[]) {
         }
     }
 
-    // GNU getopt only consumes optional option args with --opt=value. For
-    // `--provider openrouter`, optarg is null and the provider name remains in
-    // argv[optind], so normalize that form for all commands.
-    if (sawProviderFlag && !providerFlagHadArg && optind < argc && argv[optind][0] != '-') {
-        cli.provider = argv[optind];
-        cli.providerSet = true;
-        cli.providerPickerRequested = false;  // got a real provider name
-        optind++;
-    }
+    // GNU getopt only consumes optional option args with --opt=value. Space
+    // forms (`-m default`, `--provider opencode-go`) leave names at optind.
+    // Claim free tokens carefully: BOTH flags may be waiting — do NOT always
+    // give the first free token to provider (bug: `-m default --provider X`
+    // assigned provider=default, agent=X).
+    {
+        auto isFlagTok = [](const char* s) { return s && s[0] == '-'; };
+        auto looksLikeProvider = [](const std::string& t) {
+            static const char* kKnown[] = {
+                "deepseek",    "openrouter", "xai",         "x-ai",
+                "openai-codex","openai",     "groq",        "zen",
+                "together",    "fireworks",  "opencode",    "opencode-go",
+                "minimax",     "anthropic",  "google",      nullptr};
+            for (int i = 0; kKnown[i]; ++i)
+                if (t == kKnown[i]) return true;
+            // dotted vendor/model routes still providers when used as --provider
+            if (t.find('/') != std::string::npos) return true;
+            return false;
+        };
 
-    // Same for --manifest / -m: optional args only attach as -mname or --manifest=name.
-    // `-m default` leaves "default" at optind — treat as agent name, not manager.
-    if (sawManifestFlag && !manifestFlagHadArg && optind < argc && argv[optind][0] != '-') {
-        cli.manifestPath = argv[optind];
-        cli.manifestPickerRequested = false;
-        optind++;
+        // Gather contiguous free tokens at optind (until a subcommand/flag).
+        std::vector<std::string> free;
+        int freeStart = optind;
+        while (freeStart + static_cast<int>(free.size()) < argc &&
+               !isFlagTok(argv[freeStart + static_cast<int>(free.size())])) {
+            std::string t = argv[freeStart + static_cast<int>(free.size())];
+            if (t == "run" || t == "serve" || t == "list" || t == "config" ||
+                t == "completions" || t == "version" || t == "help" ||
+                t == "sessions")
+                break;
+            free.push_back(t);
+        }
+
+        int used = 0;
+        auto takeAt = [&](size_t idx) -> std::string {
+            if (idx >= free.size()) return {};
+            std::string v = free[idx];
+            free[idx].clear(); // mark consumed
+            ++used;
+            return v;
+        };
+
+        // Prefer matching shapes when both flags need a free arg.
+        if (sawManifestFlag && !manifestFlagHadArg) {
+            int pick = -1;
+            for (size_t i = 0; i < free.size(); ++i) {
+                if (free[i].empty()) continue;
+                if (!looksLikeProvider(free[i])) { pick = static_cast<int>(i); break; }
+            }
+            if (pick < 0) {
+                for (size_t i = 0; i < free.size(); ++i)
+                    if (!free[i].empty()) { pick = static_cast<int>(i); break; }
+            }
+            if (pick >= 0) {
+                cli.manifestPath = takeAt(static_cast<size_t>(pick));
+                cli.manifestPickerRequested = false;
+            }
+        }
+        if (sawProviderFlag && !providerFlagHadArg) {
+            int pick = -1;
+            for (size_t i = 0; i < free.size(); ++i) {
+                if (free[i].empty()) continue;
+                if (looksLikeProvider(free[i])) { pick = static_cast<int>(i); break; }
+            }
+            if (pick < 0) {
+                for (size_t i = 0; i < free.size(); ++i)
+                    if (!free[i].empty()) { pick = static_cast<int>(i); break; }
+            }
+            if (pick >= 0) {
+                cli.provider = takeAt(static_cast<size_t>(pick));
+                cli.providerSet = true;
+                cli.providerPickerRequested = false;
+            }
+        }
+        // Advance optind past consumed free tokens (preserve order holes).
+        int advanced = 0;
+        for (size_t i = 0; i < free.size(); ++i) {
+            if (free[i].empty())
+                ++advanced;
+            else
+                break; // stop at first unconsumed — left for subcommand/prompt
+        }
+        // If we consumed non-prefix holes, compact: only safe when all free claimed
+        bool allClaimed = true;
+        for (const auto& t : free)
+            if (!t.empty()) allClaimed = false;
+        if (allClaimed)
+            optind = freeStart + static_cast<int>(free.size());
+        else if (advanced > 0)
+            optind = freeStart + advanced;
     }
 
     // Subcommand (first positional after flags)
