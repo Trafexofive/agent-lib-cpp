@@ -294,12 +294,29 @@ inline bool looksLikeSymbolDump(const std::string& s) {
     return false;
 }
 
+// Model leaked a tool-call plan as prose: one (or few) huge lines of
+// "read-foo tool fs_read path …" tokens. Not a symbol table — still stalls
+// wrap + rebuild (12 KiB thought → hundreds of display rows / tick).
+inline bool looksLikeToolPlanDump(const std::string& s) {
+    if (s.size() < 800) return false;
+    int nl = 0, sp = 0;
+    for (char c : s) {
+        if (c == '\n') ++nl;
+        else if (c == ' ' || c == '\t') ++sp;
+    }
+    const int lines = nl + 1;
+    const int tokens = sp + 1;
+    if (s.size() > 4000 && lines <= 6) return true;
+    if (tokens >= 80 && lines > 0 && tokens / lines >= 25) return true;
+    return false;
+}
+
 // Main entry: strip protocol noise; return remaining human prose or empty.
 inline std::string stripProtocolNoise(const std::string& raw) {
     if (raw.empty()) return {};
 
     // Symbol tables are not protocol markup — kill early before strip work.
-    if (looksLikeSymbolDump(raw)) return {};
+    if (looksLikeSymbolDump(raw) || looksLikeToolPlanDump(raw)) return {};
 
     std::string s = stripAllProtocolMarkup(raw);
     s = stripAttrDebris(s);
@@ -307,7 +324,7 @@ inline std::string stripProtocolNoise(const std::string& raw) {
     trimInPlace(s);
     if (s.empty()) return {};
 
-    if (looksLikeSymbolDump(s)) return {};
+    if (looksLikeSymbolDump(s) || looksLikeToolPlanDump(s)) return {};
 
     // Pure harness phrases (often leftover after stripping tags).
     if (looksLikeHarnessPhrase(s) && s.size() < 500) return {};
@@ -341,7 +358,7 @@ inline bool isProtocolEchoBlob(const std::string& raw) {
 }
 
 inline bool isThoughtNoise(const std::string& raw) {
-    if (looksLikeSymbolDump(raw)) return true;
+    if (looksLikeSymbolDump(raw) || looksLikeToolPlanDump(raw)) return true;
     return stripProtocolNoise(raw).empty();
 }
 

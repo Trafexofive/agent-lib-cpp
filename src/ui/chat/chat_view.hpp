@@ -44,6 +44,7 @@ struct ChatSurfaceModel {
     bool showThoughts = false;
     bool showRaw = false;
     int pendingOps = 0;
+    int queuedSteer = 0;
     int actionCount = 0;
     int resultCount = 0;
     int tokenBytes = 0;
@@ -99,7 +100,7 @@ inline inkcell::Style lineStyle(const std::string& line, bool selected,
         return theme::amber();
     if (content.rfind("✓ RESULT", 0) == 0) return theme::green();
     if (content.rfind("✗", 0) == 0 || content.rfind("ERROR", 0) == 0) return theme::red();
-    if (content.rfind("THOUGHT", 0) == 0 || content.rfind("RAW", 0) == 0) return theme::dim();
+    if (content.rfind("THOUGHT", 0) == 0 || content.rfind("RAW", 0) == 0) return theme::muted();
     if (content.rfind("┌─", 0) == 0 || content.rfind("└─", 0) == 0 ||
         content.rfind("│ ", 0) == 0) return theme::dim();
     if (content.rfind("# ", 0) == 0 || content.rfind("## ", 0) == 0 ||
@@ -190,6 +191,8 @@ inline void drawStatusLine(inkcell::Surface& surface, inkcell::Rect row, const C
     const bool liveChips = m.running || state.rfind("cancel", 0) == 0;
     if (liveChips && m.pendingOps > 0)
         bar.left_seg("pend" + std::to_string(m.pendingOps), inkcell::Role::Warning, true);
+    if (m.queuedSteer > 0)
+        bar.left_seg("queued " + std::to_string(m.queuedSteer), inkcell::Role::Warning, true);
     if (liveChips && m.actionCount > 0)
         bar.left_seg("act" + std::to_string(m.actionCount), inkcell::Role::TextMuted);
     if (liveChips && m.resultCount > 0)
@@ -447,9 +450,19 @@ inline void drawHeader(inkcell::Surface& surface, inkcell::Rect frame, const Cha
 inline std::vector<std::string> hardWrapUtf8(const std::string& value, int width) {
     std::vector<std::string> out;
     width = std::max(1, width);
+    // Hard ceiling: a 12 KiB tool-plan thought must not become 200+ wrap
+    // rows (and then be re-wrapped every tick). Keep a short prefix + note.
+    constexpr size_t kMaxWrapSrc = 2048;
+    constexpr int kMaxWrapRows = 48;
+    std::string src = value;
+    bool clipped = false;
+    if (src.size() > kMaxWrapSrc) {
+        src.resize(kMaxWrapSrc);
+        clipped = true;
+    }
     std::string line;
     int columns = 0;
-    for (size_t i = 0; i < value.size();) {
+    for (size_t i = 0; i < src.size();) {
         size_t len = inkcell::text::utf8_codepoint_len(static_cast<unsigned char>(value[i]));
         if (i + len > value.size()) len = 1;
         std::string glyph = value.substr(i, len);
@@ -462,12 +475,19 @@ inline std::vector<std::string> hardWrapUtf8(const std::string& value, int width
         line += glyph;
         columns += glyphWidth;
         i += len;
+        if (static_cast<int>(out.size()) >= kMaxWrapRows) {
+            clipped = true;
+            break;
+        }
     }
     if (!line.empty() || out.empty()) out.push_back(line);
+    if (clipped) out.push_back("… [truncated for chat — row was " +
+                               std::to_string(value.size()) + " bytes]");
     return out;
 }
 
 inline std::vector<std::string> wrapWordsLossless(const std::string& value, int width) {
+    if (value.size() > 2048) return hardWrapUtf8(value, width);
     std::vector<std::string> out;
     std::istringstream words(value);
     std::string word;
@@ -911,10 +931,10 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
                 surface.text({xHeadline, yHeadline},
                              inkcell::text::truncate(headline,
                                                      std::max(0, body.w - (xHeadline - body.x))),
-                             theme::dim());
+                             theme::muted());
             surface.text({xTip, yTip},
                          inkcell::text::truncate(tip, std::max(0, body.w - (xTip - body.x))),
-                         theme::dim());
+                         theme::text());
         }
         return;
     }

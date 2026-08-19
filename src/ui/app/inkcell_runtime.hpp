@@ -14,6 +14,7 @@
 #include "src/core/agent.hpp"
 #include "src/session/controller.hpp"
 #include "src/ui/bridge/agent_bridge.hpp"
+#include "src/ui/gfx/field_raster.hpp"
 #include "src/ui/model/inkcell_app_model.hpp"
 
 namespace cortex::mk3::ui {
@@ -149,10 +150,24 @@ inline void installCoalescedTick(inkcell::App& app, AgentBridge& bridge,
                                  const std::shared_ptr<ShellModel>& model,
                                  TickHook extra = {}) {
     app.engine().input_poll_ms(33).wake_fd(bridge.wakeFd()).on_wake([]() {});
+    // Idle-skip is legal only if live chrome marks. Field / palette / notice
+    // used to freeze after the first present (one key → one frame → still).
     app.engine().skip_idle_draw(true);
     app.engine().on_tick([model, &bridge, &app, extra = std::move(extra)](inkcell::Tick t) {
         model->drain(bridge);
-        if (model->running || model->routeTicks > 0) {
+        bool live = model->running || model->routeTicks > 0;
+        if (model->cmdPalette.active()) live = true;
+        if (model->dashboard.noticeExpireAtMs > 0) live = true;
+        if (model->dashboard.navAnimating()) live = true;
+        if (gfx::fieldEnabled()) {
+            // Wallpaper tax: 10 Hz, not 30. Keys still present immediately.
+            static uint64_t lastFieldMark = 0;
+            if (t.now_ms - lastFieldMark >= 100) {
+                lastFieldMark = t.now_ms;
+                live = true;
+            }
+        }
+        if (live) {
             if (t.clock) t.clock->mark();
             else app.engine().clock().mark();
         }

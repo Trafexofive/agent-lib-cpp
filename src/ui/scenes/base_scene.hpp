@@ -20,7 +20,9 @@ class BaseScene : public inkcell::Scene {
 
     void on_tick(inkcell::Tick t) override {
         model_->tickRoute();
-        if (t.clock && (model_->running || model_->routeTicks > 0)) t.clock->mark();
+        if (!t.clock) return;
+        if (model_->running || model_->routeTicks > 0) t.clock->mark();
+        else if (model_->cmdPalette.active()) t.clock->mark();
     }
 
     void update(inkcell::Tick, inkcell::Action action) override {

@@ -102,6 +102,16 @@ int main() {
     CHECK(!looksLikeSymbolDump("I should inspect the workflow runtime next."),
           "normal prose is not a symbol dump");
 
+    {
+        std::string plan;
+        for (int i = 0; i < 80; ++i)
+            plan += "read-hub-key-files-list tool fs_read examples/boilerplate-hub true 50 ";
+        CHECK(looksLikeToolPlanDump(plan), "12k tool-plan thought is a dump");
+        CHECK(isThoughtNoise(plan), "tool-plan dump is thought noise");
+        CHECK(!looksLikeToolPlanDump("I should read the hub Makefile next."),
+              "short prose is not a tool-plan dump");
+    }
+
     std::cout << (g_fail ? "\nFAIL\n" : "\nok\n");
         return g_fail ? 1 : 0;
 }
