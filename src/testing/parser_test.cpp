@@ -450,6 +450,40 @@ void test_duplicate_id_no_retained_rejects() {
     PASS();
 }
 
+void test_hollow_object_then_full_body() {
+    TEST("hollow {} then full body: empty rejected, full executes");
+    int execCount = 0;
+    std::string lastBody;
+    Parser parser([&](const ParsedAction& a) -> Json::Value {
+        execCount++;
+        // JSON bodies land in params; content may be empty after parse.
+        if (a.params.isMember("path") && a.params["path"].isString())
+            lastBody = a.params["path"].asString();
+        else
+            lastBody = a.content;
+        Json::Value r;
+        r["success"] = true;
+        r["output"] = "ok";
+        return r;
+    });
+    int emptyErrs = 0;
+    parser.onEvent([&](const TokenEvent& ev) {
+        if (ev.type == TokenEvent::ERROR && ev.metadata.count("reason") &&
+            ev.metadata.at("reason") == "empty_action_body")
+            ++emptyErrs;
+    });
+    parser.feed(
+        "<action type=\"tool\" name=\"list\" id=\"t1\" mode=\"sync\">{}</action>"
+        "<action type=\"tool\" name=\"list\" id=\"t1\" mode=\"sync\">"
+        "{\"path\":\".\"}</action>",
+        true);
+    CHECK(emptyErrs >= 1, "hollow {} emits empty_action_body");
+    CHECK(execCount == 1, "only full body reaches executor");
+    CHECK(lastBody == "." || lastBody.find(".") != std::string::npos,
+          "executor saw full body path");
+    PASS();
+}
+
 void test_invalid_json_body_fail_closed() {
     TEST("invalid JSON body fail-closed");
     int execCount = 0;
@@ -807,6 +841,7 @@ int main() {
     test_clear_results_keeps_used_ids();
     test_duplicate_id_no_retained_rejects();
     test_invalid_json_body_fail_closed();
+    test_hollow_object_then_full_body();
     test_depends_on_async_rejected();
     test_provisional_action_on_open_tag();
 

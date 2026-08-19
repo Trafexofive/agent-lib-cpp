@@ -982,8 +982,11 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
             n == "grep" || n == "simple_fs_write";
         const bool needsCmd = n == "exec";
         if (needsPath || needsCmd) {
+            // `{}` alone is hollow — models stream empty object then the real
+            // body. Whitespace-only OR braces-only counts as empty content.
             const bool noContent =
-                action->content.find_first_not_of(" \t\n\r") == std::string::npos;
+                action->content.find_first_not_of(" \t\n\r{}") ==
+                std::string::npos;
             bool hasPath = action->params.isObject() &&
                            ((action->params.isMember("path") &&
                              action->params["path"].isString() &&

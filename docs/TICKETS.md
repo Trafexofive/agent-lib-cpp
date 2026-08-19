@@ -4,7 +4,68 @@ Open, in-progress, and recently-resolved tickets for the MK3 codebase. Anything
 historical and not part of the live backlog lives in
 [`docs/archive/`](./archive/).
 
-## Authoritative source
+---
+
+## Board — 2026-08-19 harness / daily-driver (live dumps)
+
+Evidence dumps under `.cortex/dev/ephemeral-*` and
+`docs/AUDITS/REPORTS/2026-08-19-*.md`. Update status when a slice lands + dump-verifies.
+
+### Shipped (do not regress)
+
+| ID | Item | Evidence |
+|----|------|----------|
+| T-SOT | History `<result>` full SoT (no 2KB compact inject) | `ephemeral-1801446`, `67af8c4` |
+| T-DIET | Slim tool catalog on iter≥2 | tools[0]=9.1k full → tools[1+]=2.2k slim (`1905044`, `1923837`) |
+| T-JSON | invalid_json before hollow gate | `test-parser` 24+ |
+| T-HOLLOW-BRACES | Treat tool body `{}` as hollow (not content) | parser + unit test |
+| T-EMPTYCHAT | iter≥2 user msg + 400 retry | prior commits |
+| T-FOOTER | 6-row live footer instrument | `de93e55` |
+| T-CANVAS | Ctrl-O stream/compact/canvas + timelineRows | body views |
+| T-BRAND | README + .desktop + master force | `bd8d2cd`… |
+
+### Open — P0
+
+| ID | Ticket | Symptom (dump) | Acceptance |
+|----|--------|----------------|------------|
+| **T-DUP-STREAM** | Model streams same action id twice in one gen (full+full or hollow+full). History stores both tags. | `1905044` list×2; `1923837` list×2; pre-fix grep `{}`+full | One execute; optional collapse duplicate tags in rendered history; hollow `{}` never executes |
+| **T-TIMEOUT-CANCEL** | Wall `timeout(1)` / SIGTERM painted as operator CANCEL harness | `1910320` history CANCEL while protocol has agent RESULT ok | Distinct `TIMEOUT` vs operator cancel; dump history matches protocol |
+| **T-SUBAGENT-WALL** | Sync coder child can exceed headless test budgets; join honesty under kill | `1910320` 200s kill mid-child; protocol RESULT ok + CANCEL race | Configurable child wall; parent RESULT reflects kill; one-worker PE holds |
+| **T-DEFAULT-PROMPT-BLOAT** | `-m default` iter1 tools blob ~52KB vs builtin ~9KB | `1910320` tools[0]=52286 | Cap usage_examples / schema depth for default loadout |
+
+### Open — P1
+
+| ID | Ticket | Notes |
+|----|--------|-------|
+| **T-ONE-WORKER** | PE shipped; need live proof one agent only on light scout | PE in `harness/default.md`; re-run C2 with ≥10min wall |
+| **T-COMPACT-CANVAS** | Compact/canvas craft under live TUI | Rows wired; polish selection/edges |
+| **T-WAIT-JOIN** | PE prefers wait/join over sleep | Tool exists; PE line only |
+| **T-HISTORY-DEDUP-TAGS** | Agent history line keeps duplicate `<action id=same>` text | Display/export cleanup |
+| **T-CLI-HEADLESS** | Bare `--session` opens hub TUI | Document + optional `--headless` flag |
+| **T-MANIFEST-SEATBELT** | stage/coder / sub max_iterations still huge | Don’t commit operator WIP blindly |
+
+### Open — P2
+
+| ID | Ticket |
+|----|--------|
+| **T-PARSER-STALE-DOCS** | Old TICKETS POC section below is archival noise — keep separate |
+| **T-PRODUCT-CHROME** | Beyond README/.desktop |
+| **T-EXPORT-ORDER** | Chat export vs protocol event order drift |
+
+### Live dump log (append-only)
+
+| Dump | Model | Result |
+|------|-------|--------|
+| `ephemeral-1801446` | flash | SoT full fs_read; trunc=0 |
+| `ephemeral-1897888` | flash | diet slim on continue |
+| `ephemeral-1905044` | flash | multi-tool OK; dup list tags; trunc=0 |
+| `ephemeral-1905607` | flash | bare→PROTOCOL nudge→list→final OK |
+| `ephemeral-1910320` | flash `-m default` | one coder agent started; **timeout→CANCEL race**; tools 52KB |
+| `ephemeral-1923837` | **pro** | list→final OK; diet slim iter2; dup list tags |
+
+---
+
+## Authoritative source (legacy POC audit)
 
 The current open audit findings live as an artifact and are kept in sync as
 slices ship:
