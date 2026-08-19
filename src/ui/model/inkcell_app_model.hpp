@@ -339,9 +339,9 @@ struct ShellModel : TimelineStore {
     // sets it; free-scroll (Ctrl-J/K) clears it even if selection stays on last.
     // Do NOT re-lock from selectionOnLiveEdge alone — that fought scroll unlock.
     void followLiveEdgeIfLocked() {
-        if (!running || !atRoot()) return;
+        if (!running) return;
         if (!transcriptView.stick_bottom) return;
-        int last = std::max(0, countFocusable(rootRows, showThoughts) - 1);
+        int last = std::max(0, countFocusable(activeRows(), showThoughts) - 1);
         // When a new focusable block appears, selection jumps to the new last.
         // Incremental project only rewrites the dirty tail — the previous last
         // keeps its › chrome → double highlight until j/k forces full rebuild.

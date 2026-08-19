@@ -840,11 +840,16 @@ class AgentScene final : public BaseScene {
                 if (model_->pendingOps > 0) {
                     for (auto it = model_->rootRows.rbegin();
                          it != model_->rootRows.rend(); ++it) {
-                        if (it->kind == TimelineKind::Action && it->actionType == "agent" &&
-                            !it->actionId.empty() &&
-                            model_->pendingActionIds.count(it->actionId)) {
+                        if (it->kind != TimelineKind::Action || it->actionId.empty()) continue;
+                        if (!model_->pendingActionIds.count(it->actionId)) continue;
+                        const bool child =
+                            it->actionType == "agent" ||
+                            (model_->rootAgent && !it->actionName.empty() &&
+                             model_->rootAgent->hasSubAgent(it->actionName));
+                        if (child) {
                             foot.phaseKey = "delegate";
-                            foot.phaseDetail = it->actionName.empty() ? "subagent" : it->actionName;
+                            foot.phaseDetail =
+                                it->actionName.empty() ? "subagent" : it->actionName;
                             break;
                         }
                     }
@@ -864,7 +869,9 @@ class AgentScene final : public BaseScene {
                     }
                     if (it->kind == TimelineKind::Action) {
                         const std::string& n = it->actionName;
-                        if (it->actionType == "agent") {
+                        if (it->actionType == "agent" ||
+                            (model_->rootAgent && !n.empty() &&
+                             model_->rootAgent->hasSubAgent(n))) {
                             foot.phaseKey = "delegate";
                             foot.phaseDetail = n.empty() ? "subagent" : n;
                             break;

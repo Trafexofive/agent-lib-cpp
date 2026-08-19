@@ -148,6 +148,7 @@ inline bool ShellModel::enterSubAgent(const std::string& name) {
     selectedBlock = 0;
     timelineFocus = true;
     composer.focused = false;
+    transcriptView.stick_bottom = true;
     rebuildViews();
     return true;
 }
