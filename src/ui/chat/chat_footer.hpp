@@ -219,33 +219,37 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
     // with right-aligned iter/identity.
 
     if (f.pane == ChatFooterPane::Live) {
-        // ── Row 0: phase + iter (left), pane chip (right) ──────────
+        // ── Row 0: TRUTH LINE — one verb, one object, one clock ────────
+        // Not a telemetry essay. act/res/KB/iter live on Session pane or
+        // a dim right chip only when they change the story (pending kids).
         {
             std::string phase = phaseSynonym(f.phaseKey, f.nowMs);
-            if (!f.phaseDetail.empty()) { phase += " · "; phase += f.phaseDetail; }
+            if (!f.phaseDetail.empty()) {
+                phase += "  ";
+                phase += f.phaseDetail;
+            }
             std::string g = f.running ? std::string(footerSpinner(f.nowMs))
                             : f.failed ? "✗" : "○";
-            std::string left = g + " " + phase;
+            std::string left = g + "  " + phase;
             if (f.running || f.turnElapsedMs > 0)
                 left += "  ·  " + footerFmtElapsed(f.turnElapsedMs);
-            if (f.running && f.actionCount > 0)
-                left += "  ·  act" + std::to_string(f.actionCount);
-            if (f.running && f.resultCount > 0)
-                left += " · res" + std::to_string(f.resultCount);
-            if (f.running && f.tokenBytes > 0)
-                left += " · " + footerFmtBytes(f.tokenBytes);
-            if (f.iterMax > 0) {
+            if (f.running && f.pendingOps > 0) {
                 left += "  ·  ";
-                left += std::to_string(f.iterCurrent);
-                left += "/";
-                left += std::to_string(f.iterMax);
+                left += std::to_string(f.pendingOps);
+                left += f.pendingOps == 1 ? " open" : " open";
             }
             auto st = f.running ? bright : f.failed ? theme::red().with_bg(bg.bg) : text;
+            if (f.phaseKey == "delegate") {
+                st = inkcell::Style::normal()
+                         .with_fg(theme::color(inkcell::Color::rgb(180, 155, 203),
+                                               inkcell::Color::rgb(219, 130, 255)))
+                         .with_bg(bg.bg);
+                st.bold = true;
+            }
             putLeft(0, left, st);
-            // Pane chip right — nothing else shares this row's right edge.
             putRight(0, std::string(footerPaneName(f.pane)) + " ^F", dim);
         }
-        // ── Row 1: ctx pressure + compact trigger marker ─────────────
+        // ── Row 1: ctx pressure only (compact is the story, not act23) ─
         if (box.h >= 2) {
             int ceil = std::max(1, f.ctxCompactAt > 0 ? f.ctxCompactAt : f.ctxMaxTokens);
             int used = std::max(0, f.ctxUsedTokens);
@@ -257,44 +261,40 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             std::snprintf(pbuf, sizeof(pbuf), "ctx %s %d%%  %s/%s",
                           bar.c_str(), static_cast<int>(pct * 100.f + 0.5f),
                           fmtTok(used).c_str(), fmtTok(ceil).c_str());
-            std::string row = pbuf;
             auto st = pct >= 0.85f ? theme::red().with_bg(bg.bg)
                       : pct >= 0.50f ? theme::amber().with_bg(bg.bg) : text;
-            putLeft(1, row, st);
-            // Trigger marker — a separate ▏ at the compact threshold column,
-            // painted over the bar. Never corrupt the bar string bytes.
+            putLeft(1, pbuf, st);
             if (f.ctxMaxTokens > 0 && f.ctxCompactAt > 0 &&
                 f.ctxCompactAt < f.ctxMaxTokens && box.w > 30) {
                 int markCol =
                     x0 + 4 + static_cast<int>(static_cast<float>(f.ctxCompactAt) /
                                               static_cast<float>(f.ctxMaxTokens) *
                                                   barW);
-                // bar glyphs are width-1 cells (█/░); mark sits on the next cell
                 if (markCol < box.right() - 12) {
                     auto markSt = theme::footer_bright();
                     markSt.bg = bg.bg;
                     surface.put({markCol, box.y + 1}, "▏", markSt);
                 }
             }
-            if (f.compactEnabled) {
-                putRight(1, f.compactedRecently ? "compacted" : "compact on", dim);
+            // Dim telemetry parked on the right of ctx — not the verb.
+            std::string tel;
+            if (f.running && f.actionCount > 0)
+                tel = "act" + std::to_string(f.actionCount);
+            if (f.running && f.resultCount > 0)
+                joinChip(tel, "res" + std::to_string(f.resultCount));
+            if (f.tokenBytes > 0)
+                joinChip(tel, footerFmtBytes(f.tokenBytes));
+            if (tel.empty()) {
+                if (f.compactEnabled)
+                    putRight(1, f.compactedRecently ? "compacted" : "compact on", dim);
+                else
+                    putRight(1, "compact off", dim);
             } else {
-                putRight(1, "compact off", dim);
+                putRight(1, tel, dim);
             }
         }
-        // ── Row 2: history bar + right-aligned identity ──────────────
+        // ── Row 2: identity (who) — hist is secondary ─────────────────
         if (box.h >= 3) {
-            int maxH = std::max(1, f.historyMax);
-            float hpct = static_cast<float>(std::max(0, f.historyUsed)) / static_cast<float>(maxH);
-            if (hpct > 1.f) hpct = 1.f;
-            char hbuf[48];
-            std::snprintf(hbuf, sizeof(hbuf), "hist %s %d/%d",
-                          pressureBar(hpct, 10).c_str(),
-                          std::max(0, f.historyUsed), maxH);
-            auto st = hpct >= 0.90f ? theme::red().with_bg(bg.bg)
-                      : hpct >= 0.70f ? theme::amber().with_bg(bg.bg) : text;
-            putLeft(2, std::string(hbuf), st);
-            // Identity: agent/manifest · provider/model · session
             std::string id;
             if (!f.agentName.empty()) {
                 id = f.agentName;
@@ -305,9 +305,24 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
                 joinChip(id, (f.provider.empty() ? "?" : f.provider) + "/" +
                             (f.model.empty() ? "?" : f.model));
             }
-            if (!f.sessionId.empty()) joinChip(id, suffix8(f.sessionId));
             if (id.empty()) id = f.themeName;
-            putRight(2, id, dim);
+            auto idSt = bright;
+            idSt.bold = false;
+            putLeft(2, id, idSt);
+
+            int maxH = std::max(1, f.historyMax);
+            float hpct = static_cast<float>(std::max(0, f.historyUsed)) / static_cast<float>(maxH);
+            if (hpct > 1.f) hpct = 1.f;
+            char hbuf[40];
+            std::snprintf(hbuf, sizeof(hbuf), "hist %d/%d",
+                          std::max(0, f.historyUsed), maxH);
+            if (!f.sessionId.empty()) {
+                std::string right = hbuf;
+                joinChip(right, suffix8(f.sessionId));
+                putRight(2, right, dim);
+            } else {
+                putRight(2, hbuf, dim);
+            }
         }
         return;
     }
