@@ -16,6 +16,7 @@
 #include "src/ui/chat/chat_commands.hpp"
 #include "src/ui/chat/chat_io.hpp"
 #include "src/ui/chat/chat_view.hpp"
+#include "src/ui/chat/composer_extras.hpp"
 #include "src/ui/components/cmd_palette.hpp"
 #include "src/ui/model/ui_prefs.hpp"
 
@@ -398,13 +399,14 @@ class AgentScene final : public BaseScene {
                 persistUiPrefs(*model_);
                 return true;
             }
-            // Fine scroll — always. Steals TextArea Ctrl-K kill-line; Ctrl-U ok.
-            // scroll_by clears stick_bottom unless at absolute end (unlock mid-run).
+            // Fine scroll when the composer is unfocused. While typing, Ctrl-K/U/W
+            // belong to TextArea (kill-line / kill-to-bol / kill-word).
             if (event.ch == 'j' || event.ch == 'J') {
                 model_->transcriptView.scroll_by(1);
                 return true;
             }
-            if (event.ch == 'k' || event.ch == 'K') {
+            if ((event.ch == 'k' || event.ch == 'K') &&
+                (!model_->composer.focused || model_->timelineFocus)) {
                 model_->transcriptView.scroll_by(-1);
                 return true;
             }
@@ -456,6 +458,10 @@ class AgentScene final : public BaseScene {
             }
             if (event.code == KeyCode::Character && (event.ch == 'j' || event.ch == 'J')) {
                 model_->selectDelta(1);
+                return true;
+            }
+            if (event.code == KeyCode::Character && event.ch == 'z' && !event.ctrl()) {
+                model_->toggleSelectedCollapsed();
                 return true;
             }
             // gg = top block, G = bottom block (vim-ish; history/nav mode only)
@@ -561,10 +567,12 @@ class AgentScene final : public BaseScene {
             return true;
         }
         if (event.code == KeyCode::Tab) {
+            if (chat::completeAtPath(*model_, false)) return true;
             completeSlashCommand(/*reverse=*/false);
             return true;
         }
         if (event.code == KeyCode::BackTab) {
+            if (chat::completeAtPath(*model_, true)) return true;
             completeSlashCommand(/*reverse=*/true);
             return true;
         }
@@ -608,6 +616,7 @@ class AgentScene final : public BaseScene {
                 return model_->composer.handle_key(event);
             }
             if (runSlashCommand()) return true;
+            if (chat::runBangCommand(*model_, model_->composer.value)) return true;
             model_->submitComposer();
             return true;
         }
@@ -629,6 +638,22 @@ class AgentScene final : public BaseScene {
         // Any normal edit invalidates the tab-cycle stem (readline behavior).
         if (event.code != KeyCode::Tab && event.code != KeyCode::BackTab)
             model_->clearTabCompletion();
+        if (event.code == KeyCode::Paste) {
+            int nlines = 1;
+            for (char c : event.text)
+                if (c == '\n') ++nlines;
+            bool ok = model_->composer.handle_key(event);
+            if (nlines >= 8) {
+                chat::Notification n;
+                n.id = "paste";
+                n.source = "composer";
+                n.severity = nlines > 200 ? "warn" : "info";
+                n.lifetimeMs = 2200;
+                n.title = std::to_string(nlines) + " lines pasted";
+                model_->notificationStack.push(std::move(n));
+            }
+            return ok;
+        }
         if (model_->composer.handle_key(event)) return true;
         return false;
     }
@@ -658,10 +683,6 @@ class AgentScene final : public BaseScene {
             if (model_->showRaw) mode = "raw";
             else mode = model_->showThoughts ? "think" : "clean";
             mode += model_->truncateBodies ? " · trunc" : " · full";
-            mode += " · in:";
-            mode += bodyRenderModeName(model_->actionBodyMode);
-            mode += " · out:";
-            mode += bodyRenderModeName(model_->resultBodyMode);
             if (model_->rootAgent && model_->rootAgent->config().compaction.enabled)
                 mode += " · cpk";
             if (model_->uiDevMode) mode += " · dev";
@@ -691,6 +712,9 @@ class AgentScene final : public BaseScene {
         vm.showThoughts = model_->showThoughts;
         vm.showRaw = model_->showRaw;
         vm.pendingOps = model_->pendingOps;
+        vm.queuedSteer = 0;
+        if (model_->rootAgent && model_->rootAgent->hasPendingSteer()) vm.queuedSteer = 1;
+        if (!model_->pendingSteerBuffer.empty()) vm.queuedSteer += 1;
         vm.actionCount = model_->actionCount;
         vm.resultCount = model_->resultCount;
         vm.tokenBytes = model_->tokenBytes;

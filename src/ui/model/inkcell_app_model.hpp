@@ -417,6 +417,19 @@ struct ShellModel : TimelineStore {
         rebuildViews();
     }
 
+    void toggleSelectedCollapsed() {
+        if (selectedBlock < 0 || selectedBlock >= static_cast<int>(blockRowIndex.size())) return;
+        int ri = blockRowIndex[static_cast<size_t>(selectedBlock)];
+        auto& rows = atRoot() ? rootRows : nestedRows;
+        if (ri < 0 || ri >= static_cast<int>(rows.size())) return;
+        rows[static_cast<size_t>(ri)].collapsed = !rows[static_cast<size_t>(ri)].collapsed;
+        markProjFull();
+        transcriptWrapCache.invalidate();
+        ++transcriptVersion;
+        forceFullProject_ = true;
+        rebuildViews();
+    }
+
     // Toggle body truncation and force full wrap-cache rebuild (Ctrl-O / /truncate).
     void toggleTruncateBodies() {
         truncateBodies = !truncateBodies;
@@ -480,7 +493,6 @@ struct ShellModel : TimelineStore {
         if (ri < 0 || ri >= static_cast<int>(rows.size())) return nullptr;
         return &rows[static_cast<size_t>(ri)];
     }
-
     // Nested drill — definitions in shell_nav_session.hpp (F4b).
     bool enterSubAgent(const std::string& name);
     bool enterSelected();

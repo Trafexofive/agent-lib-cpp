@@ -24,13 +24,13 @@ Living document tracking Cortex-Prime MK3 agent-lib status, priorities, decision
 | Metadata headers | Deployed — `✓ 234ms exit:0 12.3KB` per action |
 | raw.md / iterations.md dumps | Deployed — PROMPT + RESPONSE + LLM RAW OUTPUT + TOOL RESULTS |
 | Crash: `free(): invalid pointer` | Fixed — threads joined on destructor |
-| **Spinner/live typing during LLM** | **Blocked** — `curl_easy_perform` blocks main thread |
-| **LLM protocol compliance** | **~60% baseline (remeasure after CANON)** — contract lies removed 2026-07-10 |
-| **Global agent selection / any-CWD** | **Shipped** — `manifests/` only; bare `-m` manager + ownership trees |
-| **TUI (builtin)** | **Oracle** — `--tui legacy` ReplSession; frozen for parity reference |
-| **inkcell migration** | **ACTIVE path C** — native App is default; living plan `docs/INKCELL_MIGRATION.md` |
-| **inkcell product surface** | **Shipped baseline** — MainScene + AgentScene; ask/cancel/scroll tests green |
-| **Persona separation** | **Deployed** — assistant.md + decoupler.md pure behavioral, no protocol leaks |
+| **Spinner/live typing during LLM** | **Still blocked** — provider path is `curl_easy_perform` (`src/providers/generic_openai.cpp`). Tool exec is **not** the same problem. |
+| **LLM protocol compliance** | CANON shipped 2026-07-10. **Do not quote 60% as current** — remeasure before citing. |
+| **Global agent selection / any-CWD** | **Shipped** — `manifests/` + `config/agents/`; bare `-m` manager + ownership trees |
+| **TUI (builtin / `src/tui`)** | **Oracle only** — `--tui legacy`. Do not invest. |
+| **inkcell TUI** | **Default product path** on `feat/inkcell-agentshell`. Native App. Layout target: tetris/aart convention (`app/` `views/` `data/` `assets/` `components/`). |
+| **Tool / exec hang** | **Hard rule:** every subprocess goes through `process::run` with a wall clock. `popen` leftover is a bug. Caps: exec 1–600s, script tools 1–600s, feed git 2s, clipboard 1.5s, builds 120s. |
+| **Persona separation** | **Deployed** — harness = protocol, persona = behavior, tools = schemas |
 
 ---
 
@@ -56,11 +56,7 @@ Hybrid of minimal + recommended + profile sugar.
    - Selection interface: CLI (`--agent <name|path>`, fuzzy list), interactive picker at startup / slash command (`/agent`, `/manifest`).
    - Resolve harness/system/persona/tools relative to **manifest home**, not process CWD.
    - Document install layout + env vars; keep one-shot `-m path/to/agent.yml` as escape hatch.
-2. **TUI substrate decision: inkcell vs builtin** — current `src/tui/` is POC-grade. Feasibility study before more UI surface area.
-   - Candidate: sibling repo `../inkcell` (retained Surface, scene/action runtime, themes, snapshot tests, C++17/Makefile, no ncurses).
-   - Spike criteria: stream protocol events (action/result/response/thought) into inkcell scenes; input/readline parity; scrollback; dialog/ask_tool cards; frame budget under live SSE.
-   - Decision gate: **adopt inkcell** (thin adapter, delete/shrink builtin) vs **keep builtin** (rewrite in place) vs **hybrid** (inkcell shell + protocol widgets).
-   - Do not invest in select-block / fancy chrome until this gate lands.
+2. **Inkcell TUI (DECIDED — default)** — `src/ui/` is the product. Builtin `src/tui` is oracle. Remaining work is structure + QoL (`docs/AUDITS/REPORTS/2026-08-16-chat-ux-backlog.md`), not a substrate bake-off.
 3. **Async LLM** — non-blocking HTTP (curl_multi or threaded client). Unblocks spinner + typing during stream.
 4. **Runtime compliance enforcement** — strict XML mode already partially in CANON path; harden protocol_error injection + metrics.
 5. **Manifest ecosystem** — bi-directional import, remote resolving, disable unsupported builtins for auto-readonly mode.
@@ -109,11 +105,11 @@ Only `<response final="true">` completes normally. Authority: `docs/protocol/CAN
 
 | Debt | Impact | Mitigation |
 |------|--------|------------|
-| `curl_easy_perform` blocks main thread | Spinner freezes, can't type during LLM | Ctrl+C responsive via `CURLOPT_XFERINFOFUNCTION`. Full fix: async LLM (#1 priority) |
-| No thread-safe protocol vectors | Potential data race when async LLM added | Acceptable now — single-threaded. Must add mutex before async |
-| LLM emits bare text outside tags | Extra API calls until correction lands | CANON §2 strict retry (not silent final). Remeasure compliance post-canon |
-| No automated tests | Regressions manually detected | Manual testing for now. Test harness needed |
-| Markdown renderer handles partial text poorly | Live MD can be garbled during streaming | Acceptable — resolves on completion. Lazy rendering option exists |
+| `curl_easy_perform` blocks main thread | Spinner freezes, can't type during LLM | Ctrl+C via `CURLOPT_XFERINFOFUNCTION`. Next: curl_multi / worker thread |
+| No thread-safe protocol vectors | Data race **when** async LLM lands | Mutex before async, not before |
+| LLM emits bare text outside tags | Extra API calls until correction | CANON §2 retry. Remeasure — do not cite old 60% |
+| Tests exist (`test-parser`, `test-protocol`, `test-ui-model`, session/epoch) | `test-ui-model` has known expectation drift | Fix tests or product; do not ignore red |
+| Markdown renderer handles partial text poorly | Live MD garbled mid-stream | Acceptable until complete |
 
 ---
 
@@ -194,4 +190,4 @@ Results append line-by-line. Each `harvestPendingTools()` call pushes new lines 
 
 ---
 
-*Last updated: 2026-03-27 | compaction drafts + askcards/manifest-expert next track*
+*Last updated: 2026-08-18 | hang-kill (process::run only) + chat contrast/composer + agenda resync*

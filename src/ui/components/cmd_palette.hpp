@@ -228,6 +228,9 @@ inline std::vector<CmdItem> chatCommands() {
         {"chat.scroll_up", "Fine scroll up", "transcript -1 line", "CHAT", "^K"},
         {"chat.clear", "Clear transcript", "wipe current view", "CHAT", "/clear"},
         {"chat.stop", "Stop agent loop", "kill switch", "CHAT", "^X"},
+        {"chat.collapse", "Collapse block", "toggle selected body", "CHAT", "z"},
+        {"chat.bang", "Shell from composer", "!cmd run · !!cmd insert", "PROMPT", "!"},
+        {"chat.at", "Path complete", "@path + Tab", "PROMPT", "@"},
         {"act.theme", "Toggle theme", "graphite ↔ neon", "ACTION", "T"},
         {"sys.quit", "Quit", "exit cortex", "SYSTEM", "q"},
     };

@@ -53,10 +53,9 @@ inline bool ShellModel::submitComposer() {
         return false;
     }
     std::string text = composer.value;
-    while (!text.empty() && (text.back() == '\n' || text.back() == ' ' || text.back() == '\t')) text.pop_back();
-    size_t start = 0;
-    while (start < text.size() && (text[start] == ' ' || text[start] == '\t' || text[start] == '\n')) ++start;
-    text = text.substr(start);
+    while (!text.empty() && (text.back() == '\n' || text.back() == ' ' || text.back() == '\t' ||
+                             text.back() == '\r'))
+        text.pop_back();
     if (text.empty()) return false;
 
     // Live turn → steer buffer (no warn). Injected at next iteration boundary.

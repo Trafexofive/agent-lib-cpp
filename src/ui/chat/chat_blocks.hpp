@@ -100,7 +100,7 @@ inline inkcell::Color blockBackground(ChatBlockKind kind, bool selected = false,
         // doesn't scream. lift 18..30.
         const double phase = (nowMs % 1600) / 1600.0 * 6.283185307179586;
         const double breath = 0.5 + 0.5 * std::sin(phase);
-        const int lift = 18 + static_cast<int>(12.0 * breath);
+        const int lift = 28 + static_cast<int>(14.0 * breath);
         graphite = Color::rgb(std::min(255, graphite.r + lift), std::min(255, graphite.g + lift + 2),
                               std::min(255, graphite.b + lift + 4));
         neon = Color::rgb(std::min(255, neon.r + lift), std::min(255, neon.g + lift + 4),
@@ -126,7 +126,7 @@ inline inkcell::Style blockStyle(ChatBlockKind kind, bool header, bool selected 
         case ChatBlockKind::Error: style.fg = theme::red().fg; break;
         case ChatBlockKind::Thought:
         case ChatBlockKind::Raw:
-        case ChatBlockKind::Notice: style.fg = theme::dim().fg; break;
+        case ChatBlockKind::Notice: style.fg = theme::muted().fg; break;
         case ChatBlockKind::None: style.fg = theme::text().fg; break;
     }
     if (!header && kind != ChatBlockKind::Thought && kind != ChatBlockKind::Raw)

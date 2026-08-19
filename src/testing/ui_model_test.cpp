@@ -324,15 +324,16 @@ void test_workflow_run_hub_transitions() {
 
 void test_dashboard_model() {
     model::DashboardState dashboard;
-    // 4 sections, wrapping: Home → Sessions → Manifests → Help → Home
-    for (int i = 0; i < 3; ++i) dashboard.moveNavigation(1);
-    check(dashboard.section == model::DashboardSection::Settings && dashboard.navigationIndex == 3,
+    // 7 pills: Home · Sessions · Manifests · Tools · Relics · Workflows · Settings
+    const int last = model::DashboardState::sectionCount - 1;
+    for (int i = 0; i < last; ++i) dashboard.moveNavigation(1);
+    check(dashboard.section == model::DashboardSection::Settings && dashboard.navigationIndex == last,
           "dashboard navigation reaches Settings");
     dashboard.moveNavigation(1);
     check(dashboard.section == model::DashboardSection::Home && dashboard.navigationIndex == 0,
           "dashboard navigation wraps Home");
     dashboard.moveNavigation(-1);
-    check(dashboard.section == model::DashboardSection::Settings && dashboard.navigationIndex == 3,
+    check(dashboard.section == model::DashboardSection::Settings && dashboard.navigationIndex == last,
           "dashboard navigation wraps backward to Settings");
 
     session::SessionManager::SessionInfo first;
@@ -599,16 +600,20 @@ void test_chat_commands() {
     check(neonTheme.toggleTheme && neonTheme.themeName == "neon", "chat theme accepts explicit neon selection");
     auto badTheme = chat::executeChatCommand("/theme radioactive");
     check(!badTheme.toggleTheme && !badTheme.lines.empty(), "chat theme rejects unknown palette");
-    check(chat::executeChatCommand("/prompts").showPrompts, "chat prompts command classified");
-    check(chat::executeChatCommand("/dump-prompt").dumpPrompts, "chat dump-prompt command classified");
+    chat::ChatCommandContext dev;
+    dev.devMode = true;
+    check(chat::executeChatCommand("/prompts", dev).showPrompts, "chat prompts command classified");
+    check(chat::executeChatCommand("/dump-prompt", dev).dumpPrompts, "chat dump-prompt command classified");
     check(chat::executeChatCommand("/cp-all").copyAll, "chat copy-all command classified");
-    check(chat::executeChatCommand("/cp-raw").copyRaw, "chat copy-raw command classified");
+    check(chat::executeChatCommand("/cp-raw", dev).copyRaw, "chat copy-raw command classified");
     check(chat::executeChatCommand("/quit").quit, "chat quit command classified");
     auto dynamic = chat::discoverDynamicChatCommands();
     check(!dynamic.empty(), "dynamic prompt/skill catalog is discovered");
     auto debugger = chat::completeChatCommand("/debug");
-    check(std::find(debugger.begin(), debugger.end(), "/debugger") != debugger.end(),
-          "dynamic command participates in completion");
+    bool hasDebugger = false;
+    for (const auto& name : debugger)
+        if (name.rfind("/debugger", 0) == 0) hasDebugger = true;
+    check(hasDebugger, "dynamic command participates in completion");
     auto expanded = chat::executeChatCommand("/debugger parser crash");
     check(expanded.handled && !expanded.composerReplacement.empty() &&
               expanded.composerReplacement.find("parser crash") != std::string::npos,

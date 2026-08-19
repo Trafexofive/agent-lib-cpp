@@ -41,6 +41,7 @@ struct TimelineRow {
     std::string actionName;
     std::string actionId;
     bool drillable = false;
+    bool collapsed = false;  // operator za — session-live, not persisted
 };
 
 inline const char* kindGlyph(TimelineKind k, bool ok = true) {

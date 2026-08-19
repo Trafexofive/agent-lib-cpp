@@ -166,6 +166,12 @@ inline bool ShellModel::projectOneRow(const TimelineRow& row, int ri, int& focus
     }
     transcriptView.lines.push_back(std::string(selected ? "› " : "  ") + label);
     {
+        if (row.collapsed) {
+            transcriptView.lines.push_back("    ▸ collapsed · za to expand");
+            transcriptView.lines.push_back("");
+            ++focusIdx;
+            return true;
+        }
         // Thoughts are operator-secondary; hard-cap tighter so a runaway
         // stream cannot paint 50×wide lines every frame and stall input.
         // Actions/results denser under truncate (ctrl-o); full when expanded.
@@ -214,8 +220,8 @@ inline bool ShellModel::projectOneRow(const TimelineRow& row, int ri, int& focus
         }
         if (truncateBodies && more && total > shown) {
             transcriptView.lines.push_back(
-                "    … (" + std::to_string(total - shown) +
-                " more lines — /truncate off or ↳ drill to expand)");
+                "    … " + std::to_string(total - shown) + " more lines · " +
+                std::to_string(body.size()) + "B — za or /truncate");
         }
     }
     transcriptView.lines.push_back("");
