@@ -425,13 +425,21 @@ inline CompactResult compactHistory(const std::vector<std::string>& history,
         }
     }
 
-    if (r.didCompact && (cfg.outputMode == "summarize_rules" || cfg.outputMode == "summarize_llm")) {
+    // Note only when something real left the store — bare truncate-in-place
+    // without drops still sets didCompact for prompt, but operator badge/note
+    // should say what happened in plain numbers.
+    if (r.didCompact &&
+        (cfg.outputMode == "summarize_rules" || cfg.outputMode == "summarize_llm")) {
         std::ostringstream note;
         note << "[COMPACTED] dropped=" << r.dropped << " kept=" << r.kept
              << " tokens≈" << estimateTokens(r.lines);
-        if (cfg.archiveEnabled && cfg.archiveSink != "none")
+        if (cfg.archiveEnabled && cfg.archiveSink != "none" && r.dropped > 0)
             note << " archive=" << cfg.archiveSink;
-        r.note = note.str();
+        if (r.dropped > 0 || r.kept < static_cast<int>(history.size()))
+            r.note = note.str();
+        else if (r.didCompact)
+            r.note = "[COMPACTED] trimmed in-place kept=" + std::to_string(r.kept) +
+                     " tokens≈" + std::to_string(estimateTokens(r.lines));
     }
     if (cfg.archiveEnabled && cfg.archiveSink != "none" && r.dropped > 0)
         r.archiveBody = arch.str();

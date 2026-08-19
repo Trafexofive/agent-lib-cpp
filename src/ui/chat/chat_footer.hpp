@@ -491,14 +491,35 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             surface.text({x, y0 + 2}, pl, pst);
             x += inkcell::text::display_width(pl) + 3;
 
-            if (f.compactEnabled && trigPct > 0.f) {
-                std::string tr = "trigger ";
-                tr += std::to_string(static_cast<int>(std::lround(trigPct * 100.0)));
-                tr += "%";
-                if (f.compactedRecently) tr += "  COMPACTED";
+            // Compaction status — human states, not a sticky lie.
+            //   off | idle (under arm) | armed (≥ arm%, will fire) | just compacted
+            {
+                std::string tr;
+                auto tst = dim;
+                if (!f.compactEnabled) {
+                    tr = "compact off";
+                } else if (f.compactedRecently) {
+                    tr = "just compacted";
+                    tst = amber;
+                    tst.bold = true;
+                } else if (trigPct > 0.f) {
+                    const int arm = static_cast<int>(std::lround(trigPct * 100.0));
+                    tr = "arm@";
+                    tr += std::to_string(arm);
+                    tr += "%";
+                    if (pct + 1e-6f >= trigPct) {
+                        tr += " · armed";
+                        tst = amber;
+                        tst.bold = true;
+                    } else {
+                        tr += " · idle";
+                    }
+                } else {
+                    tr = "compact on";
+                }
+                tst.bg = bg.bg;
                 surface.text({x, y0 + 2},
-                             inkcell::text::truncate(tr, rightEdge - x),
-                             f.compactedRecently ? amber : dim);
+                             inkcell::text::truncate(tr, rightEdge - x), tst);
             }
         }
 
@@ -625,11 +646,24 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         if (box.h >= 2)
             putLeft(1, f.bodyFmt.empty() ? "fmt default" : f.bodyFmt, text);
         if (box.h >= 3) {
-            std::string c = f.compactEnabled ? "compact on" : "compact off";
+            std::string c;
+            if (!f.compactEnabled) {
+                c = "compact off · history_cap only";
+            } else {
+                c = "compact";
+                if (f.ctxCompactAt > 0 && f.ctxMaxTokens > 0) {
+                    int arm = static_cast<int>(std::lround(
+                        100.0 * static_cast<double>(f.ctxCompactAt) /
+                        static_cast<double>(std::max(1, f.ctxMaxTokens))));
+                    c += " arm@";
+                    c += std::to_string(arm);
+                    c += "%";
+                }
+                joinChip(c, f.compactedRecently ? "just ran" : "waiting");
+            }
             joinChip(c, "win " + fmtTok(f.ctxMaxTokens));
-            joinChip(c, "iter " + std::to_string(f.iterCurrent) + "/" +
-                            std::to_string(f.iterMax));
-            joinChip(c, f.themeName.empty() ? "theme" : f.themeName);
+            joinChip(c, "hist " + std::to_string(f.historyUsed) + "/" +
+                            std::to_string(f.historyMax));
             putLeft(2, c, dim);
         }
         if (box.h >= 4) {

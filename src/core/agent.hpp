@@ -374,7 +374,9 @@ class Agent {
     AgentConfig config_;
     LlmProviderPtr provider_;
     session::SessionManager sessionMgr_;
-    std::vector<std::string> history_;
+    // mutable: prompt-build compaction may shrink the back-store from const
+    // buildSystemPrompt (front=prompt view, back=session history).
+    mutable std::vector<std::string> history_;
     mutable std::mutex steerMu_;
     std::string pendingSteer_;
     std::string systemPrompt_;

@@ -878,7 +878,7 @@ class AgentScene final : public BaseScene {
             if (foot.ctxMaxTokens <= 0) foot.ctxMaxTokens = 128000;
             // Flash COMPACTED ~8s after a real compact — never sticky forever.
             foot.compactedRecently =
-                live->compactBadgeActive(static_cast<int64_t>(now));
+                live->compactBadgeActive(static_cast<int64_t>(vm.nowMs));
         } else if (model_->tokenBytes > 0) {
             foot.ctxUsedTokens = std::max(foot.ctxUsedTokens, model_->tokenBytes / 3 + 2000);
         }
