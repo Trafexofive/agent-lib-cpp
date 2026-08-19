@@ -222,7 +222,12 @@ Json::Value GenericOpenAIClient::buildRequestBody(const ChatMessages& msgs, bool
     body["stream"] = stream;
 
     Json::Value messages(Json::arrayValue);
+    bool anyUserOrAssistant = false;
     for (const auto& m : msgs) {
+        // Drop whitespace-only content — some gateways treat "" as empty chat.
+        if (m.content.find_first_not_of(" \t\n\r") == std::string::npos &&
+            m.role != ChatRole::TOOL)
+            continue;
         Json::Value msg;
         msg["role"] = ChatMessage::roleName(m.role);
         msg["content"] = m.content;
@@ -230,6 +235,15 @@ Json::Value GenericOpenAIClient::buildRequestBody(const ChatMessages& msgs, bool
             msg["tool_call_id"] = m.toolCallId;
             msg["name"] = m.name;
         }
+        if (m.role == ChatRole::USER || m.role == ChatRole::ASSISTANT)
+            anyUserOrAssistant = true;
+        messages.append(msg);
+    }
+    if (!anyUserOrAssistant || messages.empty()) {
+        Json::Value msg;
+        msg["role"] = "user";
+        msg["content"] =
+            "Continue from system context. Emit the next step or a final answer.";
         messages.append(msg);
     }
     body["messages"] = messages;

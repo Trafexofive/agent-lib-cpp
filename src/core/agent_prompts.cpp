@@ -6,6 +6,7 @@
 #include "agent_xml.hpp"
 #include "compaction.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include "manifest_loader.hpp"
 
@@ -515,22 +516,62 @@ std::string Agent::sanitize(const std::string &output) {
 ChatMessages Agent::buildChatPrompt(const AgentContext &ctx) const {
     ChatMessages msgs;
     msgs.push_back(ChatMessage::system(buildSystemPrompt(ctx)));
-    // First iteration: current user request is a real user message, not
-    // synthetic history inside the system prompt. Later iterations replay the
-    // inline action/result transcript from history, but still need a minimal
-    // provider-level user message; some OpenRouter routes reject system-only
-    // continuation calls as "No user query found".
+    // First iteration: current user request is a real user message.
+    // Later iterations: system prompt already embeds the action/result
+    // transcript, BUT many providers (opencode-go, some OpenRouter routes)
+    // reject system-only payloads as "chat content is empty" / "No user
+    // query found". Always send a non-empty user message.
     if (ctx.iteration <= 1) {
-        msgs.push_back(ChatMessage::user(buildUserPrompt(ctx)));
+        std::string u = buildUserPrompt(ctx);
+        if (u.find_first_not_of(" \t\n\r") == std::string::npos) {
+            u = "(empty user input — continue from system context)";
+        }
+        msgs.push_back(ChatMessage::user(u));
+    } else {
+        // Carry the newest history tail so the provider sees real user-role
+        // content without a vacuous "continue" one-liner.
+        std::ostringstream cont;
+        cont << "<harness kind=\"runtime\" code=\"continue\" iteration=\""
+             << ctx.iteration << "\">\n"
+             << "Prior actions/results are in the system transcript above.\n"
+             << "Emit the next <action> batch, or <response final=\"true\">.\n"
+             << "Do not re-emit completed action ids.\n";
+        // Last few history lines (truncated) — proof of work for picky APIs.
+        int n = static_cast<int>(history_.size());
+        int from = std::max(0, n - 6);
+        if (from < n) {
+            cont << "\n--- recent history tail ---\n";
+            for (int i = from; i < n; ++i) {
+                const std::string& h = history_[static_cast<size_t>(i)];
+                if (h.size() > 1200)
+                    cont << h.substr(0, 1200) << "…\n";
+                else
+                    cont << h << "\n";
+            }
+        }
+        cont << "</harness>";
+        msgs.push_back(ChatMessage::user(cont.str()));
     }
-    // Iteration > 1: NO synthetic user message. The inline transcript inside
-    // the system prompt carries full context; the model continues from where
-    // history stopped. No "…", no "Continue from..." — both were slop.
     std::string dynamicTail = buildDynamicContextPrompt();
     if (!dynamicTail.empty()) {
         // Dynamic context is intentionally last for prompt-cache friendliness,
         // but it is runtime/system context, not another user request.
         msgs.push_back(ChatMessage::system(dynamicTail));
+    }
+    // Final guard: never ship a messages[] with zero non-empty user/assistant
+    // content (opencode-go 400 chat content is empty).
+    bool hasUserContent = false;
+    for (const auto& m : msgs) {
+        if (m.role == ChatRole::USER &&
+            m.content.find_first_not_of(" \t\n\r") != std::string::npos) {
+            hasUserContent = true;
+            break;
+        }
+    }
+    if (!hasUserContent) {
+        msgs.push_back(ChatMessage::user(
+            "<harness code=\"continue\">Continue. Emit action or final "
+            "response.</harness>"));
     }
     return msgs;
 }

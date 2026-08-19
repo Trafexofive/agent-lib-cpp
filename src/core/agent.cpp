@@ -754,8 +754,16 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     msg.find("HTTP 403") != std::string::npos ||
                     msg.find("RegionError") != std::string::npos ||
                     msg.find("region") != std::string::npos;
+                // opencode-go 400 "chat content is empty" is a payload/layout
+                // flake we can rebuild+retry (not a permanent model refusal).
+                const bool isEmptyChatPayload =
+                    msg.find("chat content is empty") != std::string::npos ||
+                    msg.find("content is empty") != std::string::npos ||
+                    (msg.find("HTTP 400") != std::string::npos &&
+                     (msg.find("bad_request") != std::string::npos ||
+                      msg.find("invalid params") != std::string::npos));
                 const bool isTransientNet =
-                    isTimeout ||
+                    isTimeout || isEmptyChatPayload ||
                     msg.find("CURL error") != std::string::npos ||
                     msg.find("Couldn't connect") != std::string::npos ||
                     msg.find("Connection reset") != std::string::npos ||
@@ -797,6 +805,31 @@ std::string Agent::runLoop(AgentContext &ctx) {
                             ctx.onToken("", false);
                         continue;  // retry generateStream with new provider
                     }
+                }
+                // Empty-chat 400: rebuild payload and retry in-loop (subagents
+                // hit this on iter≥2 when only system msgs were sent).
+                if (isEmptyChatPayload && attempt + 1 < maxAttempts) {
+                    emitStatus("[RETRY] empty chat payload · attempt " +
+                               std::to_string(attempt + 1) + "/" +
+                               std::to_string(maxAttempts) + " · " + msg);
+                    history_.push_back(
+                        "System: <harness code=\"RETRY\" kind=\"runtime\">\n"
+                        "Provider rejected empty chat content. Rebuilding "
+                        "messages with a user-role continuation.\n"
+                        "</harness>");
+                    if (ctx.onToken) ctx.onToken("", false);
+                    int waitMs = std::min(
+                        config_.emptyResponseInitialBackoffMs * (attempt + 1),
+                        config_.emptyResponseMaxBackoffMs);
+                    auto step = std::chrono::milliseconds(100);
+                    auto left = std::chrono::milliseconds(waitMs);
+                    while (g_running && left.count() > 0) {
+                        auto slice = left < step ? left : step;
+                        std::this_thread::sleep_for(slice);
+                        left -= slice;
+                    }
+                    ++attempt;
+                    continue;
                 }
                 std::ostringstream notice;
                 if (isTimeout) {
