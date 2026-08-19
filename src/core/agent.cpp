@@ -1231,7 +1231,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // Bare/non-final protocol retries already pushed the raw model output
         // plus a strict system correction above; don't add an empty duplicate.
         if (!st.nonFinalProtocolRetry)
-            history_.push_back("Agent: " + historyOutput);
+            history_.push_back(
+                "Agent: " + collapseDuplicateActionTags(historyOutput));
         if (!results.empty()) {
             for (auto &[id, result] : results) {
                 std::ostringstream sysMsg;

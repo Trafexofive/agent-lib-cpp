@@ -17,6 +17,57 @@
 
 namespace cortex::mk3 {
 
+// Collapse stream stutter: same action id emitted twice in one generation
+// (hollow {} then full, or full then full). Keep the last body per id.
+inline std::string collapseDuplicateActionTags(const std::string &s) {
+    static const std::regex actRe(
+        R"(<action[^>]*id="([^"]+)"[^>]*>[\s\S]*?</action>)",
+        std::regex::ECMAScript);
+    std::smatch m;
+    struct Hit {
+        size_t begin = 0;
+        size_t end = 0;
+        std::string id;
+        std::string tag;
+    };
+    std::vector<Hit> hits;
+    std::string::const_iterator it = s.cbegin();
+    while (std::regex_search(it, s.cend(), m, actRe)) {
+        Hit h;
+        h.begin = static_cast<size_t>(m[0].first - s.cbegin());
+        h.end = static_cast<size_t>(m[0].second - s.cbegin());
+        h.id = m[1].str();
+        h.tag = m[0].str();
+        hits.push_back(std::move(h));
+        it = m[0].second;
+    }
+    if (hits.size() < 2)
+        return s;
+    std::set<size_t> drop;
+    std::map<std::string, size_t> lastIdx;
+    for (size_t i = 0; i < hits.size(); ++i) {
+        auto prev = lastIdx.find(hits[i].id);
+        if (prev != lastIdx.end())
+            drop.insert(prev->second);
+        lastIdx[hits[i].id] = i;
+    }
+    if (drop.empty())
+        return s;
+    std::string rebuilt;
+    size_t cursor = 0;
+    for (size_t i = 0; i < hits.size(); ++i) {
+        const auto &h = hits[i];
+        if (h.begin > cursor)
+            rebuilt.append(s, cursor, h.begin - cursor);
+        if (!drop.count(i))
+            rebuilt.append(h.tag);
+        cursor = h.end;
+    }
+    if (cursor < s.size())
+        rebuilt.append(s, cursor, std::string::npos);
+    return rebuilt;
+}
+
 inline std::string stripModelOwnedRuntimeTags(const std::string &s) {
     static const std::regex responseRe(
         R"(<response\b[^>]*>[\s\S]*?</response>)");
