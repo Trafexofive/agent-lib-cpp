@@ -549,6 +549,11 @@ install: $(BIN_CLI)
 	install -m 755 $(BIN_CLI) $(DESTDIR)$(BINDIR)/$(BIN_CLI)
 	@echo "✓ installed $(BIN_CLI) → $(DESTDIR)$(BINDIR)/$(BIN_CLI)"
 	@if [ -f $(BIN_SERVER) ]; then install -m 755 $(BIN_SERVER) $(DESTDIR)$(BINDIR)/$(BIN_SERVER); echo "✓ installed $(BIN_SERVER) → $(DESTDIR)$(BINDIR)/$(BIN_SERVER)"; fi
+	@if [ -f share/applications/cortex-mk3.desktop ]; then \
+	  mkdir -p $(HOME)/.local/share/applications; \
+	  install -m 644 share/applications/cortex-mk3.desktop $(HOME)/.local/share/applications/cortex-mk3.desktop; \
+	  echo "✓ desktop entry → ~/.local/share/applications/cortex-mk3.desktop"; \
+	fi
 
 reinstall: install
 	@echo "✓ reinstalled"
