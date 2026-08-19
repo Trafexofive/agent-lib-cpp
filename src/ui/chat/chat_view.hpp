@@ -969,18 +969,12 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
             if (kind != ChatBlockKind::None) {
                 auto style = blockStyle(kind, header, selected, m.nowMs);
                 surface.fill({body.x, firstY + y, blockWidth, 1}, " ", style);
-                // Selection rail only — drop duplicate › paint clash: strip leading ›
-                // from the displayed string when selected (source keeps › for metadata).
                 std::string paint = line;
                 if (selected && paint.rfind("› ", 0) == 0) paint = "  " + paint.substr(2);
-                if (selected) {
-                    auto rail = theme::selected_style();
-                    rail.bg = style.bg;
-                    // Breath the rail with the same phase as bg.
-                    surface.text({body.x, firstY + y}, "▌", rail);
-                } else {
-                    surface.text({body.x, firstY + y}, header ? "▎" : " ", style);
-                }
+                // Kind-colored rail (not generic gray gutter / green select).
+                auto rail = blockRailStyle(kind, header, selected, m.nowMs);
+                surface.text({body.x, firstY + y},
+                             blockRailGlyph(kind, header, selected), rail);
                 surface.text({body.x + 1, firstY + y},
                              inkcell::text::fit_left(paint, std::max(1, blockWidth - 1)), style);
             } else {
@@ -1032,13 +1026,9 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
             surface.fill({body.x, firstY + y, blockWidth, 1}, " ", style);
             std::string paint = line;
             if (selected && paint.rfind("› ", 0) == 0) paint = "  " + paint.substr(2);
-            if (selected) {
-                auto rail = theme::selected_style();
-                rail.bg = style.bg;
-                surface.text({body.x, firstY + y}, "▌", rail);
-            } else {
-                surface.text({body.x, firstY + y}, header ? "▎" : " ", style);
-            }
+            auto rail = blockRailStyle(kind, header, selected, m.nowMs);
+            surface.text({body.x, firstY + y},
+                         blockRailGlyph(kind, header, selected), rail);
             surface.text({body.x + 1, firstY + y},
                          inkcell::text::fit_left(paint, std::max(1, blockWidth - 1)), style);
         } else {

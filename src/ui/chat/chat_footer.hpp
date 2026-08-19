@@ -223,17 +223,59 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         components::hairline(surface, box.x + 1, box.y, std::max(0, box.w - 1), rule);
     }
 
-    // Accent rail — full height. Live breathes slightly (earned motion only).
-    auto accent = f.failed ? theme::footer_warn()
-                  : live   ? theme::footer_accent_live()
-                  : focus  ? theme::footer_accent_focus()
-                           : footerDimAccent(bg);
-    accent.bg = bg.bg;
+    // Phase-colored rail — the plate's identity, not one green forever.
+    auto phaseAccent = [&]() -> inkcell::Style {
+        auto s = inkcell::Style::normal().with_bg(bg.bg);
+        s.bold = true;
+        if (f.failed || f.phaseKey == "fail") {
+            s.fg = theme::color(inkcell::Color::rgb(220, 95, 100),
+                                inkcell::Color::rgb(255, 95, 115));
+            return s;
+        }
+        if (f.phaseKey == "delegate") {
+            s.fg = theme::color(inkcell::Color::rgb(175, 125, 220),
+                                inkcell::Color::rgb(220, 130, 255));
+            return s;
+        }
+        if (f.phaseKey == "think") {
+            s.fg = theme::color(inkcell::Color::rgb(130, 140, 200),
+                                inkcell::Color::rgb(150, 160, 255));
+            return s;
+        }
+        if (f.phaseKey == "act") {
+            s.fg = theme::color(inkcell::Color::rgb(210, 155, 80),
+                                inkcell::Color::rgb(255, 185, 70));
+            return s;
+        }
+        if (f.phaseKey == "wait") {
+            s.fg = theme::color(inkcell::Color::rgb(100, 175, 200),
+                                inkcell::Color::rgb(90, 220, 255));
+            return s;
+        }
+        if (f.phaseKey == "reply") {
+            s.fg = theme::color(inkcell::Color::rgb(120, 190, 150),
+                                inkcell::Color::rgb(100, 235, 160));
+            return s;
+        }
+        if (f.phaseKey == "ask") {
+            s.fg = theme::color(inkcell::Color::rgb(200, 130, 190),
+                                inkcell::Color::rgb(245, 140, 235));
+            return s;
+        }
+        if (f.phaseKey == "cancel") {
+            s.fg = theme::color(inkcell::Color::rgb(200, 140, 90),
+                                inkcell::Color::rgb(245, 170, 80));
+            return s;
+        }
+        if (live) return theme::footer_accent_live().with_bg(bg.bg);
+        if (focus) return theme::footer_accent_focus().with_bg(bg.bg);
+        return footerDimAccent(bg);
+    };
+    auto accent = phaseAccent();
     if (live) {
-        // Soft breath on the rail only (~2.2s). Not a second spinner.
         const double phase = (f.nowMs % 2200) / 2200.0 * 6.283185307179586;
         const double breath = 0.55 + 0.45 * std::sin(phase);
-        accent.dim = breath < 0.7;
+        accent.dim = breath < 0.65;
         accent.bold = true;
     }
     components::accentBar(surface, box.x, box.y, box.h, accent);
@@ -244,8 +286,13 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
     dim.bg = bg.bg;
     auto text = theme::footer_text();
     text.bg = bg.bg;
-    auto liveSt = theme::footer_live();
+    auto liveSt = accent;  // verb matches rail phase hue
     liveSt.bg = bg.bg;
+    liveSt.bold = true;
+    auto cyanSoft = inkcell::Style::normal()
+                        .with_fg(theme::color(inkcell::Color::rgb(110, 160, 175),
+                                              inkcell::Color::rgb(90, 200, 230)))
+                        .with_bg(bg.bg);
     auto violet = inkcell::Style::normal()
                       .with_fg(theme::color(inkcell::Color::rgb(180, 155, 203),
                                             inkcell::Color::rgb(219, 130, 255)))
@@ -305,36 +352,52 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             if (!right.empty()) putRight(0, right, dim);
         }
 
-        // ── Row 1: who  ·  pressure bar when it matters ─────────────
+        // ── Row 1: agent (bright) · model (cyan) + pressure bar ─────
         if (box.h >= 2) {
-            std::string who;
-            if (!f.agentName.empty()) who = f.agentName;
-            if (!f.provider.empty() || !f.model.empty()) {
-                std::string pm = (f.provider.empty() ? "?" : f.provider) + "/" +
-                                 (f.model.empty() ? "?" : f.model);
-                // Prefer short model tail when wide identity fights the bar.
-                if (pm.size() > 28 && !f.model.empty()) pm = f.model;
-                joinChip(who, pm);
-            }
-            if (who.empty()) who = f.themeName.empty() ? "cortex" : f.themeName;
-
             int ceil = std::max(1, f.ctxCompactAt > 0 ? f.ctxCompactAt : f.ctxMaxTokens);
             int used = std::max(0, f.ctxUsedTokens);
             float pct = static_cast<float>(used) / static_cast<float>(ceil);
             if (pct > 1.f) pct = 1.f;
             const bool showBar = live || pct >= 0.35f || f.compactedRecently;
             const int barW = 10;
-            int reserve = showBar ? (barW + 8) : 6;
-            putLeft(1, who, dim, std::max(10, innerW - reserve));
+            int reserve = showBar ? (barW + 4) : 6;
+            int maxWho = std::max(10, innerW - reserve);
+
+            // Multi-tone identity: name bright · provider muted · model cyan
+            int x = x0;
+            auto paintChip = [&](const std::string& s, inkcell::Style st) {
+                if (s.empty() || x >= x0 + maxWho) return;
+                int room = x0 + maxWho - x;
+                std::string t = inkcell::text::truncate(s, room);
+                surface.text({x, box.y + 1}, t, st);
+                x += inkcell::text::display_width(t);
+            };
+            auto sep = [&]() {
+                if (x + 3 >= x0 + maxWho) return;
+                surface.text({x, box.y + 1}, " · ", dim);
+                x += 3;
+            };
+            if (!f.agentName.empty()) paintChip(f.agentName, bright);
+            if (!f.provider.empty()) {
+                if (x > x0) sep();
+                paintChip(f.provider, dim);
+            }
+            if (!f.model.empty()) {
+                if (x > x0) sep();
+                paintChip(f.model, cyanSoft);
+            }
+            if (x == x0)
+                paintChip(f.themeName.empty() ? "cortex" : f.themeName, dim);
 
             if (showBar) {
                 auto on = pct >= 0.85f ? theme::footer_warn()
                           : pct >= 0.55f ? theme::amber()
-                                         : theme::footer_accent_focus();
+                                         : theme::cyan_soft();
                 on.bg = bg.bg;
+                on.bold = pct >= 0.55f;
                 auto off = dim;
-                off.fg = theme::color(inkcell::Color::rgb(48, 48, 56),
-                                      inkcell::Color::rgb(28, 36, 52));
+                off.fg = theme::color(inkcell::Color::rgb(42, 44, 54),
+                                      inkcell::Color::rgb(24, 32, 48));
                 int bx = rightEdge - barW - 1;
                 if (bx > x0 + 12)
                     drawUnitBar(surface, bx, box.y + 1, barW, pct, on, off);
