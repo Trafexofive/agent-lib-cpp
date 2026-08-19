@@ -115,79 +115,94 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     ss << "  <action_available>\n";
 
     ss << "    <tools>\n";
-    auto schemaIt = env_.find("__TOOL_SCHEMAS__");
-    bool hasSchemas = (schemaIt != env_.end() && !schemaIt->second.empty());
-    // Dedup by tool name (set) — string find on the schema blob was fragile
-    // and still allowed duplicate git_status / path-tool blocks.
-    std::set<std::string> emittedTools;
-    if (hasSchemas) {
-        ss << schemaIt->second << "\n";
-        // Record names already emitted in the schema blob.
+    // Continue turns already saw full schemas on iter 1. Re-dumping full
+    // input_schema + usage_examples every generation is pure burn (~100KB+).
+    // Names + short desc keep the catalog legal without starving history SoT.
+    const bool slimTools = ctx.iteration > 1;
+    if (slimTools) {
+        ss << "        <!-- slim catalog: full schemas were on iteration 1 -->\n";
         for (const auto &[name, tool] : tools_) {
-            const std::string needle = "name=\"" + name + "\"";
-            if (schemaIt->second.find(needle) != std::string::npos)
-                emittedTools.insert(name);
+            ss << "        <tool name=\"" << xmlAttr(name) << "\"";
+            if (!tool.description().empty() &&
+                tool.description() != "See input_schema for parameters")
+                ss << " desc=\"" << xmlAttr(tool.description()) << "\"";
+            ss << "/>\n";
         }
-    }
-    for (const auto &[name, tool] : tools_) {
-        if (emittedTools.count(name))
-            continue;
-
-        // Session-restored script tools keep scriptPath but historically lost
-        // schema context. Recover nearest tool.yml so the model sees params.
-        bool emittedRecoveredSchema = false;
-        if (!tool.scriptPath().empty()) {
-            std::filesystem::path scriptPath(tool.scriptPath());
-            std::vector<std::filesystem::path> candidates = {
-                scriptPath.parent_path() / "tool.yml",
-                scriptPath.parent_path().parent_path() / "tool.yml"};
-            for (const auto &candidate : candidates) {
-                if (!std::filesystem::exists(candidate))
-                    continue;
-                auto recovered =
-                    ManifestLoader::loadToolManifest(candidate.string());
-                if (recovered.name.empty() || recovered.name != name)
-                    continue;
-                const auto &rc = config_.promptBuilding.runtimeCapabilities;
-                ss << ManifestLoader::toolSchemasToXml(
-                    {recovered}, 8, rc.inputSchemas, rc.returnSchemas,
-                    rc.usageExamples);
-                emittedRecoveredSchema = true;
-                emittedTools.insert(name);
-                break;
+    } else {
+        auto schemaIt = env_.find("__TOOL_SCHEMAS__");
+        bool hasSchemas = (schemaIt != env_.end() && !schemaIt->second.empty());
+        // Dedup by tool name (set) — string find on the schema blob was fragile
+        // and still allowed duplicate git_status / path-tool blocks.
+        std::set<std::string> emittedTools;
+        if (hasSchemas) {
+            ss << schemaIt->second << "\n";
+            // Record names already emitted in the schema blob.
+            for (const auto &[name, tool] : tools_) {
+                const std::string needle = "name=\"" + name + "\"";
+                if (schemaIt->second.find(needle) != std::string::npos)
+                    emittedTools.insert(name);
             }
         }
-        if (emittedRecoveredSchema)
-            continue;
+        for (const auto &[name, tool] : tools_) {
+            if (emittedTools.count(name))
+                continue;
 
-        ss << "        <tool name=\"" << xmlAttr(name) << "\"";
-        if (!tool.description().empty() &&
-            tool.description() != "See input_schema for parameters")
-            ss << " desc=\"" << xmlAttr(tool.description()) << "\"";
-        ss << ">\n";
-        // Last-resort card from ToolDef.params when tool.yml was not found.
-        // Never leave builtins as bare "schema not loaded" if registry has params.
-        if (!tool.params().empty()) {
-            ss << "            <params card=\"true\">keys: ";
-            bool first = true;
-            for (const auto& p : tool.params()) {
-                if (!first)
-                    ss << ", ";
-                first = false;
-                ss << p.name;
-                if (p.required)
-                    ss << "*";
+            // Session-restored script tools keep scriptPath but historically lost
+            // schema context. Recover nearest tool.yml so the model sees params.
+            bool emittedRecoveredSchema = false;
+            if (!tool.scriptPath().empty()) {
+                std::filesystem::path scriptPath(tool.scriptPath());
+                std::vector<std::filesystem::path> candidates = {
+                    scriptPath.parent_path() / "tool.yml",
+                    scriptPath.parent_path().parent_path() / "tool.yml"};
+                for (const auto &candidate : candidates) {
+                    if (!std::filesystem::exists(candidate))
+                        continue;
+                    auto recovered =
+                        ManifestLoader::loadToolManifest(candidate.string());
+                    if (recovered.name.empty() || recovered.name != name)
+                        continue;
+                    const auto &rc = config_.promptBuilding.runtimeCapabilities;
+                    ss << ManifestLoader::toolSchemasToXml(
+                        {recovered}, 8, rc.inputSchemas, rc.returnSchemas,
+                        rc.usageExamples);
+                    emittedRecoveredSchema = true;
+                    emittedTools.insert(name);
+                    break;
+                }
             }
-            ss << "</params>\n";
-        } else {
-            ss << "            <params unavailable=\"true\">schema not loaded; "
-                  "do not guess required JSON keys — check "
-                  "manifests/built-in/tools/"
-               << xmlAttr(name)
-               << "/tool.yml resolution (CWD-independent)</params>\n";
+            if (emittedRecoveredSchema)
+                continue;
+
+            ss << "        <tool name=\"" << xmlAttr(name) << "\"";
+            if (!tool.description().empty() &&
+                tool.description() != "See input_schema for parameters")
+                ss << " desc=\"" << xmlAttr(tool.description()) << "\"";
+            ss << ">\n";
+            // Last-resort card from ToolDef.params when tool.yml was not found.
+            // Never leave builtins as bare "schema not loaded" if registry has params.
+            if (!tool.params().empty()) {
+                ss << "            <params card=\"true\">keys: ";
+                bool first = true;
+                for (const auto& p : tool.params()) {
+                    if (!first)
+                        ss << ", ";
+                    first = false;
+                    ss << p.name;
+                    if (p.required)
+                        ss << "*";
+                }
+                ss << "</params>\n";
+            } else {
+                ss << "            <params unavailable=\"true\">schema not loaded; "
+                      "do not guess required JSON keys — check "
+                      "manifests/built-in/tools/"
+                   << xmlAttr(name)
+                   << "/tool.yml resolution (CWD-independent)</params>\n";
+            }
+            ss << "        </tool>\n";
+            emittedTools.insert(name);
         }
-        ss << "        </tool>\n";
-        emittedTools.insert(name);
     }
     ss << "    </tools>\n";
 
