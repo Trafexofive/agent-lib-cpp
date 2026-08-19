@@ -13,6 +13,8 @@ Evidence dumps under `.cortex/dev/ephemeral-*` and
 
 ### Shipped (do not regress)
 
+| T-FALLBACK-EARLY | Transient CURL/stream abort retries primary to exhaustion before FALLBACK | agent.cpp catch order |
+
 | ID | Item | Evidence |
 |----|------|----------|
 | T-SOT | History `<result>` full SoT (no 2KB compact inject) | `ephemeral-1801446`, `67af8c4` |

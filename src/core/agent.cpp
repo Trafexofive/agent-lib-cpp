@@ -748,47 +748,37 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     });
             } catch (const std::exception &e) {
                 const std::string msg = e.what() ? e.what() : "";
-                // Intentional operator stop (Ctrl-X / CURL abort callback).
-                if (!g_running || msg == "cancelled" ||
-                    msg.find("cancelled") != std::string::npos ||
-                    msg.find("ABORTED_BY_CALLBACK") != std::string::npos) {
-                    const auto sk = currentRunStopKind();
-                    if (sk == RunStopKind::ExternalSignal ||
-                        msg.find("Operation too slow") != std::string::npos) {
-                        fullResponse = "[timed out]";
-                        emitHarness("TIMEOUT",
-                                    "Stream/process stopped by external signal or "
-                                    "stall abort — not operator cancel.",
-                                    "limit");
-                        finishTurn("timeout", "[timed out · stream/signal]");
-                        iterationOutputs_.push_back("[timed out]");
-                    } else if (sk == RunStopKind::Operator ||
-                               msg == "cancelled" ||
-                               msg.find("cancelled") != std::string::npos) {
-                        fullResponse = "[cancelled]";
-                        emitHarness("CANCEL",
-                                    "Operator stopped the turn (Ctrl-C/X / stream "
-                                    "abort). Halt the plan; do not continue.",
-                                    "limit");
-                        finishTurn("cancel", "[cancelled by operator]");
-                        iterationOutputs_.push_back("[cancelled]");
-                    } else {
-                        // Unknown abort — stream stall callback without stop kind.
-                        if (sk == RunStopKind::None)
-                            requestRunStop(RunStopKind::StreamAbort);
-                        fullResponse = "[aborted]";
-                        emitHarness("ABORT",
-                                    "Stream aborted (callback/stall). Not a clean "
-                                    "operator cancel. reason: " + msg,
-                                    "limit");
-                        finishTurn("abort", "[aborted · stream]");
-                        iterationOutputs_.push_back("[aborted]");
-                    }
-                    break;  // leave generateStream retry loop → outer stop path
+                const auto sk = currentRunStopKind();
+
+                // ── 1) Hard operator / external stop — never retry, never FALLBACK
+                const bool hardOperator =
+                    sk == RunStopKind::Operator ||
+                    (msg == "cancelled") ||
+                    (msg.find("cancelled by operator") != std::string::npos);
+                const bool hardExternal =
+                    sk == RunStopKind::ExternalSignal ||
+                    msg.find("Operation too slow") != std::string::npos;
+                if (hardExternal) {
+                    fullResponse = "[timed out]";
+                    emitHarness("TIMEOUT",
+                                "External signal (SIGTERM / wall timeout) stopped "
+                                "the process — not a flaky stream to FALLBACK.",
+                                "limit");
+                    finishTurn("timeout", "[timed out · external signal]");
+                    iterationOutputs_.push_back("[timed out]");
+                    break;
                 }
-                // Transport / HTTP failures after the provider's own retries.
-                // Classify so the operator AND the next LLM turn see a clear,
-                // non-final failure — not a fake completed answer.
+                if (hardOperator || (!g_running && sk == RunStopKind::Operator)) {
+                    fullResponse = "[cancelled]";
+                    emitHarness("CANCEL",
+                                "Operator stopped the turn (Ctrl-C/X). Halt the plan.",
+                                "limit");
+                    finishTurn("cancel", "[cancelled by operator]");
+                    iterationOutputs_.push_back("[cancelled]");
+                    break;
+                }
+
+                // ── 2) Classify transport / HTTP
                 const bool isTimeout =
                     msg.find("Timeout") != std::string::npos ||
                     msg.find("timeout") != std::string::npos ||
@@ -797,17 +787,24 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 const bool isRegionOrForbidden =
                     msg.find("HTTP 403") != std::string::npos ||
                     msg.find("RegionError") != std::string::npos ||
-                    msg.find("region") != std::string::npos;
-                // opencode-go 400 "chat content is empty" is a payload/layout
-                // flake we can rebuild+retry (not a permanent model refusal).
+                    (msg.find("region") != std::string::npos &&
+                     msg.find("HTTP") != std::string::npos);
                 const bool isEmptyChatPayload =
                     msg.find("chat content is empty") != std::string::npos ||
                     msg.find("content is empty") != std::string::npos ||
                     (msg.find("HTTP 400") != std::string::npos &&
                      (msg.find("bad_request") != std::string::npos ||
                       msg.find("invalid params") != std::string::npos));
+                // Stream short-write / stall abort is RETRYABLE on the same
+                // primary — NOT an instant FALLBACK (operator saw grok→minimax
+                // on first Failed writing received data).
+                const bool isStreamAbort =
+                    msg.find("Failed writing received data") != std::string::npos ||
+                    msg.find("ABORTED_BY_CALLBACK") != std::string::npos ||
+                    msg.find("stream aborted") != std::string::npos ||
+                    sk == RunStopKind::StreamAbort;
                 const bool isTransientNet =
-                    isTimeout || isEmptyChatPayload ||
+                    isTimeout || isEmptyChatPayload || isStreamAbort ||
                     msg.find("CURL error") != std::string::npos ||
                     msg.find("Couldn't connect") != std::string::npos ||
                     msg.find("Connection reset") != std::string::npos ||
@@ -815,55 +812,29 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     msg.find("HTTP 502") != std::string::npos ||
                     msg.find("HTTP 503") != std::string::npos ||
                     msg.find("HTTP 504") != std::string::npos;
-                // One-shot cognitive_engine.fallback swap on hard region/403/net.
-                if (!fallbackTriedThisTurn_ && !config_.fallbackProvider.empty() &&
-                    !config_.fallbackModel.empty() &&
-                    (isRegionOrForbidden || isTransientNet)) {
-                    auto fb = providers::createProvider(config_.fallbackProvider,
-                                                        config_.fallbackModel);
-                    if (fb) {
-                        fallbackTriedThisTurn_ = true;
-                        fb->setQuietLogs(silenceTerminal_);
-                        const std::string from =
-                            config_.provider + "/" + config_.model;
-                        const std::string to =
-                            config_.fallbackProvider + "/" +
-                            config_.fallbackModel;
-                        setProvider(fb, config_.fallbackProvider, config_.fallbackModel);
-                        // Classify opaque curl short-writes (not disk full).
-                        std::string reason = msg;
-                        if (reason.find("Failed writing received data") !=
-                            std::string::npos) {
-                            reason =
-                                "stream aborted mid-read (stall/callback/cancel) "
-                                "— not a disk error; " + msg;
-                        }
-                        // One STATUS via emitStatus + one harness for the model.
-                        // (Previously double STATUS: emitStatus + extra push.)
-                        emitStatus("[FALLBACK] " + from + " → " + to +
-                                   " · reason: " + reason);
-                        history_.push_back(
-                            "System: <harness kind=\"runtime\" code=\"FALLBACK\">\n"
-                            "primary " + from + " failed.\n"
-                            "switched to " + to + " for the rest of this turn.\n"
-                            "reason: " + reason + "\n"
-                            "Do not assume the original provider is live.\n"
-                            "</harness>");
-                        continue;  // retry generateStream with new provider
-                    }
+
+                // If operator flipped g_running mid-stream without kind, treat
+                // as operator only when not a pure stream-abort message.
+                if (!g_running && !isStreamAbort && !isTransientNet &&
+                    sk == RunStopKind::None) {
+                    fullResponse = "[cancelled]";
+                    emitHarness("CANCEL", "Operator stopped the turn.", "limit");
+                    finishTurn("cancel", "[cancelled by operator]");
+                    iterationOutputs_.push_back("[cancelled]");
+                    break;
                 }
-                // Empty-chat 400: rebuild payload and retry in-loop (subagents
-                // hit this on iter≥2 when only system msgs were sent).
-                if (isEmptyChatPayload && attempt + 1 < maxAttempts) {
-                    emitStatus("[RETRY] empty chat payload · attempt " +
-                               std::to_string(attempt + 1) + "/" +
-                               std::to_string(maxAttempts) + " · " + msg);
-                    history_.push_back(
-                        "System: <harness code=\"RETRY\" kind=\"runtime\">\n"
-                        "Provider rejected empty chat content. Rebuilding "
-                        "messages with a user-role continuation.\n"
-                        "</harness>");
-                    if (ctx.onToken) ctx.onToken("", false);
+
+                // Clear soft stream-abort stop so retries can run generateStream.
+                if (isStreamAbort && sk == RunStopKind::StreamAbort) {
+                    g_stop_kind.store(static_cast<uint8_t>(RunStopKind::None),
+                                      std::memory_order_release);
+                    g_running.store(true, std::memory_order_release);
+                } else if (isStreamAbort && sk == RunStopKind::None && !g_running) {
+                    // Stall callback set g_running false without kind — recover.
+                    g_running.store(true, std::memory_order_release);
+                }
+
+                auto backoffSleep = [&]() {
                     int waitMs = std::min(
                         config_.emptyResponseInitialBackoffMs * (attempt + 1),
                         config_.emptyResponseMaxBackoffMs);
@@ -874,19 +845,87 @@ std::string Agent::runLoop(AgentContext &ctx) {
                         std::this_thread::sleep_for(slice);
                         left -= slice;
                     }
+                };
+
+                // ── 3) PRIMARY retries first (exhaust maxAttempts)
+                if (isTransientNet && attempt + 1 < maxAttempts) {
+                    std::string reason = msg;
+                    if (reason.find("Failed writing received data") !=
+                        std::string::npos) {
+                        reason =
+                            "stream aborted mid-read (stall/callback) — not disk; " +
+                            msg;
+                    }
+                    emitStatus("[RETRY] primary " + config_.provider + "/" +
+                               config_.model + " · attempt " +
+                               std::to_string(attempt + 1) + "/" +
+                               std::to_string(maxAttempts) + " · " + reason);
+                    history_.push_back(
+                        "System: <harness code=\"RETRY\" kind=\"runtime\">\n"
+                        "Primary stream failed (transient). Retrying same provider "
+                        "before any FALLBACK.\nreason: " +
+                        reason + "\n</harness>");
+                    if (ctx.onToken) ctx.onToken("", false);
+                    backoffSleep();
                     ++attempt;
                     continue;
                 }
+
+                // ── 4) FALLBACK only after primary retries exhausted OR hard 403
+                const bool primaryExhausted = (attempt + 1 >= maxAttempts);
+                const bool mayFallback =
+                    !fallbackTriedThisTurn_ && !config_.fallbackProvider.empty() &&
+                    !config_.fallbackModel.empty() &&
+                    (isRegionOrForbidden || (isTransientNet && primaryExhausted));
+                if (mayFallback) {
+                    auto fb = providers::createProvider(config_.fallbackProvider,
+                                                        config_.fallbackModel);
+                    if (fb) {
+                        fallbackTriedThisTurn_ = true;
+                        fb->setQuietLogs(silenceTerminal_);
+                        const std::string from =
+                            config_.provider + "/" + config_.model;
+                        const std::string to =
+                            config_.fallbackProvider + "/" +
+                            config_.fallbackModel;
+                        setProvider(fb, config_.fallbackProvider,
+                                    config_.fallbackModel);
+                        std::string reason = msg;
+                        if (reason.find("Failed writing received data") !=
+                            std::string::npos) {
+                            reason =
+                                "stream aborted mid-read after " +
+                                std::to_string(maxAttempts) +
+                                " primary attempt(s) — not a disk error; " + msg;
+                        }
+                        emitStatus("[FALLBACK] " + from + " → " + to +
+                                   " · after " + std::to_string(maxAttempts) +
+                                   " primary attempt(s) · reason: " + reason);
+                        history_.push_back(
+                            "System: <harness kind=\"runtime\" code=\"FALLBACK\">\n"
+                            "primary " + from + " exhausted retries.\n"
+                            "switched to " + to + " for the rest of this turn.\n"
+                            "reason: " + reason + "\n"
+                            "Do not assume the original provider is live.\n"
+                            "</harness>");
+                        // Fresh attempt budget on the fallback provider.
+                        attempt = 0;
+                        continue;
+                    }
+                }
+
+                // ── 5) Terminal failure
                 std::ostringstream notice;
                 if (isTimeout) {
-                    notice << "⚠ Upstream stream TIMED OUT after provider retries.\n"
+                    notice << "⚠ Upstream stream TIMED OUT after retries.\n"
                            << "Detail: " << msg << "\n"
-                           << "This is a transport failure — not a completed answer.\n"
-                           << "Re-send the prompt or wait and continue; the model never finished.";
+                           << "This is a transport failure — not a completed answer.";
                 } else if (isTransientNet) {
-                    notice << "⚠ Upstream network/HTTP failure after provider retries.\n"
-                           << "Detail: " << msg << "\n"
-                           << "Turn aborted without a final response. Retry the prompt.";
+                    notice << "⚠ Upstream network/HTTP failure after "
+                           << maxAttempts << " primary attempt(s)"
+                           << (fallbackTriedThisTurn_ ? " (+ fallback)" : "")
+                           << ".\nDetail: " << msg << "\n"
+                           << "Turn aborted without a final response.";
                 } else {
                     notice << "⚠ Provider error: " << msg << "\n"
                            << "Turn aborted without a final response.";
@@ -896,17 +935,15 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 iterationRawOutput += err;
                 iterationOutputs_.push_back(err);
                 emitStatus(std::string(isTimeout ? "[TIMEOUT] " : "[ERROR] ") + msg);
-                // System line first so the NEXT prompt's context carries the
-                // failure reason for the LLM (not only the UI Final block).
                 history_.push_back(
-                    "System: [PROVIDER " + std::string(isTimeout ? "TIMEOUT" : "ERROR") +
-                    "] " + msg +
+                    "System: [PROVIDER " +
+                    std::string(isTimeout ? "TIMEOUT" : "ERROR") + "] " + msg +
                     " — previous turn did not complete. Do not treat any partial "
                     "output as final; continue or ask the operator to retry.");
                 finishTurn("provider_error", err);
                 fullResponse = err;
                 responseOutput_ = err;
-                break;  // leave retry loop → outer break via fullResponse set
+                break;
             }
 
             streamStats = provider_ ? provider_->lastStreamStats()
