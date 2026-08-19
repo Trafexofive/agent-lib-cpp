@@ -47,6 +47,9 @@ inline ChatBlockKind classifyChatBlock(const std::string& header,
     if (!agentName.empty() && value.rfind(agentName, 0) == 0) return ChatBlockKind::Assistant;
     if (value.rfind("CORTEX", 0) == 0) return ChatBlockKind::Assistant;
     if (value.rfind("AGENT", 0) == 0) return ChatBlockKind::Agent;
+    // Compact child well (parent spawn preview).
+    if (value.rfind("┌ ", 0) == 0 || value.rfind("│  ", 0) == 0 || value.rfind("└ ", 0) == 0)
+        return ChatBlockKind::Agent;
     if (value.rfind("✓ RESULT", 0) == 0) return ChatBlockKind::ResultOk;
     if (value.rfind("✗ RESULT", 0) == 0) return ChatBlockKind::ResultError;
     if (value.rfind("✗ ERROR", 0) == 0) return ChatBlockKind::Error;

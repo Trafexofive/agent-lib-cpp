@@ -1036,11 +1036,11 @@ void test_chat_subagent_result_shows_final_no_auto_enter() {
     for (const auto& l : model.transcriptView.lines) {
         if (l.find("✓ RESULT") != std::string::npos && l.find("reader") != std::string::npos)
             headerFound = true;
-        if (l.find("reader-ok") != std::string::npos)
+        if (l.find("┌") != std::string::npos && l.find("reader") != std::string::npos)
             finalShown = true;
     }
     check(headerFound, "RESULT header present in parent");
-    check(finalShown, "RESULT body shows child's final response text");
+    check(finalShown, "RESULT body is compact child well (not full dump)");
 
     // Manual drill still works.
     check(model.enterSubAgent("reader"), "manual enterSubAgent works");

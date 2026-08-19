@@ -49,7 +49,7 @@ inline void appendChildWell(std::vector<std::string>& lines, Agent* child,
                             const std::string& name, bool live, int maxLines) {
     maxLines = std::max(4, std::min(maxLines, 14));
     const std::string nm = name.empty() ? "subagent" : name;
-    std::string head = "    ┌ " + nm + (live ? "  ·  LIVE" : "  ·  done");
+    std::string head = "    ┌ " + nm + (live ? "  ·  ● LIVE" : "  ·  ○ done");
     if (child) {
         const auto& evs = child->protocolEvents();
         int acts = 0, ress = 0;

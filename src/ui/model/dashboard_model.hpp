@@ -130,8 +130,30 @@ struct DashboardState {
     // 9 zen · 10 nav pill · 11 pill hide · 12 cwd
     // 13 remember cwd · 14 keep live · 15 session scope · 16 dev mode
     int settingsFocus = 0;
+    // 0 DISPLAY · 1 CHAT · 2 CHROME · 3 SESSION · 4 DEV
+    int settingsCat = 0;
     // 0..16 inclusive → 17 options (THEME … DEV MODE).
     static constexpr int settingsOptionCount = 17;
+    static constexpr int settingsCatCount = 5;
+    static int settingsCatFor(int focus) {
+        if (focus <= 2) return 0;
+        if (focus <= 8) return 1;
+        if (focus <= 11) return 2;
+        if (focus <= 15) return 3;
+        return 4;
+    }
+    static int settingsCatFirst(int cat) {
+        static const int k[] = {0, 3, 9, 12, 16};
+        if (cat < 0) cat = 0;
+        if (cat > 4) cat = 4;
+        return k[cat];
+    }
+    static int settingsCatLast(int cat) {
+        static const int k[] = {2, 8, 11, 15, 16};
+        if (cat < 0) cat = 0;
+        if (cat > 4) cat = 4;
+        return k[cat];
+    }
 
     // Inline edit buffer for CWD setting. Entered via `e` on the CWD row.
     // Captures next chars; Backspace deletes; Enter commits (~ expanded);

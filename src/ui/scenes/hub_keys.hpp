@@ -235,15 +235,32 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
         }
 
         if (dash.section == model::DashboardSection::Settings) {
+            dash.settingsCat = model::DashboardState::settingsCatFor(dash.settingsFocus);
+            if (event.code == KeyCode::Tab ||
+                (event.code == KeyCode::Character && event.ch == ']' && !event.ctrl())) {
+                dash.settingsCat =
+                    (dash.settingsCat + 1) % model::DashboardState::settingsCatCount;
+                dash.settingsFocus = model::DashboardState::settingsCatFirst(dash.settingsCat);
+                return true;
+            }
+            if (event.code == KeyCode::BackTab ||
+                (event.code == KeyCode::Character && event.ch == '[' && !event.ctrl())) {
+                dash.settingsCat =
+                    (dash.settingsCat + model::DashboardState::settingsCatCount - 1) %
+                    model::DashboardState::settingsCatCount;
+                dash.settingsFocus = model::DashboardState::settingsCatFirst(dash.settingsCat);
+                return true;
+            }
             if (up) {
-                dash.settingsFocus =
-                    (dash.settingsFocus + model::DashboardState::settingsOptionCount - 1) %
-                    model::DashboardState::settingsOptionCount;
+                int first = model::DashboardState::settingsCatFirst(dash.settingsCat);
+                int last = model::DashboardState::settingsCatLast(dash.settingsCat);
+                dash.settingsFocus = dash.settingsFocus <= first ? last : dash.settingsFocus - 1;
                 return true;
             }
             if (down) {
-                dash.settingsFocus =
-                    (dash.settingsFocus + 1) % model::DashboardState::settingsOptionCount;
+                int last = model::DashboardState::settingsCatLast(dash.settingsCat);
+                int first = model::DashboardState::settingsCatFirst(dash.settingsCat);
+                dash.settingsFocus = dash.settingsFocus >= last ? first : dash.settingsFocus + 1;
                 return true;
             }
             if (left) {

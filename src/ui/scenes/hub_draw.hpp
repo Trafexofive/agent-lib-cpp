@@ -1052,11 +1052,26 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
         y = prev.bottom() + 1;
     }
 
-    // Section labels
-    auto section = [&](const char* name) {
-        if (y >= frame.bottom()) return;
-        surface.text({frame.x, y++}, name, theme::violet());
-    };
+    const int cat = model::DashboardState::settingsCatFor(dashFocus());
+    model_->dashboard.settingsCat = cat;
+    static const char* kCats[] = {"DISPLAY", "CHAT", "CHROME", "SESSION", "DEV"};
+    // Category rail — one row of pills. Active is accent.
+    {
+        int x = frame.x;
+        for (int i = 0; i < 5 && x < frame.right() - 4; ++i) {
+            bool on = (i == cat);
+            auto st = on ? theme::cyan() : theme::muted();
+            if (on) st.bold = true;
+            std::string lab = on ? std::string("[") + kCats[i] + "]" : kCats[i];
+            surface.text({x, y}, lab, st);
+            x += inkcell::text::display_width(lab) + 2;
+        }
+        ++y;
+        if (y < frame.bottom()) ++y;
+    }
+
+    // Section labels (legacy; rail is the category)
+    auto section = [&](const char* /*name*/) {};
 
     // Game-style option row:  [▸] LABEL ……… ◂ VALUE ▸   bind
     auto option = [&](int idx, const char* label, const std::string& value, const char* bind,
@@ -1088,14 +1103,16 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
         ++y;
     };
 
+    if (cat == 0) {
     section("DISPLAY");
     option(0, "THEME", upperCopy(theme::name()), "T / ←→", true);
     option(1, "FIELD", gfx::fieldEnabled() ? "ON" : "OFF", "B", false);
     option(2, "SHADER",
            gfx::fieldEnabled() ? upperCopy(gfx::activeFieldName()) : std::string("—"),
            "S / ←→", true);
+    }
 
-    if (y < frame.bottom()) ++y;
+    if (cat == 1) {
     section("CHAT");
     option(3, "THOUGHTS", model_->showThoughts ? "ON" : "OFF", "^T", false);
     option(4, "TRUNCATE", model_->truncateBodies ? "ON" : "OFF", "^O", false);
@@ -1111,8 +1128,9 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
                                         : std::string("ON  ·  hub off"))
                : "OFF",
            "B / S", true);
+    }
 
-    if (y < frame.bottom()) ++y;
+    if (cat == 2) {
     section("CHROME");
     option(9, "ZEN MODE", model_->zenMode ? "ON" : "OFF", "Z", false);
     option(10, "NAV PILL", model_->navPillEnabled ? "ON" : "OFF", "", false);
@@ -1123,8 +1141,9 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
                 : (std::to_string(model_->navPillHideMs / 1000) + "S");
         option(11, "PILL HIDE", hide, "←→", true);
     }
+    }
 
-    if (y < frame.bottom()) ++y;
+    if (cat == 3) {
     section("SESSION");
     // CWD row — show live value or current process CWD when unset.
     // Inline edit mode replaces value with the buffer + cursor.
@@ -1146,17 +1165,20 @@ inline void MainScene::drawSettings(inkcell::Surface& surface, inkcell::Rect fra
     option(13, "REMEMBER CWD", model_->rememberLastCwd ? "ON" : "OFF", "", false);
     option(14, "KEEP LIVE", model_->keepLiveOnCwdChange ? "ON" : "OFF", "", false);
     option(15, "SESSION SCOPE", model_->globalSessions ? "GLOBAL" : "PROJECT", "←→", false);
+    }
 
-    if (y < frame.bottom()) ++y;
+    if (cat == 4) {
     section("DEV");
     option(16, "DEV MODE", model_->uiDevMode ? "ON" : "OFF", "←→", false);
+    }
 
     // Single footer — path only, no key encyclopedia
     if (y + 1 < frame.bottom()) {
         y = frame.bottom() - 1;
         surface.text({frame.x, y},
                      inkcell::text::truncate(
-                         std::string("j/k select  ·  h/l or enter cycle  ·  ") + uiPrefsPath(),
+                         std::string("Tab/[ ] category  ·  j/k row  ·  h/l cycle  ·  ") +
+                             uiPrefsPath(),
                          frame.w),
                      theme::italic_dim());
     }
