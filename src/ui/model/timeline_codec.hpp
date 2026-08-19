@@ -472,6 +472,8 @@ inline TimelineRow rowFromProtocol(const ProtocolEvent& pe) {
                     : pe.text.rfind("[LIMIT]", 0) == 0     ? "limit"
                     : pe.text.rfind("[FINALIZE]", 0) == 0 ? "finalize"
                     : pe.text.rfind("[TIMEOUT]", 0) == 0  ? "timeout"
+                    : pe.text.rfind("[CANCEL]", 0) == 0   ? "cancel"
+                    : pe.text.rfind("[FALLBACK]", 0) == 0 ? "fallback"
                     : pe.text.rfind("[ERROR]", 0) == 0    ? "error"
                                                             : "status";
         row.body = pe.text;

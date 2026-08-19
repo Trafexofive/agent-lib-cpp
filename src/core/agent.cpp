@@ -370,6 +370,29 @@ std::string Agent::runLoop(AgentContext &ctx) {
             ctx.onToken("", false);
     };
 
+    // Dual-channel runtime notice:
+    //   1) <harness> in history_ → model sees it on the next generation/turn
+    //   2) STATUS protocol event → operator chat paints ⚠ LIMIT / TIMEOUT block
+    // Bare emitStatus alone only shoved System: text — easy to miss in UI and
+    // not structured for the model (live dump: TIMEOUT with no harness body).
+    auto emitHarness = [&](const std::string &code, const std::string &detail,
+                           const std::string &kind = "runtime") {
+        std::ostringstream h;
+        h << "<harness kind=\"" << kind << "\" code=\"" << code << "\">\n"
+          << detail << "\n"
+          << "This is runtime state, not user prose. Adjust plan; do not "
+             "blind-retry the same blocked path.\n"
+          << "</harness>";
+        history_.push_back("System: " + h.str());
+        std::string tag = "[" + code + "] ";
+        for (char &c : tag)
+            if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+        protocolEvents_.push_back(
+            {ProtocolEventKind::STATUS, tag + detail, {}, {}});
+        if (ctx.onToken)
+            ctx.onToken("", false);
+    };
+
     // max_iterations limit → inform the LLM via a runtime <harness> tag
     // (harness.md documents it as runtime-injected) and the operator via a
     // TUI Status block. "per session, not per cycle" is satisfied by
@@ -377,13 +400,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
     // the loop at 1, which resets the budget to 0.
     auto emitLimitNote = [&](const std::string &reason,
                              const std::string &detail) {
-        history_.push_back("<harness limit=\"" + reason + "\">\n" + detail +
-                           "\n</harness>");
-        protocolEvents_.push_back(
-            {ProtocolEventKind::STATUS,
-             "[LIMIT] " + reason + " — " + detail, {}, {}});
-        if (ctx.onToken)
-            ctx.onToken("", false);
+        emitHarness(reason, detail, "limit");
     };
 
     // Unified terminal bookkeeping — every stop path must leave BOTH the
@@ -418,7 +435,10 @@ std::string Agent::runLoop(AgentContext &ctx) {
     for (ctx.iteration = 1;; ctx.iteration++) {
         if (!g_running) {
             fullResponse = "[cancelled]";
-            emitStatus("[LIMIT] cancelled by operator (Ctrl-C / stop).");
+            emitHarness("CANCEL",
+                        "Operator stopped the turn (Ctrl-C). Pending tools/children "
+                        "should halt; do not continue the cancelled plan.",
+                        "limit");
             finishTurn("cancel", "[cancelled by operator]");
             break;
         }
@@ -713,8 +733,10 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     msg.find("cancelled") != std::string::npos ||
                     msg.find("ABORTED_BY_CALLBACK") != std::string::npos) {
                     fullResponse = "[cancelled]";
-                    emitStatus(
-                        "[LIMIT] cancelled by operator (Ctrl-C / stop).");
+                    emitHarness("CANCEL",
+                                "Operator stopped the turn (Ctrl-C / stream "
+                                "abort). Halt the plan; do not continue.",
+                                "limit");
                     finishTurn("cancel", "[cancelled by operator]");
                     iterationOutputs_.push_back("[cancelled]");
                     break;  // leave generateStream retry loop → outer cancel path
@@ -749,13 +771,29 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     if (fb) {
                         fallbackTriedThisTurn_ = true;
                         fb->setQuietLogs(silenceTerminal_);
+                        const std::string from =
+                            config_.provider + "/" + config_.model;
+                        const std::string to =
+                            config_.fallbackProvider + "/" +
+                            config_.fallbackModel;
                         setProvider(fb, config_.fallbackProvider, config_.fallbackModel);
-                        emitStatus("[FALLBACK] " + config_.fallbackProvider + "/" +
-                                   config_.fallbackModel + " after: " + msg);
+                        // Operator-facing: who died → who we ride now.
+                        emitStatus("[FALLBACK] " + from + " → " + to +
+                                   " · reason: " + msg);
+                        // Model-facing: structured harness so next gen knows
+                        // the active provider changed mid-turn.
                         history_.push_back(
-                            "System: [PROVIDER FALLBACK] switched to " +
-                            config_.fallbackProvider + "/" + config_.fallbackModel +
-                            " after failure: " + msg);
+                            "System: <harness kind=\"runtime\" code=\"FALLBACK\">\n"
+                            "primary " + from + " failed.\n"
+                            "switched to " + to + " for the rest of this turn.\n"
+                            "reason: " + msg + "\n"
+                            "Do not assume the original provider is live.\n"
+                            "</harness>");
+                        protocolEvents_.push_back(
+                            {ProtocolEventKind::STATUS,
+                             "[FALLBACK] " + from + " → " + to, {}, {}});
+                        if (ctx.onToken)
+                            ctx.onToken("", false);
                         continue;  // retry generateStream with new provider
                     }
                 }
@@ -836,15 +874,26 @@ std::string Agent::runLoop(AgentContext &ctx) {
             break;
         }
 
-        if (!parser.waitForActions(
-                std::chrono::seconds(config_.actionTimeoutSec))) {
-            const std::string to =
-                "[TIMEOUT] actions did not complete within " +
-                std::to_string(config_.actionTimeoutSec) + "s";
-            emitStatus(to);
-            finishTurn("action_timeout", to);
-            fullResponse = to;
-            break;
+        // Join async tool futures. Floor 120s — 30s was killing parent turns
+        // while a child/agent or slow tool still ran (operator saw TIMEOUT +
+        // child still burning). Ctrl-C still aborts via g_running slices.
+        {
+            int joinSec = config_.actionTimeoutSec;
+            if (joinSec > 0 && joinSec < 120) joinSec = 120;
+            if (joinSec <= 0) joinSec = 600;
+            if (!parser.waitForActions(std::chrono::seconds(joinSec))) {
+                const std::string detail =
+                    "Actions did not complete within " +
+                    std::to_string(joinSec) +
+                    "s. Pending async work was abandoned for this turn. "
+                    "Prefer mode=sync agents (joined) or tool wait{ids}. "
+                    "Do not sleep-poll children.";
+                emitHarness("TIMEOUT", detail, "limit");
+                const std::string to = "[TIMEOUT] " + detail;
+                finishTurn("action_timeout", to);
+                fullResponse = to;
+                break;
+            }
         }
         parser.flush();
 
@@ -1314,6 +1363,17 @@ Json::Value Agent::handleAgentDelegate(AgentContext &ctx,
     if (forceEphemeral) {
         it->second->clearHistory();
     }
+    // Hard seatbelt: parent-delegated children must not inherit 400–1800
+    // iteration budgets (live dump: coder burned minutes until cancel).
+    // Cap delegated runs; leave standalone launches alone via setMaxIterations
+    // only for this call's agent object (sub-agent is reused — clamp stays,
+    // which is correct for nested thrash prevention).
+    {
+        constexpr int kDelegatedChildIterCap = 48;
+        int cur = it->second->config().iterationCap;
+        if (cur <= 0 || cur > kDelegatedChildIterCap)
+            it->second->setIterationCap(kDelegatedChildIterCap);
+    }
     // Stream the child's progress to the parent's UI so it stays alive
     // (byte counter + spinner) during the synchronous sub-agent call.
     // Without this, the child runs for seconds with zero UI updates —
@@ -1761,6 +1821,17 @@ Json::Value Agent::handleActionExecute(
             else if (result.isMember("data") &&
                      result["data"].isString())
                 summary = result["data"].asString();
+            // tree tool (manifests/tools/tree) puts the ascii map in
+            // "tree", not "output". Without this, UI shows "tree" 4B.
+            else if (result.isMember("tree") &&
+                     result["tree"].isString())
+                summary = result["tree"].asString();
+            else if (result.isMember("tree") &&
+                     result["tree"].isObject()) {
+                Json::StreamWriterBuilder wb;
+                wb["indentation"] = "";
+                summary = Json::writeString(wb, result["tree"]);
+            }
             // context_peek / pin / unpin return structured JSON
             // without an "output" string — synthesize a scannable
             // summary so RESULT cards are not empty tool-name

@@ -278,9 +278,12 @@ inline bool ShellModel::projectOneRow(const TimelineRow& row, int ri, int& focus
             break;
         case TimelineKind::Status:
             if (row.title == "limit") label = "⚠ LIMIT";
+            else if (row.title == "timeout") label = "⏱ TIMEOUT";
+            else if (row.title == "cancel") label = "⏹ CANCEL";
+            else if (row.title == "fallback") label = "↺ FALLBACK";
+            else if (row.title == "harness") label = "▣ HARNESS";
             else if (row.title == "finalize") label = "▣ FINALIZE";
             else if (row.title == "steer") label = "⟹ STEER";
-            else if (row.title == "timeout") label = "⏱ TIMEOUT";
             else if (row.title == "error") label = "✗ ERROR";
             else label = "STATUS";
             break;

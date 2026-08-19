@@ -10,6 +10,7 @@
 #include <json/json.h>
 
 #include <chrono>
+#include <ctime>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
@@ -94,9 +95,31 @@ struct OpenAIProviderConfig {
             if (token && token[0])
                 return token;
 
-            auto readTokenObject = [](const Json::Value& obj) -> std::string {
+            auto tokenExpired = [](const Json::Value& obj) -> bool {
+                if (!obj.isObject() || !obj.isMember("expires"))
+                    return false;
+                // pi stores expires as unix ms; some paths use seconds.
+                double exp = 0;
+                if (obj["expires"].isNumeric())
+                    exp = obj["expires"].asDouble();
+                else if (obj["expires"].isString()) {
+                    try {
+                        exp = std::stod(obj["expires"].asString());
+                    } catch (...) {
+                        return false;
+                    }
+                } else
+                    return false;
+                if (exp > 1e12) exp /= 1000.0;  // ms → s
+                // 60s skew — don't use a token about to die mid-stream.
+                const double now = static_cast<double>(std::time(nullptr));
+                return exp > 0 && exp < (now + 60.0);
+            };
+            auto readTokenObject = [&](const Json::Value& obj) -> std::string {
                 if (!obj.isObject())
                     return "";
+                if (tokenExpired(obj))
+                    return "";  // try next provider key (xai-auth expired → xai)
                 // pi auth.json API-key entries use { type:"api_key", key:"..." }.
                 if (obj.isMember("key") && obj["key"].isString())
                     return obj["key"].asString();
@@ -122,7 +145,9 @@ struct OpenAIProviderConfig {
                         Json::CharReaderBuilder reader;
                         std::string errs;
                         if (Json::parseFromStream(reader, f, &root, &errs)) {
-                            for (const char* provider : {"xai-auth", "xai", "x-ai", "grok"}) {
+                            // Prefer non-expired. xai-auth often goes stale while
+                            // sibling `xai` entry is still live (live 403 dump).
+                            for (const char* provider : {"xai", "x-ai", "xai-auth", "grok"}) {
                                 if (!root.isMember(provider))
                                     continue;
                                 std::string access = readTokenObject(root[provider]);
