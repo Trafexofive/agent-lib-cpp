@@ -167,6 +167,7 @@ struct ChatFooterModel {
     std::string themeName;
     int turnCount = 0;
     int queuedSteer = 0;
+    int bodyMode = 0;  // 0 stream 1 compact 2 graph — shown on live row 4
     std::vector<std::string> extraLines;
 };
 
@@ -275,20 +276,26 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         surface.text({x, box.y + row}, inkcell::text::truncate(s, innerW), st);
     };
 
-    // ── Pane tab strip (left of row 0 content) ───────────────────────
+    // Pane strip — no brackets. Active = bold + phase hue; idle = muted.
+    // Separator is a thin middot, not [CHIP] chrome.
     auto paintPaneTabs = [&](int row, int& cursorX) {
-        static const char* names[] = {"LIVE", "SESS", "ENG"};
+        static const char* names[] = {"live", "sess", "eng"};
         for (int i = 0; i < 3; ++i) {
+            if (i) {
+                surface.text({cursorX, box.y + row}, "·", dim);
+                cursorX += 1;
+            }
             bool on = static_cast<int>(f.pane) == i;
             auto st = on ? accent : dim;
             st.bg = bg.bg;
             st.bold = on;
-            std::string lab = on ? (std::string("[") + names[i] + "]") : names[i];
+            // Active gets a soft underline via overline-ish prefix glyph
+            std::string lab = on ? std::string("▸") + names[i] : names[i];
             surface.text({cursorX, box.y + row}, lab, st);
-            cursorX += inkcell::text::display_width(lab) + 1;
+            cursorX += inkcell::text::display_width(lab);
         }
-        surface.text({cursorX, box.y + row}, " ", dim);
-        cursorX += 1;
+        surface.text({cursorX, box.y + row}, "  ", dim);
+        cursorX += 2;
     };
 
     // ═════════════════════════════════════════════════════════════════
@@ -545,6 +552,33 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
                 else who = f.agentName;
             }
             if (!who.empty()) putRight(2, who, cyan);
+        }
+
+        // ROW 3 (live) — open queue detail + view mode + cwd teaser
+        if (box.h >= 4) {
+            std::string left;
+            if (!f.openLine.empty())
+                left = f.openLine;
+            else if (!f.statusHint.empty())
+                left = f.statusHint;
+            else if (!f.lastResultLine.empty())
+                left = std::string("last  ") + f.lastResultLine;
+            else if (!f.path.empty())
+                left = f.path;
+            else
+                left = "—";
+
+            static const char* kView[] = {"stream", "compact", "graph"};
+            int bm = f.bodyMode;
+            if (bm < 0 || bm > 2) bm = 0;
+            std::string right = kView[bm];
+            right += "  ctrl-o";
+
+            int rw = inkcell::text::display_width(right) + 1;
+            surface.text({x0, box.y + 3},
+                         inkcell::text::truncate(left, std::max(8, innerW - rw - 1)),
+                         dim);
+            putRight(3, right, cyan);
         }
         return;
     }

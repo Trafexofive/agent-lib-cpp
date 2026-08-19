@@ -37,6 +37,7 @@ struct UiPrefState {
     std::string outputBodyFmt = "json";
     // 0=live 1=session 2=engine
     int chatFooterPane = 0;
+    int chatBodyMode = 0;  // 0 stream 1 compact 2 graph
     // Chat-side field underlay. Inherits shared gfx::activeFieldIndex; this
     // is the on/off gate for the chat surface specifically.
     bool chatFieldEnabled = false;
@@ -265,6 +266,7 @@ inline void loadUiPrefs() {
         std::string out = jsonGetString(body, "output_body_fmt");
         if (!out.empty()) shad.outputBodyFmt = out;
         shad.chatFooterPane = jsonGetInt(body, "chat_footer_pane", 0);
+        shad.chatBodyMode = jsonGetInt(body, "chat_body_mode", 0);
     }
     shad.chatFieldEnabled = jsonGetBool(body, "chat_field_enabled", false);
     shad.autoFollowLive = jsonGetBool(body, "auto_follow_live", true);
@@ -332,6 +334,12 @@ inline void applyUiPrefsToModel(Model& model) {
         if (p > 2) p = 2;
         model.chatFooterPane = static_cast<chat::ChatFooterPane>(p);
     }
+    {
+        int b = s.chatBodyMode;
+        if (b < 0) b = 0;
+        if (b > 2) b = 2;
+        model.chatBodyMode = b;
+    }
     model.chatFieldEnabled = s.chatFieldEnabled;
     model.autoFollowLive = s.autoFollowLive;
     model.zenMode = s.zenMode;
@@ -353,6 +361,7 @@ inline void captureUiPrefsFromModel(const Model& model) {
     s.inputBodyFmt = bodyRenderModeName(model.actionBodyMode);
     s.outputBodyFmt = bodyRenderModeName(model.resultBodyMode);
     s.chatFooterPane = static_cast<int>(model.chatFooterPane);
+    s.chatBodyMode = model.chatBodyMode;
     s.chatFieldEnabled = model.chatFieldEnabled;
     s.autoFollowLive = model.autoFollowLive;
     s.zenMode = model.zenMode;
@@ -390,6 +399,7 @@ inline std::string serializeUiPrefs(const std::string& themeName,
         << "  \"input_body_fmt\": \"" << s.inputBodyFmt << "\",\n"
         << "  \"output_body_fmt\": \"" << s.outputBodyFmt << "\",\n"
         << "  \"chat_footer_pane\": " << s.chatFooterPane << ",\n"
+        << "  \"chat_body_mode\": " << s.chatBodyMode << ",\n"
         << "  \"chat_field_enabled\": " << (s.chatFieldEnabled ? "true" : "false") << ",\n"
         << "  \"auto_follow_live\": " << (s.autoFollowLive ? "true" : "false") << ",\n"
         << "  \"zen_mode\": " << (s.zenMode ? "true" : "false") << ",\n"

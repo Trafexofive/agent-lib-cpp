@@ -402,8 +402,21 @@ class AgentScene final : public BaseScene {
                 persistUiPrefs(*model_);
                 return true;
             }
+            // Ctrl-O: cycle body view stream → compact → graph.
+            // Ctrl-Shift-O: truncate bodies (was plain Ctrl-O).
             if (event.ch == 'o' || event.ch == 'O') {
-                model_->toggleTruncateBodies();
+                if (event.shift()) {
+                    model_->toggleTruncateBodies();
+                    model_->dashboard.flashNotice(
+                        model_->truncateBodies ? "bodies · truncated"
+                                               : "bodies · full");
+                } else {
+                    model_->chatBodyMode = (model_->chatBodyMode + 1) % 3;
+                    static const char* kNames[] = {"stream", "compact", "graph"};
+                    model_->dashboard.flashNotice(
+                        std::string("view · ") +
+                        kNames[model_->chatBodyMode % 3] + "  (ctrl-o)");
+                }
                 persistUiPrefs(*model_);
                 return true;
             }
@@ -681,7 +694,12 @@ class AgentScene final : public BaseScene {
 
     void draw(inkcell::Surface& surface) const override {
         if (layout::render_min_size_notice(surface)) return;
+        // Claim bottom inset (page is inset(2)) — footer sits on the glass edge.
         auto p = layout::page(surface);
+        {
+            auto b = surface.bounds();
+            if (p.bottom() < b.bottom()) p.h = b.bottom() - p.y;
+        }
 
         chat::ChatSurfaceModel vm;
         vm.path = model_->breadcrumb();
@@ -731,6 +749,7 @@ class AgentScene final : public BaseScene {
         vm.inputFocused = model_->composer.focused && !model_->timelineFocus;
         vm.historyFocused = model_->timelineFocus || !model_->composer.focused;
         vm.showThoughts = model_->showThoughts;
+        vm.bodyMode = model_->chatBodyMode;
         vm.showRaw = model_->showRaw;
         vm.pendingOps = model_->pendingOps;
         vm.queuedSteer = 0;
@@ -988,6 +1007,7 @@ class AgentScene final : public BaseScene {
 
         // ── Instrument feed (footer was empty without this) ───────────
         foot.queuedSteer = vm.queuedSteer;
+        foot.bodyMode = model_->chatBodyMode;
         foot.focusLine.clear();
         foot.openLine.clear();
         foot.lastResultLine.clear();

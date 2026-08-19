@@ -64,6 +64,8 @@ struct ChatSurfaceModel {
     std::string hint;
     std::string agentName;  // real agent display name for the assistant label (replaces CORTEX)
     std::string scopeName;  // drilled-in subagent name (empty at root) for header/status scope indicator
+    // 0 stream · 1 compact · 2 graph — set by Ctrl-O cycle
+    int bodyMode = 0;
     // Transient readline-style completion menu (NOT transcript history).
     // Drawn between the body separator and the status line; cleared when the
     // operator types, submits, or leaves the stem.
@@ -967,11 +969,11 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
             bool selected = m.historyFocused && y < static_cast<int>(blockSelected->size()) &&
                             (*blockSelected)[static_cast<size_t>(y)];
             if (kind != ChatBlockKind::None) {
-                auto style = blockStyle(kind, header, selected, m.nowMs);
-                surface.fill({body.x, firstY + y, blockWidth, 1}, " ", style);
+                auto fillSt = blockStyle(kind, header, selected, m.nowMs);
+                auto style = blockLineStyle(kind, header, line, selected, m.nowMs);
+                surface.fill({body.x, firstY + y, blockWidth, 1}, " ", fillSt);
                 std::string paint = line;
                 if (selected && paint.rfind("› ", 0) == 0) paint = "  " + paint.substr(2);
-                // Kind-colored rail (not generic gray gutter / green select).
                 auto rail = blockRailStyle(kind, header, selected, m.nowMs);
                 surface.text({body.x, firstY + y},
                              blockRailGlyph(kind, header, selected), rail);
@@ -1021,9 +1023,10 @@ inline void drawTranscript(inkcell::Surface& surface, inkcell::Rect body, const 
         bool header = (*blockHeaders)[static_cast<size_t>(idx)];
         bool selected = m.historyFocused && (*blockSelected)[static_cast<size_t>(idx)];
         if (kind != ChatBlockKind::None) {
-            auto style = blockStyle(kind, header, selected, m.nowMs);
+            auto fillSt = blockStyle(kind, header, selected, m.nowMs);
+            auto style = blockLineStyle(kind, header, line, selected, m.nowMs);
             int blockWidth = std::max(1, body.w - (total > body.h ? 1 : 0));
-            surface.fill({body.x, firstY + y, blockWidth, 1}, " ", style);
+            surface.fill({body.x, firstY + y, blockWidth, 1}, " ", fillSt);
             std::string paint = line;
             if (selected && paint.rfind("› ", 0) == 0) paint = "  " + paint.substr(2);
             auto rail = blockRailStyle(kind, header, selected, m.nowMs);
@@ -1246,6 +1249,8 @@ inline int chatFooterReserve(const ChatFooterModel* footer, int frameH, int prom
     return footerHeightFor(*footer, maxAvail);
 }
 
+#include "src/ui/chat/chat_body_views.hpp"
+
 inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, const ChatSurfaceModel& m,
                             const ChatFooterModel* footer = nullptr) {
     surface.clear(theme::base_bg());
@@ -1264,7 +1269,13 @@ inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, cons
     if (!footer) menuY = statusY - menuH;
 
     inkcell::Rect body{frame.x, frame.y, frame.w, std::max(1, menuY - frame.y)};
-    drawTranscript(surface, body, m);
+    // Body mode: 0 stream · 1 compact · 2 graph (Ctrl-O). Stream default.
+    if (m.bodyMode == 1)
+        drawTranscriptCompact(surface, body, m);
+    else if (m.bodyMode == 2)
+        drawTranscriptGraph(surface, body, m);
+    else
+        drawTranscript(surface, body, m);
     if (menuH > 0)
         drawCompletionMenu(surface, {frame.x, menuY, frame.w, menuH}, m);
     if (!footer)

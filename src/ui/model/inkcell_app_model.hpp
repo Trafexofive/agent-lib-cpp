@@ -130,6 +130,8 @@ struct ShellModel : TimelineStore {
     BodyRenderMode resultBodyMode = BodyRenderMode::PrettyJson;
     // Cyclable footer under the prompt (Ctrl-F). See chat_footer.hpp.
     chat::ChatFooterPane chatFooterPane = chat::ChatFooterPane::Live;
+    // 0 stream · 1 compact · 2 graph — Ctrl-O cycles
+    int chatBodyMode = 0;
     static constexpr int kMaxBodyLines = 50;
     // tokenBytes/actionCount/resultCount/pendingOps live in TimelineStore
     int wakeCount = 0;
