@@ -836,9 +836,24 @@ class AgentScene final : public BaseScene {
             if (model_->status.rfind("cancel", 0) == 0) foot.phaseKey = "cancel";
             else {
                 foot.phaseKey = "wait";  // default until we see structure
+                // Children in flight beat a parent thought / stale tool verb.
+                if (model_->pendingOps > 0) {
+                    for (auto it = model_->rootRows.rbegin();
+                         it != model_->rootRows.rend(); ++it) {
+                        if (it->kind == TimelineKind::Action && it->actionType == "agent" &&
+                            !it->actionId.empty() &&
+                            model_->pendingActionIds.count(it->actionId)) {
+                            foot.phaseKey = "delegate";
+                            foot.phaseDetail = it->actionName.empty() ? "subagent" : it->actionName;
+                            break;
+                        }
+                    }
+                }
                 int scanned = 0;
                 for (auto it = model_->rootRows.rbegin();
-                     it != model_->rootRows.rend() && scanned < 12; ++it, ++scanned) {
+                     it != model_->rootRows.rend() && scanned < 12 &&
+                     foot.phaseKey != "delegate";
+                     ++it, ++scanned) {
                     if (it->kind == TimelineKind::Thought) {
                         foot.phaseKey = "think";
                         break;
@@ -848,8 +863,13 @@ class AgentScene final : public BaseScene {
                         break;
                     }
                     if (it->kind == TimelineKind::Action) {
-                        foot.phaseKey = "act";
                         const std::string& n = it->actionName;
+                        if (it->actionType == "agent") {
+                            foot.phaseKey = "delegate";
+                            foot.phaseDetail = n.empty() ? "subagent" : n;
+                            break;
+                        }
+                        foot.phaseKey = "act";
                         auto chip = [&](const std::string& body) -> std::string {
                             // basename of path= or first short token
                             auto p = body.find("\"path\"");

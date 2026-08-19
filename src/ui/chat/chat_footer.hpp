@@ -75,6 +75,8 @@ inline const char* phaseSynonym(const std::string& key, uint64_t nowMs) {
         return pick({"acting", "working", "executing", "in motion"});
     if (key == "wait")
         return pick({"awaiting provider", "waiting on inference", "streaming in", "holding for model"});
+    if (key == "delegate")
+        return pick({"waiting on child", "delegated", "subagent running", "holding for specialist"});
     if (key == "reply")
         return pick({"composing reply", "drafting", "answering", "wrapping up"});
     if (key == "ask")
