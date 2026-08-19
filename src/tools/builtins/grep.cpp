@@ -1,6 +1,7 @@
 // src/tools/builtins/grep.cpp — grep native builtin
 #include "grep.hpp"
 #include "common.hpp"
+#include "src/core/agent.hpp"  // g_running — cancel mid-walk
 
 #include <fnmatch.h>
 
@@ -94,6 +95,39 @@ std::string grep(const Json::Value& p) {
     return grepStreaming(p, {});
 }
 
+// Dir names we never descend into — recursive grep of a C++ monorepo otherwise
+// walks build/ + .git and burns a wall minute while the footer clock looks like
+// "list is slow" (list was 0ms; grep was still open).
+static bool skipDirName(const std::string& name) {
+    static const char* kSkip[] = {
+        ".git",       "build",      "Build",     "cmake-build-debug",
+        "cmake-build-release", "node_modules", ".cache", ".cortex",
+        "sessions",    "state",      "__pycache__", ".tox",
+        "target",      "dist",       ".venv",     "venv",
+        ".mypy_cache", ".pytest_cache", nullptr};
+    for (int i = 0; kSkip[i]; ++i)
+        if (name == kSkip[i]) return true;
+    return false;
+}
+
+static bool looksBinaryOrHuge(const fs::path& file, std::error_code& ec) {
+    auto sz = fs::file_size(file, ec);
+    if (ec) return true;
+    // Skip multi-MB objects / archives; text tools shouldn't open them.
+    if (sz > 2 * 1024 * 1024) return true;
+    std::string ext = file.extension().string();
+    for (char& c : ext)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    static const char* kBin[] = {
+        ".o", ".a", ".so", ".dylib", ".dll", ".exe", ".bin",
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
+        ".zip", ".gz", ".tgz", ".7z", ".rar", ".pdf",
+        ".wasm", ".pyc", ".class", nullptr};
+    for (int i = 0; kBin[i]; ++i)
+        if (ext == kBin[i]) return true;
+    return false;
+}
+
 std::string grepStreaming(const Json::Value& p,
                           const std::function<void(const std::string&, bool)>& stream) {
     std::string pattern = p.get("pattern", "").asString();
@@ -103,6 +137,8 @@ std::string grepStreaming(const Json::Value& p,
     std::string glob = p.get("glob", p.get("pattern_glob", "*").asString()).asString();
     int ctx = std::clamp(p.get("context", 0).asInt(), 0, 20);
     int maxMatches = std::clamp(p.get("max_matches", 100).asInt(), 1, 5000);
+    // Cap files opened — unbounded recursive walk was the 60s hang.
+    int maxFiles = std::clamp(p.get("max_files", 2000).asInt(), 1, 20000);
     bool literal = p.get("literal", false).asBool();
     bool ignoreCase = p.get("ignore_case", false).asBool();
 
@@ -125,28 +161,81 @@ std::string grepStreaming(const Json::Value& p,
 
     Json::Value matchesJson(Json::arrayValue);
     std::ostringstream out;
+    int filesOpened = 0;
+    int filesSkipped = 0;
+    bool filesCapped = false;
+    bool cancelled = false;
+
+    auto scanFile = [&](const fs::path& f) {
+        if (!g_running) {
+            cancelled = true;
+            return;
+        }
+        if ((int)matchesJson.size() >= maxMatches) return;
+        if (filesOpened >= maxFiles) {
+            filesCapped = true;
+            return;
+        }
+        if (!globAllowed(f, glob)) return;
+        if (looksBinaryOrHuge(f, ec)) {
+            ++filesSkipped;
+            return;
+        }
+        ++filesOpened;
+        grepFile(f, pattern, re, literal, ignoreCase, ctx, maxMatches, matchesJson, out,
+                 stream);
+    };
+
     if (fs::is_regular_file(root, ec)) {
-        if (globAllowed(root, glob))
-            grepFile(root, pattern, re, literal, ignoreCase, ctx, maxMatches, matchesJson, out, stream);
+        scanFile(root);
     } else if (fs::is_directory(root, ec)) {
-        for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end;
-             !ec && it != end && (int)matchesJson.size() < maxMatches; it.increment(ec)) {
-            if (it->is_regular_file(ec) && globAllowed(it->path(), glob))
-                grepFile(it->path(), pattern, re, literal, ignoreCase, ctx, maxMatches, matchesJson, out, stream);
+        for (fs::recursive_directory_iterator it(
+                 root, fs::directory_options::skip_permission_denied, ec),
+             end;
+             !ec && it != end && (int)matchesJson.size() < maxMatches && !filesCapped &&
+             !cancelled;
+             it.increment(ec)) {
+            if (!g_running) {
+                cancelled = true;
+                break;
+            }
+            if (it->is_directory(ec)) {
+                if (skipDirName(it->path().filename().string())) {
+                    it.disable_recursion_pending();
+                    ++filesSkipped;
+                }
+                continue;
+            }
+            if (it->is_regular_file(ec))
+                scanFile(it->path());
         }
     } else {
         return jsonErr("unsupported path type: " + root.string());
     }
 
     Json::Value r;
-    r["success"] = true;
+    r["success"] = !cancelled;
+    if (cancelled) {
+        r["error"] = "grep cancelled (operator stop)";
+        r["protocol_error"] = false;
+    }
     r["path"] = root.string();
     r["pattern"] = pattern;
     r["matches"] = static_cast<Json::UInt64>(matchesJson.size());
-    r["truncated"] = (int)matchesJson.size() >= maxMatches;
+    r["files_opened"] = filesOpened;
+    r["files_skipped"] = filesSkipped;
+    r["truncated"] =
+        (int)matchesJson.size() >= maxMatches || filesCapped || cancelled;
+    if (filesCapped)
+        r["files_capped"] = true;
     r["items"] = matchesJson;
     r["results"] = out.str();
-    r["output"] = "matches=" + std::to_string(matchesJson.size()) + "\n" + out.str();
+    std::ostringstream head;
+    head << "matches=" << matchesJson.size() << " files=" << filesOpened;
+    if (filesCapped) head << " (files cap)";
+    if (cancelled) head << " (cancelled)";
+    head << "\n" << out.str();
+    r["output"] = head.str();
     return jsonStr(r);
 }
 

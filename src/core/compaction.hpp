@@ -323,8 +323,15 @@ inline bool shouldTrigger(const CompactionConfig& cfg, size_t promptTokens, int 
     }
     if (cfg.triggerTurns > 0) {
         anyTrigger = true;
-        if (lastCompactUserTurn < 0 || since >= cfg.triggerTurns)
+        // Never treat "never compacted" as immediate fire — that painted
+        // COMPACTED on every turn at 5% ctx (lastCompactAtUserTurn init < 0).
+        // First fire: only after N user turns. Later: every N turns since last.
+        if (lastCompactUserTurn < 0) {
+            if (userTurns >= cfg.triggerTurns)
+                fired = true;
+        } else if (since >= cfg.triggerTurns) {
             fired = true;
+        }
     }
 
     // No triggers configured → do not auto-fire

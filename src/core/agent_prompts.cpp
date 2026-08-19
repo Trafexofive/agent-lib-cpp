@@ -279,10 +279,15 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
                 auto cr = compaction::compactHistory(promptHist, config_.compaction);
                 if (cr.didCompact) {
                     promptHist = std::move(cr.lines);
+                    // Back store: persist shrink into history_ when we dropped
+                    // lines (not mere truncate transforms). Front = promptHist.
+                    if (cr.dropped > 0 && promptHist.size() < history_.size()) {
+                        history_ = promptHist;
+                    }
                     lastCompactAtUserTurn_ = userTurnsTotal;
                     lastCompactWallMs_ = nowMs;
                     lastCompactNote_ = cr.note;
-                    lastCompactUiPending_ = cr.note;  // UI badge once
+                    lastCompactUiPending_ = cr.note;  // UI badge once (footer)
                     lastCompactArchive_ = cr.archiveBody;
                     // Archive: file and artifact both land under .cortex/compact/
                     // (artifact sink = same durable dump until full artifact store wire).

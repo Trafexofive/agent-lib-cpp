@@ -261,6 +261,12 @@ class Agent {
 
     // Compaction UI / child fold-up (see compaction.hpp).
     const std::string& lastCompactNote() const { return lastCompactNote_; }
+    int64_t lastCompactWallMs() const { return lastCompactWallMs_; }
+    // Non-destructive: true for ~8s after a compact fires (footer badge).
+    bool compactBadgeActive(int64_t nowMs) const {
+        if (lastCompactWallMs_ <= 0 || nowMs <= 0) return false;
+        return (nowMs - lastCompactWallMs_) < 8000;
+    }
     std::string takeCompactUiPending() const {
         std::string s = lastCompactUiPending_;
         lastCompactUiPending_.clear();
@@ -432,7 +438,8 @@ class Agent {
     // history_cap reclamps at most every maxTurnsPerCycle user turns (default 15).
     mutable size_t historyWindowStart_ = 0;
     mutable int historyCapAppliedAtUserTurn_ = -1000000;
-    mutable int lastCompactAtUserTurn_ = -1000000;
+    // -1 = never compacted (must NOT trip triggerTurns on first prompt).
+    mutable int lastCompactAtUserTurn_ = -1;
     mutable int64_t lastCompactWallMs_ = 0;
     mutable std::string lastCompactNote_;
     mutable std::string lastCompactArchive_;  // optional cold body from last compact
