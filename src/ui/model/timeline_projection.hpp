@@ -43,17 +43,20 @@ inline int countSourceDisplaySpan(const std::string& original, int width) {
     return std::max(1, lines);
 }
 
-// Compact live well under a spawned child — same height budget as truncated
-// tool results (14). Drill for the full chat. Never dump the child's protocol.
+// Compact well under a spawned child.
+// Live  → tool tail. Done → final reply (responseOutput / row body), not empty stats.
+// Height budget matches truncated results (~14). Drill for the full chat.
 inline void appendChildWell(std::vector<std::string>& lines, Agent* child,
-                            const std::string& name, bool live, int maxLines) {
+                            const std::string& name, bool live, int maxLines,
+                            const std::string& resultBody = {}) {
     maxLines = std::max(4, std::min(maxLines, 14));
     const std::string nm = name.empty() ? "subagent" : name;
-    std::string head = "    ┌ " + nm + (live ? "  ·  ● LIVE" : "  ·  ○ done");
+
+    int acts = 0, ress = 0;
+    std::string last;
+    std::string finalReply;
     if (child) {
         const auto& evs = child->protocolEvents();
-        int acts = 0, ress = 0;
-        std::string last;
         for (const auto& pe : evs) {
             if (pe.kind == ProtocolEventKind::ACTION) {
                 ++acts;
@@ -64,25 +67,57 @@ inline void appendChildWell(std::vector<std::string>& lines, Agent* child,
                 last = "thinking";
             } else if (pe.kind == ProtocolEventKind::RESPONSE) {
                 last = "reply";
+                if (!pe.text.empty()) finalReply = pe.text;
             }
         }
-        if (!last.empty()) head += "  ·  " + last;
-        lines.push_back(head);
-        int used = 1;
-        char meta[80];
-        std::snprintf(meta, sizeof(meta), "    │  act%d · res%d · hist %zu", acts, ress,
-                      child->history().size());
+        // Fallback counts from history when protocol stream is thin/empty.
+        if (acts == 0 && ress == 0) {
+            for (const auto& h : child->history()) {
+                if (h.find("<action") != std::string::npos) ++acts;
+                if (h.find("<result") != std::string::npos) ++ress;
+            }
+        }
+        if (finalReply.empty() && !child->responseOutput().empty())
+            finalReply = child->responseOutput();
+    }
+    if (finalReply.empty() && !resultBody.empty()) {
+        // Strip trailing "Nms" meta line the reducer sometimes appends.
+        finalReply = resultBody;
+        auto nl = finalReply.find_last_of('\n');
+        if (nl != std::string::npos) {
+            std::string tail = finalReply.substr(nl + 1);
+            if (tail.find("ms") != std::string::npos && tail.size() < 24)
+                finalReply = finalReply.substr(0, nl);
+        }
+    }
+    if (!live && finalReply.empty()) last = last.empty() ? "done" : last;
+    if (!live && !finalReply.empty()) last = "reply";
+
+    std::string head = "    ┌ " + nm + (live ? "  ·  ● LIVE" : "  ·  ○ done");
+    if (!last.empty()) head += "  ·  " + last;
+    lines.push_back(head);
+    int used = 1;
+
+    {
+        char meta[96];
+        std::snprintf(meta, sizeof(meta), "    │  %d tools · %d results · hist %zu",
+                      acts, ress, child ? child->history().size() : 0);
         lines.push_back(meta);
         ++used;
-        // Tail of last few actions — one token each, no bodies.
+    }
+
+    if (live && child) {
+        // Live: last few tools only.
         int room = maxLines - used - 1;
         std::vector<std::string> tail;
+        const auto& evs = child->protocolEvents();
         for (auto it = evs.rbegin(); it != evs.rend() && static_cast<int>(tail.size()) < room; ++it) {
             if (it->kind != ProtocolEventKind::ACTION && it->kind != ProtocolEventKind::RESULT)
                 continue;
             std::string t;
             if (it->kind == ProtocolEventKind::ACTION)
-                t = std::string("    │  ▸ ") + (it->action.name.empty() ? it->action.type : it->action.name);
+                t = std::string("    │  ▸ ") +
+                    (it->action.name.empty() ? it->action.type : it->action.name);
             else
                 t = std::string(it->result.ok ? "    │  ✓ " : "    │  ✗ ") + it->result.toolName;
             if (t.size() > 56) t = t.substr(0, 54) + "…";
@@ -93,12 +128,45 @@ inline void appendChildWell(std::vector<std::string>& lines, Agent* child,
             lines.push_back(std::move(t));
             ++used;
         }
-        lines.push_back(live ? "    └ ↳  enter · live" : "    └ ↳  enter");
-    } else {
-        lines.push_back(head);
-        lines.push_back("    │  (no instance yet)");
-        lines.push_back("    └ ↳  enter");
+        lines.push_back("    └ ↳  enter · live");
+        return;
     }
+
+    // Done: paint final reply (markdown-ish plain lines). Cap to budget.
+    if (!finalReply.empty()) {
+        int room = maxLines - used - 1;
+        if (room < 2) room = 2;
+        int shown = 0;
+        int total = 0;
+        size_t start = 0;
+        while (start <= finalReply.size()) {
+            size_t end = finalReply.find('\n', start);
+            if (end == std::string::npos) end = finalReply.size();
+            if (!(start == 0 && end == 0 && finalReply.empty())) {
+                ++total;
+                if (shown < room) {
+                    std::string line = finalReply.substr(start, end - start);
+                    // Light md soften — keep readable in the well.
+                    if (line.rfind("# ", 0) == 0) line = std::string("▸ ") + line.substr(2);
+                    else if (line.rfind("## ", 0) == 0) line = std::string("· ") + line.substr(3);
+                    else if (line.rfind("- ", 0) == 0) line = std::string("• ") + line.substr(2);
+                    if (line.size() > 72) line = line.substr(0, 70) + "…";
+                    lines.push_back("    │  " + line);
+                    ++shown;
+                }
+            }
+            if (end == finalReply.size()) break;
+            start = end + 1;
+        }
+        if (total > shown)
+            lines.push_back("    │  … " + std::to_string(total - shown) +
+                            " more · enter to read");
+        lines.push_back("    └ ↳  enter");
+        return;
+    }
+
+    lines.push_back("    │  (no reply yet)");
+    lines.push_back(live ? "    └ ↳  enter · live" : "    └ ↳  enter");
 }
 
 // Emit one root/nested row into transcriptView.lines (+ optional block index).
@@ -238,7 +306,12 @@ inline bool ShellModel::projectOneRow(const TimelineRow& row, int ri, int& focus
         if (childRow) {
             Agent* ch = rootAgent ? rootAgent->getSubAgent(row.actionName) : nullptr;
             bool live = !row.actionId.empty() && pendingActionIds.count(row.actionId);
-            appendChildWell(transcriptView.lines, ch, row.actionName, live, 14);
+            // RESULT rows that finished: never treat as live; show final reply.
+            if (row.kind == TimelineKind::Result) live = false;
+            std::string body = row.body;
+            if (body.empty() && ch && !ch->responseOutput().empty())
+                body = ch->responseOutput();
+            appendChildWell(transcriptView.lines, ch, row.actionName, live, 14, body);
             transcriptView.lines.push_back("");
             ++focusIdx;
             return true;

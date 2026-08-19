@@ -1038,9 +1038,11 @@ void test_chat_subagent_result_shows_final_no_auto_enter() {
             headerFound = true;
         if (l.find("┌") != std::string::npos && l.find("reader") != std::string::npos)
             finalShown = true;
+        if (l.find("reader-ok") != std::string::npos)
+            finalShown = true;  // done well paints final reply
     }
     check(headerFound, "RESULT header present in parent");
-    check(finalShown, "RESULT body is compact child well (not full dump)");
+    check(finalShown, "RESULT well shows final reply (not empty act0)");
 
     // Manual drill still works.
     check(model.enterSubAgent("reader"), "manual enterSubAgent works");

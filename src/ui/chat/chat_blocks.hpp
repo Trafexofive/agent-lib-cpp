@@ -48,7 +48,7 @@ inline ChatBlockKind classifyChatBlock(const std::string& header,
     if (value.rfind("CORTEX", 0) == 0) return ChatBlockKind::Assistant;
     if (value.rfind("AGENT", 0) == 0) return ChatBlockKind::Agent;
     // Compact child well (parent spawn preview).
-    if (value.rfind("┌ ", 0) == 0 || value.rfind("│  ", 0) == 0 || value.rfind("└ ", 0) == 0)
+    if (value.rfind("┌ ", 0) == 0 || value.rfind("│", 0) == 0 || value.rfind("└ ", 0) == 0)
         return ChatBlockKind::Agent;
     if (value.rfind("✓ RESULT", 0) == 0) return ChatBlockKind::ResultOk;
     if (value.rfind("✗ RESULT", 0) == 0) return ChatBlockKind::ResultError;
@@ -132,8 +132,15 @@ inline inkcell::Style blockStyle(ChatBlockKind kind, bool header, bool selected 
         case ChatBlockKind::Notice: style.fg = theme::muted().fg; break;
         case ChatBlockKind::None: style.fg = theme::text().fg; break;
     }
-    if (!header && kind != ChatBlockKind::Thought && kind != ChatBlockKind::Raw)
+    // Body keeps a softer kind hue — pure white wash made every block look dead.
+    if (!header && kind != ChatBlockKind::Thought && kind != ChatBlockKind::Raw &&
+        kind != ChatBlockKind::None) {
+        // leave switch fg; slightly de-bold bodies
+        style.bold = false;
+        style.dim = false;
+    } else if (!header && kind == ChatBlockKind::None) {
         style.fg = theme::text().fg;
+    }
     style.bold = header;
     style.dim = kind == ChatBlockKind::Thought || kind == ChatBlockKind::Raw;
     if (selected) {
