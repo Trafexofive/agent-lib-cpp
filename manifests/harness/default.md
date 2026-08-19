@@ -90,7 +90,9 @@ After producers complete (`mode="sync"`):
   `<action type="agent">`, not two clones of the same job.
 - Do not re-emit the same agent id with a second fuller body — put the full
   brief in the first close. Hollow `{}` is rejected by the runtime.
-- Prefer `wait`/`join` over `sleep` when awaiting children or timing.
+- Prefer `mode="sync"` agents (runtime joins). Do **not** use `sleep` to await
+  children or poll — that burns wall clock and tokens. If a wait tool is in
+  `<action_available>`, use it; otherwise emit the next step only after results.
 - Body = prompt or continue the named sub-agent (in-run history kept).
 - `op="inspect"` or `inspect="true"`: history/context snapshot; no sub-agent model call.
 - `last_n`, `ephemeral="true"`, `dump_context="true"` as attrs when needed.
