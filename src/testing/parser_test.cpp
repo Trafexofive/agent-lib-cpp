@@ -436,11 +436,14 @@ void test_duplicate_id_no_retained_rejects() {
     });
     // First completion is a protocol_error (not replayable). Re-emit must
     // remap to a unique id and still execute — not poison the batch.
+    // Use valid list bodies (hollow {} is rejected before executor).
     parser.feed(
-        "<action type=\"tool\" name=\"list\" id=\"a\" mode=\"sync\">{}</action>", true);
+        "<action type=\"tool\" name=\"list\" id=\"a\" mode=\"sync\">"
+        "{\"path\":\".\"}</action>", true);
     parser.clearResults();
     parser.feed(
-        "<action type=\"tool\" name=\"list\" id=\"a\" mode=\"sync\">{}</action>", true);
+        "<action type=\"tool\" name=\"list\" id=\"a\" mode=\"sync\">"
+        "{\"path\":\".\"}</action>", true);
     CHECK(sawRemap, "duplicate id remaps when no retained success");
     CHECK(execCount == 2, "remapped duplicate still executes");
     CHECK(lastId == "a-2" || lastId.rfind("a-", 0) == 0, "id was suffixed");

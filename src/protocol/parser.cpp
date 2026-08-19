@@ -910,6 +910,30 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
         return;
     }
 
+    // Invalid JSON first — hollow checks clear content on parse failure and
+    // would otherwise mask invalid_json_body as empty_action_body.
+    if (action->params.isObject() && action->params.isMember("__protocol_error")) {
+        trackRepeatFailure();
+        Json::Value err;
+        err["success"] = false;
+        err["protocol_error"] = true;
+        err["error"] = action->params["__protocol_error"].asString();
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            results_[action->id] = err;
+            completed_[action->id] = true;
+        }
+        emit({TokenEvent::ACTION_RESULT,
+              Json::writeString(Json::StreamWriterBuilder(), err),
+              nullptr,
+              {{"id", action->id}}});
+        emit({TokenEvent::ERROR,
+              err["error"].asString(),
+              nullptr,
+              {{"id", action->id}, {"reason", "invalid_json_body"}}});
+        return;
+    }
+
     // Hollow AGENT: `>{}</action>` then full brief — burns a child with empty
     // instruction or poisons id replay. Require real instruction text.
     if (action->type == ActionType::AGENT) {
@@ -997,29 +1021,6 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
                 return;
             }
         }
-    }
-
-    // Invalid JSON body marked at parse time — do not execute.
-    if (action->params.isObject() && action->params.isMember("__protocol_error")) {
-        trackRepeatFailure();
-        Json::Value err;
-        err["success"] = false;
-        err["protocol_error"] = true;
-        err["error"] = action->params["__protocol_error"].asString();
-        {
-            std::lock_guard<std::mutex> lock(mtx_);
-            results_[action->id] = err;
-            completed_[action->id] = true;
-        }
-        emit({TokenEvent::ACTION_RESULT,
-              Json::writeString(Json::StreamWriterBuilder(), err),
-              nullptr,
-              {{"id", action->id}}});
-        emit({TokenEvent::ERROR,
-              err["error"].asString(),
-              nullptr,
-              {{"id", action->id}, {"reason", "invalid_json_body"}}});
-        return;
     }
 
     if (!canExecute(*action)) {
