@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=CORTEX MK3
+GenericName=Agent Runtime
+Comment=Protocol agent harness + inkcell TUI
+Exec=cortex-mk3
+Terminal=true
+Categories=Development;ConsoleOnly;
+Keywords=ai;agent;llm;tui;cortex;
+Icon=utilities-terminal
