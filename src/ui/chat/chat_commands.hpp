@@ -44,6 +44,7 @@ struct ChatCommandResult {
     bool copyRaw = false;
     bool stopLoop = false;
     bool continueLoop = false;  // /continue — silent resume, no user text
+    bool replayFirst = false;   // /replay — wipe + re-fire first user prompt
     std::string title;
     std::string themeName;
     std::vector<std::string> lines;
@@ -103,6 +104,11 @@ inline ChatCommandResult executeChatCommand(const std::string& rawCommand,
     }
     if (command == "/clear") {
         out.clearTranscript = true;
+        return out;
+    }
+    if (command == "/replay" || command == "/rerun" || command == "/restart") {
+        out.replayFirst = true;
+        out.title = "replay";
         return out;
     }
     if (command == "/thoughts") {
@@ -203,6 +209,7 @@ inline ChatCommandResult executeChatCommand(const std::string& rawCommand,
             "/model [prov/mod]  show or switch provider/model (live)",
             "body fmt           Settings → CHAT → BODY FMT (json|yaml|raw)",
             "/continue, /cont   resume loop silently (no user text injected)",
+            "/replay, /rerun    wipe session + re-run the first prompt",
             "/stop, /cancel     stop agent loop mid-turn (same as Ctrl-C)",
             "/quit, /exit       leave chat",
             "Tab / Shift-Tab    complete slash cmds (LCP then cycle)",

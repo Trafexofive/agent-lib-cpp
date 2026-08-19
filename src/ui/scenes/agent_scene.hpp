@@ -1355,6 +1355,55 @@ class AgentScene final : public BaseScene {
                 model_->status = "continuing";
             }
         }
+        if (result.replayFirst) {
+            std::string first;
+            for (const auto& r : model_->rootRows) {
+                if (r.kind == TimelineKind::User && !r.body.empty()) {
+                    first = r.body;
+                    break;
+                }
+            }
+            if (first.empty() && !model_->promptHistory.empty()) {
+                // Skip slash-only history entries.
+                for (const auto& h : model_->promptHistory) {
+                    if (!h.empty() && h[0] != '/') {
+                        first = h;
+                        break;
+                    }
+                }
+            }
+            if (first.empty() && model_->rootAgent) {
+                for (const auto& h : model_->rootAgent->history()) {
+                    if (h.rfind("User: ", 0) == 0) {
+                        first = h.substr(6);
+                        break;
+                    }
+                }
+            }
+            if (first.empty()) {
+                model_->appendNotice("replay", {"no first prompt — nothing to rerun"});
+            } else {
+                if (model_->running) {
+                    stopAgentLoop("replay");
+                    model_->running = false;  // don't steer — arm a new turn
+                }
+                while (!model_->atRoot()) model_->goBack();
+                if (model_->rootAgent) {
+                    model_->rootAgent->clearHistory();
+                    for (const auto& name : model_->rootAgent->subAgentNames()) {
+                        if (Agent* ch = model_->rootAgent->getSubAgent(name))
+                            ch->clearHistory();
+                    }
+                }
+                model_->clearTranscript();
+                model_->pendingSteerBuffer.clear();
+                model_->pendingContinue = false;
+                model_->composer.value = first;
+                model_->composer.cursor = static_cast<int>(first.size());
+                model_->submitComposer();
+                model_->appendNotice("replay", {"wiped · replaying first prompt"});
+            }
+        }
         if (result.clearTranscript) model_->clearTranscript();
         bool prefsDirty = false;
         if (result.toggleThoughts) {

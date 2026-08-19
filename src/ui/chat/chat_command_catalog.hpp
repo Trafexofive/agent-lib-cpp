@@ -272,7 +272,8 @@ inline std::vector<std::string> completeChatCommand(const std::string& prefix,
     static const std::vector<std::string> builtins = {
         "/help", "/commands", "/clear", "/thoughts", "/truncate", "/raw", "/theme",
         "/manifests", "/sessions", "/cp-all", "/artifacts", "/art", "/model",
-        "/continue", "/cont", "/stop", "/cancel", "/quit", "/exit",
+        "/continue", "/cont", "/replay", "/rerun", "/restart",
+        "/stop", "/cancel", "/quit", "/exit",
     };
     static const std::vector<std::string> devBuiltins = {
         "/export-chat", "/export-dump", "/prompts", "/dump-prompt", "/dp", "/cp-raw",
