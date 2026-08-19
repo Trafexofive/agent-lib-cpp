@@ -146,8 +146,8 @@ inline bool ShellModel::enterSubAgent(const std::string& name) {
                           std::make_move_iterator(rows.end()));
     }
     selectedBlock = 0;
-    timelineFocus = true;
-    composer.focused = false;
+    timelineFocus = false;
+    composer.focused = true;
     transcriptView.stick_bottom = true;
     rebuildViews();
     return true;

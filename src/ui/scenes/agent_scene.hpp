@@ -412,7 +412,7 @@ class AgentScene final : public BaseScene {
             }
         }
 
-        if (model_->timelineFocus || !model_->atRoot() || !model_->composer.focused) {
+        if (model_->timelineFocus || !model_->composer.focused) {
             // Leader-leader only when composer doesn't own space
             if (event.code == KeyCode::Character && !event.ctrl() && event.ch == ' ') {
                 if (model_->cmdPalette.noteSpace()) {
@@ -543,7 +543,7 @@ class AgentScene final : public BaseScene {
                 (event.code == KeyCode::Character && (event.ch == 'h' || event.ch == 'H'))) {
                 if (model_->goBack()) return true;
             }
-            if (event.code == KeyCode::Character && event.ch == 'i' && model_->atRoot()) {
+            if (event.code == KeyCode::Character && event.ch == 'i') {
                 model_->focusComposer();
                 return true;
             }
@@ -707,13 +707,17 @@ class AgentScene final : public BaseScene {
         }
         vm.running = model_->running;
         vm.failed = model_->failed;
-        vm.inputFocused = model_->composer.focused && !model_->timelineFocus && model_->atRoot();
+        vm.inputFocused = model_->composer.focused && !model_->timelineFocus;
         vm.historyFocused = model_->timelineFocus || !model_->composer.focused;
         vm.showThoughts = model_->showThoughts;
         vm.showRaw = model_->showRaw;
         vm.pendingOps = model_->pendingOps;
         vm.queuedSteer = 0;
-        if (model_->rootAgent && model_->rootAgent->hasPendingSteer()) vm.queuedSteer = 1;
+        if (Agent* cur = model_->currentAgent()) {
+            if (cur->hasPendingSteer()) vm.queuedSteer = 1;
+        } else if (model_->rootAgent && model_->rootAgent->hasPendingSteer()) {
+            vm.queuedSteer = 1;
+        }
         if (!model_->pendingSteerBuffer.empty()) vm.queuedSteer += 1;
         vm.actionCount = model_->actionCount;
         vm.resultCount = model_->resultCount;

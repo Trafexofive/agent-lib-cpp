@@ -521,7 +521,6 @@ struct ShellModel : TimelineStore {
     }
 
     void focusComposer() {
-        if (!atRoot()) return;  // nested views are browse-only
         const int savedOff = transcriptView.offset;
         const bool savedStick = transcriptView.stick_bottom;
         timelineFocus = false;

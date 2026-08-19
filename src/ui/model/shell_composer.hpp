@@ -18,7 +18,7 @@ inline void ShellModel::appendNotice(const std::string& title, const std::vector
 }
 
 inline bool ShellModel::historyPrevious() {
-    if (promptHistory.empty() || running || !atRoot()) return false;
+    if (promptHistory.empty() || running) return false;
     if (promptHistoryIndex >= static_cast<int>(promptHistory.size())) {
         promptHistoryDraft = composer.value;
         promptHistoryIndex = static_cast<int>(promptHistory.size());
@@ -31,7 +31,7 @@ inline bool ShellModel::historyPrevious() {
 }
 
 inline bool ShellModel::historyNext() {
-    if (promptHistory.empty() || running || !atRoot()) return false;
+    if (promptHistory.empty() || running) return false;
     if (promptHistoryIndex >= static_cast<int>(promptHistory.size())) return false;
     ++promptHistoryIndex;
     composer.value = promptHistoryIndex == static_cast<int>(promptHistory.size())
@@ -42,21 +42,38 @@ inline bool ShellModel::historyNext() {
 }
 
 inline bool ShellModel::submitComposer() {
-    if (!atRoot()) {
-        chat::Notification n;
-        n.id = "submit-blocked";
-        n.source = "composer";
-        n.severity = "warn";
-        n.title = "drill out first · esc";
-        n.lifetimeMs = 2500;
-        notificationStack.push(std::move(n));
-        return false;
-    }
     std::string text = composer.value;
     while (!text.empty() && (text.back() == '\n' || text.back() == ' ' || text.back() == '\t' ||
                              text.back() == '\r'))
         text.pop_back();
     if (text.empty()) return false;
+
+    // Nested drill: same composer, isolated turn — steer the *current* agent.
+    // Do not mint a parent session or arm pendingSubmit from a child view.
+    if (!atRoot()) {
+        Agent* cur = currentAgent();
+        if (cur) cur->queueSteer(text);
+        else if (rootAgent) rootAgent->queueSteer(text);
+        {
+            TimelineRow row;
+            row.kind = TimelineKind::Status;
+            row.title = "steer";
+            row.body = "⟹ " + text;
+            nestedRows.push_back(std::move(row));
+        }
+        composer.value.clear();
+        composer.cursor = 0;
+        composer.scroll_row = 0;
+        rebuildViews();
+        chat::Notification n;
+        n.id = "steer";
+        n.source = "steer";
+        n.severity = "info";
+        n.title = cur ? ("steered · " + cur->name()) : "steered · child";
+        n.lifetimeMs = 2200;
+        notificationStack.push(std::move(n));
+        return true;
+    }
 
     // Live turn → steer buffer (no warn). Injected at next iteration boundary.
     if (running) {
