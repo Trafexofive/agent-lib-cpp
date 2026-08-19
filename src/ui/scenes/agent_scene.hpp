@@ -412,7 +412,7 @@ class AgentScene final : public BaseScene {
                                                : "bodies · full");
                 } else {
                     model_->chatBodyMode = (model_->chatBodyMode + 1) % 3;
-                    static const char* kNames[] = {"stream", "compact", "graph"};
+                    static const char* kNames[] = {"stream", "compact", "canvas"};
                     model_->dashboard.flashNotice(
                         std::string("view · ") +
                         kNames[model_->chatBodyMode % 3] + "  (ctrl-o)");
@@ -750,6 +750,8 @@ class AgentScene final : public BaseScene {
         vm.historyFocused = model_->timelineFocus || !model_->composer.focused;
         vm.showThoughts = model_->showThoughts;
         vm.bodyMode = model_->chatBodyMode;
+        vm.timelineRows = &model_->activeRows();
+        vm.selectedRow = model_->selectedBlock;
         vm.showRaw = model_->showRaw;
         vm.pendingOps = model_->pendingOps;
         vm.queuedSteer = 0;

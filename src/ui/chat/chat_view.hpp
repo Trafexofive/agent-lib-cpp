@@ -19,8 +19,11 @@
 #include "src/ui/chat/chat_footer.hpp"
 #include "src/ui/chat/notification.hpp"
 #include "src/ui/chat/transcript_cache.hpp"
+#include "src/ui/model/timeline_codec.hpp"
 #include "src/ui/theme/cortex_theme.hpp"
 #include "src/ui/model/inkcell_commands.hpp"
+
+#include <deque>
 
 namespace cortex::mk3::ui::chat {
 
@@ -64,8 +67,11 @@ struct ChatSurfaceModel {
     std::string hint;
     std::string agentName;  // real agent display name for the assistant label (replaces CORTEX)
     std::string scopeName;  // drilled-in subagent name (empty at root) for header/status scope indicator
-    // 0 stream · 1 compact · 2 graph — set by Ctrl-O cycle
+    // 0 stream · 1 compact · 2 canvas — set by Ctrl-O cycle
     int bodyMode = 0;
+    // Structured timeline for compact/canvas (not re-parsed display text).
+    const std::deque<TimelineRow>* timelineRows = nullptr;
+    int selectedRow = -1;
     // Transient readline-style completion menu (NOT transcript history).
     // Drawn between the body separator and the status line; cleared when the
     // operator types, submits, or leaves the stem.

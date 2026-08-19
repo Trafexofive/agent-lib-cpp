@@ -786,23 +786,25 @@ std::string Agent::runLoop(AgentContext &ctx) {
                             config_.fallbackProvider + "/" +
                             config_.fallbackModel;
                         setProvider(fb, config_.fallbackProvider, config_.fallbackModel);
-                        // Operator-facing: who died → who we ride now.
+                        // Classify opaque curl short-writes (not disk full).
+                        std::string reason = msg;
+                        if (reason.find("Failed writing received data") !=
+                            std::string::npos) {
+                            reason =
+                                "stream aborted mid-read (stall/callback/cancel) "
+                                "— not a disk error; " + msg;
+                        }
+                        // One STATUS via emitStatus + one harness for the model.
+                        // (Previously double STATUS: emitStatus + extra push.)
                         emitStatus("[FALLBACK] " + from + " → " + to +
-                                   " · reason: " + msg);
-                        // Model-facing: structured harness so next gen knows
-                        // the active provider changed mid-turn.
+                                   " · reason: " + reason);
                         history_.push_back(
                             "System: <harness kind=\"runtime\" code=\"FALLBACK\">\n"
                             "primary " + from + " failed.\n"
                             "switched to " + to + " for the rest of this turn.\n"
-                            "reason: " + msg + "\n"
+                            "reason: " + reason + "\n"
                             "Do not assume the original provider is live.\n"
                             "</harness>");
-                        protocolEvents_.push_back(
-                            {ProtocolEventKind::STATUS,
-                             "[FALLBACK] " + from + " → " + to, {}, {}});
-                        if (ctx.onToken)
-                            ctx.onToken("", false);
                         continue;  // retry generateStream with new provider
                     }
                 }
@@ -1180,7 +1182,9 @@ std::string Agent::runLoop(AgentContext &ctx) {
         if (!results.empty()) {
             for (auto &[id, result] : results) {
                 std::ostringstream sysMsg;
-                sysMsg << buildResultTag(id, result, true);
+                // FULL result into history — never Preview/compact. Starving
+                // the next generation of tool/subagent truth is forbidden.
+                sysMsg << buildResultTag(id, result, /*compact=*/false);
                 history_.push_back("System: " + sysMsg.str());
             }
         }

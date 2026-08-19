@@ -674,6 +674,13 @@ std::shared_ptr<ParsedAction> Parser::buildAction(const std::string& json,
     // Parse mode
     auto modeIt = attrs.find("mode");
     action->mode = (modeIt != attrs.end()) ? parseMode(modeIt->second) : ExecutionMode::SYNC;
+    // Sub-agents are long-running. ASYNC + waitForActions(30s) is how parents
+    // TIMEOUT while the child burns compute for minutes (live dump autopsy).
+    // Agent actions always join in-line unless explicitly fire_and_forget.
+    if (action->type == ActionType::AGENT &&
+        action->mode == ExecutionMode::ASYNC) {
+        action->mode = ExecutionMode::SYNC;
+    }
 
     // Name
     auto nameIt = attrs.find("name");
@@ -901,6 +908,95 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
               nullptr,
               {{"id", action->id}, {"reason", "depends_on_mode"}}});
         return;
+    }
+
+    // Hollow AGENT: `>{}</action>` then full brief — burns a child with empty
+    // instruction or poisons id replay. Require real instruction text.
+    if (action->type == ActionType::AGENT) {
+        const bool noContent =
+            action->content.find_first_not_of(" \t\n\r{}") == std::string::npos;
+        bool hasInstr = action->params.isObject() &&
+                        ((action->params.isMember("instruction") &&
+                          action->params["instruction"].isString() &&
+                          !action->params["instruction"].asString().empty()) ||
+                         (action->params.isMember("prompt") &&
+                          action->params["prompt"].isString() &&
+                          !action->params["prompt"].asString().empty()) ||
+                         (action->params.isMember("task") &&
+                          action->params["task"].isString() &&
+                          !action->params["task"].asString().empty()));
+        if (noContent && !hasInstr) {
+            trackRepeatFailure();
+            Json::Value err;
+            err["success"] = false;
+            err["protocol_error"] = true;
+            err["error"] =
+                "empty agent body — put the mission text inside <action>…</action>; "
+                "hollow {} is ignored (re-emit with full brief + new or same id)";
+            {
+                std::lock_guard<std::mutex> lock(mtx_);
+                results_[action->id] = err;
+                completed_[action->id] = true;
+            }
+            emit({TokenEvent::ACTION_RESULT,
+                  Json::writeString(Json::StreamWriterBuilder(), err),
+                  nullptr,
+                  {{"id", action->id}}});
+            emit({TokenEvent::ERROR, err["error"].asString(), nullptr,
+                  {{"id", action->id}, {"reason", "empty_action_body"}}});
+            return;
+        }
+    }
+
+    // Hollow filesystem tools: models stream `<action name="tree">{}</action>`
+    // then the real body. `{}` on tree/list used to dump cwd and poison ids.
+    // Only gate tools that require path/cmd — bare `{}` stays valid for sleep/tests.
+    if (action->type == ActionType::TOOL) {
+        const std::string& n = action->name;
+        const bool needsPath =
+            n == "tree" || n == "list" || n == "fs_read" || n == "fs_write" ||
+            n == "grep" || n == "simple_fs_write";
+        const bool needsCmd = n == "exec";
+        if (needsPath || needsCmd) {
+            const bool noContent =
+                action->content.find_first_not_of(" \t\n\r") == std::string::npos;
+            bool hasPath = action->params.isObject() &&
+                           ((action->params.isMember("path") &&
+                             action->params["path"].isString() &&
+                             !action->params["path"].asString().empty()) ||
+                            (action->params.isMember("file") &&
+                             action->params["file"].isString() &&
+                             !action->params["file"].asString().empty()));
+            bool hasCmd = action->params.isObject() &&
+                          ((action->params.isMember("cmd") &&
+                            !action->params["cmd"].asString().empty()) ||
+                           (action->params.isMember("command") &&
+                            !action->params["command"].asString().empty()) ||
+                           (action->params.isMember("argv") &&
+                            action->params["argv"].isArray() &&
+                            !action->params["argv"].empty()));
+            if (noContent && ((needsPath && !hasPath) || (needsCmd && !hasCmd))) {
+                trackRepeatFailure();
+                Json::Value err;
+                err["success"] = false;
+                err["protocol_error"] = true;
+                err["error"] =
+                    std::string("empty ") + n +
+                    " body — emit required params before </action>; hollow {} ignored";
+                {
+                    std::lock_guard<std::mutex> lock(mtx_);
+                    results_[action->id] = err;
+                    completed_[action->id] = true;
+                }
+                emit({TokenEvent::ACTION_RESULT,
+                      Json::writeString(Json::StreamWriterBuilder(), err),
+                      nullptr,
+                      {{"id", action->id}}});
+                emit({TokenEvent::ERROR, err["error"].asString(), nullptr,
+                      {{"id", action->id}, {"reason", "empty_action_body"}}});
+                return;
+            }
+        }
     }
 
     // Invalid JSON body marked at parse time — do not execute.

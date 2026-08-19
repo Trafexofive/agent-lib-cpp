@@ -264,26 +264,96 @@ inline inkcell::Style blockStyle(ChatBlockKind kind, bool header, bool selected 
         style.dim = false;
         if (kind == ChatBlockKind::Thought) style.italic = true;
     } else {
-        style.fg = theme::color(p.bodyG, p.bodyN);
+        // Body: lift toward white while keeping kind tint — mid-grays read as mono.
+        auto bg = theme::color(p.bodyG, p.bodyN);
+        style.fg = theme::color(
+            inkcell::Color::rgb(std::min(255, (bg.r * 2 + 235) / 3),
+                                std::min(255, (bg.g * 2 + 235) / 3),
+                                std::min(255, (bg.b * 2 + 240) / 3)),
+            inkcell::Color::rgb(std::min(255, (bg.r + 245) / 2),
+                                std::min(255, (bg.g + 248) / 2),
+                                std::min(255, (bg.b + 255) / 2)));
         style.bold = false;
-        // Thought/raw stay quiet; body of tools stays readable mid-chroma
-        style.dim = (kind == ChatBlockKind::Thought || kind == ChatBlockKind::Raw);
+        style.dim = false;  // never SGR-dim body — kills chroma on real terminals
         style.italic = (kind == ChatBlockKind::Thought);
     }
 
     if (selected && header) {
-        // Keep kind hue on selected headers — don't bleach to white
         style.fg = theme::color(
-            inkcell::Color::rgb(std::min(255, p.headG.r + 30),
-                                std::min(255, p.headG.g + 30),
-                                std::min(255, p.headG.b + 30)),
-            inkcell::Color::rgb(std::min(255, p.headN.r + 20),
-                                std::min(255, p.headN.g + 20),
-                                std::min(255, p.headN.b + 20)));
+            inkcell::Color::rgb(std::min(255, p.headG.r + 40),
+                                std::min(255, p.headG.g + 40),
+                                std::min(255, p.headG.b + 40)),
+            inkcell::Color::rgb(std::min(255, p.headN.r + 25),
+                                std::min(255, p.headN.g + 25),
+                                std::min(255, p.headN.b + 25)));
         style.bold = true;
         style.dim = false;
     }
     return style;
+}
+
+// Content-aware body paint — paths / errors / JSON / meta chips pop inside the wash.
+inline inkcell::Style blockLineStyle(ChatBlockKind kind, bool header, const std::string& line,
+                                     bool selected = false, uint64_t nowMs = 0) {
+    auto st = blockStyle(kind, header, selected, nowMs);
+    if (header) return st;
+
+    std::string t = line;
+    size_t i = t.find_first_not_of(" \t│┃▎▌┊›");
+    if (i != std::string::npos) t = t.substr(i);
+
+    auto withFg = [&](inkcell::Color g, inkcell::Color n, bool bold = false, bool ital = false) {
+        st.fg = theme::color(g, n);
+        st.bold = bold;
+        st.italic = ital || st.italic;
+        st.dim = false;
+        return st;
+    };
+
+    // Errors / fail
+    if (t.rfind("error", 0) == 0 || t.rfind("Error", 0) == 0 ||
+        t.find("ERROR") != std::string::npos || t.rfind("✗", 0) == 0 ||
+        t.find("failed") != std::string::npos || t.find("protocol_error") != std::string::npos)
+        return withFg(inkcell::Color::rgb(255, 140, 145), inkcell::Color::rgb(255, 120, 140), true);
+
+    // Success meta
+    if (t.rfind("✓", 0) == 0 || t.find(" ok") != std::string::npos ||
+        t.rfind("success", 0) == 0)
+        return withFg(inkcell::Color::rgb(130, 220, 160), inkcell::Color::rgb(110, 245, 170), true);
+
+    // Paths / files
+    if (t.rfind("/", 0) == 0 || t.rfind("./", 0) == 0 || t.rfind("~/", 0) == 0 ||
+        t.find(".hpp") != std::string::npos || t.find(".cpp") != std::string::npos ||
+        t.find(".md") != std::string::npos || t.find("examples/") != std::string::npos ||
+        t.rfind("dir  ", 0) == 0 || t.rfind("file ", 0) == 0)
+        return withFg(inkcell::Color::rgb(130, 200, 230), inkcell::Color::rgb(120, 230, 255));
+
+    // JSON / code-ish
+    if ((!t.empty() && (t[0] == '{' || t[0] == '[' || t[0] == '"')) ||
+        t.find(": \"") != std::string::npos || t.find("\"path\"") != std::string::npos)
+        return withFg(inkcell::Color::rgb(230, 200, 130), inkcell::Color::rgb(255, 215, 120));
+
+    // Timing / size chips (12ms · 4.2KB)
+    if (t.find("ms") != std::string::npos &&
+        (t.find("·") != std::string::npos || t.find("B") != std::string::npos))
+        return withFg(inkcell::Color::rgb(160, 165, 190), inkcell::Color::rgb(150, 170, 210), false,
+                      true);
+
+    // Markdown headings inside replies
+    if (t.rfind("# ", 0) == 0 || t.rfind("## ", 0) == 0 || t.rfind("### ", 0) == 0)
+        return withFg(inkcell::Color::rgb(240, 240, 250), inkcell::Color::rgb(245, 250, 255), true);
+
+    // Tree art
+    if (t.rfind("├", 0) == 0 || t.rfind("└", 0) == 0 || t.rfind("│", 0) == 0 ||
+        t.rfind("┌", 0) == 0)
+        return withFg(inkcell::Color::rgb(120, 175, 200), inkcell::Color::rgb(100, 200, 240));
+
+    // Thought body stays softer violet-gray but still readable
+    if (kind == ChatBlockKind::Thought)
+        return withFg(inkcell::Color::rgb(155, 158, 185), inkcell::Color::rgb(160, 165, 210), false,
+                      true);
+
+    return st;
 }
 
 }  // namespace cortex::mk3::ui::chat

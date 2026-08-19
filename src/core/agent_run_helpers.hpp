@@ -255,6 +255,15 @@ expandValueRefs(const Json::Value &value,
     return out;
 }
 
+// Truncate on a UTF-8 codepoint boundary (no mid-rune mojibake in history).
+inline std::string utf8SafePrefix(const std::string &s, size_t maxBytes) {
+    if (s.size() <= maxBytes) return s;
+    size_t i = maxBytes;
+    while (i > 0 && (static_cast<unsigned char>(s[i]) & 0xC0) == 0x80) --i;
+    if (i == 0) i = maxBytes;  // pathological; prefer hard cut over empty
+    return s.substr(0, i);
+}
+
 inline std::string buildResultTag(const std::string &id,
                                   const Json::Value &result,
                                   bool compact = false) {
@@ -275,7 +284,7 @@ inline std::string buildResultTag(const std::string &id,
     // Extract primary output body
     std::string body;
     for (const char *key : {"content", "output", "stdout", "result", "results",
-                            "data", "value"}) {
+                            "data", "value", "tree"}) {
         if (!result.isMember(key))
             continue;
         if (result[key].isString()) {
@@ -316,11 +325,18 @@ inline std::string buildResultTag(const std::string &id,
     }
 
     if (!body.empty()) {
-        size_t bytes = body.size();
-        if (compact && bytes > 2000) {
-            body = body.substr(0, 2000);
+        const size_t bytes = body.size();
+        // CARDINAL RULE: history/prompt must keep tool + subagent sources of
+        // truth. compact=true used to mean "UI teaser" but was wrongly used on
+        // history (2KB) — that starved parents of child scout reports.
+        // Full path: only a pathological safety rail (512KiB).
+        // Preview path (explicit): 4KB teaser for UI-only callers.
+        const size_t kCap = compact ? size_t(4 * 1024) : size_t(512 * 1024);
+        if (bytes > kCap) {
+            body = utf8SafePrefix(body, kCap) +
+                   "\n…[truncated safety — full payload retained in actionResults_]";
             os << " bytes=\"" << bytes << "\" truncated=\"true\"";
-        } else if (bytes > 0) {
+        } else {
             os << " bytes=\"" << bytes << "\"";
         }
         os << ">" << body << "</result>";

@@ -145,8 +145,11 @@ inline std::vector<TimelineBlock> protocolEventsToTimeline(
                 b.stableId = stablePrefix(opts.path) + ":status:" + std::to_string(i);
                 b.kind = BlockKind::Status;
                 b.status = BlockStatus::Idle;
-                b.title = ev.text.rfind("[LIMIT]", 0) == 0 ? "LIMIT"
+                b.title = ev.text.rfind("[LIMIT]", 0) == 0     ? "LIMIT"
+                          : ev.text.rfind("[TIMEOUT]", 0) == 0  ? "TIMEOUT"
                           : ev.text.rfind("[FINALIZE]", 0) == 0 ? "FINALIZE"
+                          : ev.text.rfind("[HARNESS]", 0) == 0  ? "HARNESS"
+                          : ev.text.rfind("[CANCEL", 0) == 0    ? "CANCEL"
                                                                 : "STATUS";
                 b.summary = ev.text;
                 b.hasDetail = !ev.text.empty();

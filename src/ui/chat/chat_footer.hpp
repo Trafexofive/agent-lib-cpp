@@ -552,7 +552,7 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             else
                 left = "—";
 
-            static const char* kView[] = {"stream", "compact", "graph"};
+            static const char* kView[] = {"stream", "compact", "canvas"};
             int bm = f.bodyMode;
             if (bm < 0 || bm > 2) bm = 0;
             std::string right = kView[bm];
@@ -633,7 +633,7 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             putLeft(2, c, dim);
         }
         if (box.h >= 4) {
-            static const char* kView[] = {"stream", "compact", "graph"};
+            static const char* kView[] = {"stream", "compact", "canvas"};
             int bm = std::max(0, std::min(2, f.bodyMode));
             putLeft(3, std::string("view ") + kView[bm] + "  (^O cycle)", cyan);
         }
