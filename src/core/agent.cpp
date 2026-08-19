@@ -1262,16 +1262,41 @@ Json::Value Agent::handleAgentDelegate(AgentContext &ctx,
         Json::Value snap = it->second->inspectContext(lastN);
         snap["op"] = op;
         snap["agent"] = agentName;
-        // Compact summary for the RESULT card body.
+        // Compact summary for the RESULT card — last tools/errors, not only a
+        // teaser thought. Operators were polling inspect and seeing the same
+        // first sentence forever while the child was stuck.
         std::ostringstream sum;
         sum << agentName << " context: history="
             << snap.get("history_total", 0).asInt()
-            << " events=" << snap.get("protocol_events", 0).asInt();
+            << " events=" << snap.get("protocol_events", 0).asInt()
+            << " raw=" << snap.get("raw_bytes", 0).asUInt64() << "B";
+        // Last few protocol events from the child.
+        const auto &evs = it->second->protocolEvents();
+        int shown = 0;
+        for (auto rit = evs.rbegin(); rit != evs.rend() && shown < 6; ++rit) {
+            if (rit->kind == ProtocolEventKind::ACTION) {
+                sum << "\n  ▸ " << rit->action.type << ":" << rit->action.name
+                    << " #" << rit->action.id;
+                ++shown;
+            } else if (rit->kind == ProtocolEventKind::RESULT) {
+                sum << "\n  " << (rit->result.ok ? "✓" : "✗") << " #"
+                    << rit->result.id << " " << rit->result.toolName;
+                ++shown;
+            } else if (rit->kind == ProtocolEventKind::STATUS) {
+                std::string t = rit->text;
+                if (t.size() > 120) t = t.substr(0, 118) + "…";
+                sum << "\n  status: " << t;
+                ++shown;
+            }
+        }
         if (!snap.get("response_output", "").asString().empty()) {
             std::string ro = snap["response_output"].asString();
-            if (ro.size() > 200)
-                ro = ro.substr(0, 200) + "…";
-            sum << "\nlast: " << ro;
+            if (ro.size() > 240) ro = ro.substr(0, 238) + "…";
+            sum << "\nlast_response: " << ro;
+        } else if (!evs.empty() && evs.back().kind == ProtocolEventKind::THOUGHT) {
+            std::string t = evs.back().text;
+            if (t.size() > 160) t = t.substr(0, 158) + "…";
+            sum << "\nlast_thought: " << t;
         }
         snap["output"] = sum.str();
         snap["success"] = true;
