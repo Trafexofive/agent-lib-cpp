@@ -42,7 +42,9 @@ Evidence dumps under `.cortex/dev/ephemeral-*` and
 | **T-COMPACT-CANVAS** | Compact/canvas craft under live TUI | Rows wired; polish selection/edges |
 | **T-WAIT-JOIN** | PE prefers wait/join over sleep | Tool exists; PE line only |
 | **T-HISTORY-DEDUP-TAGS** | Agent history line keeps duplicate `<action id=same>` text | Display/export cleanup |
-| **T-CLI-HEADLESS** | Bare `--session` opens hub TUI | Document + optional `--headless` flag |
+| **T-CLI-HEADLESS** | Bare `--session` opens hub TUI | still open |
+| **T-CLI-M-PROVIDER** | `-m` vs `--provider` free tokens | **shipped** `3008514` |
+| **T-ONE-WORKER** | live one agent scout | **shipped** dump `2167980` |
 | **T-MANIFEST-SEATBELT** | stage/coder / sub max_iterations still huge | Don’t commit operator WIP blindly |
 
 ### Open — P2
@@ -63,6 +65,9 @@ Evidence dumps under `.cortex/dev/ephemeral-*` and
 | `ephemeral-1905607` | flash | bare→PROTOCOL nudge→list→final OK |
 | `ephemeral-1910320` | flash `-m default` | one coder agent started; **timeout→CANCEL race**; tools 52KB |
 | `ephemeral-1923837` | **pro** | list→final OK; diet slim iter2; dup list tags |
+| `ephemeral-1953397` | flash | **TIMEOUT** harness (not CANCEL) on SIGTERM |
+| `ephemeral-1963512` | flash default | tools_len **4329** (was 52k) |
+| `ephemeral-2167980` | flash default | **ONE worker** coder #scout1 45s ok=true bytes=3033 final |
 
 ---
 

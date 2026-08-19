@@ -248,10 +248,12 @@ inline void drawTranscriptCanvas(inkcell::Surface& surface, inkcell::Rect body,
         ChatBlockKind kind = ChatBlockKind::None;
         std::string label;
         std::string sub;
+        std::string actionId;  // for ACT→OK edges
         bool live = false;
         bool ok = true;
         bool selected = false;
         bool edgeDown = true;
+        bool linksPrev = false;  // result pairs with previous action same id
     };
     std::vector<Node> nodes;
     nodes.reserve(rows->size());
@@ -268,10 +270,7 @@ inline void drawTranscriptCanvas(inkcell::Surface& surface, inkcell::Rect body,
         n.kind = kindFromTimeline(r.kind, r.ok, r.actionType, r.actionName);
         n.ok = r.ok;
         n.selected = m.historyFocused && m.selectedRow == i;
-        n.live = m.running && !r.actionId.empty() &&
-                 (r.kind == TimelineKind::Action) &&
-                 // pending set not on ChatSurfaceModel — approximate: last action-ish
-                 false;
+        n.actionId = r.actionId;
 
         if (r.kind == TimelineKind::User) {
             n.label = "YOU";
@@ -284,7 +283,6 @@ inline void drawTranscriptCanvas(inkcell::Surface& surface, inkcell::Rect body,
                 n.label += r.actionId;
             }
             n.sub = oneLine(r.body, 52);
-            n.live = m.running;  // refined below
         } else if (r.kind == TimelineKind::Result) {
             n.label = r.ok ? "OK   " : "FAIL ";
             n.label += r.actionName.empty() ? "result" : r.actionName;
@@ -293,6 +291,9 @@ inline void drawTranscriptCanvas(inkcell::Surface& surface, inkcell::Rect body,
                 n.label += r.actionId;
             }
             n.sub = oneLine(r.body, 52);
+            if (!nodes.empty() && !r.actionId.empty() &&
+                nodes.back().actionId == r.actionId)
+                n.linksPrev = true;
         } else if (r.kind == TimelineKind::Response || r.kind == TimelineKind::Final) {
             n.label = "OUT";
             n.sub = oneLine(r.body.empty() ? r.title : r.body, 52);
@@ -328,23 +329,33 @@ inline void drawTranscriptCanvas(inkcell::Surface& surface, inkcell::Rect body,
         }
     }
 
-    // Layout: each node = 3 rows (card + connector)
-    const int nodeH = 3;
+    // Layout: denser 2-row cards + spine; paired ACT→OK share a tight edge glyph
+    const int nodeH = 2;
     int contentH = 2 + static_cast<int>(nodes.size()) * nodeH;
     int maxOff = std::max(0, contentH - body.h);
     int off = m.followBottom ? maxOff : std::max(0, std::min(m.scrollOffset, maxOff));
     if (m.contentHWriteback) *m.contentHWriteback = std::max(1, contentH);
+
+    int nAct = 0, nOk = 0, nFail = 0, nSub = 0;
+    for (const auto& n : nodes) {
+        if (n.label.rfind("ACT", 0) == 0) ++nAct;
+        if (n.label.rfind("SUB", 0) == 0) ++nSub;
+        if (n.label.rfind("OK", 0) == 0) ++nOk;
+        if (n.label.rfind("FAIL", 0) == 0) ++nFail;
+    }
 
     // Title
     {
         auto st = theme::cyan();
         st.bold = true;
         surface.text({body.x + 1, body.y}, "canvas", st);
+        std::string meta = std::to_string(nodes.size()) + "n";
+        if (nAct + nSub) meta += " · " + std::to_string(nAct + nSub) + "act";
+        if (nOk) meta += " · " + std::to_string(nOk) + "ok";
+        if (nFail) meta += " · " + std::to_string(nFail) + "fail";
+        meta += " · ctrl-o";
         surface.text({body.x + 8, body.y},
-                     inkcell::text::truncate(
-                         std::to_string(nodes.size()) + " nodes · flow · ctrl-o",
-                         body.w - 9),
-                     theme::dim());
+                     inkcell::text::truncate(meta, body.w - 9), theme::dim());
     }
 
     int spineX = body.x + 2;
@@ -358,12 +369,14 @@ inline void drawTranscriptCanvas(inkcell::Surface& surface, inkcell::Rect body,
         // spine
         if (baseY >= body.y && baseY < body.bottom()) {
             auto rail = blockRailStyle(n.kind, true, n.selected || n.live, m.nowMs);
-            surface.put({spineX, baseY}, n.live ? "◆" : (n.ok ? "●" : "✖"), rail);
+            const char* glyph = n.live ? "◆" : (n.ok ? "●" : "✖");
+            if (n.linksPrev) glyph = n.ok ? "└" : "┴";
+            surface.put({spineX, baseY}, glyph, rail);
         }
         if (i + 1 < nodes.size() && baseY + 1 >= body.y && baseY + 1 < body.bottom()) {
-            surface.put({spineX, baseY + 1}, "│", theme::dim());
-            if (baseY + 2 >= body.y && baseY + 2 < body.bottom())
-                surface.put({spineX, baseY + 2}, "│", theme::dim());
+            // Paired result: short edge; else flow spine
+            const char* conn = nodes[i + 1].linksPrev ? "│" : "│";
+            surface.put({spineX, baseY + 1}, conn, theme::dim());
         }
 
         // card row 0 — label
@@ -373,6 +386,7 @@ inline void drawTranscriptCanvas(inkcell::Surface& surface, inkcell::Rect body,
             if (w > 2) {
                 surface.fill({cardX, baseY, w, 1}, " ", bg);
                 std::string lab = n.label;
+                if (n.linksPrev) lab = std::string("↳ ") + lab;
                 if (n.live) lab = std::string("▸ ") + lab;
                 if (n.selected) lab = std::string("› ") + lab;
                 surface.text({cardX + 1, baseY},
