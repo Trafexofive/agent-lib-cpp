@@ -585,27 +585,29 @@ void Parser::handleAction(const std::string& content,
                   nullptr,
                   {{"id", action->id}}});
             emit({TokenEvent::ERROR,
-                  "duplicate id replayed: " + action->id,
+                  "duplicate id replayed: " + action->id +
+                      " (returned retained result; next action needs a new id)",
                   nullptr,
                   {{"id", action->id}, {"reason", "duplicate_action_id_replay"}}});
             return;
         }
-        Json::Value err;
-        err["success"] = false;
-        err["protocol_error"] = true;
-        err["error"] =
-            "duplicate action id: " + action->id + " — each action must have a unique id";
-        results_[action->id] = err;
-        completed_[action->id] = true;
-        emit({TokenEvent::ACTION_RESULT,
-              Json::writeString(Json::StreamWriterBuilder(), err),
-              nullptr,
-              {{"id", action->id}}});
+        // Auto-suffix a unique id so one collision does not poison the batch.
+        // Models often re-emit the same id with a fuller body on the next line.
+        std::string base = action->id.empty() ? "act" : action->id;
+        std::string uniq = base;
+        int n = 2;
+        while (usedActionIds_.count(uniq) && n < 1000) {
+            uniq = base + "-" + std::to_string(n++);
+        }
+        const std::string originalId = action->id;
+        action->id = uniq;
         emit({TokenEvent::ERROR,
-              "duplicate id: " + action->id,
+              "duplicate id remapped: " + originalId + " → " + uniq,
               nullptr,
-              {{"id", action->id}, {"reason", "duplicate_action_id"}}});
-        return;
+              {{"id", originalId},
+               {"remapped_to", uniq},
+               {"reason", "duplicate_action_id_remapped"}}});
+        // Fall through with remapped id (lock released below path needs insert).
     }
     usedActionIds_.insert(action->id);
 

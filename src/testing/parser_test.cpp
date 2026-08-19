@@ -416,29 +416,34 @@ void test_clear_results_keeps_used_ids() {
 }
 
 void test_duplicate_id_no_retained_rejects() {
-    TEST("duplicate id of a protocol-error action rejects (no real result)");
-    Parser parser([&](const ParsedAction&) -> Json::Value {
+    TEST("duplicate id without retained success remaps to unique id");
+    int execCount = 0;
+    std::string lastId;
+    Parser parser([&](const ParsedAction& a) -> Json::Value {
+        execCount++;
+        lastId = a.id;
         Json::Value r;
         r["protocol_error"] = true;
         r["success"] = false;
         return r;
     });
-    bool sawDupError = false;
+    bool sawRemap = false;
     parser.onEvent([&](const TokenEvent& ev) {
         if (ev.type == TokenEvent::ERROR &&
             ev.metadata.count("reason") &&
-            ev.metadata.at("reason") == "duplicate_action_id")
-            sawDupError = true;
+            ev.metadata.at("reason") == "duplicate_action_id_remapped")
+            sawRemap = true;
     });
-    // First completion is a protocol_error (not a real success) → retained not
-    // marked replayable; a re-emit must produce the duplicate_id error.
+    // First completion is a protocol_error (not replayable). Re-emit must
+    // remap to a unique id and still execute — not poison the batch.
     parser.feed(
         "<action type=\"tool\" name=\"list\" id=\"a\" mode=\"sync\">{}</action>", true);
     parser.clearResults();
     parser.feed(
         "<action type=\"tool\" name=\"list\" id=\"a\" mode=\"sync\">{}</action>", true);
-    CHECK(sawDupError,
-          "duplicate id with only-a-protocol-error retained → duplicate_action_id error");
+    CHECK(sawRemap, "duplicate id remaps when no retained success");
+    CHECK(execCount == 2, "remapped duplicate still executes");
+    CHECK(lastId == "a-2" || lastId.rfind("a-", 0) == 0, "id was suffixed");
     PASS();
 }
 

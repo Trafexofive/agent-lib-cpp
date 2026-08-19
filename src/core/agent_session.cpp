@@ -168,6 +168,34 @@ void Agent::dumpSessionArtifacts(bool force) const {
         std::ofstream f(path);
         if (!f) return;
         f << "# Protocol events (ordered)\n\n";
+        f << "event_count=" << protocolEvents_.size() << "\n";
+        f << "history_lines=" << history_.size() << "\n";
+        f << "iteration_outputs=" << iterationOutputs_.size() << "\n\n";
+        if (protocolEvents_.empty()) {
+            f << "_(protocolEvents_ empty — falling back to history scan)_\n\n";
+            // History still has the run when events were cleared (retry wipe,
+            // ephemeral child, or dump after a path that reset the stream).
+            size_t n = 0;
+            for (const auto& h : history_) {
+                if (h.find("<action") == std::string::npos &&
+                    h.find("<result") == std::string::npos &&
+                    h.find("<response") == std::string::npos &&
+                    h.rfind("System: ", 0) != 0 &&
+                    h.rfind("User: ", 0) != 0 &&
+                    h.rfind("Agent: ", 0) != 0)
+                    continue;
+                f << "## history[" << n++ << "]\n";
+                f << h << "\n\n";
+            }
+            if (!iterationOutputs_.empty()) {
+                f << "# Iteration outputs (raw+runtime)\n\n";
+                for (size_t i = 0; i < iterationOutputs_.size(); ++i) {
+                    f << "## iter " << (i + 1) << "\n";
+                    f << iterationOutputs_[i] << "\n\n";
+                }
+            }
+            return;
+        }
         for (size_t i = 0; i < protocolEvents_.size(); ++i) {
             const auto& pe = protocolEvents_[i];
             f << "## [" << i << "] ";

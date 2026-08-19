@@ -63,12 +63,43 @@ inline bool jsonBool(const Json::Value &params, const std::string &key,
     return def;
 }
 
+// Child returned foreign tool mesh / leaked plan soup — not a real answer.
+inline bool looksLikeForeignToolSoup(const std::string &s) {
+    if (s.size() < 40) return false;
+    int hits = 0;
+    if (s.find("<<<<<") != std::string::npos) ++hits;
+    if (s.find("|path|") != std::string::npos || s.find("|list|") != std::string::npos)
+        ++hits;
+    if (s.find("tool fs_read") != std::string::npos ||
+        s.find("tool list") != std::string::npos)
+        ++hits;
+    // Dense space-separated tool tokens on few lines (same class as UI hang).
+    int nl = 0, sp = 0;
+    for (char c : s) {
+        if (c == '\n') ++nl;
+        else if (c == ' ' || c == '\t') ++sp;
+    }
+    if (s.size() > 2000 && nl <= 4 && sp > 80) ++hits;
+    return hits >= 2;
+}
+
 inline Json::Value makeSubAgentResult(const std::string &output,
                                       const std::string &trace,
                                       bool dumpContext) {
     Json::Value r;
-    r["success"] = true;
+    const bool soup = looksLikeForeignToolSoup(output);
+    const bool empty = output.empty() ||
+                       (output.find_first_not_of(" \t\n\r") == std::string::npos);
+    r["success"] = !soup && !empty;
     r["output"] = output;
+    if (soup) {
+        r["protocol_error"] = true;
+        r["error"] =
+            "sub-agent returned foreign tool grammar / plan dump, not a final "
+            "report — treat as failed child, do not wait or re-inspect as progress";
+    } else if (empty) {
+        r["error"] = "sub-agent returned empty output";
+    }
     if (dumpContext)
         r["trace"] = trace;
     return r;
