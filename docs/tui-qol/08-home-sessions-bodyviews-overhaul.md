@@ -1,8 +1,7 @@
 # Home · Sessions · Body views overhaul
 
-**Status:** plan + wave-0 code (graph name kill, compact correctness)  
-**Branch tip target:** `feat/inkcell-agentshell` / master  
-**Operator ask:** big move — home + sessions UI/UX/QOL; **remove graph view** (not the canvas they asked for); fix compact bugs; then raise craft.
+**Status:** plan. Chat canvas **removed** (stream/compact only). Compact header/scroll shipped. **Pill: Home is visual center** (slot 3 of 7). Home/Sessions UI still the old draw.
+**Branch tip target:** `feat/inkcell-agentshell` / master
 
 ---
 
@@ -150,6 +149,10 @@ Chat body modes after cleanup: **`stream · compact · canvas`** only. No “gra
 1. Kill graph naming; canvas-only mode 2  
 2. Compact scroll/header/selection correctness  
 3. Plan doc (this file) + TICKETS board  
+
+### Wave 0.5 — pill (done)
+Home is `kPillOrder[3]`: Manifests · Tools · Relics · **Home** · Sessions · Workflows · Settings.
+`h`/`l` walk pill slots. `g`/`s`/… still jump by section. Enum values unchanged.
 
 ### Wave 1 — Home launchpad
 1. Focusable RECENT + pin live  
