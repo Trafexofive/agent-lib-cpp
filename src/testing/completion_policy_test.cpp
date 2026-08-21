@@ -79,7 +79,7 @@ void test_autonomous_bare_continues_nonfinal() {
             h.find("@ CAP") == std::string::npos)
             earlyFinal = true;
     }
-    CHECK(bareN >= 2, "each bare generation injects BARE_TEXT harness");
+    CHECK(bareN >= 1, "BARE_TEXT harness injected once (not spammed)");
     CHECK(!earlyFinal, "no mid-loop AUTO-PROMOTED final");
 }
 

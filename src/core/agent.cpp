@@ -350,11 +350,9 @@ std::string Agent::runLoop(AgentContext &ctx) {
         return CompPolicy::Recover; // normal default
     };
     const CompPolicy compPolicy = resolveCompPolicy();
-    // Consecutive thought-only generations (no action, no final). No hard
-    // stop — we steer with <harness code="THOUGHT_ONLY"> like BARE_TEXT.
-    int thoughtOnlyStreak = 0;
-    std::string lastSalvage; // best non-final content this turn (for promote)
-    std::string lastThoughtContent;  // last substantive <thought> this turn
+    std::string lastSalvage; // non-final <response> body this turn (cap salvage)
+    std::string lastThoughtContent;
+    bool incompleteNoted = false;  // at most one BARE_TEXT/NONFINAL per prompt()
 
 
     const int workCap = std::max(1, config_.iterationCap);
@@ -1084,8 +1082,11 @@ std::string Agent::runLoop(AgentContext &ctx) {
                                             ? std::string("medium")
                                             : config_.thinkingLevel;
                 if (hadActions) {
-                    // action present but parser results empty — don't fake a response
+                    // parser missed an <action> — do not invent a response
+                } else if (incompleteNoted) {
+                    // one steer per prompt() is enough; repeating it is noise
                 } else if (hadNonFinalResp) {
+                    incompleteNoted = true;
                     lastSalvage = trimCopy(responseOutput_);
                     history_.push_back(
                         "System: " +
@@ -1107,15 +1108,21 @@ std::string Agent::runLoop(AgentContext &ctx) {
                          {}, {}});
                     if (ctx.onToken) ctx.onToken("", false);
                 } else {
+                    incompleteNoted = true;
                     lastSalvage.clear();
                     history_.push_back(
                         "System: " +
                         buildRuntimeHarness(
                             "BARE_TEXT", ctx.iteration, workCap, lvl,
-                            "This generation had no <action> and no "
-                            "<response final=\"true\">. Untagged tokens are "
-                            "recorded as <thought>, not an operator-visible "
-                            "answer. thinking_level=" + lvl + ".",
+                            leftover.empty()
+                                ? ("This generation produced no <action> and no "
+                                   "<response>. Provider thinking may have run; "
+                                   "zero protocol tokens. thinking_level=" +
+                                   lvl + ".")
+                                : ("This generation had no <action> and no "
+                                   "<response final=\"true\">. Untagged tokens "
+                                   "are <thought>, not an answer. thinking_level=" +
+                                   lvl + "."),
                             "Thought is kept. No fake <response> was created. "
                             "Turn still open (" +
                                 std::to_string(ctx.iteration) + "/" +
@@ -1178,65 +1185,6 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // mid-turn still leaves the last LLM-facing prompt on disk.
         if (devMode_ || verbose_ || raw_ || ctx.debug)
             dumpSessionArtifacts();
-
-        // Thought-only streak: no hard stop. Skip if BARE_TEXT/NONFINAL already
-        // steered this generation (untagged TEXT is already a Thought).
-        bool alreadySteered = false;
-        for (int hi = static_cast<int>(history_.size()) - 1;
-             hi >= 0 && hi + 4 >= static_cast<int>(history_.size()); --hi) {
-            const auto& hl = history_[static_cast<size_t>(hi)];
-            if (hl.find("code=\"BARE_TEXT\"") != std::string::npos ||
-                hl.find("code=\"NONFINAL\"") != std::string::npos ||
-                hl.find("code=\"THOUGHT_ONLY\"") != std::string::npos) {
-                alreadySteered = true;
-                break;
-            }
-        }
-        if (!finalizationTurn && !st.taskComplete && !alreadySteered) {
-            const bool hadActions = !results.empty() ||
-                iterationRawOutput.find("<action") != std::string::npos;
-            const bool hadThought =
-                !trimCopy(thoughtOutput_).empty() ||
-                iterationRawOutput.find("<thought") != std::string::npos;
-            if (!hadActions && hadThought) {
-                ++thoughtOnlyStreak;
-                const std::string lvl = config_.thinkingLevel.empty()
-                                            ? std::string("medium")
-                                            : config_.thinkingLevel;
-                history_.push_back(
-                    "System: " +
-                    buildRuntimeHarness(
-                        "THOUGHT_ONLY", ctx.iteration, workCap, lvl,
-                        "This generation produced <thought> (and/or provider "
-                        "reasoning tokens) but no <action> and no "
-                        "<response final=\"true\">. Streak=" +
-                            std::to_string(thoughtOnlyStreak) +
-                            " consecutive thought-only generations.",
-                        "The thought is kept in history. The turn is still "
-                        "open. thinking_level=" +
-                            lvl +
-                            " is the operator budget for <thought> — not a "
-                            "license to spend extra generations thinking.",
-                        "In THIS next generation emit <action> to do work, or "
-                        "<response final=\"true\"> if the job is already "
-                        "answerable. One short <thought> in the SAME generation "
-                        "as the action/final is enough.",
-                        "Do not spend another generation only thinking. Do not "
-                        "restate the same plan. Native provider thinking already "
-                        "ran; extra <thought> tags across turns waste the budget."));
-                protocolEvents_.push_back(
-                    {ProtocolEventKind::STATUS,
-                     "[THOUGHT_ONLY] streak " + std::to_string(thoughtOnlyStreak) +
-                         " — loop continues",
-                     {},
-                     {}});
-                if (ctx.onToken) ctx.onToken("", false);
-            } else if (hadActions) {
-                thoughtOnlyStreak = 0;
-            }
-        } else if (st.taskComplete) {
-            thoughtOnlyStreak = 0;
-        }
 
         // Never force a follow-up after finalization — that turn is one-shot.
         bool forceResultFollowup =
