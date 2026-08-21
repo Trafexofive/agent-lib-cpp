@@ -1,0 +1,74 @@
+kind: Agent
+name: live-lab
+version: "1.0.0"
+summary: Live harness/manifest lab — opencode-go DeepSeek v4 primary, MiniMax M3 fallback.
+description: |
+  Disposable daily-driver for protocol, fallback, ask_tool, sibling agents, and
+  incomplete-gen recovery. Not a product agent. Do not import this from coder.
+category: agent
+tags: [agent, launchable, lab, harness, live-test]
+
+cognitive_engine:
+  primary:
+    provider: opencode-go
+    model: deepseek-v4-pro
+    thinking: true
+    thinking_level: medium
+    parameters:
+      temperature: 0.4
+      max_tokens: 32768
+  fallback:
+    provider: opencode-go
+    model: minimax-m3
+    thinking: true
+    thinking_level: low
+    parameters:
+      temperature: 0.4
+      max_tokens: 32768
+
+context:
+  harness: ../../harness/default.md
+  system: ./system.md
+  persona: ./persona.md
+
+runtime:
+  max_iterations: 24
+  history_cap: 800
+  max_turns_per_cycle: 8
+  mode: normal
+  subagents:
+    persistence: session
+  prompt_building:
+    runtime_capabilities:
+      input_schemas: true
+      return_schemas: false
+      usage_examples: true
+  compaction:
+    enabled: true
+    profile: light
+    trigger:
+      context_tokens: 40k
+      turns: 12
+    cooldown:
+      min_turns: 2
+      min_seconds: 20
+
+import:
+  tools:
+    - list
+    - grep
+    - fs_read
+    - json
+    - sleep
+    - ask_tool
+    - artifact
+    - context_peek
+    - web_fetch
+  feeds:
+    - working_directory
+  agents:
+    - ./agents/echo-worker/agent.yml
+    - ./agents/probe-worker/agent.yml
+  files:
+    - ./prompts/live-script.md
+  env: []

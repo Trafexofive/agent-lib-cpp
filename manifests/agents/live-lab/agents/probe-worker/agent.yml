@@ -1,0 +1,41 @@
+kind: Agent
+name: probe-worker
+version: "1.0.0"
+summary: Second child — proves two names can run overlapping.
+category: agent
+tags: [agent, lab, child]
+
+cognitive_engine:
+  primary:
+    provider: opencode-go
+    model: deepseek-v4-flash
+    thinking: true
+    thinking_level: low
+    parameters:
+      temperature: 0.3
+      max_tokens: 8192
+  fallback:
+    provider: opencode-go
+    model: minimax-m3
+    parameters:
+      temperature: 0.3
+      max_tokens: 8192
+
+context:
+  harness: ../../../../harness/small.md
+  system: ./system.md
+  persona: ./persona.md
+
+runtime:
+  max_iterations: 8
+  history_cap: 200
+  mode: normal
+
+import:
+  tools:
+    - json
+    - list
+    - grep
+  feeds:
+    - working_directory
+  env: []
