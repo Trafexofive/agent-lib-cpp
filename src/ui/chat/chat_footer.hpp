@@ -122,13 +122,11 @@ struct ChatFooterModel {
     std::vector<std::string> extraLines;
 };
 
-inline int footerBaseRows(const ChatFooterModel& f) {
-    return (f.running || f.failed) ? 4 : 3;
-}
+inline int footerBaseRows(const ChatFooterModel&) { return 3; }
 
-inline int footerHeightFor(const ChatFooterModel& f, int maxAvail) {
+inline int footerHeightFor(const ChatFooterModel&, int maxAvail) {
     if (maxAvail < 1) return 0;
-    return std::min(footerBaseRows(f), maxAvail);
+    return std::min(3, maxAvail);
 }
 
 inline constexpr int kChatFooterHMin = 3;
@@ -299,32 +297,6 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         }
         if (!tr.empty() && x < right - 2)
             surface.text({x, y0 + 2}, inkcell::text::truncate(tr, right - x), dim);
-    }
-
-    if (box.h < 4) return;
-
-    // 3 — live counters only
-    {
-        auto kv = [&](int& x, const char* k, const std::string& v) {
-            if (x >= right - 8) return;
-            surface.text({x, y0 + 3}, k, dim);
-            x += inkcell::text::display_width(k) + 1;
-            surface.text({x, y0 + 3}, v, text);
-            x += inkcell::text::display_width(v) + 3;
-        };
-        int x = x0;
-        kv(x, "turn", std::to_string(std::max(0, f.turnCount)));
-        kv(x, "iter",
-           std::to_string(std::max(0, f.iterCurrent)) + "/" +
-               std::to_string(std::max(0, f.iterMax)));
-        std::string tools = std::to_string(std::max(0, f.resultCount)) + "/" +
-                            std::to_string(std::max(0, f.actionCount));
-        kv(x, "tools", tools);
-        kv(x, "hist",
-           std::to_string(std::max(0, f.historyUsed)) + "/" +
-               std::to_string(std::max(0, f.historyMax)));
-        if (x < right - 8)
-            surface.text({x, y0 + 3}, footerFmtBytes(f.tokenBytes), dim);
     }
 }
 

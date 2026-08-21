@@ -1247,17 +1247,14 @@ inline void drawCompletionMenu(inkcell::Surface& surface, inkcell::Rect area,
     }
 }
 
-// Footer is dynamic height — use footerHeightFor() every frame (can grow).
-// Soft max fraction of frame so transcript never dies.
+// Footer is a fixed 3-row plate. Never grow with live/idle/extraLines.
 inline int chatFooterReserve(const ChatFooterModel* footer, int frameH, int promptH,
                              int menuH) {
     if (!footer) return 0;
-    // Daily-driver footer wants 5–6 rows. Keep ≥8 transcript rows when the
-    // glass is tall; on short terms still hand the instrument a real plate.
-    const int transcriptFloor = frameH >= 28 ? 8 : (frameH >= 20 ? 5 : 3);
-    const int maxAvail =
-        std::max(3, frameH - promptH - menuH - transcriptFloor);
-    return footerHeightFor(*footer, maxAvail);
+    (void)promptH;
+    (void)menuH;
+    if (frameH < 8) return std::min(3, std::max(1, frameH / 4));
+    return 3;
 }
 
 }  // namespace cortex::mk3::ui::chat
@@ -1270,7 +1267,7 @@ inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, cons
                             const ChatFooterModel* footer = nullptr) {
     surface.clear(theme::base_bg());
     if (frame.w <= 0 || frame.h <= 0) return;
-    // Layout (bottom-up): footer(N dynamic) · prompt · menu · transcript.
+    // Layout (bottom-up): footer(3) · prompt · menu · transcript.
     const int promptH = std::max(1, promptBoxHeight(m, frame.w));
     int menuH = completionMenuHeight(m, frame.w);
     const int footerH = chatFooterReserve(footer, frame.h, promptH, menuH);

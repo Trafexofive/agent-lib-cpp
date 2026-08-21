@@ -1100,8 +1100,7 @@ class AgentScene final : public BaseScene {
                 foot.lastResultLine.clear();  // truth row shows statusHint
         }
 
-        // Reserve: footer(N dynamic) + prompt + menu — NO header.
-        // Footer can grow any frame (extraLines / live phase); recompute always.
+        // Reserve: fixed 3-row footer + prompt + menu.
         int menuH = chat::completionMenuHeight(vm, p.w);
         const int promptH = chat::promptBoxHeight(vm, p.w);
         const int footerH = chat::chatFooterReserve(&foot, p.h, promptH, menuH);
