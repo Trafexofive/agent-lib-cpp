@@ -95,8 +95,15 @@ struct ChatFooterModel {
     int ctxUsedTokens = 0;
     int ctxMaxTokens = 128000;
     int ctxCompactAt = 60000;
-    bool compactEnabled = false;
+    bool compactEnabled = false;   // compaction: enabled
+    bool trimEnabled = false;      // trim: block (tail always if cap>0)
+    bool trimFilter = false;       // trim policy/trigger armed
     bool compactedRecently = false;
+    int trimArmTokens = 0;
+    int compactArmTokens = 0;
+    int tailCap = 0;
+    int tailEvery = 0;
+    std::string lastEconomyCode;  // TRIM | COMPACT | TAIL
     int iterCurrent = 0;
     int iterMax = 80;
     int historyUsed = 0;
@@ -207,20 +214,29 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
                           (f.model.empty() ? "?" : f.model);
         putL(0, x0, eng, bright, inner);
         if (box.h >= 2) {
-            std::string c = f.compactEnabled ? "compact on" : "compact off";
-            if (!f.compactProfile.empty()) c += "  " + f.compactProfile;
-            if (f.compactEnabled && armPct > 0) c += "  arm " + std::to_string(armPct) + "%";
-            putL(1, x0, c, dim, inner);
+            std::string t = "trim ";
+            t += f.trimFilter ? "filter" : (f.trimEnabled ? "tail" : "off");
+            if (f.trimArmTokens > 0) t += "  arm " + fmtTok(f.trimArmTokens);
+            putL(1, x0, t, f.trimFilter ? text : dim, inner);
         }
         if (box.h >= 3) {
-            std::string h = "hist " + std::to_string(f.historyUsed) + "/" +
-                            std::to_string(f.historyMax) + "   " + view;
-            putL(2, x0, h, text, inner);
+            std::string c = "compact ";
+            c += f.compactEnabled ? "on" : "off";
+            if (f.compactEnabled && !f.compactProfile.empty()) c += "  " + f.compactProfile;
+            if (f.compactArmTokens > 0) c += "  arm " + fmtTok(f.compactArmTokens);
+            putL(2, x0, c, f.compactEnabled ? text : dim, inner);
         }
-        if (box.h >= 4)
-            putL(3, x0,
-                 footerFmtBytes(f.tokenBytes) + " stream   " + fmtTok(used) + " ctx", dim,
-                 inner);
+        if (box.h >= 4) {
+            std::string h = "tail " + std::to_string(std::max(0, f.tailCap));
+            if (f.tailEvery >= 0) h += " / " + std::to_string(f.tailEvery) + "t";
+            h += "   hist " + std::to_string(f.historyUsed) + "/" +
+                 std::to_string(f.historyMax);
+            if (!f.lastEconomyCode.empty()) {
+                h += "   last ";
+                h += f.lastEconomyCode;
+            }
+            putL(3, x0, h, text, inner);
+        }
         if (box.h >= 5) putL(4, x0, paneHint, dim, inner);
         return;
     }
@@ -309,12 +325,20 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         surface.text({x, y0 + 2}, pl, pct >= 0.85f ? warn : dim);
         x += inkcell::text::display_width(pl) + 2;
         std::string tr;
-        if (!f.compactEnabled)
-            tr = "trim/compact off";
-        else if (f.compactedRecently)
-            tr = f.compactProfile == "trim" ? "trimmed" : "compacted";
-        else {
-            tr = f.compactProfile.empty() ? "compact" : f.compactProfile;
+        if (f.compactedRecently && !f.lastEconomyCode.empty()) {
+            if (f.lastEconomyCode == "TRIM") tr = "trimmed";
+            else if (f.lastEconomyCode == "TAIL") tr = "tailed";
+            else tr = "compacted";
+        } else {
+            std::string bits;
+            if (f.trimFilter) bits = "trim";
+            else if (f.trimEnabled && f.tailCap > 0) bits = "tail";
+            if (f.compactEnabled) {
+                if (!bits.empty()) bits += "+";
+                bits += f.compactProfile.empty() ? "compact" : f.compactProfile;
+            }
+            if (bits.empty()) bits = "ctx-clean off";
+            tr = bits;
             if (armPct > 0) {
                 tr += " ";
                 tr += std::to_string(armPct);
@@ -351,6 +375,11 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
            std::to_string(std::max(0, f.historyUsed)) + "/" +
                std::to_string(std::max(0, f.historyMax)),
            dim);
+        if (f.tailCap > 0 && f.tailCap != f.historyMax)
+            kv(x, "tail", std::to_string(f.tailCap), dim);
+        else if (f.tailCap > 0 && f.historyMax == f.tailCap) {
+            /* hist already shows the tail cap */
+        }
         kv(x, "", footerFmtBytes(f.tokenBytes), dim);
         if (f.queuedSteer > 0) kv(x, "steer", std::to_string(f.queuedSteer), warn);
     }

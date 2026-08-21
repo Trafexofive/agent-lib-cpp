@@ -297,6 +297,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
                     lastCompactNote_ = buildCtxEconomyHarness(
                         "TRIM", dropped, kept, tok, config_.effectiveHistoryCap(),
                         ctx.iteration, std::max(1, config_.iterationCap));
+                    lastEconomyCode_ = "TRIM";
                     lastCompactUiPending_ = ctxEconomyUiLine("TRIM", dropped, kept);
                 }
             }
@@ -327,6 +328,7 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
                         compaction::estimateTokens(promptHist),
                         config_.effectiveHistoryCap(), ctx.iteration,
                         std::max(1, config_.iterationCap));
+                    lastEconomyCode_ = "COMPACT";
                     lastCompactUiPending_ = ctxEconomyUiLine("COMPACT", cr.dropped, cr.kept);
                     lastCompactArchive_ = cr.archiveBody;
                     // Archive: file and artifact both land under .cortex/compact/
@@ -372,8 +374,10 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
                 lastCompactNote_ = tailHx;
             else
                 lastCompactNote_ += "\n" + tailHx;
-            if (lastCompactUiPending_.empty())
+            if (lastCompactUiPending_.empty()) {
+                lastEconomyCode_ = "TAIL";
                 lastCompactUiPending_ = ctxEconomyUiLine("TAIL", dropped, kept);
+            }
         }
 
         if (!lastCompactNote_.empty()) {
@@ -671,6 +675,7 @@ void Agent::compactHistoryInPlaceIfConfigured() {
     lastCompactNote_ = buildCtxEconomyHarness(
         code, cr.dropped, cr.kept, compaction::estimateTokens(history_),
         config_.effectiveHistoryCap(), 0, std::max(1, config_.iterationCap));
+    lastEconomyCode_ = code;
     lastCompactUiPending_ = std::string("[child] ") +
                             ctxEconomyUiLine(code, cr.dropped, cr.kept);
     lastCompactAtUserTurn_ = compaction::countUserTurns(history_);

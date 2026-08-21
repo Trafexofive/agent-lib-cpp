@@ -857,19 +857,25 @@ class AgentScene final : public BaseScene {
         if (Agent* live = model_->currentAgent() ? model_->currentAgent()
                                                  : model_->rootAgent) {
             const auto& c = live->config();
-            foot.compactEnabled = c.compaction.enabled || c.trim.filterEnabled;
-            if (c.trim.filterEnabled)
-                foot.compactProfile = "trim";
-            else
-                foot.compactProfile = c.compaction.profile;
+            foot.trimEnabled = c.trim.configured || c.effectiveHistoryCap() > 0;
+            foot.trimFilter = c.trim.filterEnabled;
+            foot.compactEnabled = c.compaction.enabled;
+            foot.compactProfile = c.compaction.profile;
+            foot.tailCap = c.effectiveHistoryCap();
+            foot.tailEvery = c.effectiveTailEveryTurns();
+            foot.trimArmTokens = c.trim.triggerContextTokens;
+            foot.compactArmTokens = c.compaction.triggerContextTokens;
             if (c.trim.modelContextTokens > 0)
                 foot.ctxMaxTokens = c.trim.modelContextTokens;
             else if (c.compaction.modelContextTokens > 0)
                 foot.ctxMaxTokens = c.compaction.modelContextTokens;
+            // Arm the nearest live trigger (trim first — it fires first).
             if (c.trim.filterEnabled && c.trim.triggerContextTokens > 0)
                 foot.ctxCompactAt = c.trim.triggerContextTokens;
             else if (c.compaction.triggerContextTokens > 0)
                 foot.ctxCompactAt = c.compaction.triggerContextTokens;
+            else if (c.trim.triggerContextTokens > 0)
+                foot.ctxCompactAt = c.trim.triggerContextTokens;
             foot.iterMax = c.iterationCap;
             int li = live->liveIteration();
             foot.iterCurrent = li > 0 ? li : 0;
@@ -886,6 +892,7 @@ class AgentScene final : public BaseScene {
             // Flash COMPACTED ~8s after a real compact — never sticky forever.
             foot.compactedRecently =
                 live->compactBadgeActive(static_cast<int64_t>(vm.nowMs));
+            foot.lastEconomyCode = live->lastEconomyCode();
         } else if (model_->tokenBytes > 0) {
             foot.ctxUsedTokens = std::max(foot.ctxUsedTokens, model_->tokenBytes / 3 + 2000);
         }

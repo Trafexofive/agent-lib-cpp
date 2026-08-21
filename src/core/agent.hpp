@@ -252,6 +252,7 @@ class Agent {
         lastCompactUiPending_.clear();
         return s;
     }
+    const std::string& lastEconomyCode() const { return lastEconomyCode_; }
     // Public so parent can fold child history after delegate return.
     void compactHistoryInPlaceIfConfigured();
 
@@ -434,6 +435,7 @@ class Agent {
     mutable std::string lastCompactArchive_;  // optional cold body from last compact
     // One-shot UI badge after a compact fires (prompt still keeps lastCompactNote_).
     mutable std::string lastCompactUiPending_;
+    mutable std::string lastEconomyCode_;  // TRIM | COMPACT | TAIL
     // One cognitive_engine.fallback attempt per top-level prompt().
     bool fallbackTriedThisTurn_ = false;
     bool fallbackSwappedThisTurn_ = false;
