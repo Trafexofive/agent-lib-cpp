@@ -1070,51 +1070,38 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 fullResponse = visibleError;
                 st.taskComplete = true; // runtime failure, not model final
             } else {
-                // Salvage bare/non-final content. Policy (types.hpp):
-                //   recover (normal)  → keep looping with a correction nudge
-                //   promote (auto)    → wrap and complete the turn now
-                //   strict            → same as recover (no early promote)
-                // Cap-time promotion still happens after the loop.
+                // Bare / non-final → keep as non-final <response>, inject
+                // harness, continue. Never mid-loop promote to final="true"
+                // (that stopped the turn dishonestly). Cap still salvages.
                 std::string salvage =
                     pickSalvage(iterationRawOutput, responseOutput_);
-                const bool hadNonFinalResponse =
-                    !trimCopy(responseOutput_).empty();
                 if (!salvage.empty()) {
                     lastSalvage = salvage;
-                    if (compPolicy == CompPolicy::Promote) {
-                        std::string agentLine;
-                        if (hadNonFinalResponse) {
-                            agentLine = "<response final=\"true\">" +
-                                        trimCopy(responseOutput_) +
-                                        "</response>";
-                        } else {
-                            agentLine = "<thought>" + salvage + "</thought>";
-                        }
-                        history_.push_back("Agent: " + agentLine);
-                        responseOutput_ = salvage;
-                        fullResponse = salvage;
-                        st.taskComplete = true;
-                        protocolEvents_.push_back(
-                            {ProtocolEventKind::RESPONSE, salvage, {}, {}});
-                        emitStatus(
-                            "[AUTO-PROMOTED] bare/non-final output under "
-                            "runtime.mode=autonomous / completion_policy=promote");
-                    } else {
-                        // Recover: keep the work in history, nudge, continue.
-                        std::string agentLine =
-                            hadNonFinalResponse
-                                ? ("<response>" + trimCopy(responseOutput_) +
-                                   "</response>")
-                                : ("<thought>" + salvage + "</thought>");
-                        history_.push_back("Agent: " + agentLine);
-                        history_.push_back(
-                            "System: [PROTOCOL] Bare or non-final output is not "
-                            "completion. Emit tools via <action> or close with "
-                            "<response final=\"true\">. Do not repeat the same "
-                            "prose without advancing.");
-                        st.nonFinalProtocolRetry = true;
-                        // Do NOT set taskComplete — loop continues.
-                    }
+                    const std::string body = trimCopy(salvage);
+                    history_.push_back("Agent: <response>" + body +
+                                       "</response>");
+                    protocolEvents_.push_back(
+                        {ProtocolEventKind::RESPONSE, body, {}, {}});
+                    std::ostringstream h;
+                    h << "<harness kind=\"runtime\" code=\"BARE_TEXT\">\n"
+                      << "Last generation had no <action> and no "
+                         "<response final=\"true\">. Captured as a "
+                         "non-final <response>. The loop continues.\n"
+                      << "Emit <action> to use tools, or close with "
+                         "<response final=\"true\">. Do not repeat the "
+                         "same prose without advancing.\n"
+                      << "</harness>";
+                    history_.push_back("System: " + h.str());
+                    protocolEvents_.push_back(
+                        {ProtocolEventKind::STATUS,
+                         "[BARE_TEXT] captured as non-final response — "
+                         "loop continues",
+                         {},
+                         {}});
+                    if (ctx.onToken) ctx.onToken("", false);
+                    st.nonFinalProtocolRetry = true;
+                    responseOutput_.clear();  // not a final
+                    // Do NOT set taskComplete — cap-time path still salvages.
                 }
             }
         }

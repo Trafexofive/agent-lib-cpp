@@ -232,17 +232,15 @@ struct AgentConfig {
     bool devMode = false;
 
     // Runtime mode / completion policy — how the harness treats bare or
-    // non-final model output (small-model due diligence).
+    // non-final model output.
     //
-    // mode:
-    //   normal      → recover with correction; promote salvage only if the
-    //                 iteration budget is exhausted with no final tag
-    //   autonomous  → same recovery, but auto-promote salvageable bare/
-    //                 non-final content after a few failed recoveries
+    // Mid-loop: ALWAYS capture bare/non-final as <response> (not final),
+    // inject <harness code="BARE_TEXT">, continue. Never stop the turn.
     //
-    // completion_policy (optional override of mode defaults):
-    //   recover | promote | strict
-    //   strict never auto-promotes; always surfaces the stop warning at cap
+    // At iteration cap:
+    //   recover / promote → salvage that body as the turn result
+    //   strict            → stop banner, do not salvage
+    // autonomous currently equals recover mid-loop; cap still salvages.
     std::string runtimeMode = "normal";
     std::string completionPolicy;  // empty → derive from runtimeMode
     int bareRecoveryPromoteAfter = -1;  // -1 → derive (normal: never early; autonomous: 2)

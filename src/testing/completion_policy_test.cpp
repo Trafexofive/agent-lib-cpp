@@ -46,37 +46,41 @@ void test_bare_text_recovers_then_final() {
     std::string out = agent.prompt("go", /*sessionId=*/"", /*ephemeral=*/true);
     CHECK(out.find("Here is the answer without tags.") != std::string::npos,
           "bare text recovers and final response is returned");
-    bool sawRecovery = false;
+    bool sawHarness = false, sawNonFinal = false;
     for (const auto& h : agent.history()) {
-        if (h.find("[PROTOCOL RECOVERY]") != std::string::npos &&
-            h.find("BEGIN SALVAGE") != std::string::npos)
-            sawRecovery = true;
+        if (h.find("code=\"BARE_TEXT\"") != std::string::npos) sawHarness = true;
+        if (h.find("<response>") != std::string::npos &&
+            h.find("final=\"true\"") == std::string::npos &&
+            h.find("Here is the answer without tags.") != std::string::npos)
+            sawNonFinal = true;
     }
-    CHECK(sawRecovery, "recovery correction injects full salvage block");
+    CHECK(sawHarness, "harness BARE_TEXT injected");
+    CHECK(sawNonFinal, "bare text stored as non-final <response>");
 }
 
-void test_autonomous_promotes_after_repeated_bare() {
-    // Autonomous promotes after 2 bare recoveries (default promoteAfter=2).
-    // Three bare dumps → promote on the 2nd recovery path... actually:
-    // recovery 1 after first bare, recovery 2 after second bare → early promote.
+void test_autonomous_bare_continues_nonfinal() {
+    // Mid-loop never finalizes bare text — even autonomous. Cap salvages.
     auto sp = std::make_shared<ScriptedProvider>(std::deque<std::string>{
         "Draft answer v1 — still bare.",
         "Draft answer v2 — still bare.",
-        "Draft answer v3 — should not be needed.",
+        "<response final=\"true\">done after harness</response>",
     });
     AgentConfig cfg = baseCfg("autonomous");
     cfg.iterationCap = 6;
     Agent agent(cfg, sp);
     std::string out = agent.prompt("go", "", true);
-    CHECK(out.find("Draft answer") != std::string::npos,
-          "autonomous mode promotes salvaged bare text");
-    CHECK(out.find("stopped without emitting") == std::string::npos,
-          "promoted path does not return stop banner");
-    bool sawPromote = false;
+    CHECK(out.find("done after harness") != std::string::npos,
+          "autonomous continues after bare until a real final");
+    int bareN = 0;
+    bool earlyFinal = false;
     for (const auto& h : agent.history()) {
-        if (h.find("[AUTO-PROMOTED]") != std::string::npos) sawPromote = true;
+        if (h.find("code=\"BARE_TEXT\"") != std::string::npos) ++bareN;
+        if (h.find("[AUTO-PROMOTED]") != std::string::npos &&
+            h.find("@ CAP") == std::string::npos)
+            earlyFinal = true;
     }
-    CHECK(sawPromote, "history records AUTO-PROMOTED note");
+    CHECK(bareN >= 2, "each bare generation injects BARE_TEXT harness");
+    CHECK(!earlyFinal, "no mid-loop AUTO-PROMOTED final");
 }
 
 void test_strict_never_promotes_at_cap() {
@@ -90,8 +94,12 @@ void test_strict_never_promotes_at_cap() {
     cfg.iterationCap = 3;
     Agent agent(cfg, sp);
     std::string out = agent.prompt("go", "", true);
-    CHECK(out.find("stopped without emitting") != std::string::npos,
-          "strict policy keeps stop banner at cap");
+    const bool stopped =
+        out.find("stopped without emitting") != std::string::npos ||
+        out.find("THOUGHT-ONLY HARD STOP") != std::string::npos;
+    CHECK(stopped, "strict policy does not treat bare text as a final answer");
+    CHECK(out.find("orphan prose") == std::string::npos || stopped,
+          "strict does not return salvage as a successful completion");
 }
 
 void test_max_iter_runs_finalization_turn() {
@@ -121,8 +129,16 @@ void test_max_iter_runs_finalization_turn() {
             if (pe.text.find("[FINALIZE]") != std::string::npos) sawFinalize = true;
         }
     }
-    CHECK(sawLimit, "LIMIT status is recorded when work budget exhausts");
-    CHECK(sawFinalize, "FINALIZE status/prompt is recorded for the extra turn");
+    for (const auto& h : agent.history()) {
+        if (h.find("status=\"finalization\"") != std::string::npos ||
+            h.find("FINALIZATION") != std::string::npos)
+            sawFinalize = true;
+        if (h.find("kind=\"limit\"") != std::string::npos ||
+            h.find("iteration budget exhausted") != std::string::npos)
+            sawLimit = true;
+    }
+    CHECK(sawLimit, "limit harness is recorded when work budget exhausts");
+    CHECK(sawFinalize, "finalization harness is recorded for the extra turn");
 }
 
 void test_nonfinal_response_body_salvaged() {
@@ -140,7 +156,7 @@ void test_nonfinal_response_body_salvaged() {
 int main() {
     std::cout << "completion_policy_test\n";
     test_bare_text_recovers_then_final();
-    test_autonomous_promotes_after_repeated_bare();
+    test_autonomous_bare_continues_nonfinal();
     test_strict_never_promotes_at_cap();
     test_max_iter_runs_finalization_turn();
     test_nonfinal_response_body_salvaged();
