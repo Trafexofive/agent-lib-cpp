@@ -141,7 +141,7 @@ inline int runInkcellRepl(const InkcellAppConfig &cfg, Agent &agent,
 
     auto applyLiveIdentity = [&](const AgentConfig &acfg,
                                  const std::string &manifestPath) {
-        model->agentName = acfg.name.empty() ? "cortex" : acfg.name;
+        model->agentName = acfg.name.empty() ? std::string("default") : acfg.name;
         model->agentModel = acfg.model;
         model->agentProvider = acfg.provider;
         model->activeManifestPath = manifestPath;

@@ -373,6 +373,10 @@ inline void ShellModel::persistUiTimeline() {
     c.agentName = agentName;
     c.model = agentModel;
     c.provider = agentProvider;
+    c.manifestPath = activeManifestPath;
+    if (c.manifestPath.empty() && rootAgent &&
+        !rootAgent->config().manifestPath.empty())
+        c.manifestPath = rootAgent->config().manifestPath;
     c.generation = gen.fetch_add(1, std::memory_order_relaxed);
     session::AsyncUiTimelineWriter::instance().enqueue(std::move(c));
 }

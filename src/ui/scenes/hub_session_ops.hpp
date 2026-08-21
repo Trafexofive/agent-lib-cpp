@@ -357,14 +357,33 @@ inline void MainScene::resumeSelectedSession() {
         std::string wantManifest;
         auto it = full.metadata.find("manifest_path");
         if (it != full.metadata.end()) wantManifest = it->second;
-        if (wantManifest.empty() && !full.agentName.empty() &&
-            full.agentName != "cortext-builtin-agent" && full.agentName != "cortex") {
+        if (wantManifest.empty() && !isPlaceholderAgentName(full.agentName)) {
             std::string err;
             wantManifest = catalog::resolveAgent(full.agentName, "", &err);
+            if (wantManifest.empty()) {
+                // config/agents (hub launchable) is not always on catalog roots.
+                namespace fs = std::filesystem;
+                fs::path cfg = fs::current_path() / "config" / "agents" /
+                               full.agentName / "agent.yml";
+                std::error_code ec;
+                if (fs::is_regular_file(cfg, ec))
+                    wantManifest = fs::absolute(cfg).string();
+            }
         }
-        if (!wantManifest.empty() && wantManifest != model_->activeManifestPath) {
-            // Full rebuild via repl tick (same path as hub launch) so tools/
-            // subagents/prompts match the session agent — not header-only rename.
+        const bool livePlaceholder =
+            isPlaceholderAgentName(model_->agentName) ||
+            model_->activeManifestPath.empty();
+        const bool identityMismatch =
+            (!wantManifest.empty() && wantManifest != model_->activeManifestPath) ||
+            (!isPlaceholderAgentName(full.agentName) &&
+             full.agentName != model_->agentName);
+        if (identityMismatch || (livePlaceholder && !wantManifest.empty())) {
+            // Full rebuild via repl tick so tools/prompts match the session agent.
+            if (wantManifest.empty()) {
+                model_->dashboard.flashNotice(
+                    "resume failed — no manifest for agent " + full.agentName);
+                return;
+            }
             if (model_->running) {
                 model_->dashboard.flashNotice(
                     "live turn — stop before resume onto another agent");
@@ -372,11 +391,10 @@ inline void MainScene::resumeSelectedSession() {
             }
             model_->pendingResumeSessionId = result.sessionId;
             model_->pendingLaunchManifest = wantManifest;
-            // Stash engine so post-launch apply keeps session model.
             model_->agentName = full.agentName.empty() ? model_->agentName : full.agentName;
             model_->agentProvider = full.provider;
             model_->agentModel = full.model;
-            model_->dashboard.flashNotice("resuming · rebuilding agent…");
+            model_->dashboard.flashNotice("resuming · " + full.agentName);
             return;  // repl builds agent then loads session
         }
         if (!full.agentName.empty()) model_->agentName = full.agentName;

@@ -135,6 +135,7 @@ struct UiTimelineCommit {
     std::string agentName;
     std::string model;
     std::string provider;
+    std::string manifestPath;  // absolute agent.yml — resume lock
     uint64_t generation = 0;
 };
 
@@ -232,9 +233,19 @@ class AsyncUiTimelineWriter {
             }
             s.uiTimelineJson = job.uiTimelineJson;
             s.updated = SessionManager::iso8601();
-            if (s.agentName.empty()) s.agentName = job.agentName;
-            if (s.model.empty()) s.model = job.model;
-            if (s.provider.empty()) s.provider = job.provider;
+            // Never demote a real agent to empty/placeholder from a stale flush.
+            if (!::cortex::mk3::isPlaceholderAgentName(job.agentName))
+                s.agentName = job.agentName;
+            else if (s.agentName.empty())
+                s.agentName = job.agentName;
+            if (!job.model.empty()) s.model = job.model;
+            if (!job.provider.empty()) s.provider = job.provider;
+            if (!job.manifestPath.empty()) {
+                const auto it = s.metadata.find("manifest_path");
+                if (it == s.metadata.end() || it->second.empty() ||
+                    it->second == job.manifestPath)
+                    s.metadata["manifest_path"] = job.manifestPath;
+            }
             sm.save(s, /*pretty=*/false);
         } catch (...) {
             // Fail-soft: never throw across worker → UI.

@@ -365,28 +365,39 @@ void Agent::saveSession(const std::string& id) {
         //  - upgrade empty/builtin → live config when live is a real agent
         //  - always refresh model/provider (live /model switches)
         {
-            const bool liveBuiltin = config_.name.empty() ||
-                                     config_.name == "cortext-builtin-agent" ||
-                                     config_.name == "cortex";
-            const bool diskReal = !session.agentName.empty() &&
-                                  session.agentName != "cortext-builtin-agent" &&
-                                  session.agentName != "cortex";
-            if (!liveBuiltin)
+            const bool livePlaceholder = isPlaceholderAgentName(config_.name);
+            const bool diskReal = !isPlaceholderAgentName(session.agentName);
+            const std::string diskMp =
+                session.metadata.count("manifest_path") ? session.metadata.at("manifest_path")
+                                                         : std::string{};
+            // Never steal a session's agent. Wrong-slot save (hub default after
+            // restart) used to overwrite coder → default.
+            const bool sameSlot =
+                diskMp.empty() || config_.manifestPath.empty() ||
+                diskMp == config_.manifestPath;
+            if (sameSlot && !livePlaceholder)
                 session.agentName = config_.name;
             else if (!diskReal && session.agentName.empty())
                 session.agentName = config_.name;
-            // else keep diskReal name
         }
         if (!config_.model.empty()) session.model = config_.model;
         if (!config_.provider.empty()) session.provider = config_.provider;
-        // Backfill manifest_path once so --continue can resolve without -m.
-        if (session.metadata.count("manifest_path") == 0 && !session.agentName.empty() &&
-            session.agentName != "cortext-builtin-agent" && session.agentName != "cortex") {
-            std::string err;
-            std::string resolved =
-                catalog::resolveAgent(session.agentName, config_.manifestDir, &err);
-            if (!resolved.empty())
-                session.metadata["manifest_path"] = resolved;
+        // Absolute manifest path is the resume lock. Always write when live has it
+        // and we're on the same slot (or disk has none yet).
+        {
+            const std::string diskMp =
+                session.metadata.count("manifest_path") ? session.metadata.at("manifest_path")
+                                                         : std::string{};
+            if (!config_.manifestPath.empty() &&
+                (diskMp.empty() || diskMp == config_.manifestPath))
+                session.metadata["manifest_path"] = config_.manifestPath;
+            else if (diskMp.empty() && !isPlaceholderAgentName(session.agentName)) {
+                std::string err;
+                std::string resolved =
+                    catalog::resolveAgent(session.agentName, config_.manifestDir, &err);
+                if (!resolved.empty())
+                    session.metadata["manifest_path"] = resolved;
+            }
         }
         session.updated = session::SessionManager::iso8601();
         // Vet-fix: never replace a non-empty on-disk transcript with an
@@ -427,6 +438,11 @@ void Agent::saveSession(const std::string& id) {
     }
     // AC18 — round-trip the LLM-injected context feeds.
     session.contextFeeds = contextFeeds_;
+    if (!config_.manifestPath.empty()) {
+        auto it = session.metadata.find("manifest_path");
+        if (it == session.metadata.end() || it->second.empty())
+            session.metadata["manifest_path"] = config_.manifestPath;
+    }
     sessionMgr_.save(session);
 }
 

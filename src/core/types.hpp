@@ -360,6 +360,10 @@ struct SessionRecord {
     std::string metadata;
 };
 
+inline bool isPlaceholderAgentName(const std::string& n) {
+    return n.empty() || n == "cortext-builtin-agent" || n == "cortex";
+}
+
 struct Session {
     std::string id;
     std::string agentName;
