@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <cstdlib>
 #include <map>
 #include <regex>
@@ -529,6 +530,35 @@ inline std::string buildRuntimeHarness(const std::string& code, int iteration,
     os << "  <do_not>" << doNot << "</do_not>\n";
     os << "</harness>";
     return os.str();
+}
+
+// Context-economy event. code = TRIM | COMPACT | TAIL. Never an LLM call.
+inline std::string buildCtxEconomyHarness(const char* code, int dropped, int kept,
+                                          int tokensEst, int tailCap, int iteration,
+                                          int cap) {
+    const char* hap =
+        (std::strcmp(code, "TRIM") == 0)
+            ? "Prompt context exceeded the 0-LLM trim budget."
+        : (std::strcmp(code, "TAIL") == 0)
+            ? "History tail window moved (dumb cap, 0 LLM)."
+            : "Prompt context exceeded the compaction policy budget.";
+    std::string did = std::string("dropped=") + std::to_string(dropped) +
+                      " kept=" + std::to_string(kept) +
+                      " tokens≈" + std::to_string(tokensEst);
+    if (tailCap > 0)
+        did += std::string(" tail_cap=") + std::to_string(tailCap);
+    return buildRuntimeHarness(
+        code, iteration, cap, "",
+        hap, did,
+        "Continue from the remaining transcript. If a dropped fact is needed, "
+        "re-read it with a tool. Do not interview the operator about it.",
+        "Do not recap dropped lines. Do not forge <result> for missing work. "
+        "Do not treat this note as a final answer.");
+}
+
+inline std::string ctxEconomyUiLine(const char* code, int dropped, int kept) {
+    return std::string("[") + code + "] dropped=" + std::to_string(dropped) +
+           " kept=" + std::to_string(kept);
 }
 
 enum class TransportClass {

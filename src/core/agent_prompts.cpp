@@ -4,6 +4,7 @@
 
 #include "agent.hpp"
 #include "agent_xml.hpp"
+#include "agent_run_helpers.hpp"
 #include "compaction.hpp"
 
 #include <algorithm>
@@ -290,12 +291,13 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
                         history_ = promptHist;
                     lastCompactAtUserTurn_ = userTurnsTotal;
                     lastCompactWallMs_ = nowMs;
-                    if (!cr.note.empty()) {
-                        if (cr.note.find("[COMPACTED]") == 0)
-                            cr.note.replace(0, 11, "[TRIMMED]");
-                        lastCompactNote_ = cr.note;
-                        lastCompactUiPending_ = cr.note;
-                    }
+                    const int kept = cr.kept;
+                    const int dropped = cr.dropped;
+                    const int tok = compaction::estimateTokens(promptHist);
+                    lastCompactNote_ = buildCtxEconomyHarness(
+                        "TRIM", dropped, kept, tok, config_.effectiveHistoryCap(),
+                        ctx.iteration, std::max(1, config_.iterationCap));
+                    lastCompactUiPending_ = ctxEconomyUiLine("TRIM", dropped, kept);
                 }
             }
         }
@@ -320,8 +322,12 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
                     }
                     lastCompactAtUserTurn_ = userTurnsTotal;
                     lastCompactWallMs_ = nowMs;
-                    lastCompactNote_ = cr.note;
-                    lastCompactUiPending_ = cr.note;  // UI badge once (footer)
+                    lastCompactNote_ = buildCtxEconomyHarness(
+                        "COMPACT", cr.dropped, cr.kept,
+                        compaction::estimateTokens(promptHist),
+                        config_.effectiveHistoryCap(), ctx.iteration,
+                        std::max(1, config_.iterationCap));
+                    lastCompactUiPending_ = ctxEconomyUiLine("COMPACT", cr.dropped, cr.kept);
                     lastCompactArchive_ = cr.archiveBody;
                     // Archive: file and artifact both land under .cortex/compact/
                     // (artifact sink = same durable dump until full artifact store wire).
@@ -350,12 +356,26 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
         }
 
         // ── history_cap seatbelt (dumb tail; not every turn) ────────
+        const size_t prevTail = historyWindowStart_;
         size_t histStart = compaction::resolveHistoryWindowStart(
             promptHist.size(), config_.effectiveHistoryCap(),
             config_.effectiveTailEveryTurns(),
             userTurnsTotal, historyCapAppliedAtUserTurn_, historyWindowStart_);
+        if (histStart > prevTail && histStart > 0) {
+            const int dropped = static_cast<int>(histStart);
+            const int kept = static_cast<int>(promptHist.size() - histStart);
+            std::string tailHx = buildCtxEconomyHarness(
+                "TAIL", dropped, kept, compaction::estimateTokens(promptHist),
+                config_.effectiveHistoryCap(), ctx.iteration,
+                std::max(1, config_.iterationCap));
+            if (lastCompactNote_.empty())
+                lastCompactNote_ = tailHx;
+            else
+                lastCompactNote_ += "\n" + tailHx;
+            if (lastCompactUiPending_.empty())
+                lastCompactUiPending_ = ctxEconomyUiLine("TAIL", dropped, kept);
+        }
 
-        // Inject last compact note once at the head of the visible window
         if (!lastCompactNote_.empty()) {
             ss << "System: " << lastCompactNote_ << "\n\n";
         }
@@ -632,14 +652,27 @@ ChatMessages Agent::buildChatPrompt(const AgentContext &ctx) const {
 }
 
 void Agent::compactHistoryInPlaceIfConfigured() {
-    if (!config_.compaction.enabled || history_.empty())
+    if (history_.empty())
         return;
-    auto cr = compaction::compactHistory(history_, config_.compaction);
-    if (!cr.didCompact)
+    const char* code = nullptr;
+    compaction::CompactResult cr;
+    cr.didCompact = false;
+    if (config_.trim.filterEnabled && config_.trim.enabled) {
+        cr = compaction::compactHistory(history_, config_.trim.asCompaction());
+        if (cr.didCompact) code = "TRIM";
+    }
+    if (!cr.didCompact && config_.compaction.enabled) {
+        cr = compaction::compactHistory(history_, config_.compaction);
+        if (cr.didCompact) code = "COMPACT";
+    }
+    if (!code || !cr.didCompact)
         return;
     history_ = std::move(cr.lines);
-    lastCompactNote_ = cr.note;
-    lastCompactUiPending_ = std::string("[child] ") + cr.note;
+    lastCompactNote_ = buildCtxEconomyHarness(
+        code, cr.dropped, cr.kept, compaction::estimateTokens(history_),
+        config_.effectiveHistoryCap(), 0, std::max(1, config_.iterationCap));
+    lastCompactUiPending_ = std::string("[child] ") +
+                            ctxEconomyUiLine(code, cr.dropped, cr.kept);
     lastCompactAtUserTurn_ = compaction::countUserTurns(history_);
     lastCompactWallMs_ = std::chrono::duration_cast<std::chrono::milliseconds>(
                              std::chrono::steady_clock::now().time_since_epoch())
