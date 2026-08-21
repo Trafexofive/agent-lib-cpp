@@ -28,7 +28,39 @@ context:
 
 runtime:
   max_iterations: 8
-  history_cap: 200
+  trim:
+    enabled: true
+    tail:
+      cap: 200
+      every_turns: 15
+      # every_turns: 1            # reclamp every prompt
+      # every_turns: 0            # compute once, freeze forever
+      # cap: 0                    # fall back to runtime.history_cap alias
+    # trigger:                    # uncomment = tag filter (0 LLM). omit = tail only
+    #   context_tokens: 72k       # also: context_window / 72000
+    #   context_pct: 0.80         # needs model_context_tokens
+    #   turns: 8                  # user turns since last trim
+    #   model_context_tokens: 128000
+    # cooldown:
+    #   min_turns: 1
+    #   min_seconds: 0
+    # policy:                     # alias: filter:
+    #   default: { keep: tail, keep_last: 8, truncate_chars: 800 }
+    #   # keep: all | tail | none
+    #   tags:
+    #     user:     { keep: all }
+    #     parent:   { keep: all }
+    #     thought:  { keep: none }   # strip <thought> from Agent lines
+    #     action:   { keep: tail, keep_last: 8, truncate_chars: 800 }
+    #     result:   { keep: tail, keep_last: 8, truncate_chars: 600, on_error: keep }
+    #     response: { keep: tail, keep_last: 3, truncate_chars: 2400 }
+    #     agent:    { keep: tail, keep_last: 8, truncate_chars: 2000 }
+    #     system:   { keep: tail, keep_last: 8, truncate_chars: 800 }
+    #   never_drop: [pin, open_ask]
+    # overrides:
+    #   tags:
+    #     result: { keep_last: 12 }
+    #   never_drop: [pin, open_ask]
   mode: normal
 
 import:

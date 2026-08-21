@@ -1,82 +1,55 @@
 kind: Agent
-name: default
-version: "2.0"
-summary: Primary general agent — deepseek primary, curated built-in tools
+name: reviewer
+version: "1.0"
+summary: Diff/risk pass — severity findings only; no edits.
 category: agent
-tags: [agent, launchable, prod]
-
-
+tags: [specialist, coding, review]
 
 cognitive_engine:
   primary:
-    provider: x-ai
-    model: grok-4.6
+    provider: opencode
+    model: deepseek-v4-flash-free
     parameters:
-      temperature: 0.80
-      max_tokens: 65536
-    thinking: true # enables provider test-time compute / reasoning tokens
-    thinking_level: minimal
+      temperature: 0.25
+      max_tokens: 8192
   fallback:
     provider: opencode-go
-    model: minimax-m3
-    parameters:
-      temperature: 0.75
-      max_tokens: 65536
-    thinking: true # enables provider test-time compute / reasoning tokens
-    thinking_level: minimal
+    model: deepseek-v4-flash
 
 context:
-  harness: ../../harness/default.md
-  system: ../../system/default.md
-  persona: ../../persona/default.md
-  # Operator ground-truth (USER.md). Injected as <user_context> in the system block.
-  user: ./USER.md
+  harness: ../../../harness/small.md
+  system: ./system.md
+  persona: ./persona.md
 
 import:
   tools:
-    - exec
+    - fs_read
     - grep
     - list
-    - fs_read
-    - ../../tools/tree/tool.yml
-    - ../../tools/squeezer/tool.yml
-    # - ../../../playground/diagram-junky/manifests/tools/diagram-render/tool.yml
-    - fs_write
-    - json
-    - web_fetch
-    - sleep
-    - artifact
-    # - context_pin
-    - context_peek
-    # - context_unpin
-    - ask_tool
-  # Built-in relics: none. Runtime checkpointing belongs in the core runtime,
-  # not as stdlib relic manifests.
-  agents: ["../stage/coder/agent.yml"]
+    - ../../tools/git_diff/tool.yml
+    - ../../tools/git_status/tool.yml
+  skills:
+    - ../../skills/evidence-first
+    - ../../skills/smallest-diff
   feeds: []
+  agents: []
   env: []
 
 runtime:
-  # Seatbelt — 1800 was a silent compute furnace in the footer (i 1/1800).
-  max_iterations: 80
-  # history_cap: 1700  # now trim.tail.cap
-  # max_turns_per_cycle: 15  # now trim.tail.every_turns
+  max_iterations: 400
+  # history_cap: 2400  # now trim.tail.cap
   mode: normal
-  # dev_mode: true
 
-  # Prompt assembly knobs (also accepted top-level as legacy prompt_building:).
   prompt_building:
     runtime_capabilities:
-      input_schemas: true # full JSON input schemas (default off = cards)
-      return_schemas: false # controls <returns>
-      usage_examples: true # controls <examples>
+      input_schemas: true
+      return_schemas: false
+      usage_examples: true
 
-  # ── Context economy (nested under runtime) ─────────────────────────────
-  # trim: docs/manifests/trim.md   compaction: docs/manifests/compaction.md
   trim:
     enabled: true
     tail:
-      cap: 1700
+      cap: 2400
       every_turns: 15
       # every_turns: 1            # reclamp every prompt
       # every_turns: 0            # compute once, freeze forever
@@ -109,10 +82,10 @@ runtime:
   compaction:
     enabled: true
     # none | light | balanced | aggressive | archive_first
-    profile: light
+    profile: balanced
 
     trigger:
-      context_tokens: 250k # also: context_window
+      context_tokens: 190k # also: context_window
       context_pct: 0.65 # needs model_context_tokens
       turns: 15 # user turns since last compact
       model_context_tokens: 128000 # window size for context_pct
@@ -142,14 +115,14 @@ runtime:
     #     result: { keep_last: 20 }
     #   never_drop: [pin, open_ask]
 
-    output:
-      # drop | summarize_rules | summarize_llm (llm → rules for now)
-      mode: summarize_rules
-      archive:
-        enabled: true
-        # file | artifact | none  (both file/artifact → .cortex/compact/<session>/)
-        sink: file
-        format: markdown # markdown | jsonl
+    # output:
+    #   # drop | summarize_rules | summarize_llm (llm → rules for now)
+    #   mode: summarize_rules
+    #   archive:
+    #     enabled: true
+    #     # file | artifact | none  (both file/artifact → .cortex/compact/<session>/)
+    #     sink: file
+    #     format: markdown # markdown | jsonl
 
     # subagents:
     #   inherit: true # child agents get parent compaction cfg

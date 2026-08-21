@@ -1,0 +1,20 @@
+kind: Tool
+name: build_detect
+version: "1.0"
+summary: "Detect build/test entry points in a repo (Makefile, cmake, cargo, …)"
+description: |
+  Read-only scan for common build/test surfaces. Use once on unknown repos
+  before inventing verify commands.
+category: coding
+tags: [build, detect, read-only]
+implementation:
+  runtime: bash
+  entrypoint: run.sh
+  timeout: 15
+input_schema:
+  type: object
+  properties:
+    cwd: {type: string, default: "."}
+examples:
+  - description: "Detect at cwd"
+    params: {}

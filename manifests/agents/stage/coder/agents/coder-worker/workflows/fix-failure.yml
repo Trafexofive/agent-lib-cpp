@@ -1,0 +1,26 @@
+kind: Workflow
+version: "1.0"
+name: fix-failure
+summary: "Localize failure evidence (parent patches after)"
+description: |
+  Recovery scout only. Parent applies the patch — never re-enter coder here.
+steps:
+  - id: capture
+    type: tool
+    name: "Diff stat"
+    tool: git_diff
+    params: {stat: true}
+    on_error: skip
+
+  - id: localize
+    type: agent
+    name: "Reader localizes"
+    agent: reader
+    params:
+      instruction: "Localize failure for task ${input.task}. Error/log: ${input.error}. Return file:line hypotheses only."
+    on_error: skip
+
+import:
+  agents: [reader]
+  tools: [git_diff]
+tags: [coder, recovery]

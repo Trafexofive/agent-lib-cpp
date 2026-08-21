@@ -33,8 +33,6 @@ context:
 
 runtime:
   max_iterations: 24
-  history_cap: 800
-  max_turns_per_cycle: 8
   mode: normal
   subagents:
     persistence: session
@@ -49,15 +47,32 @@ runtime:
     tail:
       cap: 800
       every_turns: 8
+      # every_turns: 1            # reclamp every prompt
+      # every_turns: 0            # compute once, freeze forever
+      # cap: 0                    # fall back to runtime.history_cap alias
     trigger:
       context_tokens: 72k
       turns: 8
+      # context_pct: 0.80
+      # model_context_tokens: 128000
+    # cooldown:
+    #   min_turns: 1
+    #   min_seconds: 0
     policy:
+      # default: { keep: tail, keep_last: 8, truncate_chars: 800 }
       tags:
-        thought: { keep: none }
-        action: { keep: tail, keep_last: 8, truncate_chars: 800 }
-        result: { keep: tail, keep_last: 8, truncate_chars: 600 }
+        thought:  { keep: none }
+        action:   { keep: tail, keep_last: 8, truncate_chars: 800 }
+        result:   { keep: tail, keep_last: 8, truncate_chars: 600 }
         response: { keep: tail, keep_last: 3, truncate_chars: 2400 }
+        # user:     { keep: all }
+        # parent:   { keep: all }
+        # agent:    { keep: tail, keep_last: 8, truncate_chars: 2000 }
+        # system:   { keep: tail, keep_last: 8, truncate_chars: 800 }
+      # never_drop: [pin, open_ask]
+    # overrides:
+    #   tags:
+    #     result: { keep_last: 12 }
   compaction:
     enabled: false
     profile: light

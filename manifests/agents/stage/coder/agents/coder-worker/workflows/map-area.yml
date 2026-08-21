@@ -1,0 +1,41 @@
+kind: Workflow
+version: "1.0"
+name: map-area
+summary: "Discovery-first area map (no write)"
+description: |
+  First-touch / investigate-only spine.
+steps:
+  - id: pulse
+    type: tool
+    name: "Repo pulse"
+    tool: git_status
+    params: {short: true}
+    on_error: skip
+
+  - id: detect
+    type: tool
+    name: "Build surface"
+    tool: build_detect
+    params: {}
+    on_error: skip
+
+  - id: map
+    type: agent
+    name: "Discovery map"
+    agent: discovery
+    params:
+      instruction: "Full area map for: ${input.task}. Build hints: ${detect.output}. CONFIRMED vs INFERRED."
+    on_error: abort
+
+  - id: hits
+    type: agent
+    name: "Optional reader"
+    agent: reader
+    params:
+      instruction: "Fill task-local path gaps for ${input.task}. Map: ${map.output}"
+    on_error: skip
+
+import:
+  agents: [discovery, reader]
+  tools: [git_status, build_detect]
+tags: [coder, map]

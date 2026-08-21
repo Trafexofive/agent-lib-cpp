@@ -1,0 +1,33 @@
+kind: Tool
+name: git_status
+version: "1.0"
+summary: "Structured git status (branch, dirty, short status) — read-only"
+description: |
+  Runs a bounded, read-only git status snapshot for the working tree.
+  Prefer this over raw exec for change awareness before edits or finals.
+category: coding
+tags: [git, status, read-only]
+implementation:
+  runtime: bash
+  entrypoint: run.sh
+  timeout: 15
+input_schema:
+  type: object
+  properties:
+    cwd:
+      type: string
+      description: "Working directory (default: process cwd)"
+      default: "."
+    short:
+      type: boolean
+      description: "If true, porcelain short status only"
+      default: true
+output_schema:
+  type: object
+  properties:
+    success: {type: boolean}
+    output: {type: string}
+    error: {type: string}
+examples:
+  - description: "Default short status"
+    params: {short: true}

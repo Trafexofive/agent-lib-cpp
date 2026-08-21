@@ -1,55 +1,41 @@
 kind: Agent
-name: default-sub-agent
-version: "2.0"
-summary: Primary general RO sub-agent —  NO exec, NO fs_write
+name: reader
+version: "1.0"
+summary: Task-scoped read-only scout — paths, symbols, evidence table.
 category: agent
-tags: [sub-agent, launchable, prod]
+tags: [specialist, coding, scout, read-only]
 
 cognitive_engine:
   primary:
-    # provider: opencode-go
-    # model: deepseek-v4-pro
-    provider: deepseek
-    model: deepseek-v4-flash
-    # provider: opencode
-    # model: deepseek-v4-flash-free
-    parameters:
-      temperature: 0.55
-      max_tokens: 65536
-    thinking: true # enables provider test-time compute / reasoning tokens
-  # Used once on hard 403/RegionError/transient net after primary retries.
-  fallback:
     provider: opencode
     model: deepseek-v4-flash-free
+    parameters:
+      temperature: 0.35
+      max_tokens: 16384
+  fallback:
+    provider: opencode-go
+    model: deepseek-v4-flash
 
 context:
   harness: ../../../harness/default.md
-  system: ../../../system/default.md
-  persona: ../../../persona/default.md
-  # Operator ground-truth (USER.md). Injected as <user_context> in the system block.
-  # user: ./USER.md
+  system: ./system.md
+  persona: ./persona.md
 
 runtime:
-  max_iterations: 180
-  # history_cap: 1700  # now trim.tail.cap
-  # max_turns_per_cycle: 15  # now trim.tail.every_turns
+  max_iterations: 400
+  # history_cap: 2400  # now trim.tail.cap
   mode: normal
-  # dev_mode: true
 
-  # Prompt assembly knobs (also accepted top-level as legacy prompt_building:).
   prompt_building:
     runtime_capabilities:
-      input_schemas: true # full JSON input schemas (default off = cards)
-      return_schemas: false # controls <returns>
-      usage_examples: true # controls <examples>
+      input_schemas: true
+      return_schemas: false
+      usage_examples: true
 
-  # ── Context economy (nested under runtime) ─────────────────────────────
-  # Canonical: docs/manifests/compaction.md
-  # Top-level compaction: still accepted as a legacy alias.
   trim:
     enabled: true
     tail:
-      cap: 1700
+      cap: 2400
       every_turns: 15
       # every_turns: 1            # reclamp every prompt
       # every_turns: 0            # compute once, freeze forever
@@ -85,7 +71,7 @@ runtime:
     profile: balanced
 
     trigger:
-      context_tokens: 60k # also: context_window
+      context_tokens: 190k # also: context_window
       context_pct: 0.65 # needs model_context_tokens
       turns: 15 # user turns since last compact
       model_context_tokens: 128000 # window size for context_pct
@@ -115,14 +101,14 @@ runtime:
     #     result: { keep_last: 20 }
     #   never_drop: [pin, open_ask]
 
-    output:
-      # drop | summarize_rules | summarize_llm (llm → rules for now)
-      mode: summarize_rules
-      archive:
-        enabled: true
-        # file | artifact | none  (both file/artifact → .cortex/compact/<session>/)
-        sink: file
-        format: markdown # markdown | jsonl
+    # output:
+    #   # drop | summarize_rules | summarize_llm (llm → rules for now)
+    #   mode: summarize_rules
+    #   archive:
+    #     enabled: true
+    #     # file | artifact | none  (both file/artifact → .cortex/compact/<session>/)
+    #     sink: file
+    #     format: markdown # markdown | jsonl
 
     # subagents:
     #   inherit: true # child agents get parent compaction cfg
@@ -136,26 +122,14 @@ runtime:
   #   empty_response_backoff_multiplier: 1.8
   #   retry_on_finish_reason_length: true
   #   retry_on_finish_reason_content_filter: true
-
 import:
   tools:
-    # - exec
-    - grep
     - list
+    - grep
     - fs_read
-    - ../../../tools/tree/tool.yml
-    - ../../../tools/squeezer/tool.yml
-    # - ../../../playground/diagram-junky/manifests/tools/diagram-render/tool.yml
-    # - fs_write
-    - json
-    - web_fetch
-    - sleep
-    - artifact
-    # - context_pin
     - context_peek
-    # - context_unpin
-    - ask_tool
-  # Built-in relics: none. Runtime checkpointing belongs in the core runtime,
-  # not as stdlib relic manifests.
+  skills:
+    - ../../skills/evidence-first
   feeds: []
+  agents: []
   env: []

@@ -1,0 +1,33 @@
+kind: Workflow
+version: "1.0"
+name: review-diff
+summary: "Diff → reviewer risk pass (no write)"
+description: |
+  Gate spine. No parent re-entry.
+steps:
+  - id: stat
+    type: tool
+    name: "Diff stat"
+    tool: git_diff
+    params: {stat: true}
+    on_error: skip
+
+  - id: patch
+    type: tool
+    name: "Diff body"
+    tool: git_diff
+    params: {stat: false}
+    on_error: skip
+
+  - id: risk
+    type: agent
+    name: "Reviewer"
+    agent: reviewer
+    params:
+      instruction: "Severity-tagged risk pass. Stat: ${stat.output}. Patch: ${patch.output}"
+    on_error: skip
+
+import:
+  agents: [reviewer]
+  tools: [git_diff]
+tags: [coder, review]
