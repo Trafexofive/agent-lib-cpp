@@ -170,7 +170,8 @@ struct CompactionConfig {
     bool configured = false;  // compaction:/compacting: block present
     bool enabled = false;
 
-    // none | light | balanced | aggressive | archive_first | "" (explicit policy only)
+    // none | light | balanced | aggressive | archive_first | trim | "" (explicit policy only)
+    // trim = 0-LLM deterministic shrink (summarize_rules, no archive).
     std::string profile;
 
     // Triggers (OR). Empty triggers + enabled → never auto (manual later).

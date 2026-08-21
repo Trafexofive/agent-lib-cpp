@@ -53,7 +53,21 @@ inline void applyProfile(CompactionConfig& cfg) {
     if (cfg.outputMode.empty())
         cfg.outputMode = "summarize_rules";
 
-    if (p == "light") {
+    if (p == "trim") {
+        // 0 LLM. Deterministic shrink only. No archive, no summarize_llm path.
+        if (cfg.triggerContextPct <= 0)
+            cfg.triggerContextPct = 0.80;
+        if (cfg.triggerContextTokens <= 0)
+            cfg.triggerContextTokens = 72000;
+        cfg.tags["thought"] = CompactionTagPolicy{"none", 0, 0, true};
+        cfg.tags["action"] = CompactionTagPolicy{"tail", 8, 800, true};
+        cfg.tags["result"] = CompactionTagPolicy{"tail", 8, 600, true};
+        cfg.tags["response"] = CompactionTagPolicy{"tail", 3, 2400, true};
+        cfg.tags["agent"] = CompactionTagPolicy{"tail", 8, 2000, true};
+        cfg.tags["system"] = CompactionTagPolicy{"tail", 8, 800, true};
+        cfg.archiveEnabled = false;
+        cfg.outputMode = "summarize_rules";
+    } else if (p == "light") {
         if (cfg.triggerContextPct <= 0)
             cfg.triggerContextPct = 0.85;
         cfg.tags["thought"] = CompactionTagPolicy{"tail", 2, 800, true};

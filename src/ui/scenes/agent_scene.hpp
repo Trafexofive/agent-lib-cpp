@@ -858,6 +858,7 @@ class AgentScene final : public BaseScene {
                                                  : model_->rootAgent) {
             const auto& c = live->config();
             foot.compactEnabled = c.compaction.enabled;
+            foot.compactProfile = c.compaction.profile;
             if (c.compaction.modelContextTokens > 0)
                 foot.ctxMaxTokens = c.compaction.modelContextTokens;
             if (c.compaction.triggerContextTokens > 0)

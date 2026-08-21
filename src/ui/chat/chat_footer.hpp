@@ -119,6 +119,7 @@ struct ChatFooterModel {
     int turnCount = 0;
     int queuedSteer = 0;
     int bodyMode = 0;  // 0 stream · 1 compact
+    std::string compactProfile;  // light | balanced | aggressive | trim | …
     std::vector<std::string> extraLines;
 };
 
@@ -149,6 +150,11 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
     const bool live = f.running && !f.failed;
     auto bg = theme::footer_bg();
     components::fillRect(surface, box, bg);
+    auto accent = theme::footer_accent_idle().with_bg(bg.bg);
+    if (live) accent = theme::footer_accent_live().with_bg(bg.bg);
+    else if (f.failed) accent = theme::footer_warn().with_bg(bg.bg);
+    for (int r = 0; r < box.h; ++r)
+        surface.put({box.x, box.y + r}, "▌", accent);
 
     auto dim = theme::footer_dim().with_bg(bg.bg);
     dim.dim = false;
@@ -156,6 +162,7 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
     auto bright = theme::footer_bright().with_bg(bg.bg);
     auto liveSt = theme::footer_live().with_bg(bg.bg);
     auto warn = theme::footer_warn().with_bg(bg.bg);
+    auto cyan = theme::cyan().with_bg(bg.bg);
 
     const int y0 = box.y;
     const int x0 = box.x + 1;
@@ -180,6 +187,7 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
     const int armPct =
         (f.ctxCompactAt > 0) ? std::min(100, (f.ctxCompactAt * 100) / win) : 0;
     const char* view = (f.bodyMode == 1) ? "compact" : "stream";
+    const char* paneHint = "^F cycle";
 
     if (f.pane == ChatFooterPane::Session) {
         putL(0, x0, f.sessionId.empty() ? "no session" : f.sessionId, bright, inner);
@@ -187,11 +195,11 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         if (box.h >= 3) {
             std::string m = std::to_string(f.turnCount) + " turns";
             if (!f.manifestStem.empty()) m += "   " + f.manifestStem;
-            putL(2, x0, m, dim, inner);
+            if (!f.agentName.empty()) m += "   " + f.agentName;
+            putL(2, x0, m, text, inner);
         }
-        if (box.h >= 4)
-            putL(3, x0, f.agentName.empty() ? "-" : f.agentName, text, inner);
-        if (box.h >= 5) putL(4, x0, "^F live", dim, inner);
+        if (box.h >= 4) putL(3, x0, f.bodyFmt.empty() ? view : f.bodyFmt, dim, inner);
+        if (box.h >= 5) putL(4, x0, paneHint, dim, inner);
         return;
     }
     if (f.pane == ChatFooterPane::Engine) {
@@ -200,25 +208,28 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         putL(0, x0, eng, bright, inner);
         if (box.h >= 2) {
             std::string c = f.compactEnabled ? "compact on" : "compact off";
-            if (f.compactEnabled && armPct > 0) c += "  " + std::to_string(armPct) + "%";
+            if (!f.compactProfile.empty()) c += "  " + f.compactProfile;
+            if (f.compactEnabled && armPct > 0) c += "  arm " + std::to_string(armPct) + "%";
             putL(1, x0, c, dim, inner);
         }
         if (box.h >= 3) {
             std::string h = "hist " + std::to_string(f.historyUsed) + "/" +
-                            std::to_string(f.historyMax);
-            h += "   ";
-            h += view;
-            putL(2, x0, h, dim, inner);
+                            std::to_string(f.historyMax) + "   " + view;
+            putL(2, x0, h, text, inner);
         }
-        if (box.h >= 4) putL(3, x0, footerFmtBytes(f.tokenBytes), dim, inner);
-        if (box.h >= 5) putL(4, x0, "^F live", dim, inner);
+        if (box.h >= 4)
+            putL(3, x0,
+                 footerFmtBytes(f.tokenBytes) + " stream   " + fmtTok(used) + " ctx", dim,
+                 inner);
+        if (box.h >= 5) putL(4, x0, paneHint, dim, inner);
         return;
     }
 
-    // 0 — name                         provider / model                    clock
+    // 0 — identity · engine · clock (hairline already on this row's top)
     {
         std::string name = f.agentName.empty() ? "-" : f.agentName;
         auto nst = f.failed ? warn : (live ? liveSt : bright);
+        nst.bold = true;
         std::string clock;
         if (live || f.turnElapsedMs > 0)
             clock = footerFmtElapsed(f.turnElapsedMs);
@@ -231,19 +242,19 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         std::string eng;
         if (!f.provider.empty() || !f.model.empty()) {
             eng += f.provider.empty() ? "?" : f.provider;
-            eng += " / ";
+            eng += "/";
             eng += f.model.empty() ? "?" : f.model;
         }
         if (!eng.empty()) {
-            int nx = x0 + inkcell::text::display_width(name) + 3;
+            int nx = x0 + inkcell::text::display_width(name) + 2;
             int ew = right - rw - nx;
-            if (ew >= 10) putL(0, nx, eng, dim, ew);
+            if (ew >= 8) putL(0, nx, eng, dim, ew);
         }
     }
 
     if (box.h < 2) return;
 
-    // 1 — now                                                              view
+    // 1 — NOW (phase + open tools + steer). This was the dead row.
     {
         std::string now;
         auto st = text;
@@ -252,14 +263,22 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             st = warn;
         } else if (live) {
             now = phaseVerb(f.phaseKey, f.phaseDetail);
-            if (!f.openLine.empty() && f.phaseKey != "act") {
-                now += " · ";
+            if (!f.openLine.empty()) {
+                now += "  ·  ";
                 now += f.openLine;
+            } else if (!f.focusLine.empty() && f.phaseKey != "wait") {
+                now += "  ·  ";
+                now += f.focusLine;
             }
-            if (f.pendingOps > 1)
-                now += " · " + std::to_string(f.pendingOps) + " open";
-            if (f.childPending > 0) now += " · child";
-            if (f.queuedSteer > 0) now += " · steer";
+            if (f.childPending > 0) now += "  ·  child×" + std::to_string(f.childPending);
+            if (f.queuedSteer > 0) now += "  ·  steer";
+            st = liveSt;
+        } else if (!f.statusHint.empty() &&
+                   (f.statusHint.find("FALLBACK") != std::string::npos ||
+                    f.statusHint.find("TIMEOUT") != std::string::npos ||
+                    f.statusHint.find("CANCEL") != std::string::npos)) {
+            now = f.statusHint;
+            st = warn;
         } else if (!f.lastResultLine.empty()) {
             now = f.lastResultLine;
         } else if (f.turnCount > 0) {
@@ -275,30 +294,33 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
 
     if (box.h < 3) return;
 
-    // 2 — ctx meter
+    // 2 — context meter (real tokens, compact/trim arm)
     {
         int x = x0;
-        std::string nums = fmtTok(used) + " / " + fmtTok(win);
+        std::string nums = fmtTok(used) + "/" + fmtTok(win);
         surface.text({x, y0 + 2}, nums, text);
-        x += inkcell::text::display_width(nums) + 2;
-        const int barW = std::min(16, std::max(8, inner / 5));
-        auto on = pct >= 0.85f ? warn : text;
+        x += inkcell::text::display_width(nums) + 1;
+        const int barW = std::min(18, std::max(8, inner / 5));
+        auto on = pct >= 0.85f ? warn : (live ? liveSt : text);
         on.bold = true;
         drawCtxMeter(surface, x, y0 + 2, barW, pct, on, dim);
         x += barW + 2;
         std::string pl = std::to_string(static_cast<int>(pct * 100.f + 0.5f)) + "%";
         surface.text({x, y0 + 2}, pl, pct >= 0.85f ? warn : dim);
-        x += inkcell::text::display_width(pl) + 3;
+        x += inkcell::text::display_width(pl) + 2;
         std::string tr;
         if (!f.compactEnabled)
-            tr = "compact off";
+            tr = "trim/compact off";
         else if (f.compactedRecently)
-            tr = "compacted";
-        else if (armPct > 0) {
-            tr = "compact ";
-            tr += std::to_string(armPct);
-            tr += "%";
-            if (pct * 100.f + 1e-3f >= static_cast<float>(armPct)) tr += " armed";
+            tr = f.compactProfile == "trim" ? "trimmed" : "compacted";
+        else {
+            tr = f.compactProfile.empty() ? "compact" : f.compactProfile;
+            if (armPct > 0) {
+                tr += " ";
+                tr += std::to_string(armPct);
+                tr += "%";
+                if (pct * 100.f + 1e-3f >= static_cast<float>(armPct)) tr += " armed";
+            }
         }
         if (!tr.empty() && x < right - 2)
             surface.text({x, y0 + 2}, inkcell::text::truncate(tr, right - x), dim);
@@ -306,10 +328,10 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
 
     if (box.h < 4) return;
 
-    // 3 — meters (live occupancy)
+    // 3 — occupancy (every kv is live)
     {
         auto kv = [&](int& x, const char* k, const std::string& v, inkcell::Style vs) {
-            if (x >= right - 8) return;
+            if (x >= right - 6) return;
             surface.text({x, y0 + 3}, k, dim);
             x += inkcell::text::display_width(k) + 1;
             surface.text({x, y0 + 3}, v, vs);
@@ -320,29 +342,33 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         kv(x, "iter",
            std::to_string(std::max(0, f.iterCurrent)) + "/" +
                std::to_string(std::max(0, f.iterMax)),
-           text);
+           (live && f.iterCurrent > 0) ? liveSt : text);
         kv(x, "open", std::to_string(std::max(0, f.pendingOps)),
            f.pendingOps > 0 ? liveSt : dim);
+        if (f.childPending > 0)
+            kv(x, "child", std::to_string(f.childPending), cyan);
         kv(x, "hist",
            std::to_string(std::max(0, f.historyUsed)) + "/" +
                std::to_string(std::max(0, f.historyMax)),
            dim);
         kv(x, "", footerFmtBytes(f.tokenBytes), dim);
+        if (f.queuedSteer > 0) kv(x, "steer", std::to_string(f.queuedSteer), warn);
     }
 
     if (box.h < 5) return;
 
-    // 4 — place
+    // 4 — place (cwd · manifest · session)
     {
         std::string left = f.path.empty() ? "." : f.path;
         if (!f.manifestStem.empty()) {
-            left += "   ";
+            left += "  ·  ";
             left += f.manifestStem;
         }
         std::string sid = suffix8(f.sessionId);
-        int rw = putR(4, sid, dim);
+        int rw = putR(4, sid.empty() ? paneHint : sid, dim);
         putL(4, x0, left, dim, std::max(8, inner - rw));
     }
 }
+
 
 }  // namespace cortex::mk3::ui::chat
