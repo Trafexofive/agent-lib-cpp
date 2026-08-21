@@ -55,7 +55,7 @@ void test_bare_text_recovers_then_final() {
             sawNonFinal = true;
     }
     CHECK(sawHarness, "harness BARE_TEXT injected");
-    CHECK(sawNonFinal, "bare text stored as non-final <response>");
+    CHECK(!sawNonFinal, "untagged text is NOT minted as <response>");
 }
 
 void test_autonomous_bare_continues_nonfinal() {

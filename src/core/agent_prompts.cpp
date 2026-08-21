@@ -72,27 +72,35 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
         ss << "  </system_prompt>\n";
     }
 
-    // Reasoning policy — thinking_level hint + hard requireThought rule.
-    if (!config_.thinkingLevel.empty() || config_.requireThought) {
-        ss << "  <reasoning_policy";
-        if (!config_.thinkingLevel.empty())
-            ss << " level=\"" << xmlAttr(config_.thinkingLevel) << "\"";
+    // Always expose thinking_level so the model knows the operator budget.
+    {
+        const std::string lvl =
+            config_.thinkingLevel.empty() ? std::string("medium")
+                                          : config_.thinkingLevel;
+        ss << "  <reasoning_policy level=\"" << xmlAttr(lvl) << "\"";
+        if (config_.requireThought) ss << " require_thought=\"true\"";
         ss << ">\n";
-        if (config_.thinkingLevel == "minimal") {
-            ss << "    Act over deliberating: keep <thought> to one short line "
-                  "only when it genuinely changes the next step. Do not "
-                  "narrate plans.\n";
-        } else if (config_.thinkingLevel == "low") {
-            ss << "    Think briefly: a short <thought> before actions is "
-                  "enough. Skip deep deliberation.\n";
-        } else if (config_.thinkingLevel == "high") {
-            ss << "    Think thoroughly: reason through the plan in <thought> "
-                  "BEFORE any <action>. Weigh tradeoffs, then act.\n";
+        ss << "    thinking_level is operator-set. It budgets <thought> inside "
+              "a generation — it does NOT grant extra generations of thinking.\n";
+        if (lvl == "minimal") {
+            ss << "    Act. At most one short <thought> line, and only if it "
+                  "changes the next <action>. Prefer tools/final immediately.\n";
+        } else if (lvl == "low") {
+            ss << "    Brief <thought> then act in the SAME generation. Skip "
+                  "deep deliberation and multi-turn thinking.\n";
+        } else if (lvl == "high") {
+            ss << "    Think thoroughly in <thought> THEN emit <action> or "
+                  "final in the SAME generation. Do not spend a follow-up "
+                  "generation only thinking.\n";
+        } else {
+            ss << "    Default: one compact <thought> is fine; then <action> or "
+                  "<response final=\"true\"> in this generation.\n";
         }
-        if (config_.requireThought) {
+        if (config_.requireThought)
             ss << "    Hard rule: emit at least one <thought> before each "
-                  "<action>.\n";
-        }
+                  "<action>, still in the same generation.\n";
+        ss << "    Native provider reasoning (hidden thinking tokens) already "
+              "counts. Do not duplicate it as extra <thought> turns.\n";
         ss << "  </reasoning_policy>\n";
     }
 

@@ -350,15 +350,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
         return CompPolicy::Recover; // normal default
     };
     const CompPolicy compPolicy = resolveCompPolicy();
-    // NOTE: runtime.bare_promote_after (bareRecoveryPromoteAfter) is parsed
-    // but currently vestigial — the thought-only nudge/stop uses the fixed
-    // kThoughtOnlySoftCap/HardCap below, not this knob.
-
-    // Consecutive generations with content but no tool action and no final.
-    // Soft nudge at kThoughtOnlySoftCap; hard stop at kThoughtOnlyHardCap.
-    // Multi-thought inside ONE generation is fine (not counted per-tag).
-    static constexpr int kThoughtOnlySoftCap = 2;
-    static constexpr int kThoughtOnlyHardCap = 3;
+    // Consecutive thought-only generations (no action, no final). No hard
+    // stop — we steer with <harness code="THOUGHT_ONLY"> like BARE_TEXT.
     int thoughtOnlyStreak = 0;
     std::string lastSalvage; // best non-final content this turn (for promote)
     std::string lastThoughtContent;  // last substantive <thought> this turn
@@ -385,10 +378,19 @@ std::string Agent::runLoop(AgentContext &ctx) {
     auto emitHarness = [&](const std::string &code, const std::string &detail,
                            const std::string &kind = "runtime") {
         std::ostringstream h;
-        h << "<harness kind=\"" << kind << "\" code=\"" << code << "\">\n"
-          << detail << "\n"
-          << "This is runtime state, not user prose. Adjust plan; do not "
-             "blind-retry the same blocked path.\n"
+        h << "<harness kind=\"" << kind << "\" code=\"" << code << "\""
+          << " iteration=\"" << ctx.iteration << "\""
+          << " cap=\"" << workCap << "\"";
+        if (!config_.thinkingLevel.empty())
+            h << " thinking_level=\"" << config_.thinkingLevel << "\"";
+        h << ">\n"
+          << "  <what_happened>" << detail << "</what_happened>\n"
+          << "  <runtime_did>Recorded as runtime state for this generation; "
+             "the turn is still live unless code is a hard stop."
+             "</runtime_did>\n"
+          << "  <you_must>Read this tag before emitting. Adjust the plan; "
+             "do not blind-retry the same blocked path.</you_must>\n"
+          << "  <do_not>Treat this as user prose, or ignore it.</do_not>\n"
           << "</harness>";
         history_.push_back("System: " + h.str());
         std::string tag = "[" + code + "] ";
@@ -1070,38 +1072,68 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 fullResponse = visibleError;
                 st.taskComplete = true; // runtime failure, not model final
             } else {
-                // Bare / non-final → keep as non-final <response>, inject
-                // harness, continue. Never mid-loop promote to final="true"
-                // (that stopped the turn dishonestly). Cap still salvages.
-                std::string salvage =
-                    pickSalvage(iterationRawOutput, responseOutput_);
-                if (!salvage.empty()) {
-                    lastSalvage = salvage;
-                    const std::string body = trimCopy(salvage);
-                    history_.push_back("Agent: <response>" + body +
-                                       "</response>");
-                    protocolEvents_.push_back(
-                        {ProtocolEventKind::RESPONSE, body, {}, {}});
-                    std::ostringstream h;
-                    h << "<harness kind=\"runtime\" code=\"BARE_TEXT\">\n"
-                      << "Last generation had no <action> and no "
-                         "<response final=\"true\">. Captured as a "
-                         "non-final <response>. The loop continues.\n"
-                      << "Emit <action> to use tools, or close with "
-                         "<response final=\"true\">. Do not repeat the "
-                         "same prose without advancing.\n"
-                      << "</harness>";
-                    history_.push_back("System: " + h.str());
+                // Incomplete generation: no actions, no final.
+                // Untagged TEXT is already Thought (parser). NEVER mint a
+                // <response> from thought — that was the promotion bug.
+                const bool hadActions =
+                    iterationRawOutput.find("<action") != std::string::npos;
+                const bool hadNonFinalResp = !trimCopy(responseOutput_).empty();
+                const std::string leftover =
+                    trimCopy(stripThoughtTags(iterationRawOutput));
+                const std::string lvl = config_.thinkingLevel.empty()
+                                            ? std::string("medium")
+                                            : config_.thinkingLevel;
+                if (hadActions) {
+                    // action present but parser results empty — don't fake a response
+                } else if (hadNonFinalResp) {
+                    lastSalvage = trimCopy(responseOutput_);
+                    history_.push_back(
+                        "System: " +
+                        buildRuntimeHarness(
+                            "NONFINAL", ctx.iteration, workCap, lvl,
+                            "You emitted <response> without final=\"true\" and no "
+                            "<action>. That is a progress note, not completion.",
+                            "The <response> body is kept. The turn stays open (" +
+                                std::to_string(ctx.iteration) + "/" +
+                                std::to_string(workCap) + ").",
+                            "Next: emit <action> to work, or close with "
+                            "<response final=\"true\">. If this note is the "
+                            "answer, re-emit it with final=\"true\".",
+                            "Do not repeat the same non-final <response>. "
+                            "Untagged prose is not a final."));
                     protocolEvents_.push_back(
                         {ProtocolEventKind::STATUS,
-                         "[BARE_TEXT] captured as non-final response — "
-                         "loop continues",
-                         {},
-                         {}});
+                         "[NONFINAL] response without final — loop continues",
+                         {}, {}});
                     if (ctx.onToken) ctx.onToken("", false);
-                    st.nonFinalProtocolRetry = true;
-                    responseOutput_.clear();  // not a final
-                    // Do NOT set taskComplete — cap-time path still salvages.
+                } else {
+                    lastSalvage.clear();
+                    history_.push_back(
+                        "System: " +
+                        buildRuntimeHarness(
+                            "BARE_TEXT", ctx.iteration, workCap, lvl,
+                            "This generation had no <action> and no "
+                            "<response final=\"true\">. Untagged tokens are "
+                            "recorded as <thought>, not an operator-visible "
+                            "answer. thinking_level=" + lvl + ".",
+                            "Thought is kept. No fake <response> was created. "
+                            "Turn still open (" +
+                                std::to_string(ctx.iteration) + "/" +
+                                std::to_string(workCap) + ").",
+                            "Next generation must emit protocol: "
+                            "<action type=\"tool|agent\" name=\"…\" id=\"…\">"
+                            "…</action> and/or <response final=\"true\">…"
+                            "</response>. Put the action in that emit, not "
+                            "another thinking-only turn.",
+                            "Do not ping the operator with untagged prose. "
+                            "Do not duplicate native thinking as extra "
+                            "<thought> turns. Do not assume the user got a "
+                            "finished answer."));
+                    protocolEvents_.push_back(
+                        {ProtocolEventKind::STATUS,
+                         "[BARE_TEXT] untagged kept as thought — loop continues",
+                         {}, {}});
+                    if (ctx.onToken) ctx.onToken("", false);
                 }
             }
         }
@@ -1147,52 +1179,58 @@ std::string Agent::runLoop(AgentContext &ctx) {
         if (devMode_ || verbose_ || raw_ || ctx.debug)
             dumpSessionArtifacts();
 
-        // Thought-only / no-progress streak (work turns only).
-        // Counts generations that produced content but neither tools nor final.
-        // Actions or a real final zero the streak. Empty upstream aborts above.
-        // Hard stop ONLY on genuine repetition (same body again) — not on
-        // continued thinking. A reasoning model legitimately thinks across
-        // generations; only response final="true" (or operator cancel/settings)
-        // may stop a working agent.
-        if (!finalizationTurn && !st.taskComplete) {
+        // Thought-only streak: no hard stop. Skip if BARE_TEXT/NONFINAL already
+        // steered this generation (untagged TEXT is already a Thought).
+        bool alreadySteered = false;
+        for (int hi = static_cast<int>(history_.size()) - 1;
+             hi >= 0 && hi + 4 >= static_cast<int>(history_.size()); --hi) {
+            const auto& hl = history_[static_cast<size_t>(hi)];
+            if (hl.find("code=\"BARE_TEXT\"") != std::string::npos ||
+                hl.find("code=\"NONFINAL\"") != std::string::npos ||
+                hl.find("code=\"THOUGHT_ONLY\"") != std::string::npos) {
+                alreadySteered = true;
+                break;
+            }
+        }
+        if (!finalizationTurn && !st.taskComplete && !alreadySteered) {
             const bool hadActions = !results.empty() ||
                 iterationRawOutput.find("<action") != std::string::npos;
-            const bool hadContent = streamStats.anyContent ||
-                !trimCopy(iterationRawOutput).empty() ||
-                !thoughtOutput_.empty();
-            if (!hadActions && hadContent) {
+            const bool hadThought =
+                !trimCopy(thoughtOutput_).empty() ||
+                iterationRawOutput.find("<thought") != std::string::npos;
+            if (!hadActions && hadThought) {
                 ++thoughtOnlyStreak;
-                // Repetition guard: hard-stop only when the model is stuck
-                // (literal same output again), never when it is progressing.
-                std::string curTrim = trimCopy(iterationRawOutput);
-                static std::string prevTrim;
-                static int tinyStreak = 0;
-                const bool repeated =
-                    (curTrim.size() > 40 && prevTrim == curTrim) ||
-                    (curTrim.size() <= 40 &&
-                     (curTrim.empty() || curTrim.size() <= 40) &&
-                     ++tinyStreak >= kThoughtOnlyHardCap);
-                if (curTrim.size() > 40) {
-                    prevTrim = curTrim;
-                    tinyStreak = 0;
-                }
-                if (repeated && thoughtOnlyStreak >= kThoughtOnlyHardCap) {
-                    std::string stop = buildThoughtOnlyHardStop(thoughtOnlyStreak);
-                    emitStatus(stop);
-                    history_.push_back("Agent: " + stop);
-                    responseOutput_ = stop;
-                    fullResponse = stop;
-                    protocolEvents_.push_back(
-                        {ProtocolEventKind::RESPONSE, stop, {}, {}});
-                    st.taskComplete = true;
-                    break;
-                }
-                if (thoughtOnlyStreak >= kThoughtOnlySoftCap) {
-                    history_.push_back(
-                        "System: " +
-                        buildThoughtOnlyNudge(thoughtOnlyStreak,
-                                              kThoughtOnlyHardCap));
-                }
+                const std::string lvl = config_.thinkingLevel.empty()
+                                            ? std::string("medium")
+                                            : config_.thinkingLevel;
+                history_.push_back(
+                    "System: " +
+                    buildRuntimeHarness(
+                        "THOUGHT_ONLY", ctx.iteration, workCap, lvl,
+                        "This generation produced <thought> (and/or provider "
+                        "reasoning tokens) but no <action> and no "
+                        "<response final=\"true\">. Streak=" +
+                            std::to_string(thoughtOnlyStreak) +
+                            " consecutive thought-only generations.",
+                        "The thought is kept in history. The turn is still "
+                        "open. thinking_level=" +
+                            lvl +
+                            " is the operator budget for <thought> — not a "
+                            "license to spend extra generations thinking.",
+                        "In THIS next generation emit <action> to do work, or "
+                        "<response final=\"true\"> if the job is already "
+                        "answerable. One short <thought> in the SAME generation "
+                        "as the action/final is enough.",
+                        "Do not spend another generation only thinking. Do not "
+                        "restate the same plan. Native provider thinking already "
+                        "ran; extra <thought> tags across turns waste the budget."));
+                protocolEvents_.push_back(
+                    {ProtocolEventKind::STATUS,
+                     "[THOUGHT_ONLY] streak " + std::to_string(thoughtOnlyStreak) +
+                         " — loop continues",
+                     {},
+                     {}});
+                if (ctx.onToken) ctx.onToken("", false);
             } else if (hadActions) {
                 thoughtOnlyStreak = 0;
             }
@@ -1319,10 +1357,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // substantive <thought> but forgot final="true", surface that content
         // as the result rather than a generic 'stopped without final' error.
         // This is turn-ended recovery, not mid-loop auto-promotion.
-        const std::string thoughtFinal = trimCopy(lastThoughtContent);
-        const bool thoughtIsAnswer = thoughtFinal.size() > 120;
-        if (compPolicy != CompPolicy::Strict &&
-            !lastSalvage.empty() && !thoughtIsAnswer) {
+        if (compPolicy != CompPolicy::Strict && !lastSalvage.empty() &&
+            !isThoughtEcho(lastSalvage, lastThoughtContent)) {
             emitStatus(
                 "[AUTO-PROMOTED @ CAP] No <response final=\"true\"> "
                 "before iteration cap. Promoted salvaged content under "
@@ -1334,13 +1370,6 @@ std::string Agent::runLoop(AgentContext &ctx) {
             fullResponse = lastSalvage;
             responseOutput_ = lastSalvage;
             finishTurn("auto_promote_cap", lastSalvage);
-        } else if (thoughtIsAnswer) {
-            emitStatus(
-                "[THOUGHT-PROMOTED @ CAP] No final=true before cap; "
-                "surfaced the model's substantive closing thought.");
-            fullResponse = thoughtFinal;
-            responseOutput_ = thoughtFinal;
-            finishTurn("thought_promote_cap", thoughtFinal);
         } else {
             fullResponse =
                 "⚠ Agent stopped without emitting <response final=\"true\">. "

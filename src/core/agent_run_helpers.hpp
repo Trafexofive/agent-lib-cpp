@@ -435,6 +435,52 @@ inline std::string pickSalvage(const std::string &raw, const std::string &respon
     return trimCopy(raw);
 }
 
+inline std::string stripThoughtTags(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    size_t i = 0;
+    while (i < s.size()) {
+        size_t open = s.find("<thought", i);
+        size_t open2 = s.find("<think", i);
+        if (open2 != std::string::npos && (open == std::string::npos || open2 < open))
+            open = open2;
+        if (open == std::string::npos) {
+            out.append(s, i, std::string::npos);
+            break;
+        }
+        out.append(s, i, open - i);
+        auto gt = s.find('>', open);
+        if (gt == std::string::npos) break;
+        auto close = s.find("</thought>", gt + 1);
+        auto close2 = s.find("</think>", gt + 1);
+        auto close3 = s.find("</thinking>", gt + 1);
+        size_t c = std::string::npos, clen = 0;
+        auto take = [&](size_t p, size_t n) {
+            if (p != std::string::npos && (c == std::string::npos || p < c)) {
+                c = p;
+                clen = n;
+            }
+        };
+        take(close, 10);
+        take(close2, 8);
+        take(close3, 11);
+        if (c == std::string::npos) break;
+        i = c + clen;
+    }
+    return out;
+}
+
+inline bool isThoughtEcho(const std::string& salvage, const std::string& thought) {
+    std::string a = trimCopy(salvage);
+    std::string b = trimCopy(thought);
+    if (a.empty()) return true;
+    if (b.empty()) return false;
+    if (a == b) return true;
+    if (a.size() >= 24 && b.find(a) != std::string::npos) return true;
+    if (b.size() >= 24 && a.find(b) != std::string::npos) return true;
+    return false;
+}
+
 inline std::string buildRecoveryCorrection(const std::string &salvage, bool nonFinalResponse) {
 std::ostringstream os;
 os << "[PROTOCOL RECOVERY] Previous model output had no valid "
@@ -463,26 +509,24 @@ os << "\n----- END SALVAGE -----\n\n"
 return os.str();
 }
 
-// Thought-only streak: model produced content but no <action> and no final.
-// Multi-thought in ONE generation is fine; N consecutive generations without
-// tools/final burns API cost and is almost always a re-plan loop.
-inline std::string buildThoughtOnlyNudge(int streak, int softCap) {
-    // Inline XML — never English prose. The model sees what it should emit.
+// Runtime <harness> for the model — enough context to act, not a slogan.
+inline std::string buildRuntimeHarness(const std::string& code, int iteration,
+                                       int cap, const std::string& thinkingLevel,
+                                       const std::string& happened,
+                                       const std::string& runtimeDid,
+                                       const std::string& youMust,
+                                       const std::string& doNot) {
     std::ostringstream os;
-    os << "<thought>" << streak << "/" << softCap
-       << " consecutive turns with only thoughts — no actions, no final. "
-          "THIS turn must emit either an <action> or "
-          "<response final=\"true\">. Do not restate the plan."
-          "</thought>";
-    return os.str();
-}
-
-inline std::string buildThoughtOnlyHardStop(int streak) {
-    std::ostringstream os;
-    os << "[THOUGHT-ONLY HARD STOP] " << streak
-       << " consecutive generations without tools or final. "
-          "Loop aborted to protect budget. "
-          "Re-run with a tighter prompt or a stronger model.";
+    os << "<harness kind=\"runtime\" code=\"" << code << "\""
+       << " iteration=\"" << iteration << "\" cap=\"" << cap << "\"";
+    if (!thinkingLevel.empty())
+        os << " thinking_level=\"" << thinkingLevel << "\"";
+    os << ">\n";
+    os << "  <what_happened>" << happened << "</what_happened>\n";
+    os << "  <runtime_did>" << runtimeDid << "</runtime_did>\n";
+    os << "  <you_must>" << youMust << "</you_must>\n";
+    os << "  <do_not>" << doNot << "</do_not>\n";
+    os << "</harness>";
     return os.str();
 }
 
