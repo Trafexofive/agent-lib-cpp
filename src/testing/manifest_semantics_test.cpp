@@ -446,6 +446,7 @@ compaction:
     auto cfg = ManifestLoader::loadAgentConfig((root / "agent.yml").string());
     CHECK(cfg.historyCap == 50, "history_cap");
     CHECK(cfg.maxTurnsPerCycle == 15, "max_turns_per_cycle default/parse");
+    CHECK(cfg.effectiveHistoryCap() == 50, "effectiveHistoryCap aliases history_cap");
     CHECK(cfg.compaction.configured && cfg.compaction.enabled, "compaction enabled");
     CHECK(cfg.compaction.profile == "balanced", "profile");
     CHECK(cfg.compaction.triggerContextTokens == 60000, "60k tokens parse");
@@ -514,6 +515,48 @@ import:
     PASS();
 }
 
+void test_trim_peer_of_compaction() {
+    TEST("trim: is a peer of compaction: and owns the tail");
+    fs::path root = fs::temp_directory_path() / "mk3-trim-peer";
+    fs::remove_all(root);
+    writeFile(root / "agent.yml", R"YAML(kind: Agent
+name: trim-peer
+version: "1.0"
+cognitive_engine:
+  primary: { provider: opencode-go, model: deepseek-v4-flash }
+runtime:
+  history_cap: 40
+  trim:
+    enabled: true
+    tail:
+      cap: 800
+      every_turns: 8
+    trigger:
+      context_tokens: 72k
+      turns: 8
+    policy:
+      tags:
+        thought: { keep: none }
+        result: { keep: tail, keep_last: 8, truncate_chars: 600 }
+  compaction:
+    enabled: false
+    profile: light
+)YAML");
+    auto cfg = ManifestLoader::loadAgentConfig((root / "agent.yml").string());
+    CHECK(cfg.trim.configured && cfg.trim.enabled, "trim configured");
+    CHECK(cfg.trim.filterEnabled, "trim filter on when policy present");
+    CHECK(cfg.trim.tailCap == 800, "trim.tail.cap");
+    CHECK(cfg.effectiveHistoryCap() == 800, "effectiveHistoryCap from trim.tail");
+    CHECK(cfg.effectiveTailEveryTurns() == 8, "effectiveTailEveryTurns");
+    CHECK(cfg.trim.tags.count("thought") && cfg.trim.tags["thought"].keep == "none",
+          "trim thought drop");
+    CHECK(!cfg.compaction.enabled, "compaction stays off");
+    CompactionConfig tc = cfg.trim.asCompaction();
+    CHECK(tc.outputMode == "summarize_rules", "trim never LLM");
+    CHECK(!tc.archiveEnabled, "trim no archive");
+    PASS();
+}
+
 int main() {
     std::cout.setf(std::ios::unitbuf);
     std::cout << "\n╔══════════════════════════════════════════╗\n";
@@ -533,6 +576,7 @@ int main() {
     test_process_bind_materialize_symlinks();
     test_import_files_remain_prompt_only();
     test_compaction_block_and_history_cap_every();
+    test_trim_peer_of_compaction();
 
     std::cout << "\n──────────────────────────────────────────\n";
     std::cout << "  " << passed << " passed, " << failed << " failed\n";

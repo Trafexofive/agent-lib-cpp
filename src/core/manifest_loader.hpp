@@ -288,6 +288,63 @@ class ManifestLoader {
         }
     }
 
+    static void parseTrimBlock(const ManifestYaml::Node& n, TrimConfig& out, AgentConfig& cfg) {
+        out.configured = true;
+        std::string en = ManifestYaml::get(n, "enabled", "true");
+        out.enabled = promptFlagEnabled(en);
+
+        auto readInt = [](const ManifestYaml::Node& node, const char* a, const char* b = nullptr) {
+            std::string v = ManifestYaml::get(node, a);
+            if (v.empty() && b) v = ManifestYaml::get(node, b);
+            return v;
+        };
+
+        auto* tail = ManifestYaml::find(n, "tail");
+        if (tail) {
+            std::string cap = readInt(*tail, "cap", "history_cap");
+            if (!cap.empty()) {
+                out.tailCap = std::stoi(cap);
+                cfg.historyCap = out.tailCap;
+            }
+            std::string ev = readInt(*tail, "every_turns", "max_turns_per_cycle");
+            if (!ev.empty()) {
+                out.tailEveryTurns = std::stoi(ev);
+                cfg.maxTurnsPerCycle = out.tailEveryTurns;
+            }
+        }
+        {
+            std::string cap = readInt(n, "cap", "history_cap");
+            if (!cap.empty() && out.tailCap <= 0) {
+                out.tailCap = std::stoi(cap);
+                cfg.historyCap = out.tailCap;
+            }
+        }
+
+        const ManifestYaml::Node* policy = ManifestYaml::find(n, "policy");
+        if (!policy) policy = ManifestYaml::find(n, "filter");
+        const bool hasTrig = ManifestYaml::find(n, "trigger") != nullptr;
+        if (out.enabled && (policy || hasTrig || ManifestYaml::find(n, "overrides"))) {
+            out.filterEnabled = true;
+            CompactionConfig tmp;
+            parseCompactionBlock(n, tmp);
+            tmp.outputMode = "summarize_rules";
+            tmp.archiveEnabled = false;
+            if (tmp.profile.empty() && tmp.tags.empty()) {
+                tmp.profile = "trim";
+                compaction::applyProfile(tmp);
+            }
+            out.triggerContextTokens = tmp.triggerContextTokens;
+            out.triggerContextPct = tmp.triggerContextPct;
+            out.triggerTurns = tmp.triggerTurns;
+            out.modelContextTokens = tmp.modelContextTokens;
+            out.cooldownMinTurns = tmp.cooldownMinTurns;
+            out.cooldownMinSeconds = tmp.cooldownMinSeconds;
+            out.defaultPolicy = tmp.defaultPolicy;
+            out.tags = tmp.tags;
+            out.neverDrop = tmp.neverDrop;
+        }
+    }
+
     static AgentConfig loadAgentConfig(const std::string& manifestPath) {
         AgentConfig cfg;
         auto yaml = readFile(manifestPath);
@@ -680,6 +737,33 @@ class ManifestLoader {
             }
             if (compactNode)
                 parseCompactionBlock(*compactNode, cfg.compaction);
+        }
+
+        // trim: peer of compaction: (0-LLM ctx-clean + tail). Preferred under runtime.
+        {
+            const ManifestYaml::Node* trimNode = nullptr;
+            auto* runtimeNode = ManifestYaml::find(root, "runtime");
+            if (runtimeNode)
+                trimNode = ManifestYaml::find(*runtimeNode, "trim");
+            if (!trimNode)
+                trimNode = ManifestYaml::find(root, "trim");
+            if (trimNode)
+                parseTrimBlock(*trimNode, cfg.trim, cfg);
+            else if (cfg.compaction.profile == "trim" && cfg.compaction.enabled) {
+                // Deprecated: compaction.profile: trim → copy into TrimConfig.filter.
+                cfg.trim.configured = true;
+                cfg.trim.enabled = true;
+                cfg.trim.filterEnabled = true;
+                cfg.trim.triggerContextTokens = cfg.compaction.triggerContextTokens;
+                cfg.trim.triggerContextPct = cfg.compaction.triggerContextPct;
+                cfg.trim.triggerTurns = cfg.compaction.triggerTurns;
+                cfg.trim.modelContextTokens = cfg.compaction.modelContextTokens;
+                cfg.trim.cooldownMinTurns = cfg.compaction.cooldownMinTurns;
+                cfg.trim.tags = cfg.compaction.tags;
+                cfg.trim.defaultPolicy = cfg.compaction.defaultPolicy;
+                cfg.trim.neverDrop = cfg.compaction.neverDrop;
+                cfg.compaction.enabled = false;
+            }
         }
 
         // max_turns_per_cycle on runtime/context (legacy: history_cap_every_turns).

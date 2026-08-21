@@ -273,7 +273,33 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
         // Working copy for prompt only
         std::vector<std::string> promptHist = history_;
 
-        // ── Compaction (smart) ──────────────────────────────────────
+        // ── Trim (0-LLM ctx-clean) then compaction (policy/archive) ─
+        if (config_.trim.filterEnabled && config_.trim.enabled) {
+            CompactionConfig tc = config_.trim.asCompaction();
+            size_t tokEst = compaction::estimateTokens(promptHist) + 4000;
+            const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count();
+            if (compaction::shouldTrigger(tc, tokEst, userTurnsTotal,
+                                          lastCompactAtUserTurn_, nowMs,
+                                          lastCompactWallMs_)) {
+                auto cr = compaction::compactHistory(promptHist, tc);
+                if (cr.didCompact) {
+                    promptHist = std::move(cr.lines);
+                    if (cr.dropped > 0 && promptHist.size() < history_.size())
+                        history_ = promptHist;
+                    lastCompactAtUserTurn_ = userTurnsTotal;
+                    lastCompactWallMs_ = nowMs;
+                    if (!cr.note.empty()) {
+                        if (cr.note.find("[COMPACTED]") == 0)
+                            cr.note.replace(0, 11, "[TRIMMED]");
+                        lastCompactNote_ = cr.note;
+                        lastCompactUiPending_ = cr.note;
+                    }
+                }
+            }
+        }
+
         if (config_.compaction.enabled) {
             size_t tokEst = compaction::estimateTokens(promptHist);
             // Rough system overhead so pressure trips before the model chokes
@@ -325,7 +351,8 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
 
         // ── history_cap seatbelt (dumb tail; not every turn) ────────
         size_t histStart = compaction::resolveHistoryWindowStart(
-            promptHist.size(), config_.historyCap, config_.maxTurnsPerCycle,
+            promptHist.size(), config_.effectiveHistoryCap(),
+            config_.effectiveTailEveryTurns(),
             userTurnsTotal, historyCapAppliedAtUserTurn_, historyWindowStart_);
 
         // Inject last compact note once at the head of the visible window

@@ -170,8 +170,7 @@ struct CompactionConfig {
     bool configured = false;  // compaction:/compacting: block present
     bool enabled = false;
 
-    // none | light | balanced | aggressive | archive_first | trim | "" (explicit policy only)
-    // trim = 0-LLM deterministic shrink (summarize_rules, no archive).
+    // none | light | balanced | aggressive | archive_first | "" (explicit policy only)
     std::string profile;
 
     // Triggers (OR). Empty triggers + enabled → never auto (manual later).
@@ -195,6 +194,50 @@ struct CompactionConfig {
 
     bool subagentsInherit = true;
     bool childBeforeReturn = true;
+};
+
+// 0-LLM context clean — peer of CompactionConfig, not a compaction profile.
+// Owns the dumb tail (was runtime.history_cap) plus cheap tag drop/truncate.
+struct TrimConfig {
+    bool configured = false;
+    bool enabled = true;  // tail still applies even if filter is off
+    bool filterEnabled = false;
+
+    // Dumb window. 0 = fall back to AgentConfig.historyCap (legacy).
+    int tailCap = 0;
+    // Recompute every N user turns. -1 = use AgentConfig.maxTurnsPerCycle.
+    int tailEveryTurns = -1;
+
+    // Cheap filter (same engine as compaction, always summarize_rules).
+    int triggerContextTokens = 0;
+    double triggerContextPct = 0;
+    int triggerTurns = 0;
+    int modelContextTokens = 0;
+    int cooldownMinTurns = 1;
+    int cooldownMinSeconds = 0;
+
+    CompactionTagPolicy defaultPolicy;
+    std::map<std::string, CompactionTagPolicy> tags;
+    std::vector<std::string> neverDrop;
+
+    CompactionConfig asCompaction() const {
+        CompactionConfig c;
+        c.configured = configured;
+        c.enabled = filterEnabled;
+        c.profile = "trim";
+        c.triggerContextTokens = triggerContextTokens;
+        c.triggerContextPct = triggerContextPct;
+        c.triggerTurns = triggerTurns;
+        c.modelContextTokens = modelContextTokens;
+        c.cooldownMinTurns = cooldownMinTurns;
+        c.cooldownMinSeconds = cooldownMinSeconds;
+        c.defaultPolicy = defaultPolicy;
+        c.tags = tags;
+        c.neverDrop = neverDrop;
+        c.outputMode = "summarize_rules";
+        c.archiveEnabled = false;
+        return c;
+    }
 };
 
 struct AgentConfig {
@@ -313,8 +356,20 @@ struct AgentConfig {
     bool sandboxPathsSet = false;
     bool sandboxHostsSet = false;
 
-    // Context economy — optional smart compact (see CompactionConfig).
+    // Context economy.
+    // trim:     0-LLM ctx-clean + dumb tail (peer of compaction, not a profile).
+    // compaction: policy shrink / archive (still 0 LLM until summarize_llm exists).
+    TrimConfig trim;
     CompactionConfig compaction;
+
+    int effectiveHistoryCap() const {
+        if (trim.tailCap > 0) return trim.tailCap;
+        return historyCap;
+    }
+    int effectiveTailEveryTurns() const {
+        if (trim.tailEveryTurns >= 0) return trim.tailEveryTurns;
+        return maxTurnsPerCycle;
+    }
 
     // Sub-agent runtime behavior
     // memory  = keep sub-agent history in-process only

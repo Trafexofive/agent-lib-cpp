@@ -43,15 +43,24 @@ runtime:
       input_schemas: true
       return_schemas: false
       usage_examples: true
-  compaction:
+  # 0-LLM ctx-clean. Owns the dumb tail (was history_cap).
+  trim:
     enabled: true
-    profile: light
+    tail:
+      cap: 800
+      every_turns: 8
     trigger:
-      context_tokens: 40k
-      turns: 12
-    cooldown:
-      min_turns: 2
-      min_seconds: 20
+      context_tokens: 72k
+      turns: 8
+    policy:
+      tags:
+        thought: { keep: none }
+        action: { keep: tail, keep_last: 8, truncate_chars: 800 }
+        result: { keep: tail, keep_last: 8, truncate_chars: 600 }
+        response: { keep: tail, keep_last: 3, truncate_chars: 2400 }
+  compaction:
+    enabled: false
+    profile: light
 
 import:
   tools:

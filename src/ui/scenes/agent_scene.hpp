@@ -857,17 +857,23 @@ class AgentScene final : public BaseScene {
         if (Agent* live = model_->currentAgent() ? model_->currentAgent()
                                                  : model_->rootAgent) {
             const auto& c = live->config();
-            foot.compactEnabled = c.compaction.enabled;
-            foot.compactProfile = c.compaction.profile;
-            if (c.compaction.modelContextTokens > 0)
+            foot.compactEnabled = c.compaction.enabled || c.trim.filterEnabled;
+            if (c.trim.filterEnabled)
+                foot.compactProfile = "trim";
+            else
+                foot.compactProfile = c.compaction.profile;
+            if (c.trim.modelContextTokens > 0)
+                foot.ctxMaxTokens = c.trim.modelContextTokens;
+            else if (c.compaction.modelContextTokens > 0)
                 foot.ctxMaxTokens = c.compaction.modelContextTokens;
-            if (c.compaction.triggerContextTokens > 0)
+            if (c.trim.filterEnabled && c.trim.triggerContextTokens > 0)
+                foot.ctxCompactAt = c.trim.triggerContextTokens;
+            else if (c.compaction.triggerContextTokens > 0)
                 foot.ctxCompactAt = c.compaction.triggerContextTokens;
             foot.iterMax = c.iterationCap;
-            // Real loop generation (not actionCount — that lied as i 1/1800).
             int li = live->liveIteration();
             foot.iterCurrent = li > 0 ? li : 0;
-            foot.historyMax = c.historyCap;
+            foot.historyMax = c.effectiveHistoryCap();
             foot.historyUsed = static_cast<int>(live->history().size());
             // Rough token estimate: history chars/4 + live stream + system overhead.
             size_t est = 0;
