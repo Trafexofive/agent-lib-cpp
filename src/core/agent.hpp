@@ -332,6 +332,9 @@ class Agent {
                                     bool finalizationTurn,
                                     const protocol::ParsedAction& action);
     void publishCleanThought(ProtocolStreamState& st, const std::string& rawAppend);
+    void steerIncompleteGeneration(AgentContext& ctx, const std::string& iterationRaw,
+                                   int workCap, bool& incompleteNoted,
+                                   std::string& lastSalvage);
     void handleProtocolEvent(AgentContext& ctx, ProtocolStreamState& st,
                              const protocol::TokenEvent& ev);
 

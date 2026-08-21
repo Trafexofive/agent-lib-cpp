@@ -1087,78 +1087,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 fullResponse = visibleError;
                 st.taskComplete = true; // runtime failure, not model final
             } else {
-                // Incomplete generation: no actions, no final.
-                // Untagged TEXT is already Thought (parser). NEVER mint a
-                // <response> from thought — that was the promotion bug.
-                const bool hadActions =
-                    iterationRawOutput.find("<action") != std::string::npos;
-                const bool hadNonFinalResp = !trimCopy(responseOutput_).empty();
-                const std::string leftover =
-                    trimCopy(stripThoughtTags(iterationRawOutput));
-                const std::string lvl = config_.thinkingLevel.empty()
-                                            ? std::string("medium")
-                                            : config_.thinkingLevel;
-                if (hadActions) {
-                    // parser missed an <action> — do not invent a response
-                } else if (incompleteNoted) {
-                    // one steer per prompt() is enough; repeating it is noise
-                } else if (hadNonFinalResp) {
-                    incompleteNoted = true;
-                    lastSalvage = trimCopy(responseOutput_);
-                    history_.push_back(
-                        "System: " +
-                        buildRuntimeHarness(
-                            "NONFINAL", ctx.iteration, workCap, lvl,
-                            "You emitted <response> without final=\"true\" and no "
-                            "<action>. That is a progress note, not completion.",
-                            "The <response> body is kept. The turn stays open (" +
-                                std::to_string(ctx.iteration) + "/" +
-                                std::to_string(workCap) + ").",
-                            "Next: emit <action> to work, or close with "
-                            "<response final=\"true\">. If this note is the "
-                            "answer, re-emit it with final=\"true\".",
-                            "Do not repeat the same non-final <response>. "
-                            "Untagged prose is not a final."));
-                    protocolEvents_.push_back(
-                        {ProtocolEventKind::STATUS,
-                         "[NONFINAL] response without final — loop continues",
-                         {}, {}});
-                    if (ctx.onToken) ctx.onToken("", false);
-                } else {
-                    incompleteNoted = true;
-                    lastSalvage.clear();
-                    history_.push_back(
-                        "System: " +
-                        buildRuntimeHarness(
-                            "BARE_TEXT", ctx.iteration, workCap, lvl,
-                            leftover.empty()
-                                ? ("This generation produced no <action> and no "
-                                   "<response>. Provider thinking may have run; "
-                                   "zero protocol tokens. thinking_level=" +
-                                   lvl + ".")
-                                : ("This generation had no <action> and no "
-                                   "<response final=\"true\">. Untagged tokens "
-                                   "are <thought>, not an answer. thinking_level=" +
-                                   lvl + "."),
-                            "Thought is kept. No fake <response> was created. "
-                            "Turn still open (" +
-                                std::to_string(ctx.iteration) + "/" +
-                                std::to_string(workCap) + ").",
-                            "Next generation must emit protocol: "
-                            "<action type=\"tool|agent\" name=\"…\" id=\"…\">"
-                            "…</action> and/or <response final=\"true\">…"
-                            "</response>. Put the action in that emit, not "
-                            "another thinking-only turn.",
-                            "Do not ping the operator with untagged prose. "
-                            "Do not duplicate native thinking as extra "
-                            "<thought> turns. Do not assume the user got a "
-                            "finished answer."));
-                    protocolEvents_.push_back(
-                        {ProtocolEventKind::STATUS,
-                         "[BARE_TEXT] untagged kept as thought — loop continues",
-                         {}, {}});
-                    if (ctx.onToken) ctx.onToken("", false);
-                }
+                steerIncompleteGeneration(ctx, iterationRawOutput, workCap,
+                                          incompleteNoted, lastSalvage);
             }
         }
 
@@ -1543,6 +1473,73 @@ Json::Value Agent::handleAgentDelegate(AgentContext &ctx,
     return makeSubAgentResult(result, trace, dumpContext);
 }
 
+
+void Agent::steerIncompleteGeneration(AgentContext &ctx,
+                                      const std::string &iterationRaw,
+                                      int workCap, bool &incompleteNoted,
+                                      std::string &lastSalvage) {
+    const bool hadActions = iterationRaw.find("<action") != std::string::npos;
+    const bool hadNonFinalResp = !trimCopy(responseOutput_).empty();
+    const std::string leftover = trimCopy(stripThoughtTags(iterationRaw));
+    const std::string lvl = config_.thinkingLevel.empty() ? std::string("medium")
+                                                          : config_.thinkingLevel;
+    if (hadActions || incompleteNoted)
+        return;
+    incompleteNoted = true;
+    if (hadNonFinalResp) {
+        lastSalvage = trimCopy(responseOutput_);
+        history_.push_back(
+            "System: " +
+            buildRuntimeHarness(
+                "NONFINAL", ctx.iteration, workCap, lvl,
+                "You emitted <response> without final=\"true\" and no "
+                "<action>. That is a progress note, not completion.",
+                "The <response> body is kept. The turn stays open (" +
+                    std::to_string(ctx.iteration) + "/" +
+                    std::to_string(workCap) + ").",
+                "Next: emit <action> to work, or close with "
+                "<response final=\"true\">. If this note is the "
+                "answer, re-emit it with final=\"true\".",
+                "Do not repeat the same non-final <response>. "
+                "Untagged prose is not a final."));
+        protocolEvents_.push_back({ProtocolEventKind::STATUS,
+                                   "[NONFINAL] response without final — loop continues",
+                                   {}, {}});
+    } else {
+        lastSalvage.clear();
+        history_.push_back(
+            "System: " +
+            buildRuntimeHarness(
+                "BARE_TEXT", ctx.iteration, workCap, lvl,
+                leftover.empty()
+                    ? ("This generation produced no <action> and no "
+                       "<response>. Provider thinking may have run; "
+                       "zero protocol tokens. thinking_level=" +
+                       lvl + ".")
+                    : ("This generation had no <action> and no "
+                       "<response final=\"true\">. Untagged tokens "
+                       "are <thought>, not an answer. thinking_level=" +
+                       lvl + "."),
+                "Thought is kept. No fake <response> was created. "
+                "Turn still open (" +
+                    std::to_string(ctx.iteration) + "/" +
+                    std::to_string(workCap) + ").",
+                "Next generation must emit protocol: "
+                "<action type=\"tool|agent\" name=\"…\" id=\"…\">"
+                "…</action> and/or <response final=\"true\">…"
+                "</response>. Put the action in that emit, not "
+                "another thinking-only turn.",
+                "Do not ping the operator with untagged prose. "
+                "Do not duplicate native thinking as extra "
+                "<thought> turns. Do not assume the user got a "
+                "finished answer."));
+        protocolEvents_.push_back(
+            {ProtocolEventKind::STATUS,
+             "[BARE_TEXT] untagged kept as thought — loop continues",
+             {}, {}});
+    }
+    if (ctx.onToken) ctx.onToken("", false);
+}
 
 void Agent::publishCleanThought(ProtocolStreamState &st, const std::string &rawAppend) {
     if (st.thoughtDroppedAsNoise) return;  // rest of segment is dead air
