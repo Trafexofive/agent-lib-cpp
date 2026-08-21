@@ -37,8 +37,14 @@ inline Json::Value defaultParamsForTool(const std::string& name) {
         p["content"] = std::string("smoke");
     }
     else if (name == "ask_tool") {
-        p["question"] = "smoke test";
-        p["options"] = Json::Value(Json::arrayValue);
+        p["title"] = "smoke test";
+        Json::Value card;
+        card["id"] = "response";
+        card["type"] = "text";
+        card["title"] = "smoke";
+        card["defaultValue"] = "ok";
+        p["cards"] = Json::Value(Json::arrayValue);
+        p["cards"].append(card);
     }
     return p;
 }

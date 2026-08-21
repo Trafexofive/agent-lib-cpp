@@ -99,21 +99,25 @@ output_schema:
   properties:
     success:
       type: boolean
-      description: >
-        true if the user answered at least the first card. false if the user
-        cancelled immediately (empty input on first card). If success is false,
-        do NOT retry — the user chose not to answer. Respect their choice and
-        either proceed with what you know or tell them you cannot continue
-        without their input.
+      description: true if the operator submitted; false on cancel or timeout.
+    cancelled:
+      type: boolean
+      description: Operator hit Esc / cancelled. Do not re-ask the same chain.
+    timed_out:
+      type: boolean
+      description: Wait exceeded timeout_sec (default 120). Treat as cancel.
     results:
       type: object
       description: >
-        A flat object mapping each card's "id" to the user's raw string
-        response. Empty strings mean the user either submitted empty input or
-        skipped that card (the chain stopped before reaching it). Example:
-        {"confirm_deploy": "DEPLOY", "target_env": "staging"}. Process these
-        values to determine the next action. Do NOT call ask_tool again for
-        the same information — the user has already answered.
+        Map of card id → answer (string, bool, number, or array for multi_choice).
+        Do not call ask_tool again for the same ids.
+    answered:
+      type: array
+      items: { type: string }
+    count:
+      type: integer
+    error:
+      type: string
 
 examples:
   - description: >

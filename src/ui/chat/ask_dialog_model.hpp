@@ -4,6 +4,7 @@
 #include <json/json.h>
 
 #include <algorithm>
+#include "src/tools/ask_protocol.hpp"
 #include <cctype>
 #include <cstdlib>
 #include <sstream>
@@ -130,7 +131,8 @@ static inline DialogCard cardFromJson(const Json::Value& v) {
     return card;
 }
 
-static inline DialogState parseDialogState(const Json::Value& params) {
+static inline DialogState parseDialogState(const Json::Value& rawParams) {
+    const Json::Value params = tools::normalizeAskParams(rawParams);
     DialogState state;
     state.chainTitle = params.get("title", params.get("chainTitle", "Agent asks")).asString();
     state.message = params.get("message", "").asString();

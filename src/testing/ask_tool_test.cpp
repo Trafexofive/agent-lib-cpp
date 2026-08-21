@@ -6,6 +6,7 @@
 #include <iostream>
 #include <sstream>
 
+#include "../tools/ask_protocol.hpp"
 #include "../tools/registry.hpp"
 
 int main() {
@@ -53,6 +54,19 @@ int main() {
     check(result["success"].asBool(), "ask_tool succeeds");
     check(result["results"].isObject(), "ask_tool has results object");
     check(result["results"]["q1"].asString() == "test-answer", "ask_tool captures user input");
+    check(result.isMember("cancelled") && !result["cancelled"].asBool(), "cancelled=false");
+    check(result.isMember("answered") && result["answered"].isArray(), "answered[] present");
+
+    Json::Value legacy;
+    legacy["question"] = "pick one";
+    Json::Value opts(Json::arrayValue);
+    opts.append("a");
+    opts.append("b");
+    legacy["options"] = opts;
+    auto n = cortex::mk3::tools::normalizeAskParams(legacy);
+    check(n["title"].asString() == "pick one", "legacy question → title");
+    check(n["cards"][0]["type"].asString() == "choice", "legacy options → choice card");
+    check(n["cards"][0]["id"].asString() == "response", "legacy card id=response");
 
     std::cout << "\n  " << passed << "/" << (passed + failed) << " passed\n";
     return failed == 0 ? 0 : 1;

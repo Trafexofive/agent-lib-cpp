@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "../feeds/feed_engine.hpp"
+#include "../tools/ask_protocol.hpp"
 #include "../tools/dispatch.hpp"
 #include "../utils/ansi.hpp"
 #include "../utils/process.hpp"
@@ -17,36 +18,21 @@
 namespace cortex::mk3 {
 
 Json::Value Agent::dispatchAskTool(const Json::Value& params) {
-    // Normalize result so TUI bridge and stdin fallback share one contract:
-    //   success, cancelled, results{id:value}, answered[], count
+    const Json::Value norm = tools::normalizeAskParams(params);
     auto finalize = [](Json::Value result) -> Json::Value {
-        if (!result.isObject()) {
-            Json::Value wrapped;
-            wrapped["success"] = true;
-            wrapped["cancelled"] = false;
-            wrapped["results"] = result;
-            result = std::move(wrapped);
-        }
-        if (!result.isMember("success"))
-            result["success"] = !result.get("cancelled", false).asBool();
-        if (!result.isMember("cancelled"))
-            result["cancelled"] = false;
-        if (!result.isMember("results") || !result["results"].isObject())
-            result["results"] = Json::Value(Json::objectValue);
-        if (!result.isMember("answered") || !result["answered"].isArray()) {
-            Json::Value answered(Json::arrayValue);
-            for (const auto& key : result["results"].getMemberNames())
-                answered.append(key);
-            result["answered"] = answered;
-        }
-        result["count"] =
-            static_cast<Json::UInt64>(result["answered"].size());
-        return result;
+        bool cancelled = result.get("cancelled", false).asBool();
+        bool timedOut = result.get("timed_out", false).asBool();
+        bool success = result.get("success", !cancelled && !timedOut).asBool();
+        Json::Value results = result.isMember("results") && result["results"].isObject()
+                                  ? result["results"]
+                                  : Json::Value(Json::objectValue);
+        std::string err = result.get("error", "").asString();
+        return tools::askResult(success, cancelled, timedOut, std::move(results), err);
     };
 
     if (askToolHandler_) {
         try {
-            return finalize(askToolHandler_(params));
+            return finalize(askToolHandler_(norm));
         } catch (const std::exception& e) {
             Json::Value err;
             err["success"] = false;
@@ -70,12 +56,13 @@ Json::Value Agent::dispatchAskTool(const Json::Value& params) {
         out["results"] = Json::Value(Json::objectValue);
         out["answered"] = Json::Value(Json::arrayValue);
         out["count"] = 0;
+        out["timed_out"] = false;
         return out;
     }
 
     auto fn = tools::ToolRegistry::instance().get("ask_tool");
     if (fn) {
-        std::string raw = fn(params);
+        std::string raw = fn(norm);
         Json::Value parsed;
         Json::CharReaderBuilder reader;
         std::string errs;
