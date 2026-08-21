@@ -324,17 +324,21 @@ void test_workflow_run_hub_transitions() {
 
 void test_dashboard_model() {
     model::DashboardState dashboard;
-    // 7 pills: Home · Sessions · Manifests · Tools · Relics · Workflows · Settings
-    const int last = model::DashboardState::sectionCount - 1;
-    for (int i = 0; i < last; ++i) dashboard.moveNavigation(1);
-    check(dashboard.section == model::DashboardSection::Settings && dashboard.navigationIndex == last,
-          "dashboard navigation reaches Settings");
+    // Pill: Manifests · Tools · Relics · Home · Sessions · Workflows · Settings
+    check(model::pillSlotOf(model::DashboardSection::Home) == 3, "Home is visual center of pill");
+    dashboard.select(model::DashboardSection::Home);
+    check(dashboard.navigationIndex == 3 && dashboard.section == model::DashboardSection::Home,
+          "select Home lands on pill slot 3");
     dashboard.moveNavigation(1);
-    check(dashboard.section == model::DashboardSection::Home && dashboard.navigationIndex == 0,
-          "dashboard navigation wraps Home");
+    check(dashboard.section == model::DashboardSection::Sessions && dashboard.navigationIndex == 4,
+          "h/l from Home walks to Sessions");
+    dashboard.select(model::DashboardSection::Settings);
+    dashboard.moveNavigation(1);
+    check(dashboard.section == model::DashboardSection::Manifests && dashboard.navigationIndex == 0,
+          "wrap past Settings lands Manifests (left of pill)");
     dashboard.moveNavigation(-1);
-    check(dashboard.section == model::DashboardSection::Settings && dashboard.navigationIndex == last,
-          "dashboard navigation wraps backward to Settings");
+    check(dashboard.section == model::DashboardSection::Settings,
+          "wrap backward from Manifests lands Settings");
 
     session::SessionManager::SessionInfo first;
     first.id = "first";

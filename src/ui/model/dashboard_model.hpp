@@ -19,7 +19,9 @@
 
 namespace cortex::mk3::ui::model {
 
-// Pill order: Home · Sessions · Manifests · Tools · Relics · Workflows · Settings
+// Enum values are identity, not dock slots.
+// Visual pill (Home is the capsule center):
+//   Manifests · Tools · Relics · Home · Sessions · Workflows · Settings
 enum class DashboardSection {
     Home = 0,
     Sessions = 1,
@@ -29,6 +31,22 @@ enum class DashboardSection {
     Workflows = 5,  // canvas + run (not jammed into cards)
     Settings = 6
 };
+
+inline constexpr DashboardSection kPillOrder[7] = {
+    DashboardSection::Manifests, DashboardSection::Tools, DashboardSection::Relics,
+    DashboardSection::Home,      DashboardSection::Sessions, DashboardSection::Workflows,
+    DashboardSection::Settings,
+};
+inline int pillSlotOf(DashboardSection s) {
+    for (int i = 0; i < 7; ++i)
+        if (kPillOrder[i] == s) return i;
+    return 3;
+}
+inline DashboardSection sectionAtPill(int slot) {
+    if (slot < 0) slot = 6;
+    if (slot > 6) slot = 0;
+    return kPillOrder[slot];
+}
 // Alias — older call sites / muscle memory
 constexpr DashboardSection Help = DashboardSection::Settings;
 
@@ -43,7 +61,7 @@ enum class DashboardFocus { Dock, Content };
 struct DashboardState {
     DashboardSection section = DashboardSection::Home;
     DashboardFocus focus = DashboardFocus::Content;
-    int navigationIndex = 0;
+    int navigationIndex = 3;  // Home is pill center (kPillOrder[3])
     int sessionIndex = 0;
     int manifestIndex = 0;
 
@@ -224,7 +242,7 @@ struct DashboardState {
         return static_cast<int>(e * static_cast<float>(maxRows));
     }
 
-    void syncSection() { section = static_cast<DashboardSection>(navigationIndex); }
+    void syncSection() { section = sectionAtPill(navigationIndex); }
 
     // Kind-scoped hub pages keep the manifest list filtered to that kind so
     // j/k + ↵ share the same index space as Manifests.
@@ -295,7 +313,7 @@ struct DashboardState {
 
     void select(DashboardSection next) {
         int from = navigationIndex;
-        int idx = static_cast<int>(next);
+        int idx = pillSlotOf(next);
         if (idx < 0 || idx >= sectionCount) return;
         if (idx != navigationIndex) beginNavAnim(from, idx > from ? 1 : -1);
         section = next;

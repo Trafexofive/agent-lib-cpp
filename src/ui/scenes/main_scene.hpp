@@ -172,12 +172,13 @@ class MainScene final : public BaseScene {
 
         // Floating nav pill — draw last so it sits above the stage.
         if (pillMaster && pillReveal > 0.02f) {
+            // Dock order is visual (Home centered). Keys still jump by section.
             static const std::vector<components::PillItem> pills = {
-                {"g", "Home"},
-                {"s", "Sessions"},
                 {"a", "Manifests"},
                 {"t", "Tools"},
                 {"l", "Relics"},
+                {"g", "Home"},
+                {"s", "Sessions"},
                 {"w", "Workflows"},
                 {"?", "Settings"},
             };
