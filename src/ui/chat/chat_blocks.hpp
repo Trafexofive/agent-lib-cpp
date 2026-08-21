@@ -204,9 +204,9 @@ inline inkcell::Color blockBackground(ChatBlockKind kind, bool selected = false,
             std::min(255, (wash.b * 2 + hi.b) / 3));
     }
     if (selected) {
-        const double phase = (nowMs % 1600) / 1600.0 * 6.283185307179586;
-        const double breath = 0.5 + 0.5 * std::sin(phase);
-        const int lift = 18 + static_cast<int>(12.0 * breath);
+        // Static lift only — no sin-breath flash (was seizure chrome).
+        (void)nowMs;
+        const int lift = 22;
         wash = inkcell::Color::rgb(std::min(255, wash.r + lift),
                                    std::min(255, wash.g + lift + 2),
                                    std::min(255, wash.b + lift + 4));
@@ -224,10 +224,8 @@ inline inkcell::Style blockRailStyle(ChatBlockKind kind, bool header, bool selec
     st.fg = theme::color(p.railG, p.railN);
     if (header || selected) st.bold = true;
     if (!header && !selected) st.dim = true;
-    if (selected) {
-        const double phase = (nowMs % 1600) / 1600.0 * 6.283185307179586;
-        st.dim = (0.5 + 0.5 * std::sin(phase)) < 0.45;
-    }
+    (void)nowMs;
+    // Selected = bold rail, never blinking dim.
     return st;
 }
 

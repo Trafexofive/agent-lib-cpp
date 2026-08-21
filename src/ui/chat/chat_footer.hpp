@@ -239,10 +239,8 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
     else if (focus)
         accent = mk(125, 180, 195, 95, 225, 255);
 
-    if (live) {
-        const double ph = (f.nowMs % 1600) / 1600.0 * 6.283185307179586;
-        accent.dim = (0.55 + 0.45 * std::sin(ph)) < 0.42;
-    }
+    // No sin-pulse on accent — phase color is steady; spinner glyph carries motion.
+    (void)0;
 
     // Top shelf rule in phase hue
     {
