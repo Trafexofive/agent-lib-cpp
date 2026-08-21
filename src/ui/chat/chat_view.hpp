@@ -1284,11 +1284,11 @@ inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, cons
     if (!footer) menuY = statusY - menuH;
 
     inkcell::Rect body{frame.x, frame.y, frame.w, std::max(1, menuY - frame.y)};
-    // Body mode: 0 stream · 1 compact · 2 graph (Ctrl-O). Stream default.
+    // Body mode: 0 stream · 1 compact · 2 canvas (Ctrl-O). Stream default.
     if (m.bodyMode == 1)
         drawTranscriptCompact(surface, body, m);
     else if (m.bodyMode == 2)
-        drawTranscriptGraph(surface, body, m);
+        drawTranscriptCanvas(surface, body, m);
     else
         drawTranscript(surface, body, m);
     if (menuH > 0)

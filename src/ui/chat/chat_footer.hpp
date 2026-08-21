@@ -169,7 +169,7 @@ struct ChatFooterModel {
     std::string themeName;
     int turnCount = 0;
     int queuedSteer = 0;
-    int bodyMode = 0;  // 0 stream 1 compact 2 graph
+    int bodyMode = 0;  // 0 stream 1 compact 2 canvas
     std::vector<std::string> extraLines;
 };
 

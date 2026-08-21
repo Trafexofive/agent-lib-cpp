@@ -39,7 +39,7 @@ struct UiPrefState {
     std::string outputBodyFmt = "json";
     // 0=live 1=session 2=engine
     int chatFooterPane = 0;
-    int chatBodyMode = 0;  // 0 stream 1 compact 2 graph
+    int chatBodyMode = 0;  // 0 stream 1 compact 2 canvas
     // Chat-side field underlay. Inherits shared gfx::activeFieldIndex; this
     // is the on/off gate for the chat surface specifically.
     bool chatFieldEnabled = false;

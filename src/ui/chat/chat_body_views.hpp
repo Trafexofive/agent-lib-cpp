@@ -124,7 +124,6 @@ inline void drawTranscriptCompact(inkcell::Surface& surface, inkcell::Rect body,
 
     const auto* rows = m.timelineRows;
     if (!rows || rows->empty()) {
-        // Degraded: no structured rows — don't pretend to parse stream text.
         surface.text({body.x + 1, body.y}, "compact · no timeline rows", theme::amber());
         surface.text({body.x + 1, body.y + 1},
                      "stream view still has content · ctrl-o back", theme::dim());
@@ -132,7 +131,7 @@ inline void drawTranscriptCompact(inkcell::Surface& surface, inkcell::Rect body,
         return;
     }
 
-    // Filter like stream (thoughts/raw)
+    // Filter like stream (thoughts/raw). idx[i] = root TimelineRow index.
     std::vector<int> idx;
     idx.reserve(rows->size());
     for (int i = 0; i < static_cast<int>(rows->size()); ++i) {
@@ -142,95 +141,161 @@ inline void drawTranscriptCompact(inkcell::Surface& surface, inkcell::Rect body,
         idx.push_back(i);
     }
 
-    int total = static_cast<int>(idx.size());
-    int maxOff = std::max(0, total - body.h);
-    int off = m.followBottom ? maxOff : std::max(0, std::min(m.scrollOffset, maxOff));
-    if (m.contentHWriteback) *m.contentHWriteback = std::max(1, total);
+    // Optional ACT→OK pair collapse (adjacent same actionId).
+    struct Line {
+        int root = -1;
+        int rootB = -1;  // paired result root, else -1
+        bool paired = false;
+    };
+    std::vector<Line> lines;
+    lines.reserve(idx.size());
+    for (size_t i = 0; i < idx.size(); ++i) {
+        const auto& r = (*rows)[static_cast<size_t>(idx[i])];
+        if (r.kind == TimelineKind::Action && !r.actionId.empty() && i + 1 < idx.size()) {
+            const auto& n = (*rows)[static_cast<size_t>(idx[i + 1])];
+            if (n.kind == TimelineKind::Result && n.actionId == r.actionId) {
+                lines.push_back({idx[static_cast<size_t>(i)], idx[i + 1], true});
+                ++i;
+                continue;
+            }
+        }
+        lines.push_back({idx[static_cast<size_t>(i)], -1, false});
+    }
 
-    // Header
-    if (body.h >= 1) {
+    const int headerH = body.h >= 1 ? 1 : 0;
+    const int vis = std::max(0, body.h - headerH);
+    const int total = static_cast<int>(lines.size());
+    // contentH includes header so transcript scroll math matches paint.
+    const int contentH = headerH + std::max(1, total);
+    const int maxOff = std::max(0, contentH - body.h);
+    int off = m.followBottom ? maxOff : std::max(0, std::min(m.scrollOffset, maxOff));
+
+    // Snap scroll so selected root row stays visible.
+    if (m.historyFocused && m.selectedRow >= 0 && vis > 0) {
+        int selLine = -1;
+        for (int i = 0; i < total; ++i) {
+            if (lines[static_cast<size_t>(i)].root == m.selectedRow ||
+                lines[static_cast<size_t>(i)].rootB == m.selectedRow) {
+                selLine = i;
+                break;
+            }
+        }
+        if (selLine >= 0) {
+            // off is content scroll; first data row at content y = headerH.
+            int dataOff = std::max(0, off - headerH);
+            if (selLine < dataOff) off = selLine + headerH;
+            else if (selLine >= dataOff + vis) off = selLine - vis + 1 + headerH;
+            off = std::max(0, std::min(off, maxOff));
+        }
+    }
+    if (m.contentHWriteback) *m.contentHWriteback = contentH;
+
+    int nAct = 0, nOk = 0, nOpen = 0;
+    for (const auto& L : lines) {
+        const auto& r = (*rows)[static_cast<size_t>(L.root)];
+        if (r.kind == TimelineKind::Action) ++nAct;
+        if (L.paired || r.kind == TimelineKind::Result) ++nOk;
+    }
+    if (m.running && m.pendingOps > 0) nOpen = m.pendingOps;
+
+    if (headerH) {
         auto st = theme::cyan();
         st.bold = true;
         surface.text({body.x + 1, body.y}, "compact", st);
+        std::string meta = std::to_string(total) + " rows";
+        if (nAct) meta += " · " + std::to_string(nAct) + "act";
+        if (nOk) meta += " · " + std::to_string(nOk) + "ok";
+        if (nOpen) meta += " · " + std::to_string(nOpen) + " open";
+        meta += " · j/k · ^O";
         surface.text({body.x + 9, body.y},
-                     inkcell::text::truncate(
-                         std::to_string(total) + " rows · j/k · ctrl-o", body.w - 10),
-                     theme::dim());
+                     inkcell::text::truncate(meta, body.w - 10), theme::dim());
     }
 
-    int y0 = body.y + (body.h > 1 ? 1 : 0);
-    int vis = body.bottom() - y0;
-    for (int y = 0; y < vis && off + y < total; ++y) {
-        const auto& r = (*rows)[static_cast<size_t>(idx[static_cast<size_t>(off + y)])];
+    int y0 = body.y + headerH;
+    // data scroll: content rows above y0 scrolled away
+    int dataOff = std::max(0, off - headerH);
+    for (int y = 0; y < vis && dataOff + y < total; ++y) {
+        const auto& L = lines[static_cast<size_t>(dataOff + y)];
+        const auto& r = (*rows)[static_cast<size_t>(L.root)];
         bool sel = m.historyFocused && m.selectedRow >= 0 &&
-                   idx[static_cast<size_t>(off + y)] == m.selectedRow;
+                   (L.root == m.selectedRow || L.rootB == m.selectedRow);
+
         auto bk = kindFromTimeline(r.kind, r.ok, r.actionType, r.actionName);
+        if (L.paired && L.rootB >= 0) {
+            const auto& res = (*rows)[static_cast<size_t>(L.rootB)];
+            bk = kindFromTimeline(res.kind, res.ok, res.actionType, res.actionName);
+        }
         auto fill = blockStyle(bk, true, sel, m.nowMs);
         auto st = blockLineStyle(bk, true, r.title, sel, m.nowMs);
-        surface.fill({body.x, y0 + y, body.w - (total > vis ? 1 : 0), 1}, " ", fill);
+        const bool bar = total > vis;
+        surface.fill({body.x, y0 + y, body.w - (bar ? 1 : 0), 1}, " ", fill);
         auto rail = blockRailStyle(bk, true, sel, m.nowMs);
         surface.text({body.x, y0 + y}, sel ? "▌" : "▎", rail);
 
-        std::string line = compactTag(r.kind, r.ok, r.actionType, r.actionName);
-        // Title
-        std::string title;
-        if (r.kind == TimelineKind::Action) {
-            title = r.actionType.empty() ? "action" : r.actionType;
-            if (!r.actionName.empty()) {
-                title += " ";
-                title += r.actionName;
-            }
+        std::string line;
+        if (L.paired && L.rootB >= 0) {
+            const auto& res = (*rows)[static_cast<size_t>(L.rootB)];
+            line = compactTag(r.kind, r.ok, r.actionType, r.actionName);
+            line += r.actionName.empty() ? (r.actionType.empty() ? "act" : r.actionType)
+                                         : r.actionName;
             if (!r.actionId.empty()) {
-                title += " #";
-                title += r.actionId;
+                line += " #";
+                line += r.actionId;
             }
-        } else if (r.kind == TimelineKind::Result) {
-            title = r.ok ? "result" : "result FAIL";
-            if (!r.actionName.empty()) {
-                title += " ";
-                title += r.actionName;
-            }
-            if (!r.actionId.empty()) {
-                title += " #";
-                title += r.actionId;
-            }
-            // Surface ms= from result teaser when present in body/title meta
-            auto msAt = r.body.find("ms=");
-            if (msAt == std::string::npos) msAt = r.title.find("ms=");
-            // often first line of formatted result is short meta
-            if (!r.body.empty() && r.body.find("ms") != std::string::npos &&
-                r.body.size() < 80) {
-                title += " · ";
-                title += oneLine(r.body, 24);
-            }
-        } else if (r.kind == TimelineKind::User) {
-            title = oneLine(r.body.empty() ? r.title : r.body, 60);
-        } else if (r.kind == TimelineKind::Status) {
-            title = oneLine(r.body.empty() ? r.title : r.body, 70);
-        } else {
-            title = r.title.empty() ? kindGlyph(r.kind, r.ok) : r.title;
-            if (title.size() > 40) title = title.substr(0, 38) + "…";
-        }
-        line += title;
-
-        // Teaser for non-user
-        if (r.kind != TimelineKind::User && r.kind != TimelineKind::Status &&
-            !r.body.empty()) {
-            std::string teaser = oneLine(r.body, 42);
-            if (!teaser.empty() && teaser != title) {
+            line += res.ok ? "  → OK" : "  → FAIL";
+            std::string teaser = oneLine(res.body, 36);
+            if (!teaser.empty()) {
                 line += "  ·  ";
                 line += teaser;
             }
+        } else {
+            line = compactTag(r.kind, r.ok, r.actionType, r.actionName);
+            std::string title;
+            if (r.kind == TimelineKind::Action) {
+                title = r.actionName.empty() ? (r.actionType.empty() ? "action" : r.actionType)
+                                             : r.actionName;
+                if (!r.actionType.empty() && !r.actionName.empty() &&
+                    r.actionType != "tool") {
+                    title = r.actionType + " " + r.actionName;
+                }
+                if (!r.actionId.empty()) title += " #" + r.actionId;
+            } else if (r.kind == TimelineKind::Result) {
+                title = (r.ok ? "ok " : "fail ");
+                title += r.actionName.empty() ? "result" : r.actionName;
+                if (!r.actionId.empty()) title += " #" + r.actionId;
+            } else if (r.kind == TimelineKind::User) {
+                title = oneLine(r.body.empty() ? r.title : r.body, 64);
+            } else if (r.kind == TimelineKind::Status || r.kind == TimelineKind::Error) {
+                title = oneLine(r.body.empty() ? r.title : r.body, 72);
+            } else if (r.kind == TimelineKind::Response || r.kind == TimelineKind::Final) {
+                title = oneLine(r.body.empty() ? r.title : r.body, 64);
+            } else {
+                title = oneLine(r.title.empty() ? r.body : r.title, 48);
+            }
+            line += title;
+            // Teaser only when it adds info (skip if title already ate body).
+            if (r.kind != TimelineKind::User && r.kind != TimelineKind::Status &&
+                !r.body.empty() && r.kind != TimelineKind::Response &&
+                r.kind != TimelineKind::Final) {
+                std::string teaser = oneLine(r.body, 40);
+                if (!teaser.empty() && title.find(teaser.substr(0, std::min<size_t>(12, teaser.size()))) ==
+                                          std::string::npos) {
+                    line += "  ·  ";
+                    line += teaser;
+                }
+            }
+            if (r.drillable) line += "  ↳";
         }
-        if (r.drillable) line += "  ↳";
 
         surface.text({body.x + 1, y0 + y},
-                     inkcell::text::fit_left(line, std::max(1, body.w - 3)), st);
+                     inkcell::text::fit_left(line, std::max(1, body.w - 3 - (bar ? 1 : 0))),
+                     st);
     }
 
-    if (total > vis && body.w > 2) {
+    if (total > vis && body.w > 2 && vis > 0) {
         int thumb = std::max(1, vis * vis / std::max(1, total));
-        int thumbY = maxOff <= 0 ? 0 : (off * std::max(1, vis - thumb)) / maxOff;
+        int thumbY =
+            maxOff <= 0 ? 0 : (dataOff * std::max(1, vis - thumb)) / std::max(1, total - vis);
         for (int y = 0; y < vis; ++y)
             surface.put({body.right() - 1, y0 + y},
                         (y >= thumbY && y < thumbY + thumb) ? "│" : "┆", theme::dim());
@@ -419,10 +484,5 @@ inline void drawTranscriptCanvas(inkcell::Surface& surface, inkcell::Rect body,
     }
 }
 
-// Alias kept for one call site during rename
-inline void drawTranscriptGraph(inkcell::Surface& surface, inkcell::Rect body,
-                                const ChatSurfaceModel& m) {
-    drawTranscriptCanvas(surface, body, m);
-}
 
 }  // namespace cortex::mk3::ui::chat

@@ -62,6 +62,18 @@ Shipped mid-grind: `--headless` (`5ea6f2b`), CLI free-token (`3008514`), one-wor
 
 ---
 
+## Board — Home / Sessions / body views (big move)
+
+**Plan:** `docs/tui-qol/08-home-sessions-bodyviews-overhaul.md`
+
+| ID | P | Ticket | Status |
+|----|---|--------|--------|
+| **T-GRAPH-NAME** | P0 | Remove chat "graph" name; canvas only | wave0 |
+| **T-COMPACT-FIX** | P0 | Compact scroll/header/selection/pair ACT→OK | wave0 |
+| **T-HOME-LAUNCH** | P1 | Home launchpad: focusable RECENT, NOW, CTA tiles | open |
+| **T-SESS-OS** | P1 | Sessions OS: filters, preview, adaptive cols | open |
+| **T-CANVAS-CRAFT** | P1 | Chat canvas craft (not workflow canvas) | open |
+
 ## Board — Settings SPA / categories / persistency (TODO)
 
 **Audit:** `docs/AUDITS/REPORTS/2026-08-19-settings-spa-audit.md`

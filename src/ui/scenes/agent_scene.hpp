@@ -402,7 +402,7 @@ class AgentScene final : public BaseScene {
                 persistUiPrefs(*model_);
                 return true;
             }
-            // Ctrl-O: cycle body view stream → compact → graph.
+            // Ctrl-O: cycle body view stream → compact → canvas.
             // Ctrl-Shift-O: truncate bodies (was plain Ctrl-O).
             if (event.ch == 'o' || event.ch == 'O') {
                 if (event.shift()) {
