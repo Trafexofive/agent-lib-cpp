@@ -98,6 +98,37 @@ inline void appendChildWell(std::vector<std::string>& lines, Agent* child,
     lines.push_back(head);
     int used = 1;
 
+    if (child) {
+        const auto& cfg = child->config();
+        std::string eng;
+        if (!cfg.provider.empty() || !cfg.model.empty()) {
+            eng = cfg.provider.empty() ? "?" : cfg.provider;
+            eng += "/";
+            eng += cfg.model.empty() ? "?" : cfg.model;
+        }
+        const int li = child->liveIteration();
+        const int cap = cfg.iterationCap > 0 ? cfg.iterationCap : 0;
+        std::string eline = "    │  ";
+        if (!eng.empty()) eline += eng;
+        if (live && li > 0) {
+            if (!eng.empty()) eline += "  ·  ";
+            eline += "iter ";
+            eline += std::to_string(li);
+            if (cap > 0) {
+                eline += "/";
+                eline += std::to_string(cap);
+            }
+        } else if (cap > 0 && !live) {
+            if (!eng.empty()) eline += "  ·  ";
+            eline += "cap ";
+            eline += std::to_string(cap);
+        }
+        if (eline.size() > 7) {
+            lines.push_back(eline);
+            ++used;
+        }
+    }
+
     {
         char meta[96];
         std::snprintf(meta, sizeof(meta), "    │  %d tools · %d results · hist %zu",
@@ -223,7 +254,8 @@ inline bool ShellModel::projectOneRow(const TimelineRow& row, int ri, int& focus
                 if (!row.actionName.empty()) label += "  " + row.actionName;
             }
             if (!row.actionId.empty()) label += "  #" + row.actionId;
-            // Rich meta chips from JSON body (path/cmd/url…).
+            if (!row.actionMode.empty()) label += "  " + row.actionMode;
+            if (!row.actionMeta.empty()) label += "  " + row.actionMeta;
             {
                 std::string chips = actionBodyMetaChips(row.body);
                 if (!chips.empty()) label += "  ·  " + chips;

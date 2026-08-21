@@ -40,6 +40,8 @@ struct TimelineRow {
     std::string actionType;  // tool|agent|feed|relic|workflow
     std::string actionName;
     std::string actionId;
+    std::string actionMode;  // sync | async | fire_and_forget
+    std::string actionMeta;  // eph, timeout, …
     bool drillable = false;
     bool collapsed = false;  // operator za — session-live, not persisted
 };
@@ -128,6 +130,8 @@ inline std::string serializeTimeline(const std::vector<TimelineRow>& rows) {
         if (!row.actionType.empty()) o["actionType"] = row.actionType;
         if (!row.actionName.empty()) o["actionName"] = row.actionName;
         if (!row.actionId.empty()) o["actionId"] = row.actionId;
+        if (!row.actionMode.empty()) o["actionMode"] = row.actionMode;
+        if (!row.actionMeta.empty()) o["actionMeta"] = row.actionMeta;
         if (row.drillable) o["drillable"] = true;
         arr.append(o);
     }
@@ -156,6 +160,8 @@ inline std::vector<TimelineRow> deserializeTimeline(const std::string& json) {
         row.actionType = o.get("actionType", "").asString();
         row.actionName = o.get("actionName", "").asString();
         row.actionId = o.get("actionId", "").asString();
+        row.actionMode = o.get("actionMode", "").asString();
+        row.actionMeta = o.get("actionMeta", "").asString();
         row.drillable = o.get("drillable", false).asBool();
         out.push_back(std::move(row));
     }
@@ -484,8 +490,25 @@ inline TimelineRow rowFromProtocol(const ProtocolEvent& pe) {
         row.actionType = pe.action.type;
         row.actionName = pe.action.name;
         row.actionId = pe.action.id;
+        row.actionMode = pe.action.mode.empty() ? "sync" : pe.action.mode;
+        {
+            std::string meta;
+            auto add = [&](const std::string& s) {
+                if (s.empty()) return;
+                if (!meta.empty()) meta += " ";
+                meta += s;
+            };
+            auto eph = pe.action.modifiers.find("ephemeral");
+            if (eph != pe.action.modifiers.end()) {
+                const std::string& v = eph->second;
+                if (v == "true" || v == "1" || v == "yes") add("eph");
+            }
+            auto to = pe.action.modifiers.find("timeout");
+            if (to != pe.action.modifiers.end() && !to->second.empty())
+                add("t" + to->second + "s");
+            row.actionMeta = meta;
+        }
         row.drillable = (pe.action.type == "agent" && !pe.action.name.empty());
-        // Compact header — body holds params (pretty JSON when possible).
         row.title = pe.action.type + ":" + pe.action.name + " #" + pe.action.id;
         if (row.drillable) row.title += "  ↳ enter";
         // Keep near-raw; projectOneRow applies Pretty/Compact/Raw.
