@@ -1048,6 +1048,20 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 fullResponse = visibleError;
                 st.taskComplete = true; // runtime failure, not model final
             } else {
+                if (incompleteNoted && !finalizationTurn &&
+                    ctx.iteration < workCap) {
+                    emitHarness(
+                        "THOUGHT_STALL",
+                        "Second thought-only generation after BARE_TEXT/NONFINAL. "
+                        "No <action> and no <response final=\"true\">. "
+                        "Stopping instead of burning the iteration cap.",
+                        "limit");
+                    finishTurn("thought_stall",
+                               "[THOUGHT_STALL] two thought-only gens — stopped");
+                    fullResponse = "[THOUGHT_STALL]";
+                    st.taskComplete = true;
+                    break;
+                }
                 steerIncompleteGeneration(ctx, iterationRawOutput, workCap,
                                           incompleteNoted, lastSalvage);
             }
@@ -1553,11 +1567,31 @@ void Agent::publishCleanThought(ProtocolStreamState &st, const std::string &rawA
         cleaned = cleaned.substr(0, kThoughtPubCap - 48) +
                   "\n…[thought UI safety; full stream in dump raw/iterations]";
     thoughtOutput_ = cleaned; // authoritative cleaned form for this run
-    if (st.thoughtEventIdx != static_cast<size_t>(-1) &&
-        st.thoughtEventIdx < protocolEvents_.size() &&
-        protocolEvents_[st.thoughtEventIdx].kind ==
-            ProtocolEventKind::THOUGHT) {
-        protocolEvents_[st.thoughtEventIdx].text = cleaned;
+    auto reuseThought = [&]() -> size_t {
+        if (st.thoughtEventIdx != static_cast<size_t>(-1) &&
+            st.thoughtEventIdx < protocolEvents_.size() &&
+            protocolEvents_[st.thoughtEventIdx].kind ==
+                ProtocolEventKind::THOUGHT)
+            return st.thoughtEventIdx;
+        // One thought well per prompt() epoch, unless an ACTION sealed it.
+        for (size_t i = protocolEvents_.size(); i-- > st.runEpochStart;) {
+            if (protocolEvents_[i].kind == ProtocolEventKind::ACTION)
+                return static_cast<size_t>(-1);
+            if (protocolEvents_[i].kind == ProtocolEventKind::THOUGHT)
+                return i;
+        }
+        return static_cast<size_t>(-1);
+    };
+    size_t idx = reuseThought();
+    if (idx != static_cast<size_t>(-1)) {
+        std::string& dst = protocolEvents_[idx].text;
+        if (cleaned.find(dst) != std::string::npos)
+            dst = cleaned;
+        else if (dst.find(cleaned) == std::string::npos) {
+            dst += "\n\n---\n\n";
+            dst += cleaned;
+        }
+        st.thoughtEventIdx = idx;
     } else {
         st.thoughtEventIdx = protocolEvents_.size();
         protocolEvents_.push_back(

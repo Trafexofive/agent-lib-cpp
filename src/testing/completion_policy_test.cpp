@@ -59,18 +59,20 @@ void test_bare_text_recovers_then_final() {
 }
 
 void test_autonomous_bare_continues_nonfinal() {
-    // Mid-loop never finalizes bare text — even autonomous. Cap salvages.
+    // One BARE_TEXT, one recovery gen. Second thought-only → THOUGHT_STALL.
     auto sp = std::make_shared<ScriptedProvider>(std::deque<std::string>{
         "Draft answer v1 — still bare.",
         "Draft answer v2 — still bare.",
-        "<response final=\"true\">done after harness</response>",
+        "<response final=\"true\">should not be reached</response>",
     });
     AgentConfig cfg = baseCfg("autonomous");
     cfg.iterationCap = 6;
     Agent agent(cfg, sp);
     std::string out = agent.prompt("go", "", true);
-    CHECK(out.find("done after harness") != std::string::npos,
-          "autonomous continues after bare until a real final");
+    CHECK(out.find("THOUGHT_STALL") != std::string::npos,
+          "second thought-only gen stalls instead of burning cap");
+    CHECK(out.find("should not be reached") == std::string::npos,
+          "stall does not consume a third generation");
     int bareN = 0;
     bool earlyFinal = false;
     for (const auto& h : agent.history()) {
@@ -96,7 +98,8 @@ void test_strict_never_promotes_at_cap() {
     std::string out = agent.prompt("go", "", true);
     const bool stopped =
         out.find("stopped without emitting") != std::string::npos ||
-        out.find("THOUGHT-ONLY HARD STOP") != std::string::npos;
+        out.find("THOUGHT-ONLY HARD STOP") != std::string::npos ||
+        out.find("THOUGHT_STALL") != std::string::npos;
     CHECK(stopped, "strict policy does not treat bare text as a final answer");
     CHECK(out.find("orphan prose") == std::string::npos || stopped,
           "strict does not return salvage as a successful completion");
