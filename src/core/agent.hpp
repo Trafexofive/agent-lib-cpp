@@ -423,6 +423,9 @@ class Agent {
     std::vector<ProtocolResult> protocolResults_;
     std::vector<ProtocolEvent> protocolEvents_;
     std::map<std::string, std::shared_ptr<Agent>> subAgents_;
+    // Serialize prompt() on the same child; different names may overlap.
+    std::mutex subAgentMuMapMu_;
+    std::map<std::string, std::unique_ptr<std::mutex>> subAgentRunMus_;
     // Workflow integration: handlers for human-in-loop and checkpoint steps
     HumanPromptHandler humanPromptHandler_;
     CheckpointHandler checkpointHandler_;

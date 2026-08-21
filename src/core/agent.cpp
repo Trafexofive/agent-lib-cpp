@@ -1380,6 +1380,15 @@ Json::Value Agent::handleAgentDelegate(AgentContext &ctx,
         return err;
     }
 
+    std::mutex* childMu = nullptr;
+    {
+        std::lock_guard<std::mutex> g(subAgentMuMapMu_);
+        auto& slot = subAgentRunMus_[agentName];
+        if (!slot) slot = std::make_unique<std::mutex>();
+        childMu = slot.get();
+    }
+    std::lock_guard<std::mutex> childRun(*childMu);
+
     // op: prompt (default) | inspect | context | history
     // XML attrs land in params (parser extra-attr path), e.g.
     //   <action type="agent" name="reader" op="inspect" last_n="10"/>

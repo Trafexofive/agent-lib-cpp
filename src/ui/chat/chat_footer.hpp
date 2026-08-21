@@ -122,15 +122,15 @@ struct ChatFooterModel {
     std::vector<std::string> extraLines;
 };
 
-inline int footerBaseRows(const ChatFooterModel&) { return 3; }
+inline int footerBaseRows(const ChatFooterModel&) { return 5; }
 
 inline int footerHeightFor(const ChatFooterModel&, int maxAvail) {
     if (maxAvail < 1) return 0;
-    return std::min(3, maxAvail);
+    return std::min(5, maxAvail);
 }
 
-inline constexpr int kChatFooterHMin = 3;
-inline constexpr int kChatFooterHTypical = 3;
+inline constexpr int kChatFooterHMin = 5;
+inline constexpr int kChatFooterHTypical = 5;
 
 inline void drawCtxMeter(inkcell::Surface& surface, int x, int y, int barW, float pct,
                          inkcell::Style on, inkcell::Style off) {
@@ -189,6 +189,9 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             if (!f.manifestStem.empty()) m += "   " + f.manifestStem;
             putL(2, x0, m, dim, inner);
         }
+        if (box.h >= 4)
+            putL(3, x0, f.agentName.empty() ? "-" : f.agentName, text, inner);
+        if (box.h >= 5) putL(4, x0, "^F live", dim, inner);
         return;
     }
     if (f.pane == ChatFooterPane::Engine) {
@@ -207,6 +210,8 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             h += view;
             putL(2, x0, h, dim, inner);
         }
+        if (box.h >= 4) putL(3, x0, footerFmtBytes(f.tokenBytes), dim, inner);
+        if (box.h >= 5) putL(4, x0, "^F live", dim, inner);
         return;
     }
 
@@ -297,6 +302,46 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         }
         if (!tr.empty() && x < right - 2)
             surface.text({x, y0 + 2}, inkcell::text::truncate(tr, right - x), dim);
+    }
+
+    if (box.h < 4) return;
+
+    // 3 — meters (live occupancy)
+    {
+        auto kv = [&](int& x, const char* k, const std::string& v, inkcell::Style vs) {
+            if (x >= right - 8) return;
+            surface.text({x, y0 + 3}, k, dim);
+            x += inkcell::text::display_width(k) + 1;
+            surface.text({x, y0 + 3}, v, vs);
+            x += inkcell::text::display_width(v) + 3;
+        };
+        int x = x0;
+        kv(x, "turn", std::to_string(std::max(0, f.turnCount)), text);
+        kv(x, "iter",
+           std::to_string(std::max(0, f.iterCurrent)) + "/" +
+               std::to_string(std::max(0, f.iterMax)),
+           text);
+        kv(x, "open", std::to_string(std::max(0, f.pendingOps)),
+           f.pendingOps > 0 ? liveSt : dim);
+        kv(x, "hist",
+           std::to_string(std::max(0, f.historyUsed)) + "/" +
+               std::to_string(std::max(0, f.historyMax)),
+           dim);
+        kv(x, "", footerFmtBytes(f.tokenBytes), dim);
+    }
+
+    if (box.h < 5) return;
+
+    // 4 — place
+    {
+        std::string left = f.path.empty() ? "." : f.path;
+        if (!f.manifestStem.empty()) {
+            left += "   ";
+            left += f.manifestStem;
+        }
+        std::string sid = suffix8(f.sessionId);
+        int rw = putR(4, sid, dim);
+        putL(4, x0, left, dim, std::max(8, inner - rw));
     }
 }
 

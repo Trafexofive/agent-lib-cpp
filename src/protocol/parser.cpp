@@ -1053,12 +1053,19 @@ void Parser::executeAction(std::shared_ptr<ParsedAction> action) {
 
     switch (action->mode) {
         case ExecutionMode::SYNC:
-            doExecute(action);
+            // Agent actions must not block feed(): a sync child (7s) starved
+            // the next sibling ACTION_START so the TUI only showed one card.
+            // Tools stay in-thread. Generation still joins via waitForActions.
+            if (action->type == ActionType::AGENT) {
+                std::lock_guard<std::mutex> lock(mtx_);
+                futures_.push_back(
+                    std::async(std::launch::async, doExecute, action));
+            } else {
+                doExecute(action);
+            }
             break;
         case ExecutionMode::ASYNC:
         case ExecutionMode::FIRE_AND_FORGET: {
-            // Both are joinable. fire_and_forget means "model should not wait
-            // for a result to plan the next tag", not "abandon the thread".
             std::lock_guard<std::mutex> lock(mtx_);
             futures_.push_back(std::async(std::launch::async, doExecute, action));
             break;

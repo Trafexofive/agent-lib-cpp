@@ -1247,14 +1247,14 @@ inline void drawCompletionMenu(inkcell::Surface& surface, inkcell::Rect area,
     }
 }
 
-// Footer is a fixed 3-row plate. Never grow with live/idle/extraLines.
+// Footer is a fixed 5-row plate.
 inline int chatFooterReserve(const ChatFooterModel* footer, int frameH, int promptH,
                              int menuH) {
     if (!footer) return 0;
     (void)promptH;
     (void)menuH;
-    if (frameH < 8) return std::min(3, std::max(1, frameH / 4));
-    return 3;
+    if (frameH < 12) return std::min(5, std::max(1, frameH / 4));
+    return 5;
 }
 
 }  // namespace cortex::mk3::ui::chat
@@ -1267,7 +1267,7 @@ inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, cons
                             const ChatFooterModel* footer = nullptr) {
     surface.clear(theme::base_bg());
     if (frame.w <= 0 || frame.h <= 0) return;
-    // Layout (bottom-up): footer(3) · prompt · menu · transcript.
+    // Layout (bottom-up): footer(5) · prompt · menu · transcript.
     const int promptH = std::max(1, promptBoxHeight(m, frame.w));
     int menuH = completionMenuHeight(m, frame.w);
     const int footerH = chatFooterReserve(footer, frame.h, promptH, menuH);
