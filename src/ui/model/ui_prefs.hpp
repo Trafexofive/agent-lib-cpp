@@ -3,8 +3,9 @@
 // Path: $XDG_CONFIG_HOME/cortex-mk3/ui.json  or  ~/.config/cortex-mk3/ui.json
 
 #include <cstdlib>
-#include <mutex>
+#include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
@@ -30,7 +31,8 @@ struct WfCamPref {
 
 struct UiPrefState {
     bool showThoughts = true;
-    bool truncateBodies = true;
+    // Default OFF — short cards opt-in (Settings · SHORT CARDS).
+    bool truncateBodies = false;
     bool showRaw = false;
     // Action/result body paint: "json" | "yaml" | "raw"
     std::string inputBodyFmt = "json";
@@ -257,7 +259,7 @@ inline void loadUiPrefs() {
 
     auto& shad = uiPrefShadow();
     shad.showThoughts = jsonGetBool(body, "show_thoughts", true);
-    shad.truncateBodies = jsonGetBool(body, "truncate_bodies", true);
+    shad.truncateBodies = jsonGetBool(body, "truncate_bodies", false);
     shad.showRaw = jsonGetBool(body, "show_raw", false);
     {
         std::string in = jsonGetString(body, "input_body_fmt");
@@ -390,6 +392,7 @@ inline std::string serializeUiPrefs(const std::string& themeName,
     const auto& s = uiPrefShadow();
     std::ostringstream oss;
     oss << "{\n"
+        << "  \"ui_schema_version\": 1,\n"
         << "  \"theme\": \"" << themeName << "\",\n"
         << "  \"shader\": \"" << shaderId << "\",\n"
         << "  \"shader_enabled\": " << (gfx::fieldEnabled() ? "true" : "false") << ",\n"
@@ -426,8 +429,29 @@ inline std::string serializeUiPrefs(const std::string& themeName,
 inline void writeUiPrefsFile(const std::string& body) {
     std::string path = uiPrefsPath();
     ensureParentDir(path);
-    std::ofstream out(path, std::ios::trunc);
-    if (out) out << body;
+    // Atomic replace: write tmp beside target then rename — crash mid-write
+    // must not leave a half JSON that loads as empty defaults forever.
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out) return;
+        out << body;
+        out.flush();
+        if (!out) {
+            std::error_code ec;
+            std::filesystem::remove(tmp, ec);
+            return;
+        }
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
+        // Cross-device rename fallback
+        std::filesystem::copy_file(
+            tmp, path,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        std::filesystem::remove(tmp, ec);
+    }
 }
 
 inline void saveUiPrefs() {

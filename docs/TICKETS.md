@@ -33,7 +33,7 @@ Evidence dumps under `.cortex/dev/ephemeral-*` and
 
 | ID | Ticket | Symptom (dump) | Acceptance |
 |----|--------|----------------|------------|
-| **T-DUP-STREAM** | Model streams same action id twice in one gen (full+full or hollow+full). History stores both tags. | `1905044` list×2; `1923837` list×2; pre-fix grep `{}`+full | One execute; optional collapse duplicate tags in rendered history; hollow `{}` never executes |
+| **T-DUP-STREAM** | (mitigated) collapseDuplicateActionTags + hollow `{}` | (full+full or hollow+full). History stores both tags. | `1905044` list×2; `1923837` list×2; pre-fix grep `{}`+full | One execute; optional collapse duplicate tags in rendered history; hollow `{}` never executes |
 | **T-DUP-STREAM** | (still open) Model streams same action id twice | history dual tags | collapse / single execute |
 
 ### Open — P1
@@ -70,9 +70,9 @@ Operator ask: **settings category + options overhaul**, **persistency**, **SPA a
 
 | ID | Priority | Ticket | Acceptance |
 |----|----------|--------|------------|
-| **T-SET-IA** | P1 | Re-IA categories; rename opaque labels (INPUT/OUTPUT FMT, FIELD vs CHAT FIELD) | Spec + `settings_table` + draw |
-| **T-SET-BODYVIEW** | P0 | Cabinet row for body view stream/compact/canvas (prefs already exist) | ui.json round-trip + Settings ←→ |
-| **T-SET-PERSIST-V** | P1 | `ui_schema_version` + atomic write (tmp+rename) | Crash-safe save |
+| **T-SET-IA** | P1 | Rename opaque labels (SHORT CARDS, ACTION/RESULT BODY, HUB FIELD…) | **partial** labels; full SPA rail still open |
+| **T-SET-BODYVIEW** | P0 | BODY VIEW row | **shipped** `6ad83a0` |
+| **T-SET-PERSIST-V** | P1 | `ui_schema_version` + atomic write | **shipped** (v1 + tmp/rename) |
 | **T-SET-SPA** | P1 | Two-pane SPA: category rail + option list + focus help | h/l or tab categories; j/k options |
 | **T-SET-ENGINE** | P2 | ENGINE category: provider/model/fallback surface | Display + picker deep-link |
 | **T-SET-FOCUS-PERSIST** | P2 | Persist settingsFocus / scroll | Reopen same row |

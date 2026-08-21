@@ -62,7 +62,7 @@ struct InkcellAppConfig {
     bool startAtManifests = false;
     // Chat render modifiers (orthogonal to -p / session / lifecycle).
     bool showThoughts = true;
-    bool truncateBodies = true;
+    bool truncateBodies = false;
 };
 
 inline bool snapshotMode() {
@@ -123,7 +123,7 @@ struct ShellModel : TimelineStore {
     bool uiDevMode = false;
     // When true, long block bodies are capped (pi-like truncation) with a
     // "… N more lines" note. Toggle via /truncate or CLI --[no-]truncate.
-    bool truncateBodies = true;
+    bool truncateBodies = false;
     // Action (input) / result (output) body presentation: json | yaml | raw.
     // Settings · CHAT · INPUT FMT / OUTPUT FMT carousels.
     BodyRenderMode actionBodyMode = BodyRenderMode::PrettyJson;

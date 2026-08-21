@@ -129,7 +129,8 @@ struct DashboardState {
     int settingsFocus = 1;  // first item under LOOK
     int settingsScroll = 0;
     // Legacy name kept for a few call sites — equals kSettingsRowN.
-    static constexpr int settingsOptionCount = 32;
+    // Legacy alias — keep ≥ SettingsOpt::Count; real layout is kSettingsRowN.
+    static constexpr int settingsOptionCount = 64;
 
     // Inline edit buffer for CWD setting. Entered via `e` on the CWD row.
     // Captures next chars; Backspace deletes; Enter commits (~ expanded);
