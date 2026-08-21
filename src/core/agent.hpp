@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "../core/provider.hpp"
+#include "../core/run_control.hpp"
 #include "../core/types.hpp"
 #include "../protocol/events.hpp"  // ProtocolEvent* PODs (foundation F1)
 #include "../protocol/parser.hpp"
@@ -29,31 +30,6 @@
 namespace cortex::mk3 {
 
 namespace dispatch { class ActionDispatcher; }
-
-extern std::atomic<bool> g_running;
-
-// Why g_running flipped false — distinguishes operator cancel from wall kills.
-enum class RunStopKind : uint8_t {
-    None = 0,
-    Operator = 1,   // Ctrl-C/X, slash stop, TUI stopAgentLoop
-    ExternalSignal = 2,  // SIGTERM / external `timeout` / kill
-    StreamAbort = 3,     // provider callback abort without operator stop
-};
-extern std::atomic<uint8_t> g_stop_kind;  // RunStopKind
-
-inline void requestRunStop(RunStopKind kind) {
-    g_stop_kind.store(static_cast<uint8_t>(kind), std::memory_order_release);
-    g_running.store(false, std::memory_order_release);
-}
-inline RunStopKind currentRunStopKind() {
-    return static_cast<RunStopKind>(
-        g_stop_kind.load(std::memory_order_acquire));
-}
-inline void clearRunStop() {
-    g_stop_kind.store(static_cast<uint8_t>(RunStopKind::None),
-                      std::memory_order_release);
-    g_running.store(true, std::memory_order_release);
-}
 
 // ProtocolAction / ProtocolResult / ProtocolEventKind / ProtocolEvent:
 // defined in protocol/events.hpp (included above). Agent remains the runtime.
@@ -251,6 +227,10 @@ class Agent {
     void removeSubAgent(const std::string& name);
     bool hasSubAgent(const std::string& name) const;
     Agent* getSubAgent(const std::string& name) const;
+    void requestStop(RunStopKind k = RunStopKind::Operator);
+    RunControl& runControl() { return runControl_; }
+    const RunControl& runControl() const { return runControl_; }
+    void restorePrimaryIfFallback();
     std::vector<std::string> subAgentNames() const {
         std::vector<std::string> names;
         for (const auto& [name, _] : subAgents_)
@@ -413,6 +393,7 @@ class Agent {
     std::string rawLlOutput_;        // raw LLM stream (all tokens)
     std::string responseOutput_;     // sanitized response text
     std::atomic<int> liveIteration_{0};  // 1..cap while runLoop; 0 idle
+    RunControl runControl_;
     std::string thoughtOutput_;      // thought content (hidden in FULL)
     std::string lastPrompt_;         // last built prompt for /prompts
     std::vector<std::string>
@@ -452,6 +433,10 @@ class Agent {
     mutable std::string lastCompactUiPending_;
     // One cognitive_engine.fallback attempt per top-level prompt().
     bool fallbackTriedThisTurn_ = false;
+    bool fallbackSwappedThisTurn_ = false;
+    LlmProviderPtr fallbackSavedProvider_;
+    std::string fallbackSavedProviderName_;
+    std::string fallbackSavedModel_;
 };
 
 }  // namespace cortex::mk3

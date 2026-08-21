@@ -31,9 +31,6 @@
 
 namespace cortex::mk3 {
 
-std::atomic<bool> g_running{true};
-std::atomic<uint8_t> g_stop_kind{static_cast<uint8_t>(RunStopKind::None)};
-
 // ── XML attribute escaping ──────────────────────────────────────────────
 
 // Vet-fix: harness resolver. Searches a deterministic list of roots
@@ -199,12 +196,36 @@ std::string Agent::prompt(const std::string &input, StreamCallback onToken,
     }
     lastSessionId_ = sessionId;
     fallbackTriedThisTurn_ = false;
+    fallbackSwappedThisTurn_ = false;
 
+    TlsRunGuard tls(&runControl_);
     std::string result = runLoop(ctx);
+    restorePrimaryIfFallback();
 
     dumpSessionArtifacts();
 
     return result;
+}
+
+void Agent::requestStop(RunStopKind k) {
+    runControl_.requestStop(k);
+    std::vector<std::shared_ptr<Agent>> kids;
+    kids.reserve(subAgents_.size());
+    for (const auto& kv : subAgents_)
+        kids.push_back(kv.second);
+    for (const auto& kptr : kids) {
+        if (kptr)
+            kptr->requestStop(k);
+    }
+}
+
+void Agent::restorePrimaryIfFallback() {
+    if (!fallbackSwappedThisTurn_ || !fallbackSavedProvider_)
+        return;
+    setProvider(fallbackSavedProvider_, fallbackSavedProviderName_,
+                fallbackSavedModel_);
+    fallbackSavedProvider_.reset();
+    fallbackSwappedThisTurn_ = false;
 }
 
 Json::Value Agent::inspectContext(int lastN) const {
@@ -270,12 +291,8 @@ Json::Value Agent::inspectContext(int lastN) const {
 // ═══════════════════════════════════════════════════════════════════════
 
 std::string Agent::runLoop(AgentContext &ctx) {
-    // Fresh turn: clear prior stop kind. Operator/SIGTERM set it again as needed.
-    if (g_running.load(std::memory_order_acquire))
-        g_stop_kind.store(static_cast<uint8_t>(RunStopKind::None),
-                          std::memory_order_release);
-    else if (currentRunStopKind() == RunStopKind::None)
-        requestRunStop(RunStopKind::Operator);
+    // TlsRunGuard in prompt() already armed this agent's RunControl.
+    // g_hardKill (SIGINT/SIGTERM) is left alone.
     std::string fullResponse;
     std::string rawOutput;
     // Continuation = this Agent already has transcript from a prior prompt().
@@ -824,15 +841,9 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     break;
                 }
 
-                // Clear soft stream-abort stop so retries can run generateStream.
-                if (isStreamAbort && sk == RunStopKind::StreamAbort) {
-                    g_stop_kind.store(static_cast<uint8_t>(RunStopKind::None),
-                                      std::memory_order_release);
-                    g_running.store(true, std::memory_order_release);
-                } else if (isStreamAbort && sk == RunStopKind::None && !g_running) {
-                    // Stall callback set g_running false without kind — recover.
-                    g_running.store(true, std::memory_order_release);
-                }
+                // Soft recover THIS agent only. Never store g_hardKill=false.
+                if (isStreamAbort && !g_hardKill.load(std::memory_order_acquire))
+                    runControl_.clearSoft();
 
                 auto backoffSleep = [&]() {
                     int waitMs = std::min(
@@ -888,6 +899,12 @@ std::string Agent::runLoop(AgentContext &ctx) {
                         const std::string to =
                             config_.fallbackProvider + "/" +
                             config_.fallbackModel;
+                        if (!fallbackSwappedThisTurn_) {
+                            fallbackSavedProvider_ = provider_;
+                            fallbackSavedProviderName_ = config_.provider;
+                            fallbackSavedModel_ = config_.model;
+                            fallbackSwappedThisTurn_ = true;
+                        }
                         setProvider(fb, config_.fallbackProvider,
                                     config_.fallbackModel);
                         std::string reason = msg;

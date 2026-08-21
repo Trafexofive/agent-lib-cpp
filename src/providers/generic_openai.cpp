@@ -13,7 +13,7 @@
 #include <thread>
 #include <unordered_map>
 
-#include "../core/agent.hpp"  // g_running
+#include "../core/run_control.hpp"  // runIsActive / g_running
 
 namespace cortex::mk3::providers {
 

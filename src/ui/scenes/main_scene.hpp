@@ -352,7 +352,10 @@ class MainScene final : public BaseScene {
         // CWD on their next call, activeSessionId is preserved.
         if (!model_->keepLiveOnCwdChange &&
             model_->running && !model_->activeSessionId.empty()) {
-            requestRunStop(RunStopKind::Operator);
+            if (model_->rootAgent)
+                model_->rootAgent->requestStop(RunStopKind::Operator);
+            else
+                requestRunStop(RunStopKind::Operator);
             model_->running = false;
             model_->status = "stopped";
             session::activeSession().clear();

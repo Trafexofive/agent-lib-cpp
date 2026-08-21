@@ -1,7 +1,7 @@
 // src/tools/builtins/grep.cpp — grep native builtin
 #include "grep.hpp"
 #include "common.hpp"
-#include "src/core/agent.hpp"  // g_running — cancel mid-walk
+#include "src/core/run_control.hpp"  // g_running — cancel mid-walk
 
 #include <fnmatch.h>
 

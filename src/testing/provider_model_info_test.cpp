@@ -6,9 +6,7 @@
 
 #include "src/providers/generic_openai.hpp"
 
-namespace cortex::mk3 {
-std::atomic<bool> g_running{true};
-}
+
 
 static void expect(bool condition, const char* message) {
     if (!condition) {

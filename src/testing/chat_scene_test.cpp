@@ -214,20 +214,20 @@ void test_ctrl_c_state() {
     scenes::AgentScene scene(cfg, bridge, model);
     // 1st Ctrl-C while running → cancel (pi UX), not quit.
     model->running = true;
-    g_running = true;
+    clearRunStop();
     scene.on_key(key(inkcell::KeyCode::CtrlC));
-    check(!g_running && model->status.find("cancelling") == 0,
+    check(!runIsActive() && model->status.find("cancelling") == 0,
           "Ctrl-C requests active turn cancellation");
     check(model->pendingRoute != PendingRoute::Quit, "1st Ctrl-C while running does not quit");
     // 2nd Ctrl-C when idle → quit.
     model->running = false;
     model->askActive = false;
     model->status = "idle";
-    g_running = true;
+    clearRunStop();
     model->clearRoute();
     scene.on_key(key(inkcell::KeyCode::CtrlC));
     check(model->pendingRoute == PendingRoute::Quit, "2nd Ctrl-C when idle requests quit");
-    g_running = true;
+    clearRunStop();
 }
 
 void test_esc_never_routes_main_or_quit() {

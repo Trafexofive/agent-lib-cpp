@@ -22,6 +22,8 @@ inline void runAgentTurn(AgentBridge &bridge, Agent &agent,
                          const std::string &sessionId, bool ephemeral,
                          std::atomic<bool> &done) {
     try {
+        if (!g_hardKill.load(std::memory_order_acquire))
+            agent.runControl().clearSoft();
         bridge.publish(UiEvent::status("agent running"));
         // TUI owns the alternate screen. Any agent/provider stderr mid-frame
         // corrupts cells (prompt leakage, "eaten spaces", overlapping blocks).

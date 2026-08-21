@@ -12,7 +12,7 @@
 #include <sstream>
 #include <thread>
 
-#include "src/core/agent.hpp"  // extern std::atomic<bool> g_running
+#include "src/core/run_control.hpp"  // runIsActive / g_running
 
 namespace cortex::mk3::protocol {
 
