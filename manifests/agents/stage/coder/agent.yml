@@ -16,7 +16,7 @@ cognitive_engine:
     # provider: opencode-go
     # model: deepseek-v4-pro
     parameters:
-      temperature: 0.75
+      temperature: 0.8
       max_tokens: 65536
   fallback:
     provider: opencode-go
@@ -52,27 +52,26 @@ runtime:
       # every_turns: 1            # reclamp every prompt
       # every_turns: 0            # compute once, freeze forever
       # cap: 0                    # fall back to runtime.history_cap alias
-    # trigger:                    # uncomment = tag filter (0 LLM). omit = tail only
-    #   context_tokens: 72k       # also: context_window / 72000
-    #   context_pct: 0.80         # needs model_context_tokens
-    #   turns: 8                  # user turns since last trim
-    #   model_context_tokens: 128000
-    # cooldown:
-    #   min_turns: 1
-    #   min_seconds: 0
-    # policy:                     # alias: filter:
-    #   default: { keep: tail, keep_last: 8, truncate_chars: 800 }
-    #   # keep: all | tail | none
-    #   tags:
-    #     user:     { keep: all }
-    #     parent:   { keep: all }
-    #     thought:  { keep: none }   # strip <thought> from Agent lines
-    #     action:   { keep: tail, keep_last: 8, truncate_chars: 800 }
-    #     result:   { keep: tail, keep_last: 8, truncate_chars: 600, on_error: keep }
-    #     response: { keep: tail, keep_last: 3, truncate_chars: 2400 }
-    #     agent:    { keep: tail, keep_last: 8, truncate_chars: 2000 }
-    #     system:   { keep: tail, keep_last: 8, truncate_chars: 800 }
-    #   never_drop: [pin, open_ask]
+    trigger:
+      context_tokens: 72k
+      context_pct: 0.80
+      turns: 8
+      model_context_tokens: 500000
+    cooldown:
+      min_turns: 1
+      min_seconds: 0
+    policy:
+      default: { keep: tail, keep_last: 8, truncate_chars: 800 }
+      tags:
+        user:     { keep: all }
+        parent:   { keep: all }
+        thought:  { keep: none }
+        action:   { keep: tail, keep_last: 8, truncate_chars: 800 }
+        result:   { keep: tail, keep_last: 8, truncate_chars: 600, on_error: keep }
+        response: { keep: tail, keep_last: 3, truncate_chars: 2400 }
+        agent:    { keep: tail, keep_last: 8, truncate_chars: 2000 }
+        system:   { keep: tail, keep_last: 8, truncate_chars: 800 }
+      never_drop: [pin, open_ask]
     # overrides:
     #   tags:
     #     result: { keep_last: 12 }
@@ -86,7 +85,7 @@ runtime:
       context_tokens: 50k # also: context_window
       context_pct: 0.65 # needs model_context_tokens
       turns: 15 # user turns since last compact
-      model_context_tokens: 128000 # window size for context_pct
+      model_context_tokens: 500000 # window size for context_pct
 
     cooldown:
       min_turns: 2

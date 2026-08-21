@@ -865,10 +865,13 @@ class AgentScene final : public BaseScene {
             foot.tailEvery = c.effectiveTailEveryTurns();
             foot.trimArmTokens = c.trim.triggerContextTokens;
             foot.compactArmTokens = c.compaction.triggerContextTokens;
-            if (c.trim.modelContextTokens > 0)
-                foot.ctxMaxTokens = c.trim.modelContextTokens;
-            else if (c.compaction.modelContextTokens > 0)
-                foot.ctxMaxTokens = c.compaction.modelContextTokens;
+            {
+                int win = 0;
+                if (c.trim.modelContextTokens > 0) win = c.trim.modelContextTokens;
+                if (c.compaction.modelContextTokens > win)
+                    win = c.compaction.modelContextTokens;
+                if (win > 0) foot.ctxMaxTokens = win;
+            }
             // Arm the nearest live trigger (trim first — it fires first).
             if (c.trim.filterEnabled && c.trim.triggerContextTokens > 0)
                 foot.ctxCompactAt = c.trim.triggerContextTokens;
@@ -881,13 +884,8 @@ class AgentScene final : public BaseScene {
             foot.iterCurrent = li > 0 ? li : 0;
             foot.historyMax = c.effectiveHistoryCap();
             foot.historyUsed = static_cast<int>(live->history().size());
-            // Rough token estimate: history chars/4 + live stream + system overhead.
-            size_t est = 0;
-            for (const auto& h : live->history())
-                est += (h.size() + 3) / 4;
-            est += static_cast<size_t>(std::max(0, model_->tokenBytes) + 3) / 4;
-            est += 6000;  // system/harness/tools card overhead
-            foot.ctxUsedTokens = static_cast<int>(est);
+            // Same estimator compact uses. Live stream bytes are NOT prompt tokens.
+            foot.ctxUsedTokens = live->estimatedPromptTokens();
             if (foot.ctxMaxTokens <= 0) foot.ctxMaxTokens = 128000;
             // Flash COMPACTED ~8s after a real compact — never sticky forever.
             foot.compactedRecently =

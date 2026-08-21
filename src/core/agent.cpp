@@ -1259,6 +1259,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
     }
 
     liveIteration_.store(0, std::memory_order_relaxed);
+    // After cancel/timeout the next prompt() may be minutes away — shrink now.
+    applyCtxEconomyInPlace(ctx.iteration, /*force=*/false, ctx.sessionId);
     if (ctx.raw && !rawOutput.empty()) {
         return rawOutput;
     }

@@ -557,6 +557,18 @@ runtime:
     PASS();
 }
 
+void test_coder_trim_and_compaction_window() {
+    TEST("stage/coder trim filter + 500k window parse");
+    auto cfg = ManifestLoader::loadAgentConfig("manifests/agents/stage/coder/agent.yml");
+    CHECK(cfg.trim.configured && cfg.trim.filterEnabled, "coder trim filter on");
+    CHECK(cfg.trim.tailCap == 2400, "coder trim.tail.cap");
+    CHECK(cfg.trim.modelContextTokens == 500000 || cfg.compaction.modelContextTokens == 500000,
+          "coder window 500k");
+    CHECK(cfg.compaction.enabled, "coder compaction on");
+    CHECK(cfg.compaction.triggerContextTokens == 50000, "coder compact arm 50k");
+    PASS();
+}
+
 int main() {
     std::cout.setf(std::ios::unitbuf);
     std::cout << "\n╔══════════════════════════════════════════╗\n";
@@ -577,6 +589,7 @@ int main() {
     test_import_files_remain_prompt_only();
     test_compaction_block_and_history_cap_every();
     test_trim_peer_of_compaction();
+    test_coder_trim_and_compaction_window();
 
     std::cout << "\n──────────────────────────────────────────\n";
     std::cout << "  " << passed << " passed, " << failed << " failed\n";

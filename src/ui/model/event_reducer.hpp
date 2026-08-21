@@ -102,6 +102,7 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
             if (isCancel) {
                 turn.failed = false;
                 turn.status = "cancelled";
+                store.tokenBytes = 0;
                 store.timelineState = PageState::Populated;
                 // No Error row — cancel is an operator action, not a fault.
             } else {

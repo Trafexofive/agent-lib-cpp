@@ -255,6 +255,11 @@ class Agent {
     const std::string& lastEconomyCode() const { return lastEconomyCode_; }
     // Public so parent can fold child history after delegate return.
     void compactHistoryInPlaceIfConfigured();
+    // 0-LLM trim then compaction. Persists truncates into history_ (not just drops).
+    // force=true skips shouldTrigger (child fold-up / end-of-turn).
+    bool applyCtxEconomyInPlace(int iteration = 0, bool force = false,
+                                const std::string& sessionId = "") const;
+    int estimatedPromptTokens() const;
 
     // Hot-swap cognitive engine (slash /model). Keeps history/tools/session.
     void setProvider(LlmProviderPtr p, std::string providerName, std::string modelName) {
