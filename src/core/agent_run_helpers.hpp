@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "run_control.hpp"
 #include "types.hpp"
 
 namespace cortex::mk3 {
@@ -528,6 +529,61 @@ inline std::string buildRuntimeHarness(const std::string& code, int iteration,
     os << "  <do_not>" << doNot << "</do_not>\n";
     os << "</harness>";
     return os.str();
+}
+
+enum class TransportClass {
+    HardOperator,
+    HardExternal,
+    Timeout,
+    RegionForbidden,
+    EmptyPayload,
+    StreamAbort,
+    TransientNet,
+    Fatal,
+};
+
+inline TransportClass classifyTransportError(const std::string& msg, RunStopKind sk) {
+    if (sk == RunStopKind::ExternalSignal ||
+        msg.find("Operation too slow") != std::string::npos)
+        return TransportClass::HardExternal;
+    if (sk == RunStopKind::Operator || msg == "cancelled" ||
+        msg.find("cancelled by operator") != std::string::npos)
+        return TransportClass::HardOperator;
+    if (msg.find("HTTP 403") != std::string::npos ||
+        msg.find("RegionError") != std::string::npos ||
+        (msg.find("region") != std::string::npos && msg.find("HTTP") != std::string::npos))
+        return TransportClass::RegionForbidden;
+    const bool streamAbort =
+        msg.find("Failed writing received data") != std::string::npos ||
+        msg.find("ABORTED_BY_CALLBACK") != std::string::npos ||
+        msg.find("stream aborted") != std::string::npos ||
+        sk == RunStopKind::StreamAbort;
+    if (streamAbort)
+        return TransportClass::StreamAbort;
+    if (msg.find("Timeout") != std::string::npos ||
+        msg.find("timeout") != std::string::npos ||
+        msg.find("timed out") != std::string::npos)
+        return TransportClass::Timeout;
+    if (msg.find("chat content is empty") != std::string::npos ||
+        msg.find("content is empty") != std::string::npos ||
+        (msg.find("HTTP 400") != std::string::npos &&
+         (msg.find("bad_request") != std::string::npos ||
+          msg.find("invalid params") != std::string::npos)))
+        return TransportClass::EmptyPayload;
+    if (msg.find("CURL error") != std::string::npos ||
+        msg.find("Couldn't connect") != std::string::npos ||
+        msg.find("Connection reset") != std::string::npos ||
+        msg.find("HTTP 429") != std::string::npos ||
+        msg.find("HTTP 502") != std::string::npos ||
+        msg.find("HTTP 503") != std::string::npos ||
+        msg.find("HTTP 504") != std::string::npos)
+        return TransportClass::TransientNet;
+    return TransportClass::Fatal;
+}
+
+inline bool transportIsRetryable(TransportClass c) {
+    return c == TransportClass::Timeout || c == TransportClass::EmptyPayload ||
+           c == TransportClass::StreamAbort || c == TransportClass::TransientNet;
 }
 
 }  // namespace cortex::mk3

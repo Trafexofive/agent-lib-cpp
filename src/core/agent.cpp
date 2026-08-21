@@ -766,16 +766,14 @@ std::string Agent::runLoop(AgentContext &ctx) {
             } catch (const std::exception &e) {
                 const std::string msg = e.what() ? e.what() : "";
                 const auto sk = currentRunStopKind();
+                const TransportClass tc = classifyTransportError(msg, sk);
+                const bool isStreamAbort = tc == TransportClass::StreamAbort;
+                const bool isTimeout = tc == TransportClass::Timeout;
+                const bool isTransientNet = transportIsRetryable(tc);
+                const bool isRegionOrForbidden =
+                    tc == TransportClass::RegionForbidden;
 
-                // ── 1) Hard operator / external stop — never retry, never FALLBACK
-                const bool hardOperator =
-                    sk == RunStopKind::Operator ||
-                    (msg == "cancelled") ||
-                    (msg.find("cancelled by operator") != std::string::npos);
-                const bool hardExternal =
-                    sk == RunStopKind::ExternalSignal ||
-                    msg.find("Operation too slow") != std::string::npos;
-                if (hardExternal) {
+                if (tc == TransportClass::HardExternal) {
                     fullResponse = "[timed out]";
                     emitHarness("TIMEOUT",
                                 "External signal (SIGTERM / wall timeout) stopped "
@@ -785,7 +783,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     iterationOutputs_.push_back("[timed out]");
                     break;
                 }
-                if (hardOperator || (!g_running && sk == RunStopKind::Operator)) {
+                if (tc == TransportClass::HardOperator ||
+                    (!g_running && sk == RunStopKind::Operator)) {
                     fullResponse = "[cancelled]";
                     emitHarness("CANCEL",
                                 "Operator stopped the turn (Ctrl-C/X). Halt the plan.",
@@ -795,43 +794,6 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     break;
                 }
 
-                // ── 2) Classify transport / HTTP
-                const bool isTimeout =
-                    msg.find("Timeout") != std::string::npos ||
-                    msg.find("timeout") != std::string::npos ||
-                    msg.find("timed out") != std::string::npos ||
-                    msg.find("Operation too slow") != std::string::npos;
-                const bool isRegionOrForbidden =
-                    msg.find("HTTP 403") != std::string::npos ||
-                    msg.find("RegionError") != std::string::npos ||
-                    (msg.find("region") != std::string::npos &&
-                     msg.find("HTTP") != std::string::npos);
-                const bool isEmptyChatPayload =
-                    msg.find("chat content is empty") != std::string::npos ||
-                    msg.find("content is empty") != std::string::npos ||
-                    (msg.find("HTTP 400") != std::string::npos &&
-                     (msg.find("bad_request") != std::string::npos ||
-                      msg.find("invalid params") != std::string::npos));
-                // Stream short-write / stall abort is RETRYABLE on the same
-                // primary — NOT an instant FALLBACK (operator saw grok→minimax
-                // on first Failed writing received data).
-                const bool isStreamAbort =
-                    msg.find("Failed writing received data") != std::string::npos ||
-                    msg.find("ABORTED_BY_CALLBACK") != std::string::npos ||
-                    msg.find("stream aborted") != std::string::npos ||
-                    sk == RunStopKind::StreamAbort;
-                const bool isTransientNet =
-                    isTimeout || isEmptyChatPayload || isStreamAbort ||
-                    msg.find("CURL error") != std::string::npos ||
-                    msg.find("Couldn't connect") != std::string::npos ||
-                    msg.find("Connection reset") != std::string::npos ||
-                    msg.find("HTTP 429") != std::string::npos ||
-                    msg.find("HTTP 502") != std::string::npos ||
-                    msg.find("HTTP 503") != std::string::npos ||
-                    msg.find("HTTP 504") != std::string::npos;
-
-                // If operator flipped g_running mid-stream without kind, treat
-                // as operator only when not a pure stream-abort message.
                 if (!g_running && !isStreamAbort && !isTransientNet &&
                     sk == RunStopKind::None) {
                     fullResponse = "[cancelled]";
@@ -841,7 +803,6 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     break;
                 }
 
-                // Soft recover THIS agent only. Never store g_hardKill=false.
                 if (isStreamAbort && !g_hardKill.load(std::memory_order_acquire))
                     runControl_.clearSoft();
 
