@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -47,6 +48,31 @@ inline DashboardSection sectionAtPill(int slot) {
     if (slot > 6) slot = 0;
     return kPillOrder[slot];
 }
+
+// ISO-8601 UTC (`%Y-%m-%dT%H:%M:%SZ`) → relative. Garbage in → original.
+inline std::string relativeTimeAgo(const std::string& iso) {
+    if (iso.size() < 19) return iso.empty() ? std::string("—") : iso;
+    std::tm tm{};
+    tm.tm_year = std::atoi(iso.substr(0, 4).c_str()) - 1900;
+    tm.tm_mon = std::atoi(iso.substr(5, 2).c_str()) - 1;
+    tm.tm_mday = std::atoi(iso.substr(8, 2).c_str());
+    tm.tm_hour = std::atoi(iso.substr(11, 2).c_str());
+    tm.tm_min = std::atoi(iso.substr(14, 2).c_str());
+    tm.tm_sec = std::atoi(iso.substr(17, 2).c_str());
+#if defined(_WIN32)
+    std::time_t then = _mkgmtime(&tm);
+#else
+    std::time_t then = timegm(&tm);
+#endif
+    if (then <= 0) return iso;
+    long long sec = static_cast<long long>(std::time(nullptr) - then);
+    if (sec < 0) sec = 0;
+    if (sec < 60) return std::to_string(sec) + "s ago";
+    if (sec < 3600) return std::to_string(sec / 60) + "m ago";
+    if (sec < 86400) return std::to_string(sec / 3600) + "h ago";
+    if (sec < 86400 * 14) return std::to_string(sec / 86400) + "d ago";
+    return iso.substr(0, 10);
+}
 // Alias — older call sites / muscle memory
 constexpr DashboardSection Help = DashboardSection::Settings;
 
@@ -64,6 +90,9 @@ struct DashboardState {
     int navigationIndex = 3;  // Home is pill center (kPillOrder[3])
     int sessionIndex = 0;
     int manifestIndex = 0;
+    // Home launchpad: 0 OPEN · 1 NEW · 2 SESS · 3 REG, then 4+ = recent rows.
+    int homeCursor = 0;
+    static constexpr int kHomeActionN = 4;
 
     // Facets — kind is primary; tag secondary; search tertiary.
     std::string manifestFilter;  // empty = all kinds
@@ -331,6 +360,13 @@ struct DashboardState {
         bumpNavActivity();
     }
 
+    void moveHome(int delta) {
+        int recentN = std::min(6, static_cast<int>(sessions.size()));
+        int maxI = kHomeActionN + recentN - 1;
+        if (maxI < 0) maxI = 0;
+        homeCursor = std::max(0, std::min(maxI, homeCursor + delta));
+    }
+
     void moveSession(int delta) {
         if (sessions.empty()) {
             sessionIndex = 0;
@@ -383,6 +419,15 @@ struct DashboardState {
                 if (session::sessionInCurrentProject(s.id))
                     scoped.push_back(std::move(s));
             sessions = std::move(scoped);
+        }
+        if (!searchQuery.empty()) {
+            std::vector<session::SessionManager::SessionInfo> hit;
+            for (auto& s : sessions) {
+                if (containsFold(s.id, searchQuery) || containsFold(s.title, searchQuery) ||
+                    containsFold(s.agentName, searchQuery) || containsFold(s.model, searchQuery))
+                    hit.push_back(std::move(s));
+            }
+            sessions = std::move(hit);
         }
         if (sessions.empty())
             sessionIndex = 0;

@@ -86,315 +86,223 @@ inline void MainScene::metricTile(inkcell::Surface& surface, inkcell::Rect r, co
 }
 
 inline void MainScene::drawHome(inkcell::Surface& surface, inkcell::Rect frame) const {
-    // ── Hero identity ────────────────────────────────────────────
+    const auto& dash = model_->dashboard;
     const std::string name = activeName();
     const std::string engine =
         nonempty(model_->agentProvider, nonempty(cfg_.provider, "?")) + "/" +
         nonempty(model_->agentModel, nonempty(cfg_.model, "?"));
     const bool live = model_->running;
-    const char* pulse = live ? "● LIVE BG" : "○ READY";
+    const bool contentFocus = dash.focus == model::DashboardFocus::Content;
 
-    surface.text({frame.x, frame.y}, inkcell::text::truncate(name, frame.w / 2), theme::bright());
+    surface.text({frame.x, frame.y}, inkcell::text::truncate(name, std::max(8, frame.w / 2)),
+                 theme::bright());
     surface.text({frame.x + inkcell::text::display_width(name) + 2, frame.y},
-                 pulse, live ? theme::green() : theme::muted());
-    if (frame.h > 1) {
-        std::string sub = engine;
-        if (live) {
-            sub += "  ·  turn continues on Settings/Manifests/Sessions";
-            if (!model_->activeSessionId.empty())
-                sub += "  ·  " + model_->activeSessionId;
-        }
-        surface.text({frame.x, frame.y + 1},
-                     inkcell::text::truncate(sub, frame.w), theme::italic_dim());
-    }
+                 live ? "● LIVE" : "○ READY", live ? theme::green() : theme::muted());
+    if (frame.h > 1)
+        surface.text({frame.x, frame.y + 1}, inkcell::text::truncate(engine, frame.w),
+                     theme::italic_dim());
 
     int y = frame.y + 3;
-
-    // ── KPI strip (real counts only) ─────────────────────────────
-    int agents = 0, tools = 0, feeds = 0;
-    for (const auto& m : model_->dashboard.manifests) {
-        if (m.kind == "agent") ++agents;
-        else if (m.kind == "tool") ++tools;
-        else if (m.kind == "feed") ++feeds;
-    }
-    int sessN = static_cast<int>(model_->dashboard.sessions.size());
-    int toolN = model_->rootAgent ? static_cast<int>(model_->rootAgent->toolNames().size()) : 0;
-    int subN = model_->rootAgent ? static_cast<int>(model_->rootAgent->subAgentNames().size()) : 0;
-
-    struct Kpi { const char* lab; std::string val; inkcell::Style st; };
-    std::vector<Kpi> kpis = {
-        {"REGISTRY", std::to_string(static_cast<int>(model_->dashboard.manifests.size())), theme::cyan()},
-        {"AGENTS", std::to_string(agents), theme::bright()},
-        {"SESSIONS", std::to_string(sessN), theme::text()},
-        {"TOOLS", std::to_string(toolN), theme::text()},
-        {"SUBS", std::to_string(subN), theme::muted()},
-    };
-    int cols = std::min(static_cast<int>(kpis.size()), std::max(3, frame.w / 18));
-    int gap = 1;
-    int tileW = std::max(12, (frame.w - gap * (cols - 1)) / cols);
-    int tileH = 3;
-    if (y + tileH < frame.bottom()) {
-        for (int i = 0; i < cols; ++i) {
-            inkcell::Rect t{frame.x + i * (tileW + gap), y, tileW, tileH};
-            surface.fill(t, " ", theme::panel_2());
-            // top accent freckle
-            surface.text({t.x + 1, t.y}, "▀",
-                         (i == 0 ? theme::cyan() : theme::dim()).with_bg(theme::panel_2().bg));
-            surface.text({t.x + 2, t.y}, inkcell::text::truncate(kpis[static_cast<size_t>(i)].lab, tileW - 3),
-                         theme::dim().with_bg(theme::panel_2().bg));
-            auto vs = kpis[static_cast<size_t>(i)].st;
-            vs.bg = theme::panel_2().bg;
-            vs.bold = true;
-            surface.text({t.x + 2, t.y + 1},
-                         inkcell::text::truncate(kpis[static_cast<size_t>(i)].val, tileW - 3), vs);
+    if (y < frame.bottom()) {
+        std::string now = "NOW  ";
+        if (live) {
+            now += model_->status.empty() ? "running" : model_->status;
+            if (model_->pendingOps > 0)
+                now += "  ·  " + std::to_string(model_->pendingOps) + " open";
+            if (!model_->activeSessionId.empty())
+                now += "  ·  " + suffix(model_->activeSessionId);
+        } else if (!model_->activeSessionId.empty()) {
+            now += "idle  ·  " + suffix(model_->activeSessionId);
+        } else {
+            now += "idle  ·  no session";
         }
-        y += tileH + 2;
+        surface.text({frame.x, y++}, inkcell::text::truncate(now, frame.w),
+                     live ? theme::cyan() : theme::muted());
     }
 
-    // ── Two-column: runtime | loadout ────────────────────────────
-    int colW = frame.w >= 70 ? (frame.w - 3) / 2 : frame.w;
-    int leftX = frame.x;
-    int rightX = frame.w >= 70 ? frame.x + colW + 3 : frame.x;
-    int yL = y, yR = y;
+    ++y;
+    static const char* kActs[] = {"OPEN", "NEW", "SESS", "REG"};
+    int tileW = std::max(10, (frame.w - 3) / 4);
+    if (y + 2 < frame.bottom()) {
+        for (int i = 0; i < 4; ++i) {
+            bool on = contentFocus && dash.homeCursor == i;
+            inkcell::Rect t{frame.x + i * (tileW + 1), y, tileW, 2};
+            auto bg = on ? theme::panel_3() : theme::panel_2();
+            surface.fill(t, " ", bg);
+            auto st = (on ? theme::bright() : theme::dim()).with_bg(bg.bg);
+            st.bold = on;
+            surface.text({t.x + 1, t.y}, on ? "▌" : " ", st);
+            surface.text({t.x + 2, t.y}, kActs[i], st);
+            const char* sub = i == 0 ? "chat" : i == 1 ? "session" : i == 2 ? "list" : "agents";
+            surface.text({t.x + 2, t.y + 1}, sub, theme::muted().with_bg(bg.bg));
+        }
+        y += 3;
+    }
 
-    auto head = [&](int x, int& yy, const char* t, inkcell::Style st) {
-        if (yy >= frame.bottom()) return;
-        surface.text({x, yy++}, t, st);
-    };
-    auto row = [&](int x, int& yy, int w, const char* k, const std::string& v) {
-        if (yy >= frame.bottom()) return;
-        components::fieldLine(surface, x, yy++, w, k, v);
-    };
-
-    head(leftX, yL, "RUNTIME", theme::cyan_soft());
-    row(leftX, yL, colW, "manifest",
-        activeManifest().empty() ? "—" : basename(activeManifest()));
-    row(leftX, yL, colW, "session",
-        model_->activeSessionId.empty() ? "—" : suffix(model_->activeSessionId));
-    row(leftX, yL, colW, "harness", basename(cfg_.harnessPath));
-    row(leftX, yL, colW, "system", basename(cfg_.systemPromptPath));
-    row(leftX, yL, colW, "persona", basename(cfg_.personaPath));
+    std::vector<int> recentIdx;
+    recentIdx.reserve(6);
     {
-        // Live process CWD (post-chdir). Marker when it differs from the
-        // configured sessionCwd so the operator sees drift between setting
-        // and runtime state.
-        char buf[1024] = {0};
-        std::string live = (::getcwd(buf, sizeof(buf) - 1)) ? buf : "—";
-        if (!model_->sessionCwd.empty() && live != model_->sessionCwd) {
-            live += "  ·cfg≠";
-        }
-        row(leftX, yL, colW, "cwd", live);
-    }
-    row(leftX, yL, colW, "turn", live ? "running" : "idle");
-
-    if (frame.w >= 70) {
-        head(rightX, yR, "LOADOUT", theme::amber_soft());
-        auto joinN = [&](const std::vector<std::string>& names, int maxN) {
-            std::string j;
-            int n = 0;
-            for (const auto& nm : names) {
-                if (n >= maxN) {
-                    j += " · +";
-                    j += std::to_string(static_cast<int>(names.size()) - maxN);
+        const std::string& liveId = model_->activeSessionId;
+        if (!liveId.empty()) {
+            for (int i = 0; i < static_cast<int>(dash.sessions.size()); ++i)
+                if (dash.sessions[static_cast<size_t>(i)].id == liveId) {
+                    recentIdx.push_back(i);
                     break;
                 }
-                if (!j.empty()) j += " · ";
-                j += nm;
-                ++n;
-            }
-            return j.empty() ? std::string("—") : j;
-        };
-        if (model_->rootAgent) {
-            row(rightX, yR, colW, "tools", joinN(model_->rootAgent->toolNames(), 6));
-            row(rightX, yR, colW, "agents", joinN(model_->rootAgent->subAgentNames(), 5));
-            row(rightX, yR, colW, "feeds", joinN(model_->rootAgent->feedNames(), 4));
-        } else {
-            row(rightX, yR, colW, "tools", "—");
-            row(rightX, yR, colW, "agents", "—");
-            row(rightX, yR, colW, "feeds", "—");
         }
-        row(rightX, yR, colW, "registry", std::to_string(agents) + "a · " +
-                                              std::to_string(tools) + "t · " +
-                                              std::to_string(feeds) + "f");
-        row(rightX, yR, colW, "field",
-            gfx::fieldEnabled() ? std::string(gfx::activeFieldName()) : std::string("off"));
+        for (int i = 0; i < static_cast<int>(dash.sessions.size()) &&
+                         static_cast<int>(recentIdx.size()) < 6;
+             ++i) {
+            if (!liveId.empty() && dash.sessions[static_cast<size_t>(i)].id == liveId)
+                continue;
+            recentIdx.push_back(i);
+        }
     }
 
-    y = std::max(yL, yR) + 1;
-
-    // ── Recent sessions (actionable) ─────────────────────────────
-    if (y + 2 < frame.bottom() && !model_->dashboard.sessions.empty()) {
+    if (y < frame.bottom()) {
         surface.text({frame.x, y++}, "RECENT", theme::violet());
-        int shown = 0;
-        for (const auto& s : model_->dashboard.sessions) {
-            if (shown >= 4 || y >= frame.bottom() - 1) break;
-            bool cur = !model_->activeSessionId.empty() && s.id == model_->activeSessionId;
-            std::string line = std::string(cur ? "▸ " : "  ") +
-                               (s.agentName.empty() ? s.id : s.agentName);
-            line += "  ·  " + std::to_string(s.turnCount) + "t";
-            if (!s.updated.empty()) line += "  ·  " + s.updated;
-            surface.text({frame.x, y++}, inkcell::text::truncate(line, frame.w),
-                         cur ? theme::bright() : theme::muted());
-            ++shown;
+        if (recentIdx.empty()) {
+            surface.text({frame.x, y++}, "  n  new session", theme::muted());
+        } else {
+            for (int r = 0; r < static_cast<int>(recentIdx.size()) && y < frame.bottom() - 2; ++r) {
+                const auto& s = dash.sessions[static_cast<size_t>(recentIdx[static_cast<size_t>(r)])];
+                bool on = contentFocus && dash.homeCursor == model::DashboardState::kHomeActionN + r;
+                bool cur = !model_->activeSessionId.empty() && s.id == model_->activeSessionId;
+                auto bg = on ? theme::panel_3() : theme::panel_bg();
+                surface.fill({frame.x, y, frame.w, 1}, " ", bg);
+                std::string mark = on ? "▸ " : (cur ? "● " : "  ");
+                std::string lab = !s.title.empty() ? s.title
+                                                   : (s.agentName.empty() ? suffix(s.id) : s.agentName);
+                std::string line = mark + lab + "  ·  " + nonempty(s.agentName, "?") + "  ·  " +
+                                   std::to_string(s.turnCount) + "t  ·  " +
+                                   model::relativeTimeAgo(s.updated);
+                if (cur && live) line += "  LIVE";
+                auto st = (on ? theme::bright() : (cur ? theme::text() : theme::muted())).with_bg(bg.bg);
+                if (on || cur) st.bold = true;
+                surface.text({frame.x, y++}, inkcell::text::truncate(line, frame.w), st);
+            }
         }
     }
 
-    if (!model_->launchError.empty() && y < frame.bottom()) {
-        surface.text({frame.x, y},
-                     inkcell::text::truncate("⚠  " + model_->launchError, frame.w),
-                     theme::red());
+    y = std::max(y + 1, frame.bottom() - 3);
+    if (y < frame.bottom()) {
+        char buf[1024] = {0};
+        std::string cwd = (::getcwd(buf, sizeof(buf) - 1)) ? buf : ".";
+        std::string strip = basename(activeManifest());
+        strip += "  ·  ";
+        strip += cwd;
+        int toolN = model_->rootAgent ? static_cast<int>(model_->rootAgent->toolNames().size()) : 0;
+        int subN = model_->rootAgent ? static_cast<int>(model_->rootAgent->subAgentNames().size()) : 0;
+        strip += "  ·  ";
+        strip += std::to_string(toolN) + " tools  ·  " + std::to_string(subN) + " children";
+        surface.text({frame.x, y++}, inkcell::text::truncate(strip, frame.w), theme::dim());
     }
-
-    // Footer action — one line, no key encyclopedia
-    if (frame.bottom() - 1 > y)
+    if (!model_->launchError.empty() && y < frame.bottom()) {
+        surface.text({frame.x, y++},
+                     inkcell::text::truncate("⚠  " + model_->launchError, frame.w), theme::red());
+    }
+    if (frame.bottom() - 1 >= frame.y)
         surface.text({frame.x, frame.bottom() - 1},
-                     "enter open chat  ·  a registry  ·  s sessions",
+                     "j/k move  ·  ↵ act  ·  n new  ·  / sessions",
                      theme::italic_dim());
 }
 
 inline void MainScene::drawSessions(inkcell::Surface& surface, inkcell::Rect frame) const {
-    // Vet-fix smarter sessions page: LIVE chip on the active session,
-    // column-rich row, active-delete guard refused via notice (not a
-    // hint-only silent failure), empty-state with shortcut, scoped
-    // header KPI. Same AAA grammar as Home.
     const auto& dash = model_->dashboard;
-
-    // Hero + KPI label
-    surface.text({frame.x, frame.y}, "SESSIONS", theme::bright());
     const int totalSess = static_cast<int>(dash.sessions.size());
-    const int activeFlag = !model_->activeSessionId.empty() ? 1 : 0;
-    std::string stat =
-        " " + std::to_string(totalSess) +
-        " on disk" + (activeFlag ? "  ·  1 active" : "");
+    const bool liveTurn = model_->running;
+
+    surface.text({frame.x, frame.y}, "SESSIONS", theme::bright());
+    std::string stat = "  " + std::to_string(totalSess) + " disk";
+    if (!model_->activeSessionId.empty()) stat += liveTurn ? "  ·  1 live" : "  ·  1 open";
+    if (dash.searchMode || !dash.searchQuery.empty())
+        stat += "  ·  /" + dash.searchQuery;
     surface.text({frame.x + 9, frame.y}, inkcell::text::truncate(stat, frame.w - 9),
                  theme::italic_dim());
-    if (frame.h > 1) {
-        int liveTurn = model_->running ? 1 : 0;
-        char cwdBuf[1024] = {0};
-        std::string cwdStr = (::getcwd(cwdBuf, sizeof(cwdBuf) - 1)) ? cwdBuf : "—";
-        std::string meta = std::string("enter resume · n new · d delete · e export · x kill-live · / search") +
-                            (liveTurn ? std::string("  ·  ● live") : std::string("  ·  ○ idle")) +
-                            "  ·  cwd " + cwdStr;
-        surface.text({frame.x, frame.y + 1},
-                     inkcell::text::truncate(meta, frame.w), theme::italic_dim());
-    }
 
-    int y = frame.y + 3;
+    int y = frame.y + 2;
     if (dash.sessions.empty()) {
-        inkcell::Style tip = theme::muted();
-        surface.text({frame.x, y++}, "Nothing yet.", tip);
-        surface.text({frame.x, y++}, "Press  n  to create and open chat.", theme::text());
-        surface.text({frame.x, y}, "Press  e  on a later session to export as .json.", theme::dim());
+        surface.text({frame.x, y++}, "Nothing yet.", theme::muted());
+        surface.text({frame.x, y++}, "n  new session", theme::text());
         return;
     }
 
-    // Visible column headers
-    if (frame.w >= 64) {
-        int rowW = frame.w;
-        int idsX = frame.x;
-        int liveX = frame.x + 4;
-        int agentX = frame.x + 12;
-        int turnsX = std::max(agentX + 18, frame.x + rowW - 28);
-        int updatedX = std::max(turnsX + 6, frame.x + rowW - 14);
+    const bool wide = frame.w >= 72;
+    const int previewH = (frame.h >= 16 && wide) ? 3 : 0;
+    int listBottom = frame.bottom() - 1 - previewH;
+
+    if (wide && y < listBottom) {
         auto head = theme::dim();
-        surface.text({idsX, y}, "ID", head);
-        surface.text({liveX, y}, "STATE", head);
-        surface.text({agentX, y}, "AGENT", head);
-        surface.text({turnsX, y}, "TURNS", head);
-        surface.text({updatedX, y}, "UPDATED", head);
+        surface.text({frame.x, y}, "  STATE", head);
+        surface.text({frame.x + 10, y}, "AGENT", head);
+        surface.text({frame.x + 24, y}, "TITLE", head);
+        surface.text({frame.x + frame.w - 22, y}, "TURNS", head);
+        surface.text({frame.x + frame.w - 12, y}, "UPDATED", head);
         ++y;
     }
 
-    int visible = std::max(1, frame.bottom() - y - 1);  // reserve row for footer
+    int visible = std::max(1, listBottom - y);
     int start = std::max(0, std::min(dash.sessionIndex - visible / 2,
                                      static_cast<int>(dash.sessions.size()) - visible));
+    if (start < 0) start = 0;
 
-    for (int i = start; i < static_cast<int>(dash.sessions.size()) && y < frame.bottom(); ++i) {
+    const auto* sel = dash.selectedSession();
+    for (int i = start; i < static_cast<int>(dash.sessions.size()) && y < listBottom; ++i) {
         const auto& s = dash.sessions[static_cast<size_t>(i)];
         bool selected = i == dash.sessionIndex;
-        bool active = !model_->activeSessionId.empty() &&
-                      s.id == model_->activeSessionId;
-
-        auto rowBg = selected ? theme::panel_3()
-                      : active   ? theme::panel_2()
-                                 : theme::panel_bg();
+        bool active = !model_->activeSessionId.empty() && s.id == model_->activeSessionId;
+        auto rowBg = selected ? theme::panel_3() : active ? theme::panel_2() : theme::panel_bg();
         surface.fill({frame.x, y, frame.w, 1}, " ", rowBg);
         if (selected)
             surface.text({frame.x, y}, "▌", theme::cyan().with_bg(rowBg.bg));
 
-        // Primary label: title (first prompt / rename) else id suffix.
-        std::string idTxt = suffix(s.id);
-        std::string label = !s.title.empty() ? s.title : idTxt;
-        int labelW = std::max(2, inkcell::text::display_width(label));
-        auto idSt = active ? theme::bright() : theme::muted();
-        idSt.bg = rowBg.bg;
-        surface.text({frame.x + 1, y},
-                     inkcell::text::truncate(label, std::max(2, frame.w - 3)),
-                     active ? idSt.strong() : idSt);
+        std::string badge = "○";
+        if (active && liveTurn) badge = "●";
+        else if (active) badge = "◉";
+        else if (s.hasUiTimeline) badge = "·";
 
-        if (frame.w >= 64) {
-            // STATE + resume quality badge
-            auto state = active ? theme::green() : theme::dim();
-            state.bg = rowBg.bg;
-            state.bold = active;
-            // LIVE = this session owns the bg worker turn; OPEN = attached idle.
-            std::string badge = "◯";
-            if (active && model_->running)
-                badge = "● RUN";
-            else if (active)
-                badge = "● OPEN";
-            else if (s.hasUiTimeline)
-                badge = "◉ UI";
-            surface.text({frame.x + labelW + 2, y}, badge, state);
+        std::string label = !s.title.empty() ? s.title : suffix(s.id);
+        std::string when = model::relativeTimeAgo(s.updated);
+        std::string turns = std::to_string(s.turnCount) + "t";
+        auto st = (selected ? theme::bright() : theme::text()).with_bg(rowBg.bg);
+        if (active) st.bold = true;
 
-            // AGENT column
-            std::string agentTxt = nonempty(s.agentName, "?");
-            surface.text({frame.x + labelW + 10, y},
-                         inkcell::text::truncate(agentTxt, std::max(8, frame.w - labelW - 32)),
-                         (theme::text()).with_bg(rowBg.bg));
-
-            // TURNS
-            auto turnSt = theme::text().with_bg(rowBg.bg);
-            turnSt.bold = (s.turnCount > 0);
-            char buf[16];
-            std::snprintf(buf, sizeof(buf), "%zut",
-                          static_cast<size_t>(s.turnCount));
+        if (wide) {
+            auto bst = (active ? theme::green() : theme::dim()).with_bg(rowBg.bg);
+            surface.text({frame.x + 2, y}, badge, bst);
+            surface.text({frame.x + 10, y},
+                         inkcell::text::truncate(nonempty(s.agentName, "?"), 12), st);
+            surface.text({frame.x + 24, y},
+                         inkcell::text::truncate(label, std::max(8, frame.w - 48)), st);
             surface.text({frame.x + frame.w - 22, y},
-                         inkcell::text::truncate(buf, 6), turnSt);
-
-            // UPDATED — age-style short suffix (last 4 of iso or -)
-            std::string whenTxt = s.updated.empty()
-                                      ? std::string("—")
-                                      : s.updated.substr(std::max<size_t>(0, s.updated.size() - 16));
-            whenTxt += "Z";
-            auto updSt = theme::italic_dim();
-            updSt.bg = rowBg.bg;
-            surface.text({frame.x + frame.w - 14, y},
-                         inkcell::text::truncate(whenTxt, 14), updSt);
+                         inkcell::text::truncate(turns, 6), st);
+            surface.text({frame.x + frame.w - 12, y},
+                         inkcell::text::truncate(when, 11), theme::dim().with_bg(rowBg.bg));
         } else {
-            std::string oneLine =
-                (active && model_->running) ? "●RUN "
-                : active                    ? "● "
-                : s.hasUiTimeline           ? "◉ "
-                                            : "  ";
-            oneLine += label + "  " + nonempty(s.agentName, "?") + "  " +
-                       std::to_string(s.turnCount) + "r  ";
-            if (!s.updated.empty()) oneLine += s.updated;
-            auto st = ((selected ? theme::bright() : theme::text())).with_bg(rowBg.bg);
-            if (active) st.bold = true;
-            surface.text({frame.x + 1, y},
-                         inkcell::text::truncate(oneLine, frame.w - 2), st);
+            std::string one = std::string(selected ? "▸ " : "  ") + badge + " " + label + "  " +
+                              nonempty(s.agentName, "?") + "  " + turns + "  " + when;
+            surface.text({frame.x + 1, y}, inkcell::text::truncate(one, frame.w - 2), st);
         }
         ++y;
     }
 
-    // Footer row: error context message + J/K hint
-    if (y < frame.bottom()) {
-        std::string hint =
-            "j/k · ↵ resume · n new · f fork · t title · d del · e export · x kill";
-        surface.text({frame.x, y}, inkcell::text::truncate(hint, frame.w),
-                     theme::italic_dim());
+    if (previewH > 0 && sel) {
+        int py = frame.bottom() - 1 - previewH;
+        surface.text({frame.x, py}, inkcell::text::truncate("─ preview", frame.w), theme::dim());
+        std::string p1 = nonempty(sel->title, suffix(sel->id)) + "  ·  " +
+                         nonempty(sel->agentName, "?") + "  ·  " +
+                         nonempty(sel->model, "");
+        surface.text({frame.x, py + 1}, inkcell::text::truncate(p1, frame.w), theme::text());
+        std::string p2 = suffix(sel->id) + "  ·  " + std::to_string(sel->turnCount) + " turns  ·  " +
+                         model::relativeTimeAgo(sel->updated);
+        if (sel->hasUiTimeline) p2 += "  ·  ui timeline";
+        surface.text({frame.x, py + 2}, inkcell::text::truncate(p2, frame.w), theme::muted());
     }
+
+    surface.text({frame.x, frame.bottom() - 1},
+                 inkcell::text::truncate("j/k  ·  ↵ open  ·  n new  ·  d del  ·  x kill  ·  / find",
+                                         frame.w),
+                 theme::italic_dim());
 }
 
 inline void MainScene::drawManifests(inkcell::Surface& surface, inkcell::Rect frame) const {

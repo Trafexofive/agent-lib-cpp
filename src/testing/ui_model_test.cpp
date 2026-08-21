@@ -350,6 +350,19 @@ void test_dashboard_model() {
           "dashboard session selection moves to next record");
     dashboard.moveSession(20);
     check(dashboard.sessionIndex == 1, "dashboard session selection clamps safely");
+
+    check(model::relativeTimeAgo("") == "—", "relativeTimeAgo empty → em dash");
+    check(model::relativeTimeAgo("junk") == "junk", "relativeTimeAgo garbage passthrough");
+
+    dashboard.homeCursor = 0;
+    dashboard.sessions = {first, second};
+    dashboard.moveHome(1);
+    check(dashboard.homeCursor == 1, "Home cursor walks actions first");
+    dashboard.moveHome(20);
+    int maxHome = model::DashboardState::kHomeActionN + 2 - 1;
+    check(dashboard.homeCursor == maxHome, "Home cursor clamps to actions+recent");
+    dashboard.moveHome(-20);
+    check(dashboard.homeCursor == 0, "Home cursor wraps/clamps to 0");
 }
 
 void test_dashboard_session_controller() {

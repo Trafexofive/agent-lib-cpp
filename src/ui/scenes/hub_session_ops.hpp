@@ -79,6 +79,42 @@ inline void MainScene::activate() {
         return;
     }
     if (dash.section == model::DashboardSection::Home) {
+        const int c = dash.homeCursor;
+        if (c == 1) {
+            createSession();
+            return;
+        }
+        if (c == 2) {
+            dash.select(model::DashboardSection::Sessions);
+            return;
+        }
+        if (c == 3) {
+            dash.select(model::DashboardSection::Manifests);
+            return;
+        }
+        if (c >= model::DashboardState::kHomeActionN) {
+            int r = c - model::DashboardState::kHomeActionN;
+            const std::string& liveId = model_->activeSessionId;
+            std::vector<int> recentIdx;
+            if (!liveId.empty()) {
+                for (int i = 0; i < static_cast<int>(dash.sessions.size()); ++i)
+                    if (dash.sessions[static_cast<size_t>(i)].id == liveId) {
+                        recentIdx.push_back(i);
+                        break;
+                    }
+            }
+            for (int i = 0; i < static_cast<int>(dash.sessions.size()) &&
+                             static_cast<int>(recentIdx.size()) < 6; ++i) {
+                if (!liveId.empty() && dash.sessions[static_cast<size_t>(i)].id == liveId)
+                    continue;
+                recentIdx.push_back(i);
+            }
+            if (r >= 0 && r < static_cast<int>(recentIdx.size())) {
+                dash.sessionIndex = recentIdx[static_cast<size_t>(r)];
+                resumeSelectedSession();
+                return;
+            }
+        }
         model_->requestRoute(PendingRoute::Agent);
         return;
     }

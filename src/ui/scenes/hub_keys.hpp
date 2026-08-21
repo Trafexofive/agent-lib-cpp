@@ -35,6 +35,7 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             dash.searchMode = false;
             dash.searchQuery.clear();
             dash.refreshManifests();
+            dash.refreshSessions(session::SessionManager(), model_->globalSessions);
             bumpNotice();
             return true;
         }
@@ -46,12 +47,14 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
         if (event.code == KeyCode::Backspace) {
             if (!dash.searchQuery.empty()) dash.searchQuery.pop_back();
             dash.refreshManifests();
+            dash.refreshSessions(session::SessionManager(), model_->globalSessions);
             bumpNotice();
             return true;
         }
         if (event.code == KeyCode::Character && !event.ctrl() && event.ch >= 32) {
             dash.searchQuery.push_back(static_cast<char>(event.ch));
             dash.refreshManifests();
+            dash.refreshSessions(session::SessionManager(), model_->globalSessions);
             bumpNotice();
             return true;
         }
@@ -257,7 +260,8 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
             }
         } else {
             if (up) {
-                if (dash.section == model::DashboardSection::Sessions) dash.moveSession(-1);
+                if (dash.section == model::DashboardSection::Home) dash.moveHome(-1);
+                else if (dash.section == model::DashboardSection::Sessions) dash.moveSession(-1);
                 else if (dash.section == model::DashboardSection::Manifests ||
                          dash.section == model::DashboardSection::Tools ||
                          dash.section == model::DashboardSection::Relics ||
@@ -266,7 +270,8 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
                 return true;
             }
             if (down) {
-                if (dash.section == model::DashboardSection::Sessions) dash.moveSession(1);
+                if (dash.section == model::DashboardSection::Home) dash.moveHome(1);
+                else if (dash.section == model::DashboardSection::Sessions) dash.moveSession(1);
                 else if (dash.section == model::DashboardSection::Manifests ||
                          dash.section == model::DashboardSection::Tools ||
                          dash.section == model::DashboardSection::Relics ||
@@ -319,7 +324,11 @@ inline bool MainScene::on_key(const inkcell::KeyEvent& event) {
         }
         switch (event.ch) {
             case '/':
-                if (dash.section == model::DashboardSection::Manifests) {
+                if (dash.section == model::DashboardSection::Manifests ||
+                    dash.section == model::DashboardSection::Sessions ||
+                    dash.section == model::DashboardSection::Home) {
+                    if (dash.section == model::DashboardSection::Home)
+                        dash.select(model::DashboardSection::Sessions);
                     dash.searchMode = true;
                     dash.focus = model::DashboardFocus::Content;
                     dash.notice = "search: "; dash.noticeExpireAtMs = 0;
