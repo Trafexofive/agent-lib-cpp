@@ -7,6 +7,9 @@ Binary: `~/.local/bin/cortex-mk3` — **restart after install**.
 
 | SHA | Slice |
 |-----|--------|
+| `b54754e` | **Home launchpad + Sessions OS** (NOW/tiles/RECENT, columns/filter/preview) |
+| `cb987fd`+`e645087` | Home is the visual **center** of the nav pill |
+| `e6c41db` | live-lab agent package (deepseek-v4-pro → minimax-m3, 2 children) |
 | `d3f59d3` | `classifyTransportError` — catch uses taxonomy, not 40 `find()`s |
 | `7dff38c` | `steerIncompleteGeneration` extracted from runLoop |
 | `92492ff` | **per-agent RunControl**; stream-abort does not uncancel the tree |
