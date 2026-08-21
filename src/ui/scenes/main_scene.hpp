@@ -432,9 +432,9 @@ class MainScene final : public BaseScene {
             }
             case SettingsOpt::BodyView: {
                 int b = model_->chatBodyMode;
-                b = (b + (dir >= 0 ? 1 : 2)) % 3;
+                b = (b + (dir >= 0 ? 1 : 1)) % 2;
                 model_->chatBodyMode = b;
-                static const char* kN[] = {"stream", "compact", "canvas"};
+                static const char* kN[] = {"stream", "compact"};
                 dash.flashNotice(std::string("body · ") + kN[b] + "  (ctrl-o)");
                 break;
             }

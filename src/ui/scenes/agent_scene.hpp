@@ -402,8 +402,8 @@ class AgentScene final : public BaseScene {
                 persistUiPrefs(*model_);
                 return true;
             }
-            // Ctrl-O: cycle body view stream → compact → canvas.
-            // Ctrl-Shift-O: truncate bodies (was plain Ctrl-O).
+            // Ctrl-O: cycle stream → compact.
+            // Ctrl-Shift-O: truncate bodies.
             if (event.ch == 'o' || event.ch == 'O') {
                 if (event.shift()) {
                     model_->toggleTruncateBodies();
@@ -411,11 +411,11 @@ class AgentScene final : public BaseScene {
                         model_->truncateBodies ? "bodies · truncated"
                                                : "bodies · full");
                 } else {
-                    model_->chatBodyMode = (model_->chatBodyMode + 1) % 3;
-                    static const char* kNames[] = {"stream", "compact", "canvas"};
+                    model_->chatBodyMode = (model_->chatBodyMode + 1) % 2;
+                    static const char* kNames[] = {"stream", "compact"};
                     model_->dashboard.flashNotice(
                         std::string("view · ") +
-                        kNames[model_->chatBodyMode % 3] + "  (ctrl-o)");
+                        kNames[model_->chatBodyMode % 2] + "  (ctrl-o)");
                 }
                 persistUiPrefs(*model_);
                 return true;

@@ -67,9 +67,9 @@ struct ChatSurfaceModel {
     std::string hint;
     std::string agentName;  // real agent display name for the assistant label (replaces CORTEX)
     std::string scopeName;  // drilled-in subagent name (empty at root) for header/status scope indicator
-    // 0 stream · 1 compact · 2 canvas — set by Ctrl-O cycle
+    // 0 stream · 1 compact — Ctrl-O cycle
     int bodyMode = 0;
-    // Structured timeline for compact/canvas (not re-parsed display text).
+    // Structured timeline for compact (not re-parsed display text).
     const std::deque<TimelineRow>* timelineRows = nullptr;
     int selectedRow = -1;
     // Transient readline-style completion menu (NOT transcript history).
@@ -1284,11 +1284,9 @@ inline void drawChatSurface(inkcell::Surface& surface, inkcell::Rect frame, cons
     if (!footer) menuY = statusY - menuH;
 
     inkcell::Rect body{frame.x, frame.y, frame.w, std::max(1, menuY - frame.y)};
-    // Body mode: 0 stream · 1 compact · 2 canvas (Ctrl-O). Stream default.
+    // Body mode: 0 stream · 1 compact (Ctrl-O).
     if (m.bodyMode == 1)
         drawTranscriptCompact(surface, body, m);
-    else if (m.bodyMode == 2)
-        drawTranscriptCanvas(surface, body, m);
     else
         drawTranscript(surface, body, m);
     if (menuH > 0)

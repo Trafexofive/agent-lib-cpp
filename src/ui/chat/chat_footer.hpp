@@ -1,13 +1,6 @@
 #pragma once
-// Chat footer — sober instrument. No spinner, no phase rainbow, no pulse.
-//
-// Idle 3 / live 4:
-//   coder  x-ai/grok-4.5                         1:24  sess …08174
-//   tool list #l1 · open 1                       stream
-//   ctx 12.4k/128k  9%  ████░░░░  arm@47% idle
-//   turn 3  iter 2/80  tools 1/2  hist 8/48      ^F pane
-//
-// Ctrl-F cycles live / session / engine data on the same plate.
+// Chat footer — 3 rows idle, 4th only while a turn is live.
+// Type hierarchy: name bright, meta dim, one ctx meter. No spinner, no rainbow.
 
 #include <algorithm>
 #include <cstdio>
@@ -26,7 +19,7 @@ inline std::string footerFmtBytes(int bytes) {
     if (bytes < 1024) return std::to_string(bytes) + "B";
     if (bytes < 1024 * 1024) {
         int t = (bytes * 10) / 1024;
-        return std::to_string(t / 10) + "." + std::to_string(t % 10) + "KB";
+        return std::to_string(t / 10) + "." + std::to_string(t % 10) + "kB";
     }
     int t = (bytes * 10) / (1024 * 1024);
     return std::to_string(t / 10) + "." + std::to_string(t % 10) + "MB";
@@ -34,13 +27,13 @@ inline std::string footerFmtBytes(int bytes) {
 
 inline std::string footerFmtElapsed(int64_t ms) {
     if (ms < 0) ms = 0;
-    if (ms < 1000) return std::to_string(static_cast<int>(ms)) + "ms";
+    if (ms < 10000) return std::to_string(static_cast<int>(ms)) + "ms";
     if (ms < 60000) {
-        int t = static_cast<int>(ms / 100);
+        int t = static_cast<int>((ms + 50) / 100);
         return std::to_string(t / 10) + "." + std::to_string(t % 10) + "s";
     }
     int secs = static_cast<int>(ms / 1000);
-    char buf[32];
+    char buf[16];
     std::snprintf(buf, sizeof(buf), "%d:%02d", secs / 60, secs % 60);
     return buf;
 }
@@ -48,22 +41,14 @@ inline std::string footerFmtElapsed(int64_t ms) {
 inline std::string fmtTok(int n) {
     if (n < 0) n = 0;
     if (n < 1000) return std::to_string(n);
-    if (n < 10000) {
-        int t = (n * 10) / 1000;
-        return std::to_string(t / 10) + "." + std::to_string(t % 10) + "k";
-    }
+    int t = (n * 10) / 1000;
+    if (n < 10000) return std::to_string(t / 10) + "." + std::to_string(t % 10) + "k";
     return std::to_string(n / 1000) + "k";
 }
 
 inline std::string suffix8(const std::string& id) {
     if (id.empty()) return {};
     return id.size() > 8 ? id.substr(id.size() - 8) : id;
-}
-
-inline void joinChip(std::string& out, const std::string& chip) {
-    if (chip.empty()) return;
-    if (!out.empty()) out += "  ";
-    out += chip;
 }
 
 enum class ChatFooterPane : uint8_t { Live = 0, Session = 1, Engine = 2, Count = 3 };
@@ -86,26 +71,14 @@ inline ChatFooterPane nextFooterPane(ChatFooterPane p, int dir = 1) {
 inline std::string phaseVerb(const std::string& key, const std::string& detail) {
     if (key == "think") return "thinking";
     if (key == "act") return detail.empty() ? "tool" : detail;
-    if (key == "wait") return "waiting on model";
-    if (key == "delegate")
-        return detail.empty() ? "waiting on child" : ("child " + detail);
+    if (key == "wait") return "waiting";
+    if (key == "delegate") return detail.empty() ? "child" : detail;
     if (key == "reply") return "replying";
     if (key == "ask") return "your move";
     if (key == "ready") return "ready";
     if (key == "cancel") return "stopping";
     if (key == "fail") return "failed";
     return key.empty() ? "ready" : key;
-}
-
-inline void drawUnitBar(inkcell::Surface& s, int x, int y, int width, float pct,
-                        inkcell::Style on, inkcell::Style off) {
-    width = std::max(8, std::min(16, width));
-    pct = std::max(0.f, std::min(1.f, pct));
-    int filled = static_cast<int>(pct * width + 1e-6f);
-    if (pct > 0.02f && filled == 0) filled = 1;
-    if (pct <= 0.f) filled = 0;
-    for (int i = 0; i < width; ++i)
-        s.put({x + i, y}, i < filled ? "#" : "-", i < filled ? on : off);
 }
 
 struct ChatFooterModel {
@@ -145,29 +118,35 @@ struct ChatFooterModel {
     std::string themeName;
     int turnCount = 0;
     int queuedSteer = 0;
-    int bodyMode = 0;  // 0 stream 1 compact 2 canvas
+    int bodyMode = 0;  // 0 stream · 1 compact
     std::vector<std::string> extraLines;
 };
 
 inline int footerBaseRows(const ChatFooterModel& f) {
-    if (f.running || f.failed) return 4;
-    return 3;
+    return (f.running || f.failed) ? 4 : 3;
 }
 
 inline int footerHeightFor(const ChatFooterModel& f, int maxAvail) {
     if (maxAvail < 1) return 0;
-    int want = footerBaseRows(f);
-    if (want < 3) want = 3;
-    if (want > 4) want = 4;
-    return std::min(want, maxAvail);
+    return std::min(footerBaseRows(f), maxAvail);
 }
 
 inline constexpr int kChatFooterHMin = 3;
-inline constexpr int kChatFooterHTypical = 4;
+inline constexpr int kChatFooterHTypical = 3;
+
+inline void drawCtxMeter(inkcell::Surface& surface, int x, int y, int barW, float pct,
+                         inkcell::Style on, inkcell::Style off) {
+    barW = std::max(6, std::min(16, barW));
+    pct = std::max(0.f, std::min(1.f, pct));
+    int filled = static_cast<int>(pct * static_cast<float>(barW) + 1e-6f);
+    if (pct > 0.02f && filled == 0) filled = 1;
+    for (int i = 0; i < barW; ++i)
+        surface.put({x + i, y}, i < filled ? "█" : "░", i < filled ? on : off);
+}
 
 inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
                            const ChatFooterModel& f) {
-    if (box.h < 1 || box.w < 16) return;
+    if (box.h < 1 || box.w < 12) return;
 
     const bool live = f.running && !f.failed;
     auto bg = theme::footer_bg();
@@ -177,203 +156,175 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
     dim.dim = false;
     auto text = theme::footer_text().with_bg(bg.bg);
     auto bright = theme::footer_bright().with_bg(bg.bg);
+    auto liveSt = theme::footer_live().with_bg(bg.bg);
     auto warn = theme::footer_warn().with_bg(bg.bg);
 
-    const int x0 = box.x + 1;
-    const int rightEdge = box.right() - 1;
-    const int innerW = std::max(1, box.w - 2);
     const int y0 = box.y;
+    const int x0 = box.x + 1;
+    const int inner = std::max(1, box.w - 2);
+    const int right = box.right() - 1;
 
-    auto putRight = [&](int row, const std::string& s, inkcell::Style st) {
-        if (row < 0 || row >= box.h || s.empty()) return;
+    auto putL = [&](int row, int x, const std::string& s, inkcell::Style st, int maxW) {
+        if (row < 0 || row >= box.h || s.empty() || maxW < 1) return;
+        surface.text({x, y0 + row}, inkcell::text::truncate(s, maxW), st);
+    };
+    auto putR = [&](int row, const std::string& s, inkcell::Style st) -> int {
+        if (s.empty() || row < 0 || row >= box.h) return 0;
         int ww = inkcell::text::display_width(s);
-        int x = std::max(x0, rightEdge - ww);
-        surface.text({x, y0 + row}, inkcell::text::truncate(s, innerW), st);
+        int x = std::max(x0, right - ww);
+        surface.text({x, y0 + row}, s, st);
+        return ww + 2;
     };
 
     const int win = std::max(1, f.ctxMaxTokens > 0 ? f.ctxMaxTokens : 128000);
     const int used = std::max(0, f.ctxUsedTokens);
-    float pct = static_cast<float>(used) / static_cast<float>(win);
-    if (pct > 1.f) pct = 1.f;
-    float trigPct = 0.f;
-    if (f.ctxCompactAt > 0 && win > 0)
-        trigPct = std::min(1.f, static_cast<float>(f.ctxCompactAt) / static_cast<float>(win));
+    float pct = std::min(1.f, static_cast<float>(used) / static_cast<float>(win));
+    const int armPct =
+        (f.ctxCompactAt > 0) ? std::min(100, (f.ctxCompactAt * 100) / win) : 0;
+    const char* view = (f.bodyMode == 1) ? "compact" : "stream";
 
-    static const char* kView[] = {"stream", "compact", "canvas"};
-    int bm = f.bodyMode;
-    if (bm < 0 || bm > 2) bm = 0;
-
-    auto ident = [&]() {
-        std::string s = f.agentName.empty() ? std::string("-") : f.agentName;
-        if (!f.provider.empty() || !f.model.empty()) {
-            s += "  ";
-            s += f.provider.empty() ? "?" : f.provider;
-            s += "/";
-            s += f.model.empty() ? "?" : f.model;
+    if (f.pane == ChatFooterPane::Session) {
+        putL(0, x0, f.sessionId.empty() ? "no session" : f.sessionId, bright, inner);
+        if (box.h >= 2) putL(1, x0, f.path.empty() ? "." : f.path, dim, inner);
+        if (box.h >= 3) {
+            std::string m = std::to_string(f.turnCount) + " turns";
+            if (!f.manifestStem.empty()) m += "   " + f.manifestStem;
+            putL(2, x0, m, dim, inner);
         }
-        return s;
-    };
-
-    auto nowLine = [&]() {
-        if (f.failed) {
-            std::string s = "failed";
-            if (!f.statusHint.empty()) {
-                s += "  ";
-                s += f.statusHint;
-            }
-            return s;
+        return;
+    }
+    if (f.pane == ChatFooterPane::Engine) {
+        std::string eng = (f.provider.empty() ? "?" : f.provider) + " / " +
+                          (f.model.empty() ? "?" : f.model);
+        putL(0, x0, eng, bright, inner);
+        if (box.h >= 2) {
+            std::string c = f.compactEnabled ? "compact on" : "compact off";
+            if (f.compactEnabled && armPct > 0) c += "  " + std::to_string(armPct) + "%";
+            putL(1, x0, c, dim, inner);
         }
-        if (live) {
-            std::string s = phaseVerb(f.phaseKey, f.phaseDetail);
-            if (!f.openLine.empty() && f.phaseKey != "act") {
-                s += "  ";
-                s += f.openLine;
-            }
-            if (f.pendingOps > 0) {
-                s += "  open ";
-                s += std::to_string(f.pendingOps);
-            }
-            if (f.childPending > 0) {
-                s += "  child ";
-                s += std::to_string(f.childPending);
-            }
-            if (f.queuedSteer > 0) s += "  steer";
-            return s;
+        if (box.h >= 3) {
+            std::string h = "hist " + std::to_string(f.historyUsed) + "/" +
+                            std::to_string(f.historyMax);
+            h += "   ";
+            h += view;
+            putL(2, x0, h, dim, inner);
         }
-        if (!f.lastResultLine.empty()) return f.lastResultLine;
-        if (f.turnCount > 0)
-            return std::to_string(f.turnCount) +
-                   (f.turnCount == 1 ? " turn" : " turns");
-        return std::string("idle");
-    };
+        return;
+    }
 
-    // ROW 0 — identity ……………… clock / session
+    // 0 — name                         provider / model                    clock
     {
-        std::string left = ident();
-        if (f.failed) left = std::string("FAILED  ") + left;
-        else if (live) left = std::string("run  ") + left;
-        auto lst = f.failed ? warn : live ? bright : text;
-        std::string right;
-        if (live || f.turnElapsedMs > 0) right = footerFmtElapsed(f.turnElapsedMs);
-        std::string sid = suffix8(f.sessionId);
-        if (!sid.empty()) {
-            if (!right.empty()) right += "  ";
-            right += sid;
+        std::string name = f.agentName.empty() ? "-" : f.agentName;
+        auto nst = f.failed ? warn : (live ? liveSt : bright);
+        std::string clock;
+        if (live || f.turnElapsedMs > 0)
+            clock = footerFmtElapsed(f.turnElapsedMs);
+        else {
+            std::string sid = suffix8(f.sessionId);
+            if (!sid.empty()) clock = sid;
         }
-        int rw = right.empty() ? 0 : inkcell::text::display_width(right) + 2;
-        surface.text({x0, y0},
-                     inkcell::text::truncate(left, std::max(8, innerW - rw)), lst);
-        if (!right.empty()) putRight(0, right, dim);
+        int rw = putR(0, clock, dim);
+        putL(0, x0, name, nst, std::max(4, inner - rw));
+        std::string eng;
+        if (!f.provider.empty() || !f.model.empty()) {
+            eng += f.provider.empty() ? "?" : f.provider;
+            eng += " / ";
+            eng += f.model.empty() ? "?" : f.model;
+        }
+        if (!eng.empty()) {
+            int nx = x0 + inkcell::text::display_width(name) + 3;
+            int ew = right - rw - nx;
+            if (ew >= 10) putL(0, nx, eng, dim, ew);
+        }
     }
 
     if (box.h < 2) return;
 
-    if (f.pane == ChatFooterPane::Session) {
-        surface.text({x0, y0 + 1},
-                     inkcell::text::truncate(
-                         f.sessionId.empty() ? "no session" : f.sessionId, innerW),
-                     text);
-        if (box.h >= 3)
-            surface.text({x0, y0 + 2},
-                         inkcell::text::truncate(
-                             f.path.empty() ? "(cwd)" : f.path, innerW),
-                         dim);
-        if (box.h >= 4) {
-            std::string m = "turns " + std::to_string(f.turnCount);
-            joinChip(m, "act " + std::to_string(f.actionCount));
-            joinChip(m, "res " + std::to_string(f.resultCount));
-            joinChip(m, f.manifestStem);
-            surface.text({x0, y0 + 3}, inkcell::text::truncate(m, innerW), dim);
-        }
-        return;
-    }
-
-    if (f.pane == ChatFooterPane::Engine) {
-        std::string eng = (f.provider.empty() ? "?" : f.provider) + "/" +
-                          (f.model.empty() ? "?" : f.model);
-        surface.text({x0, y0 + 1}, inkcell::text::truncate(eng, innerW), text);
-        if (box.h >= 3) {
-            std::string c = f.compactEnabled ? "compact on" : "compact off";
-            if (f.compactEnabled && trigPct > 0.f) {
-                c += "  arm@";
-                c += std::to_string(static_cast<int>(trigPct * 100.f + 0.5f));
-                c += "%";
-            }
-            joinChip(c, "win " + fmtTok(win));
-            joinChip(c, std::string("view ") + kView[bm]);
-            surface.text({x0, y0 + 2}, inkcell::text::truncate(c, innerW), dim);
-        }
-        if (box.h >= 4) {
-            std::string h = "hist " + std::to_string(f.historyUsed) + "/" +
-                            std::to_string(f.historyMax);
-            joinChip(h, footerFmtBytes(f.tokenBytes));
-            surface.text({x0, y0 + 3}, inkcell::text::truncate(h, innerW), dim);
-        }
-        return;
-    }
-
-    // ROW 1 — what is happening + view
+    // 1 — now                                                              view
     {
-        std::string left = nowLine();
-        auto lst = f.failed ? warn : text;
-        std::string right = kView[bm];
-        int rw = inkcell::text::display_width(right) + 2;
-        surface.text({x0, y0 + 1},
-                     inkcell::text::truncate(left, std::max(8, innerW - rw)), lst);
-        putRight(1, right, dim);
+        std::string now;
+        auto st = text;
+        if (f.failed) {
+            now = f.statusHint.empty() ? "failed" : f.statusHint;
+            st = warn;
+        } else if (live) {
+            now = phaseVerb(f.phaseKey, f.phaseDetail);
+            if (!f.openLine.empty() && f.phaseKey != "act") {
+                now += " · ";
+                now += f.openLine;
+            }
+            if (f.pendingOps > 1)
+                now += " · " + std::to_string(f.pendingOps) + " open";
+            if (f.childPending > 0) now += " · child";
+            if (f.queuedSteer > 0) now += " · steer";
+        } else if (!f.lastResultLine.empty()) {
+            now = f.lastResultLine;
+        } else if (f.turnCount > 0) {
+            now = std::to_string(f.turnCount) + (f.turnCount == 1 ? " turn" : " turns");
+            st = dim;
+        } else {
+            now = "idle";
+            st = dim;
+        }
+        int rw = putR(1, view, dim);
+        putL(1, x0, now, st, std::max(8, inner - rw));
     }
 
     if (box.h < 3) return;
 
-    // ROW 2 — context
+    // 2 — ctx meter
     {
         int x = x0;
-        surface.text({x, y0 + 2}, "ctx", dim);
-        x += 4;
-        std::string nums = fmtTok(used) + "/" + fmtTok(win);
-        surface.text({x, y0 + 2}, nums, bright);
-        x += inkcell::text::display_width(nums) + 1;
-        const int barW = std::min(14, std::max(8, innerW / 5));
+        std::string nums = fmtTok(used) + " / " + fmtTok(win);
+        surface.text({x, y0 + 2}, nums, text);
+        x += inkcell::text::display_width(nums) + 2;
+        const int barW = std::min(16, std::max(8, inner / 5));
         auto on = pct >= 0.85f ? warn : text;
         on.bold = true;
-        auto off = dim;
-        drawUnitBar(surface, x, y0 + 2, barW, pct, on, off);
+        drawCtxMeter(surface, x, y0 + 2, barW, pct, on, dim);
         x += barW + 2;
         std::string pl = std::to_string(static_cast<int>(pct * 100.f + 0.5f)) + "%";
         surface.text({x, y0 + 2}, pl, pct >= 0.85f ? warn : dim);
-        x += inkcell::text::display_width(pl) + 2;
+        x += inkcell::text::display_width(pl) + 3;
         std::string tr;
         if (!f.compactEnabled)
             tr = "compact off";
         else if (f.compactedRecently)
-            tr = "just compacted";
-        else if (trigPct > 0.f) {
-            tr = "arm@";
-            tr += std::to_string(static_cast<int>(trigPct * 100.f + 0.5f));
+            tr = "compacted";
+        else if (armPct > 0) {
+            tr = "compact ";
+            tr += std::to_string(armPct);
             tr += "%";
-            tr += (pct + 1e-6f >= trigPct) ? " armed" : " idle";
+            if (pct * 100.f + 1e-3f >= static_cast<float>(armPct)) tr += " armed";
         }
-        if (!tr.empty())
-            surface.text({x, y0 + 2},
-                         inkcell::text::truncate(tr, rightEdge - x), dim);
+        if (!tr.empty() && x < right - 2)
+            surface.text({x, y0 + 2}, inkcell::text::truncate(tr, right - x), dim);
     }
 
     if (box.h < 4) return;
 
-    // ROW 3 — counters
+    // 3 — live counters only
     {
-        std::string line;
-        joinChip(line, "turn " + std::to_string(std::max(0, f.turnCount)));
-        joinChip(line, "iter " + std::to_string(std::max(0, f.iterCurrent)) + "/" +
-                           std::to_string(std::max(0, f.iterMax)));
-        std::string tv = std::to_string(std::max(0, f.resultCount)) + "/" +
-                         std::to_string(std::max(0, f.actionCount));
-        if (f.pendingOps > 0) tv += " open=" + std::to_string(f.pendingOps);
-        joinChip(line, "tools " + tv);
-        joinChip(line, "hist " + std::to_string(std::max(0, f.historyUsed)) + "/" +
-                           std::to_string(std::max(0, f.historyMax)));
-        joinChip(line, footerFmtBytes(f.tokenBytes));
-        surface.text({x0, y0 + 3}, inkcell::text::truncate(line, innerW), dim);
+        auto kv = [&](int& x, const char* k, const std::string& v) {
+            if (x >= right - 8) return;
+            surface.text({x, y0 + 3}, k, dim);
+            x += inkcell::text::display_width(k) + 1;
+            surface.text({x, y0 + 3}, v, text);
+            x += inkcell::text::display_width(v) + 3;
+        };
+        int x = x0;
+        kv(x, "turn", std::to_string(std::max(0, f.turnCount)));
+        kv(x, "iter",
+           std::to_string(std::max(0, f.iterCurrent)) + "/" +
+               std::to_string(std::max(0, f.iterMax)));
+        std::string tools = std::to_string(std::max(0, f.resultCount)) + "/" +
+                            std::to_string(std::max(0, f.actionCount));
+        kv(x, "tools", tools);
+        kv(x, "hist",
+           std::to_string(std::max(0, f.historyUsed)) + "/" +
+               std::to_string(std::max(0, f.historyMax)));
+        if (x < right - 8)
+            surface.text({x, y0 + 3}, footerFmtBytes(f.tokenBytes), dim);
     }
 }
 

@@ -18,7 +18,7 @@ enum class SettingsOpt : int {
     Raw,
     ChatField,
     FooterPane,   // default chat footer pane
-    BodyView,     // stream · compact · canvas (Ctrl-O)
+    BodyView,     // stream · compact (Ctrl-O)
     AutoFollow,   // stick to live edge while streaming
     Zen,
     NavPill,

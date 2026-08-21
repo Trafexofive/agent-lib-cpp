@@ -1,7 +1,6 @@
 #pragma once
-// Chat body projections (Ctrl-O): Stream | Compact | Canvas.
-// No "graph" mode. Compact + Canvas use TimelineRow* only.
-// Styles pass nowMs=0 — no selection breath flash.
+// Chat body projections (Ctrl-O): Stream | Compact.
+// Canvas (chat) removed — workflow canvas is a separate page.
 
 #include <algorithm>
 #include <deque>
@@ -19,15 +18,13 @@ namespace cortex::mk3::ui::chat {
 enum class ChatBodyMode : uint8_t {
     Stream = 0,
     Compact = 1,
-    Canvas = 2,
-    Count = 3
+    Count = 2
 };
 
 inline const char* chatBodyModeName(ChatBodyMode m) {
     switch (m) {
         case ChatBodyMode::Stream: return "stream";
         case ChatBodyMode::Compact: return "compact";
-        case ChatBodyMode::Canvas: return "canvas";
         default: return "stream";
     }
 }
@@ -278,138 +275,6 @@ inline void drawTranscriptCompact(inkcell::Surface& surface, inkcell::Rect body,
 
         surface.text({body.x, y0 + y},
                      inkcell::text::fit_left(line, std::max(1, body.w - 1)), st);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// CANVAS — protocol spine (not a graph editor, not a second stream)
-// ═══════════════════════════════════════════════════════════════════════
-inline void drawTranscriptCanvas(inkcell::Surface& surface, inkcell::Rect body,
-                                 const ChatSurfaceModel& m) {
-    if (body.empty()) return;
-    surface.fill(body, " ", theme::base_bg());
-
-    if (!m.timelineRows || m.timelineRows->empty()) {
-        surface.text({body.x + 1, body.y}, "canvas · empty", theme::dim());
-        if (m.contentHWriteback) *m.contentHWriteback = 1;
-        return;
-    }
-
-    std::vector<int> idx;
-    filterTimelineIdx(*m.timelineRows, m.showThoughts, m.showRaw, idx);
-
-    // Nodes: only structural kinds (drop pure log noise already filtered).
-    struct Node {
-        int root = -1;
-        std::string lab;
-        std::string sub;
-        bool ok = true;
-        bool live = false;
-        bool sel = false;
-        bool isResult = false;
-    };
-    std::vector<Node> nodes;
-    nodes.reserve(idx.size());
-    for (int ri : idx) {
-        const auto& r = (*m.timelineRows)[static_cast<size_t>(ri)];
-        Node n;
-        n.root = ri;
-        n.ok = r.ok;
-        n.sel = m.historyFocused && m.selectedRow == ri;
-        if (r.kind == TimelineKind::User) {
-            n.lab = "you";
-            n.sub = oneLine(r.body, 56);
-        } else if (r.kind == TimelineKind::Action) {
-            n.lab = (r.actionType == "agent" ? "sub " : "") +
-                    (r.actionName.empty() ? std::string("act") : r.actionName);
-            if (!r.actionId.empty()) n.lab += " #" + r.actionId;
-            n.sub = oneLine(r.body, 56);
-        } else if (r.kind == TimelineKind::Result) {
-            n.isResult = true;
-            n.lab = std::string(r.ok ? "ok  " : "fail ") +
-                    (r.actionName.empty() ? "" : r.actionName);
-            if (!r.actionId.empty()) n.lab += " #" + r.actionId;
-            n.sub = oneLine(r.body, 56);
-        } else if (r.kind == TimelineKind::Response || r.kind == TimelineKind::Final) {
-            n.lab = "out";
-            n.sub = oneLine(r.body.empty() ? r.title : r.body, 56);
-        } else if (r.kind == TimelineKind::Thought) {
-            n.lab = "…";
-            n.sub = oneLine(r.body, 56);
-        } else if (r.kind == TimelineKind::Status) {
-            n.lab = "sys";
-            n.sub = oneLine(r.body.empty() ? r.title : r.body, 56);
-        } else if (r.kind == TimelineKind::Error) {
-            n.lab = "err";
-            n.ok = false;
-            n.sub = oneLine(r.body.empty() ? r.title : r.body, 56);
-        } else {
-            continue;
-        }
-        nodes.push_back(std::move(n));
-    }
-
-    if (m.running) {
-        for (auto& n : nodes) n.live = false;
-        for (int i = static_cast<int>(nodes.size()) - 1; i >= 0; --i) {
-            const auto& r =
-                (*m.timelineRows)[static_cast<size_t>(nodes[static_cast<size_t>(i)].root)];
-            if (r.kind == TimelineKind::Action || r.kind == TimelineKind::Thought ||
-                r.kind == TimelineKind::Response) {
-                nodes[static_cast<size_t>(i)].live = true;
-                break;
-            }
-        }
-    }
-
-    const int hdr = 1;
-    const int nodeH = 2;
-    const int contentH = hdr + static_cast<int>(nodes.size()) * nodeH;
-    const int maxOff = std::max(0, contentH - body.h);
-    int off = m.followBottom ? maxOff : std::max(0, std::min(m.scrollOffset, maxOff));
-    if (m.contentHWriteback) *m.contentHWriteback = std::max(1, contentH);
-
-    surface.text({body.x, body.y},
-                 inkcell::text::truncate(
-                     "canvas  " + std::to_string(nodes.size()) + "  ^O", body.w),
-                 theme::dim());
-
-    auto dim = theme::dim();
-    auto text = theme::text();
-    auto bright = theme::bright();
-    auto okSt = theme::green();
-    auto badSt = theme::red();
-    auto cyan = theme::cyan();
-
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        int baseY = body.y + hdr + static_cast<int>(i) * nodeH - off;
-        if (baseY + 1 < body.y || baseY >= body.bottom()) continue;
-        const auto& n = nodes[i];
-
-        auto st = n.sel ? bright : text;
-        if (!n.ok) st = badSt;
-        else if (n.isResult) st = n.sel ? bright : okSt;
-        else if (n.lab == "you") st = n.sel ? bright : cyan;
-        else if (n.lab == "…" || n.lab == "sys") st = dim;
-
-        // Spine — steady glyphs, no blink
-        if (baseY >= body.y && baseY < body.bottom()) {
-            const char* g = n.live ? "*" : (n.isResult ? (n.ok ? "+" : "x") : "o");
-            if (n.sel) g = ">";
-            surface.put({body.x, baseY}, g, st);
-        }
-        if (i + 1 < nodes.size() && baseY + 1 >= body.y && baseY + 1 < body.bottom())
-            surface.put({body.x, baseY + 1}, "|", dim);
-
-        int tx = body.x + 2;
-        int tw = std::max(8, body.w - 3);
-        if (baseY >= body.y && baseY < body.bottom()) {
-            std::string lab = n.lab;
-            if (n.live) lab = std::string("live ") + lab;
-            surface.text({tx, baseY}, inkcell::text::fit_left(lab, tw), st);
-        }
-        if (baseY + 1 >= body.y && baseY + 1 < body.bottom() && !n.sub.empty())
-            surface.text({tx, baseY + 1}, inkcell::text::fit_left(n.sub, tw), dim);
     }
 }
 
