@@ -697,43 +697,12 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 const std::string msg = e.what() ? e.what() : "";
                 const auto sk = currentRunStopKind();
                 const TransportClass tc = classifyTransportError(msg, sk);
-                const bool isStreamAbort = tc == TransportClass::StreamAbort;
-                const bool isTimeout = tc == TransportClass::Timeout;
-                const bool isTransientNet = transportIsRetryable(tc);
-                const bool isRegionOrForbidden =
-                    tc == TransportClass::RegionForbidden;
-
-                if (tc == TransportClass::HardExternal) {
-                    fullResponse = "[timed out]";
-                    emit.harness("TIMEOUT",
-                                "External signal (SIGTERM / wall timeout) stopped "
-                                "the process — not a flaky stream to FALLBACK.",
-                                "limit");
-                    emit.finish("timeout", "[timed out · external signal]");
-                    iterationOutputs_.push_back("[timed out]");
-                    break;
-                }
-                if (tc == TransportClass::HardOperator ||
-                    (!g_running && sk == RunStopKind::Operator)) {
-                    fullResponse = "[cancelled]";
-                    emit.harness("CANCEL",
-                                "Operator stopped the turn (Ctrl-C/X). Halt the plan.",
-                                "limit");
-                    emit.finish("cancel", "[cancelled by operator]");
-                    iterationOutputs_.push_back("[cancelled]");
-                    break;
-                }
-
-                if (!g_running && !isStreamAbort && !isTransientNet &&
-                    sk == RunStopKind::None) {
-                    fullResponse = "[cancelled]";
-                    emit.harness("CANCEL", "Operator stopped the turn.", "limit");
-                    emit.finish("cancel", "[cancelled by operator]");
-                    iterationOutputs_.push_back("[cancelled]");
-                    break;
-                }
-
-                if (isStreamAbort && !g_hardKill.load(std::memory_order_acquire))
+                const bool hasFb = !config_.fallbackProvider.empty() &&
+                                   !config_.fallbackModel.empty();
+                const CatchDecision dec = decideTransportCatch(
+                    tc, sk, static_cast<bool>(g_running), attempt, maxAttempts,
+                    fallbackTriedThisTurn_, hasFb);
+                if (dec.clearSoft && !g_hardKill.load(std::memory_order_acquire))
                     runControl_.clearSoft();
 
                 auto backoffSleep = [&]() {
@@ -749,37 +718,46 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     }
                 };
 
-                // ── 3) PRIMARY retries first (exhaust maxAttempts)
-                if (isTransientNet && attempt + 1 < maxAttempts) {
-                    std::string reason = msg;
-                    if (reason.find("Failed writing received data") !=
-                        std::string::npos) {
-                        reason =
-                            "stream aborted mid-read (stall/callback) — not disk; " +
-                            msg;
-                    }
+                auto streamReason = [&]() {
+                    if (msg.find("Failed writing received data") != std::string::npos)
+                        return std::string("stream aborted mid-read (stall/callback) — not disk; ") +
+                               msg;
+                    return msg;
+                };
+
+                if (dec.action == CatchAction::HardTimeout) {
+                    fullResponse = "[timed out]";
+                    emit.harness("TIMEOUT",
+                                "External signal (SIGTERM / wall timeout) stopped "
+                                "the process — not a flaky stream to FALLBACK.",
+                                "limit");
+                    emit.finish("timeout", "[timed out · external signal]");
+                    iterationOutputs_.push_back("[timed out]");
+                    break;
+                }
+                if (dec.action == CatchAction::HardCancel) {
+                    fullResponse = "[cancelled]";
+                    emit.harness("CANCEL",
+                                "Operator stopped the turn (Ctrl-C/X). Halt the plan.",
+                                "limit");
+                    emit.finish("cancel", "[cancelled by operator]");
+                    iterationOutputs_.push_back("[cancelled]");
+                    break;
+                }
+                if (dec.action == CatchAction::RetryPrimary) {
+                    const std::string reason = streamReason();
                     emit.status("[RETRY] primary " + config_.provider + "/" +
                                config_.model + " · attempt " +
                                std::to_string(attempt + 1) + "/" +
                                std::to_string(maxAttempts) + " · " + reason);
-                    history_.push_back(
-                        "System: <harness code=\"RETRY\" kind=\"runtime\">\n"
-                        "Primary stream failed (transient). Retrying same provider "
-                        "before any FALLBACK.\nreason: " +
-                        reason + "\n</harness>");
-                    if (ctx.onToken) ctx.onToken("", false);
+                    emit.harness("RETRY",
+                                 "Primary stream failed (transient). Retrying same "
+                                 "provider before any FALLBACK. reason: " + reason);
                     backoffSleep();
                     ++attempt;
                     continue;
                 }
-
-                // ── 4) FALLBACK only after primary retries exhausted OR hard 403
-                const bool primaryExhausted = (attempt + 1 >= maxAttempts);
-                const bool mayFallback =
-                    !fallbackTriedThisTurn_ && !config_.fallbackProvider.empty() &&
-                    !config_.fallbackModel.empty() &&
-                    (isRegionOrForbidden || (isTransientNet && primaryExhausted));
-                if (mayFallback) {
+                if (dec.action == CatchAction::Fallback) {
                     auto fb = providers::createProvider(config_.fallbackProvider,
                                                         config_.fallbackModel);
                     if (fb) {
@@ -798,37 +776,26 @@ std::string Agent::runLoop(AgentContext &ctx) {
                         }
                         setProvider(fb, config_.fallbackProvider,
                                     config_.fallbackModel);
-                        std::string reason = msg;
-                        if (reason.find("Failed writing received data") !=
-                            std::string::npos) {
-                            reason =
-                                "stream aborted mid-read after " +
-                                std::to_string(maxAttempts) +
-                                " primary attempt(s) — not a disk error; " + msg;
-                        }
+                        std::string reason = streamReason();
                         emit.status("[FALLBACK] " + from + " → " + to +
                                    " · after " + std::to_string(maxAttempts) +
                                    " primary attempt(s) · reason: " + reason);
-                        history_.push_back(
-                            "System: <harness kind=\"runtime\" code=\"FALLBACK\">\n"
-                            "primary " + from + " exhausted retries.\n"
-                            "switched to " + to + " for the rest of this turn.\n"
-                            "reason: " + reason + "\n"
-                            "Do not assume the original provider is live.\n"
-                            "</harness>");
-                        // Fresh attempt budget on the fallback provider.
+                        emit.harness("FALLBACK",
+                                     "primary " + from + " exhausted retries. "
+                                     "switched to " + to +
+                                     " for the rest of this turn. reason: " + reason);
                         attempt = 0;
                         continue;
                     }
                 }
 
-                // ── 5) Terminal failure
                 std::ostringstream notice;
-                if (isTimeout) {
+                const bool transient = transportIsRetryable(tc);
+                if (dec.isTimeout) {
                     notice << "⚠ Upstream stream TIMED OUT after retries.\n"
                            << "Detail: " << msg << "\n"
                            << "This is a transport failure — not a completed answer.";
-                } else if (isTransientNet) {
+                } else if (transient) {
                     notice << "⚠ Upstream network/HTTP failure after "
                            << maxAttempts << " primary attempt(s)"
                            << (fallbackTriedThisTurn_ ? " (+ fallback)" : "")
@@ -842,12 +809,11 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 rawLlOutput_ += err;
                 iterationRawOutput += err;
                 iterationOutputs_.push_back(err);
-                emit.status(std::string(isTimeout ? "[TIMEOUT] " : "[ERROR] ") + msg);
-                history_.push_back(
-                    "System: [PROVIDER " +
-                    std::string(isTimeout ? "TIMEOUT" : "ERROR") + "] " + msg +
-                    " — previous turn did not complete. Do not treat any partial "
-                    "output as final; continue or ask the operator to retry.");
+                emit.status(std::string(dec.isTimeout ? "[TIMEOUT] " : "[ERROR] ") +
+                            msg);
+                emit.harness(dec.isTimeout ? "TIMEOUT" : "ERROR",
+                             msg + " — previous turn did not complete. Do not treat "
+                             "any partial output as final.");
                 emit.finish("provider_error", err);
                 fullResponse = err;
                 responseOutput_ = err;

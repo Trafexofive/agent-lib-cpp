@@ -4,6 +4,7 @@
 #include <string>
 
 #include "src/core/agent.hpp"
+#include "src/core/agent_run_helpers.hpp"
 #include "src/core/types.hpp"
 #include "src/testing/scripted_provider.hpp"
 
@@ -156,6 +157,33 @@ void test_nonfinal_response_body_salvaged() {
           "non-final response body is salvaged into a real final");
 }
 
+void test_decide_transport_catch() {
+    using SK = RunStopKind;
+    auto d = decideTransportCatch(TransportClass::HardExternal, SK::ExternalSignal,
+                                  true, 0, 9, false, true);
+    CHECK(d.action == CatchAction::HardTimeout, "SIGINT/SIGTERM is HardTimeout");
+    d = decideTransportCatch(TransportClass::HardOperator, SK::Operator, false, 0,
+                             9, false, true);
+    CHECK(d.action == CatchAction::HardCancel, "Ctrl-X is HardCancel");
+    d = decideTransportCatch(TransportClass::StreamAbort, SK::None, true, 0, 9,
+                             false, true);
+    CHECK(d.action == CatchAction::RetryPrimary && d.clearSoft,
+          "stream abort retries primary and clears soft");
+    d = decideTransportCatch(TransportClass::StreamAbort, SK::None, true, 8, 9,
+                             false, true);
+    CHECK(d.action == CatchAction::Fallback, "exhausted primary + fallback → Fallback");
+    d = decideTransportCatch(TransportClass::RegionForbidden, SK::None, true, 0, 9,
+                             false, true);
+    CHECK(d.action == CatchAction::Fallback, "403 region skips retries, goes Fallback");
+    d = decideTransportCatch(TransportClass::Fatal, SK::None, true, 0, 9, false,
+                             true);
+    CHECK(d.action == CatchAction::TerminalFail, "fatal is TerminalFail");
+    d = decideTransportCatch(TransportClass::TransientNet, SK::None, true, 8, 9,
+                             true, true);
+    CHECK(d.action == CatchAction::TerminalFail,
+          "exhausted + fallback already tried → TerminalFail");
+}
+
 int main() {
     std::cout << "completion_policy_test\n";
     test_bare_text_recovers_then_final();
@@ -163,6 +191,7 @@ int main() {
     test_strict_never_promotes_at_cap();
     test_max_iter_runs_finalization_turn();
     test_nonfinal_response_body_salvaged();
+    test_decide_transport_catch();
     std::cout << passed << " passed, " << failed << " failed\n";
     return failed ? 1 : 0;
 }

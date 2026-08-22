@@ -618,4 +618,59 @@ inline bool transportIsRetryable(TransportClass c) {
            c == TransportClass::StreamAbort || c == TransportClass::TransientNet;
 }
 
+// What runLoop does after classifyTransportError. Pure. No Agent.
+enum class CatchAction {
+    HardTimeout,
+    HardCancel,
+    RetryPrimary,
+    Fallback,
+    TerminalFail,
+};
+
+struct CatchDecision {
+    CatchAction action = CatchAction::TerminalFail;
+    bool clearSoft = false;  // stream-abort: caller RunControl::clearSoft()
+    bool isTimeout = false;
+};
+
+inline CatchDecision decideTransportCatch(TransportClass tc, RunStopKind sk,
+                                          bool running, int attempt,
+                                          int maxAttempts, bool fallbackTried,
+                                          bool hasFallback) {
+    CatchDecision d;
+    d.isTimeout = (tc == TransportClass::Timeout);
+    const bool transient = transportIsRetryable(tc);
+    const bool streamAbort = (tc == TransportClass::StreamAbort);
+    const bool region = (tc == TransportClass::RegionForbidden);
+    if (streamAbort) d.clearSoft = true;
+
+    if (tc == TransportClass::HardExternal) {
+        d.action = CatchAction::HardTimeout;
+        return d;
+    }
+    if (tc == TransportClass::HardOperator ||
+        (!running && sk == RunStopKind::Operator)) {
+        d.action = CatchAction::HardCancel;
+        return d;
+    }
+    if (!running && !streamAbort && !transient && sk == RunStopKind::None) {
+        d.action = CatchAction::HardCancel;
+        return d;
+    }
+    if (transient && attempt + 1 < maxAttempts) {
+        d.action = CatchAction::RetryPrimary;
+        return d;
+    }
+    const bool primaryExhausted = (attempt + 1 >= maxAttempts);
+    const bool mayFallback =
+        !fallbackTried && hasFallback &&
+        (region || (transient && primaryExhausted));
+    if (mayFallback) {
+        d.action = CatchAction::Fallback;
+        return d;
+    }
+    d.action = CatchAction::TerminalFail;
+    return d;
+}
+
 }  // namespace cortex::mk3
