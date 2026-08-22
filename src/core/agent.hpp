@@ -30,6 +30,7 @@
 namespace cortex::mk3 {
 
 namespace dispatch { class ActionDispatcher; }
+struct TurnEmitter;
 
 // ProtocolAction / ProtocolResult / ProtocolEventKind / ProtocolEvent:
 // defined in protocol/events.hpp (included above). Agent remains the runtime.
@@ -46,6 +47,23 @@ struct ProtocolStreamState {
     // Once a thought segment is classified as symbol-dump / pure noise, stop
     // re-scanning and re-publishing on every token (O(n²) stall under nm floods).
     bool thoughtDroppedAsNoise = false;
+};
+
+// One generateStream retry budget (primary then fallback). Owned by runLoop.
+struct StreamAttempt {
+    ProtocolStreamState* st = nullptr;
+    protocol::Parser* parser = nullptr;
+    ChatMessages* msgs = nullptr;
+    TurnEmitter* emit = nullptr;
+    std::string* iterationRawOutput = nullptr;
+    std::string* iterationRuntimeOutput = nullptr;
+    std::string* rawOutput = nullptr;
+    std::string* fullResponse = nullptr;
+    size_t runEpochStart = 0;
+    ILlmProvider::StreamStats stats;
+    int attempt = 0;
+    int maxAttempts = 1;
+    bool aborted = false;
 };
 
 // ── Pending tool execution (threaded popen, streams output live) ──
@@ -347,6 +365,7 @@ class Agent {
                                    std::string& lastSalvage);
     void handleProtocolEvent(AgentContext& ctx, ProtocolStreamState& st,
                              const protocol::TokenEvent& ev);
+    void streamUntilSettled(AgentContext& ctx, StreamAttempt& a);
 
     // Prompt building
     ChatMessages buildChatPrompt(const AgentContext& ctx) const;

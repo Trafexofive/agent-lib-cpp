@@ -613,6 +613,20 @@ inline TransportClass classifyTransportError(const std::string& msg, RunStopKind
     return TransportClass::Fatal;
 }
 
+inline bool shouldRetryEmptyStream(const AgentConfig& cfg, int attempt,
+                                   int maxAttempts, bool anyContent,
+                                   const std::string& finishReason) {
+    if (attempt + 1 >= maxAttempts) return false;
+    if (!anyContent) return true;
+    if (cfg.retryOnFinishReasonLength && finishReason == "length") return true;
+    if (cfg.retryOnFinishReasonContentFilter &&
+        (finishReason == "content_filter" || finishReason == "empty"))
+        return true;
+    for (const auto& r : cfg.retryOnFinishReasons)
+        if (finishReason == r) return true;
+    return false;
+}
+
 inline bool transportIsRetryable(TransportClass c) {
     return c == TransportClass::Timeout || c == TransportClass::EmptyPayload ||
            c == TransportClass::StreamAbort || c == TransportClass::TransientNet;
