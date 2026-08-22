@@ -271,33 +271,23 @@ std::string Agent::buildSystemPrompt(const AgentContext &ctx) const {
     if (!history_.empty()) {
         const int userTurnsTotal = compaction::countUserTurns(history_);
 
-        // Working copy for prompt only
+        // Window only. Do not mutate history_ here — that is prompt() / turn-end.
         std::vector<std::string> promptHist = history_;
-
-        applyCtxEconomyInPlace(ctx.iteration, /*force=*/false, ctx.sessionId);
-        promptHist = history_;
-
-        // ── history_cap seatbelt (dumb tail; not every turn) ────────
         const size_t prevTail = historyWindowStart_;
         size_t histStart = compaction::resolveHistoryWindowStart(
             promptHist.size(), config_.effectiveHistoryCap(),
             config_.effectiveTailEveryTurns(),
             userTurnsTotal, historyCapAppliedAtUserTurn_, historyWindowStart_);
-        if (histStart > prevTail && histStart > 0) {
+        // TAIL harness once, when the frozen window actually moves.
+        if (histStart > prevTail && histStart > 0 && ctx.iteration <= 1) {
             const int dropped = static_cast<int>(histStart);
             const int kept = static_cast<int>(promptHist.size() - histStart);
-            std::string tailHx = buildCtxEconomyHarness(
+            lastCompactNote_ = buildCtxEconomyHarness(
                 "TAIL", dropped, kept, compaction::estimateTokens(promptHist),
                 config_.effectiveHistoryCap(), ctx.iteration,
                 std::max(1, config_.iterationCap));
-            if (lastCompactNote_.empty())
-                lastCompactNote_ = tailHx;
-            else
-                lastCompactNote_ += "\n" + tailHx;
-            if (lastCompactUiPending_.empty()) {
-                lastEconomyCode_ = "TAIL";
-                lastCompactUiPending_ = ctxEconomyUiLine("TAIL", dropped, kept);
-            }
+            lastEconomyCode_ = "TAIL";
+            lastCompactUiPending_ = ctxEconomyUiLine("TAIL", dropped, kept);
         }
 
         if (!lastCompactNote_.empty()) {

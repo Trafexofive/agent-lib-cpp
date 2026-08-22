@@ -199,6 +199,10 @@ std::string Agent::prompt(const std::string &input, StreamCallback onToken,
     fallbackTriedThisTurn_ = false;
     fallbackSwappedThisTurn_ = false;
 
+    // User-turn boundary only. Never from buildSystemPrompt (every generate
+    // would rewrite the prompt prefix and bust KV cache).
+    applyCtxEconomyInPlace(0, /*force=*/false, sessionId);
+
     TlsRunGuard tls(&runControl_);
     std::string result = runLoop(ctx);
     restorePrimaryIfFallback();

@@ -107,7 +107,7 @@ inline void applyProfile(CompactionConfig& cfg) {
     }
 
     if (cfg.cooldownMinTurns <= 0)
-        cfg.cooldownMinTurns = 2;
+        cfg.cooldownMinTurns = (p == "trim") ? 8 : 2;
     // Default turn trigger aligns with max_turns_per_cycle spirit
     if (cfg.triggerTurns <= 0)
         cfg.triggerTurns = 15;
@@ -483,10 +483,10 @@ inline size_t resolveHistoryWindowStart(size_t historySize, int historyCap, int 
     int every = everyTurns;
     if (every < 0)
         every = 15;
+    if (every == 1)
+        every = 8;  // every user-turn reclamps bust prefix cache
     // every == 0 → never recompute after first
-    // every == 1 → every turn
-    bool recompute = (every == 1) ||
-                     (every > 1 && (userTurns - ioAppliedAtUserTurn) >= every);
+    bool recompute = (every > 1 && (userTurns - ioAppliedAtUserTurn) >= every);
     if (recompute) {
         ioFrozenStart = desired;
         ioAppliedAtUserTurn = userTurns;

@@ -213,7 +213,7 @@ struct TrimConfig {
     double triggerContextPct = 0;
     int triggerTurns = 0;
     int modelContextTokens = 0;
-    int cooldownMinTurns = 1;
+    int cooldownMinTurns = 8;  // never per user-turn; prefix-cache
     int cooldownMinSeconds = 0;
 
     CompactionTagPolicy defaultPolicy;
@@ -367,8 +367,11 @@ struct AgentConfig {
         return historyCap;
     }
     int effectiveTailEveryTurns() const {
-        if (trim.tailEveryTurns >= 0) return trim.tailEveryTurns;
-        return maxTurnsPerCycle;
+        int n = (trim.tailEveryTurns >= 0) ? trim.tailEveryTurns : maxTurnsPerCycle;
+        // 0 = freeze after first apply. 1 used to mean every user turn — that
+        // busts prefix cache. Floor at 8 unless the operator froze it.
+        if (n == 1) n = 8;
+        return n;
     }
 
     // Sub-agent runtime behavior

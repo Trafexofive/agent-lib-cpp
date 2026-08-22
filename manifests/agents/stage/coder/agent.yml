@@ -58,7 +58,7 @@ runtime:
       turns: 8
       model_context_tokens: 500000
     cooldown:
-      min_turns: 1
+      min_turns: 8
       min_seconds: 0
     policy:
       default: { keep: tail, keep_last: 8, truncate_chars: 800 }

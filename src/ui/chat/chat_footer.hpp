@@ -192,8 +192,12 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
     const int win = std::max(1, f.ctxMaxTokens > 0 ? f.ctxMaxTokens : 128000);
     const int used = std::max(0, f.ctxUsedTokens);
     float pct = std::min(1.f, static_cast<float>(used) / static_cast<float>(win));
+    const int compactArm = f.compactArmTokens > 0 ? f.compactArmTokens : f.ctxCompactAt;
+    const int trimArm = f.trimArmTokens;
     const int armPct =
-        (f.ctxCompactAt > 0) ? std::min(100, (f.ctxCompactAt * 100) / win) : 0;
+        (compactArm > 0) ? std::min(100, (compactArm * 100) / win) : 0;
+    const int trimArmPct =
+        (trimArm > 0) ? std::min(100, (trimArm * 100) / win) : 0;
     const char* view = (f.bodyMode == 1) ? "compact" : "stream";
     const char* paneHint = "^F cycle";
 
@@ -318,10 +322,27 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         surface.text({x, y0 + 2}, nums, text);
         x += inkcell::text::display_width(nums) + 1;
         const int barW = std::min(18, std::max(8, inner / 5));
+        const int barX = x;
         auto on = pct >= 0.85f ? warn : (live ? liveSt : text);
         on.bold = true;
-        drawCtxMeter(surface, x, y0 + 2, barW, pct, on, dim);
-        x += barW + 2;
+        drawCtxMeter(surface, barX, y0 + 2, barW, pct, on, dim);
+        auto tickCol = [&](int tokens) -> int {
+            if (tokens <= 0 || win <= 0) return -1;
+            int i = (tokens * barW) / win;
+            if (i < 0) i = 0;
+            if (i >= barW) i = barW - 1;
+            return i;
+        };
+        const int tcol = tickCol(trimArm);
+        const int ccol = tickCol(compactArm);
+        auto cyan = theme::footer_accent_live().with_bg(bg.bg);
+        cyan.bold = true;
+        if (tcol >= 0)
+            surface.put({barX + tcol, y0 + 2}, "T", cyan);
+        if (ccol >= 0)
+            surface.put({barX + ccol, y0 + 2},
+                        (ccol == tcol) ? "+" : "C", warn);
+        x = barX + barW + 2;
         std::string pl = std::to_string(static_cast<int>(pct * 100.f + 0.5f)) + "%";
         surface.text({x, y0 + 2}, pl, pct >= 0.85f ? warn : dim);
         x += inkcell::text::display_width(pl) + 2;
@@ -331,21 +352,28 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             else if (f.lastEconomyCode == "TAIL") tr = "tailed";
             else tr = "compacted";
         } else {
-            std::string bits;
-            if (f.trimFilter) bits = "trim";
-            else if (f.trimEnabled && f.tailCap > 0) bits = "tail";
-            if (f.compactEnabled) {
-                if (!bits.empty()) bits += "+";
-                bits += f.compactProfile.empty() ? "compact" : f.compactProfile;
-            }
-            if (bits.empty()) bits = "ctx-clean off";
-            tr = bits;
-            if (armPct > 0) {
-                tr += " ";
-                tr += std::to_string(armPct);
+            if (trimArmPct > 0) {
+                tr += "T";
+                tr += std::to_string(trimArmPct);
                 tr += "%";
-                if (pct * 100.f + 1e-3f >= static_cast<float>(armPct)) tr += " armed";
+                if (pct * 100.f + 1e-3f >= static_cast<float>(trimArmPct)) tr += "!";
+            } else if (f.trimFilter) {
+                tr += "T";
+            } else if (f.trimEnabled && f.tailCap > 0) {
+                tr += "tail";
             }
+            if (f.compactEnabled || compactArm > 0) {
+                if (!tr.empty()) tr += "  ";
+                tr += "C";
+                if (armPct > 0) {
+                    tr += std::to_string(armPct);
+                    tr += "%";
+                    if (pct * 100.f + 1e-3f >= static_cast<float>(armPct)) tr += "!";
+                } else if (!f.compactProfile.empty()) {
+                    tr += f.compactProfile;
+                }
+            }
+            if (tr.empty()) tr = "ctx-clean off";
         }
         if (!tr.empty() && x < right - 2)
             surface.text({x, y0 + 2}, inkcell::text::truncate(tr, right - x), dim);

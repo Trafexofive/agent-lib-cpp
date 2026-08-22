@@ -924,17 +924,24 @@ class AgentScene final : public BaseScene {
                         }
                     }
                 }
-                // No open tools → not "list foo"; waiting on the model.
-                // Stale last-Action verb made multi-minute LLM waits look like a hung tool.
+                // Open tools own the plate. Thought tokens still arriving
+                // (native thinking while grep/read run) must NOT paint
+                // "thinking" over 3 open cards — that's the hang lie.
                 if (foot.phaseKey != "delegate" && model_->pendingOps <= 0) {
                     foot.phaseKey = "wait";
                     foot.phaseDetail.clear();
+                } else if (foot.phaseKey != "delegate" && model_->pendingOps > 0) {
+                    foot.phaseKey = "act";
                 }
                 int scanned = 0;
                 for (auto it = phaseRows.rbegin();
                      it != phaseRows.rend() && scanned < 12 &&
                      foot.phaseKey != "delegate";
                      ++it, ++scanned) {
+                    if (model_->pendingOps > 0 &&
+                        (it->kind == TimelineKind::Thought ||
+                         it->kind == TimelineKind::Response))
+                        continue;
                     if (it->kind == TimelineKind::Thought) {
                         foot.phaseKey = "think";
                         break;

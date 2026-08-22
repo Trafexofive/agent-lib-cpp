@@ -387,8 +387,7 @@ class Agent {
     AgentConfig config_;
     LlmProviderPtr provider_;
     session::SessionManager sessionMgr_;
-    // mutable: prompt-build compaction may shrink the back-store from const
-    // buildSystemPrompt (front=prompt view, back=session history).
+    // mutable: trim/compact at user-turn boundaries (prompt / runLoop exit).
     mutable std::vector<std::string> history_;
     mutable std::mutex steerMu_;
     std::string pendingSteer_;
