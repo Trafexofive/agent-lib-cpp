@@ -8,6 +8,7 @@
 #include "agent_xml.hpp"
 #include "agent_run_helpers.hpp"
 #include "agent_harness.hpp"
+#include "turn_emitter.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -377,81 +378,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
     bool finalizationDone = false;
     std::string limitReason; // set when we enter finalization due to a cap
 
-    auto emitStatus = [&](const std::string &text) {
-        history_.push_back("System: " + text);
-        protocolEvents_.push_back({ProtocolEventKind::STATUS, text, {}, {}});
-        // Heartbeat so TUI drains the STATUS event mid-turn.
-        if (ctx.onToken)
-            ctx.onToken("", false);
-    };
-
-    // Dual-channel runtime notice:
-    //   1) <harness> in history_ → model sees it on the next generation/turn
-    //   2) STATUS protocol event → operator chat paints ⚠ LIMIT / TIMEOUT block
-    // Bare emitStatus alone only shoved System: text — easy to miss in UI and
-    // not structured for the model (live dump: TIMEOUT with no harness body).
-    auto emitHarness = [&](const std::string &code, const std::string &detail,
-                           const std::string &kind = "runtime") {
-        std::ostringstream h;
-        h << "<harness kind=\"" << kind << "\" code=\"" << code << "\""
-          << " iteration=\"" << ctx.iteration << "\""
-          << " cap=\"" << workCap << "\"";
-        if (!config_.thinkingLevel.empty())
-            h << " thinking_level=\"" << config_.thinkingLevel << "\"";
-        h << ">\n"
-          << "  <what_happened>" << detail << "</what_happened>\n"
-          << "  <runtime_did>Recorded as runtime state for this generation; "
-             "the turn is still live unless code is a hard stop."
-             "</runtime_did>\n"
-          << "  <you_must>Read this tag before emitting. Adjust the plan; "
-             "do not blind-retry the same blocked path.</you_must>\n"
-          << "  <do_not>Treat this as user prose, or ignore it.</do_not>\n"
-          << "</harness>";
-        history_.push_back("System: " + h.str());
-        std::string tag = "[" + code + "] ";
-        for (char &c : tag)
-            if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
-        protocolEvents_.push_back(
-            {ProtocolEventKind::STATUS, tag + detail, {}, {}});
-        if (ctx.onToken)
-            ctx.onToken("", false);
-    };
-
-    // max_iterations limit → inform the LLM via a runtime <harness> tag
-    // (harness.md documents it as runtime-injected) and the operator via a
-    // TUI Status block. "per session, not per cycle" is satisfied by
-    // ctx.iteration being scoped to this prompt() call; a reprompt restarts
-    // the loop at 1, which resets the budget to 0.
-    auto emitLimitNote = [&](const std::string &reason,
-                             const std::string &detail) {
-        emitHarness(reason, detail, "limit");
-    };
-
-    // Unified terminal bookkeeping — every stop path must leave BOTH the
-    // LLM context (history_) and the chat stream (protocolEvents_) with an
-    // honest closing block. Callers still set fullResponse themselves.
-    auto finishTurn = [&](const std::string &origin, const std::string &text,
-                          bool asResponse = true) {
-        const std::string body =
-            text.empty() ? (std::string("turn ended · ") + origin) : text;
-        const std::string needle = "Agent: " + body;
-        if (history_.empty() || history_.back() != needle)
-            history_.push_back(needle);
-        if (asResponse) {
-            bool hasResp = false;
-            for (size_t i = protocolEvents_.size(); i-- > runEpochStart;) {
-                if (protocolEvents_[i].kind == ProtocolEventKind::RESPONSE) {
-                    hasResp = true;
-                    break;
-                }
-            }
-            if (!hasResp)
-                protocolEvents_.push_back(
-                    {ProtocolEventKind::RESPONSE, body, {}, {}});
-        }
-        if (ctx.onToken)
-            ctx.onToken("", true);
-    };
+    TurnEmitter emit{history_, protocolEvents_, ctx.onToken, ctx.iteration,
+                     workCap, config_.thinkingLevel, runEpochStart};
 
     // Work turns 1..workCap, then at most one FINALIZATION turn (tools
     // disabled) so the model always gets an honest last chance to emit
@@ -463,20 +391,20 @@ std::string Agent::runLoop(AgentContext &ctx) {
             const auto sk = currentRunStopKind();
             if (sk == RunStopKind::ExternalSignal) {
                 fullResponse = "[timed out]";
-                emitHarness("TIMEOUT",
+                emit.harness("TIMEOUT",
                             "External signal (SIGTERM / wall timeout / kill) stopped "
                             "the process. This is NOT an operator Ctrl-C cancel. "
                             "Pending tools/children were interrupted.",
                             "limit");
-                finishTurn("timeout", "[timed out · external signal]");
+                emit.finish("timeout", "[timed out · external signal]");
             } else {
                 fullResponse = "[cancelled]";
-                emitHarness("CANCEL",
+                emit.harness("CANCEL",
                             "Operator stopped the turn (Ctrl-C/X). Pending "
                             "tools/children should halt; do not continue the "
                             "cancelled plan.",
                             "limit");
-                finishTurn("cancel", "[cancelled by operator]");
+                emit.finish("cancel", "[cancelled by operator]");
             }
             break;
         }
@@ -487,11 +415,12 @@ std::string Agent::runLoop(AgentContext &ctx) {
             finalizationTurn = true;
             ctx.iteration = workCap + 1;
             limitReason = "max_iterations=" + std::to_string(workCap);
-            emitLimitNote(limitReason,
+            emit.harness(limitReason,
                           "iteration budget exhausted without "
                           "<response final=\"true\">. Entering FINALIZATION "
                           "turn — tools disabled; emit the best honest final "
-                          "answer now.");
+                          "answer now.",
+                          "limit");
         }
 
         if (finalizationTurn && finalizationDone)
@@ -776,21 +705,21 @@ std::string Agent::runLoop(AgentContext &ctx) {
 
                 if (tc == TransportClass::HardExternal) {
                     fullResponse = "[timed out]";
-                    emitHarness("TIMEOUT",
+                    emit.harness("TIMEOUT",
                                 "External signal (SIGTERM / wall timeout) stopped "
                                 "the process — not a flaky stream to FALLBACK.",
                                 "limit");
-                    finishTurn("timeout", "[timed out · external signal]");
+                    emit.finish("timeout", "[timed out · external signal]");
                     iterationOutputs_.push_back("[timed out]");
                     break;
                 }
                 if (tc == TransportClass::HardOperator ||
                     (!g_running && sk == RunStopKind::Operator)) {
                     fullResponse = "[cancelled]";
-                    emitHarness("CANCEL",
+                    emit.harness("CANCEL",
                                 "Operator stopped the turn (Ctrl-C/X). Halt the plan.",
                                 "limit");
-                    finishTurn("cancel", "[cancelled by operator]");
+                    emit.finish("cancel", "[cancelled by operator]");
                     iterationOutputs_.push_back("[cancelled]");
                     break;
                 }
@@ -798,8 +727,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 if (!g_running && !isStreamAbort && !isTransientNet &&
                     sk == RunStopKind::None) {
                     fullResponse = "[cancelled]";
-                    emitHarness("CANCEL", "Operator stopped the turn.", "limit");
-                    finishTurn("cancel", "[cancelled by operator]");
+                    emit.harness("CANCEL", "Operator stopped the turn.", "limit");
+                    emit.finish("cancel", "[cancelled by operator]");
                     iterationOutputs_.push_back("[cancelled]");
                     break;
                 }
@@ -829,7 +758,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                             "stream aborted mid-read (stall/callback) — not disk; " +
                             msg;
                     }
-                    emitStatus("[RETRY] primary " + config_.provider + "/" +
+                    emit.status("[RETRY] primary " + config_.provider + "/" +
                                config_.model + " · attempt " +
                                std::to_string(attempt + 1) + "/" +
                                std::to_string(maxAttempts) + " · " + reason);
@@ -877,7 +806,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                                 std::to_string(maxAttempts) +
                                 " primary attempt(s) — not a disk error; " + msg;
                         }
-                        emitStatus("[FALLBACK] " + from + " → " + to +
+                        emit.status("[FALLBACK] " + from + " → " + to +
                                    " · after " + std::to_string(maxAttempts) +
                                    " primary attempt(s) · reason: " + reason);
                         history_.push_back(
@@ -913,13 +842,13 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 rawLlOutput_ += err;
                 iterationRawOutput += err;
                 iterationOutputs_.push_back(err);
-                emitStatus(std::string(isTimeout ? "[TIMEOUT] " : "[ERROR] ") + msg);
+                emit.status(std::string(isTimeout ? "[TIMEOUT] " : "[ERROR] ") + msg);
                 history_.push_back(
                     "System: [PROVIDER " +
                     std::string(isTimeout ? "TIMEOUT" : "ERROR") + "] " + msg +
                     " — previous turn did not complete. Do not treat any partial "
                     "output as final; continue or ask the operator to retry.");
-                finishTurn("provider_error", err);
+                emit.finish("provider_error", err);
                 fullResponse = err;
                 responseOutput_ = err;
                 break;
@@ -993,9 +922,9 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     "s. Pending async work was abandoned for this turn. "
                     "Prefer mode=sync agents (joined) or tool wait{ids}. "
                     "Do not sleep-poll children.";
-                emitHarness("TIMEOUT", detail, "limit");
+                emit.harness("TIMEOUT", detail, "limit");
                 const std::string to = "[TIMEOUT] " + detail;
-                finishTurn("action_timeout", to);
+                emit.finish("action_timeout", to);
                 fullResponse = to;
                 break;
             }
@@ -1043,21 +972,21 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     ". The agent loop is aborting this turn rather than "
                     "silently finishing. "
                     "Retry with a different model if this persists.";
-                emitStatus("[EMPTY RESPONSE]" + detail);
-                finishTurn("empty_response", visibleError);
+                emit.status("[EMPTY RESPONSE]" + detail);
+                emit.finish("empty_response", visibleError);
                 responseOutput_ = visibleError;
                 fullResponse = visibleError;
                 st.taskComplete = true; // runtime failure, not model final
             } else {
                 if (incompleteNoted && !finalizationTurn &&
                     ctx.iteration < workCap) {
-                    emitHarness(
+                    emit.harness(
                         "THOUGHT_STALL",
                         "Second thought-only generation after BARE_TEXT/NONFINAL. "
                         "No <action> and no <response final=\"true\">. "
                         "Stopping instead of burning the iteration cap.",
                         "limit");
-                    finishTurn("thought_stall",
+                    emit.finish("thought_stall",
                                "[THOUGHT_STALL] two thought-only gens — stopped");
                     fullResponse = "[THOUGHT_STALL]";
                     st.taskComplete = true;
@@ -1194,7 +1123,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                     "of what you were doing and return to it after the steer is done.\n"
                     "- Never treat the steer as a completed answer; keep using tools "
                     "and finish with <response final=\"true\"> when the whole job is done.");
-                emitStatus("[STEER] operator guidance injected");
+                emit.status("[STEER] operator guidance injected");
                 if (ctx.onToken)
                     ctx.onToken("", false);
             }
@@ -1230,7 +1159,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
         // This is turn-ended recovery, not mid-loop auto-promotion.
         if (compPolicy != CompPolicy::Strict && !lastSalvage.empty() &&
             !isThoughtEcho(lastSalvage, lastThoughtContent)) {
-            emitStatus(
+            emit.status(
                 "[AUTO-PROMOTED @ CAP] No <response final=\"true\"> "
                 "before iteration cap. Promoted salvaged content under "
                 "runtime.mode=" +
@@ -1240,7 +1169,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 ".");
             fullResponse = lastSalvage;
             responseOutput_ = lastSalvage;
-            finishTurn("auto_promote_cap", lastSalvage);
+            emit.finish("auto_promote_cap", lastSalvage);
         } else {
             fullResponse =
                 "⚠ Agent stopped without emitting <response final=\"true\">. "
@@ -1249,8 +1178,8 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 (lastSalvage.empty() ? std::string(".")
                                      : " (salvage was available but "
                                        "completion_policy=strict).");
-            emitStatus("[STOP] no final response before cap/timeout");
-            finishTurn("stop_no_final", fullResponse);
+            emit.status("[STOP] no final response before cap/timeout");
+            emit.finish("stop_no_final", fullResponse);
         }
     }
 

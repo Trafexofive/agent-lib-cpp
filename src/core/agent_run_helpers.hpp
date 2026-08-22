@@ -517,9 +517,11 @@ inline std::string buildRuntimeHarness(const std::string& code, int iteration,
                                        const std::string& happened,
                                        const std::string& runtimeDid,
                                        const std::string& youMust,
-                                       const std::string& doNot) {
+                                       const std::string& doNot,
+                                       const std::string& kind = "runtime") {
     std::ostringstream os;
-    os << "<harness kind=\"runtime\" code=\"" << code << "\""
+    os << "<harness kind=\"" << (kind.empty() ? "runtime" : kind) << "\" code=\""
+       << code << "\""
        << " iteration=\"" << iteration << "\" cap=\"" << cap << "\"";
     if (!thinkingLevel.empty())
         os << " thinking_level=\"" << thinkingLevel << "\"";
