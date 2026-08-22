@@ -84,11 +84,16 @@ void Agent::publishCleanThought(ProtocolStreamState &st, const std::string &rawA
         }
         if (idx != static_cast<size_t>(-1)) {
             std::string& dst = ev[idx].text;
-            if (cleaned.find(dst) != std::string::npos)
+            // One well. Never glue copies with --- (that's the furnace).
+            // Extension / rewrite → replace. Duplicate / subset → keep.
+            if (cleaned == dst) {
+                /* same snapshot */
+            } else if (cleaned.find(dst) != std::string::npos) {
                 dst = cleaned;
-            else if (dst.find(cleaned) == std::string::npos) {
-                dst += "\n\n---\n\n";
-                dst += cleaned;
+            } else if (dst.find(cleaned) != std::string::npos) {
+                /* dst already has this */
+            } else {
+                dst = cleaned;
             }
             st.thoughtEventIdx = idx;
         } else {

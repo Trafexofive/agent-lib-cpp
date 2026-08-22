@@ -106,6 +106,7 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
 
             try {
                 size_t leftoverAfterSettle = 0;
+                size_t preActionThink = 0;
                 bool batchSettled = false;
                 auto cutLeftover = [&]() {
                     if (leftoverAfterSettle < 4096 || !provider_)
@@ -135,20 +136,21 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
                         // — live dimmed
                         if (!token.empty() && token[0] == '\x01') {
                             std::string thoughtChunk = token.substr(1);
-                            thoughtOutput_ += thoughtChunk;
-                            if (!thoughtChunk.empty()) {
-                                protocol_.mutate([&](std::vector<ProtocolEvent>& ev) {
-                                    if (ev.size() > runEpochStart &&
-                                        ev.back().kind == ProtocolEventKind::THOUGHT)
-                                        ev.back().text += thoughtChunk;
-                                    else
-                                        ev.push_back({ProtocolEventKind::THOUGHT,
-                                                      thoughtChunk, {}, {}});
-                                });
-                            }
+                            if (!thoughtChunk.empty())
+                                publishCleanThought(st, thoughtChunk);
                             if (batchSettled) {
                                 leftoverAfterSettle += thoughtChunk.size();
                                 cutLeftover();
+                            } else {
+                                // Furnace before first <action>: expanding
+                                // "I'll scout… list path … grep path" as native
+                                // thinking with open=0. Not leftover-after-batch.
+                                preActionThink += thoughtChunk.size();
+                                if (preActionThink >= 4096 && provider_ &&
+                                    (st.thoughtDroppedAsNoise ||
+                                     protocol::looksLikeToolPlanDump(st.thoughtRawBuf) ||
+                                     protocol::looksLikeToolPlanDump(thoughtOutput_)))
+                                    provider_->abortGeneration();
                             }
                             if (ctx.onToken)
                                 ctx.onToken("", false); // trigger render

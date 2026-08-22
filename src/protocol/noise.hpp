@@ -298,16 +298,32 @@ inline bool looksLikeSymbolDump(const std::string& s) {
 // "read-foo tool fs_read path …" tokens. Not a symbol table — still stalls
 // wrap + rebuild (12 KiB thought → hundreds of display rows / tick).
 inline bool looksLikeToolPlanDump(const std::string& s) {
-    if (s.size() < 800) return false;
+    if (s.size() < 280) return false;
     int nl = 0, sp = 0;
+    int toolHits = 0;
+    auto bump = [&](const char* k) {
+        if (s.find(k) != std::string::npos) ++toolHits;
+    };
+    bump("list path");
+    bump("grep path");
+    bump("fs_read path");
+    bump("fs_write path");
+    bump("git_status");
+    bump("git_diff");
+    bump("max_entries");
+    bump("max_matches");
+    bump("path_glob");
+    bump("recursive true");
     for (char c : s) {
         if (c == '\n') ++nl;
         else if (c == ' ' || c == '\t') ++sp;
     }
     const int lines = nl + 1;
     const int tokens = sp + 1;
-    if (s.size() > 4000 && lines <= 6) return true;
-    if (tokens >= 80 && lines > 0 && tokens / lines >= 25) return true;
+    // Live furnace: expanding "I'll scout… list path … grep path …" as thought.
+    if (toolHits >= 3 && s.size() >= 400) return true;
+    if (s.size() > 4000 && lines <= 8) return true;
+    if (tokens >= 50 && lines > 0 && tokens / lines >= 18) return true;
     return false;
 }
 

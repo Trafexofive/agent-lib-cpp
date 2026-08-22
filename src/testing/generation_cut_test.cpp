@@ -320,11 +320,114 @@ void test_sibling_action_with_body_still_runs() {
     CHECK(out.find("both ran") != std::string::npos, "ReAct iterates after both tools");
 }
 
+// Live plate: 39s thinking, open=0, same "I'll scout… list path… grep path"
+// growing as native thinking. No <action> yet. Must cut, not bill a furnace.
+class PreActionToolPlanProvider : public ILlmProvider {
+   public:
+    int calls = 0;
+    size_t thinkBytes = 0;
+    bool cutSeen = false;
+    std::string generate(const ChatMessages&) override {
+        return "<response final=\"true\">unused</response>";
+    }
+    void generateStream(const ChatMessages&, StreamCallback cb) override {
+        abortGeneration_.store(false, std::memory_order_release);
+        lastStats_ = StreamStats{};
+        lastStats_.anyContent = true;
+        lastStats_.finishReason = "stop";
+        ++calls;
+        if (!cb) return;
+        if (calls == 1) {
+            const std::string plan =
+                "I'll scout the workflow page and manifests quickly. "
+                "list path /home/mlamkadm/repos/active/agent-lib-cpp max_entries 80 "
+                "list path /home/mlamkadm/repos/active/agent-lib-cpp/manifests "
+                "recursive true grep path /tmp pattern workflow path_glob *.md "
+                "max_matches 40 git_status cwd /tmp fs_read path /tmp/PLANNED.md ";
+            for (int i = 0; i < 40; ++i) {
+                std::string chunk = std::string(1, '\x01') + plan;
+                thinkBytes += plan.size();
+                if (abortGeneration_.load(std::memory_order_acquire)) {
+                    cutSeen = true;
+                    lastStats_.finishReason = "generation_cut";
+                    break;
+                }
+                cb(chunk, false);
+            }
+            return;
+        }
+        cb("<action type=\"tool\" name=\"echo\" id=\"e1\">{\"msg\":\"ok\"}</action>",
+           false);
+        cb("<response final=\"true\">plan delivered</response>", true);
+    }
+    StreamStats lastStreamStats() const override { return lastStats_; }
+    void abortGeneration() override {
+        abortGeneration_.store(true, std::memory_order_release);
+    }
+    bool generationAborted() const override {
+        return abortGeneration_.load(std::memory_order_acquire);
+    }
+    void setModel(const std::string& m) override { model_ = m; }
+    void setTemperature(double t) override { temperature_ = t; }
+    void setMaxTokens(int n) override { maxTokens_ = n; }
+    void setTopP(double p) override { topP_ = p; }
+    std::string getModel() const override { return model_; }
+    double getTemperature() const override { return temperature_; }
+    int getMaxTokens() const override { return maxTokens_; }
+    std::string providerName() const override { return "pre-action-plan"; }
+   private:
+    std::string model_ = "drip";
+    double temperature_ = 0.7;
+    int maxTokens_ = 4096;
+    double topP_ = 0.95;
+    StreamStats lastStats_{};
+    std::atomic<bool> abortGeneration_{false};
+};
+
+void test_pre_action_tool_plan_thinking_is_cut() {
+    auto sp = std::make_shared<PreActionToolPlanProvider>();
+    AgentConfig cfg;
+    cfg.name = "generation-cut-preaction";
+    cfg.provider = "scripted";
+    cfg.model = "scripted";
+    cfg.iterationCap = 6;
+    cfg.runtimeMode = "normal";
+    cfg.systemPromptText = "test";
+    Agent agent(cfg, sp);
+    ToolDef echo;
+    echo.name = "echo";
+    echo.description = "echo";
+    echo.isNative = true;
+    agent.addTool(tools::Tool(echo, [](const Json::Value&) {
+        Json::Value r; r["success"] = true;
+        Json::StreamWriterBuilder w; w["indentation"] = "";
+        return Json::writeString(w, r);
+    }));
+    std::string out = agent.prompt("scout", "", true);
+    CHECK(sp->cutSeen, "pre-action tool-plan thinking is cut");
+    CHECK(sp->thinkBytes < 20000, "pre-action furnace cut before 20KB");
+    CHECK(sp->calls >= 2, "ReAct still iterates after pre-action cut");
+    CHECK(out.find("plan delivered") != std::string::npos,
+          "next iter still delivers after pre-action cut");
+    int thoughtN = 0;
+    bool dashed = false;
+    for (const auto& pe : agent.protocolEvents()) {
+        if (pe.kind != ProtocolEventKind::THOUGHT) continue;
+        ++thoughtN;
+        if (pe.text.find("\n\n---\n\n") != std::string::npos) dashed = true;
+        if (pe.text.find("list path") != std::string::npos &&
+            pe.text.find("grep path") != std::string::npos)
+            dashed = true; // tool-plan must not stay in the well
+    }
+    CHECK(!dashed, "thought well has no --- stack and no tool-plan dump");
+}
+
 int main() {
     std::cout << "generation_cut_test\n";
     test_leftover_thinking_after_action_is_cut();
     test_hollow_unclosed_action_then_thinking_is_cut();
     test_sibling_action_with_body_still_runs();
+    test_pre_action_tool_plan_thinking_is_cut();
     std::cout << passed << " passed, " << failed << " failed\n";
     return failed ? 1 : 0;
 }

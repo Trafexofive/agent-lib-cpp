@@ -110,6 +110,17 @@ int main() {
         CHECK(isThoughtNoise(plan), "tool-plan dump is thought noise");
         CHECK(!looksLikeToolPlanDump("I should read the hub Makefile next."),
               "short prose is not a tool-plan dump");
+        std::string live =
+            "I'll scout the workflow page and manifests quickly, then give you "
+            "an expert overhaul plan to rate. Not a deep tour. list path "
+            "/home/mlamkadm/repos/active/agent-lib-cpp max_entries 80 list path "
+            "/home/mlamkadm/repos/active/agent-lib-cpp/manifests max_entries 60 "
+            "recursive true grep path /home/mlamkadm/repos/active/agent-lib-cpp "
+            "pattern workflow path_glob *.{md,yml} max_matches 40 git_status cwd "
+            "/home/mlamkadm/repos/active/agent-lib-cpp fs_read path "
+            "/home/mlamkadm/repos/active/agent-lib-cpp/manifests/PLANNED.md limit 200";
+        CHECK(looksLikeToolPlanDump(live), "live scout+tool-plan thought is a dump");
+        CHECK(isThoughtNoise(live), "live scout+tool-plan is thought noise");
     }
 
     std::cout << (g_fail ? "\nFAIL\n" : "\nok\n");
