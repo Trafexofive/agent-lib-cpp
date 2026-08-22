@@ -120,7 +120,16 @@ int main() {
             "/home/mlamkadm/repos/active/agent-lib-cpp fs_read path "
             "/home/mlamkadm/repos/active/agent-lib-cpp/manifests/PLANNED.md limit 200";
         CHECK(looksLikeToolPlanDump(live), "live scout+tool-plan thought is a dump");
-        CHECK(isThoughtNoise(live), "live scout+tool-plan is thought noise");
+        CHECK(!isThoughtNoise(live), "scout sentence is not noise — only the tool tail is");
+        auto kept = stripProtocolNoise(live);
+        CHECK(kept.find("I'll scout") != std::string::npos, "scout sentence stays");
+        CHECK(kept.find("list path") == std::string::npos, "dictated list path is stripped");
+        CHECK(kept.find("grep path") == std::string::npos, "dictated grep path is stripped");
+        std::string stacked = kept + kept + live;
+        auto stackedKept = stripProtocolNoise(stacked);
+        CHECK(!isThoughtNoise(stacked), "stacked scout+plan is not dropped as noise");
+        CHECK(stackedKept.find("I'll scout") != std::string::npos,
+              "stacked scout still keeps the sentence");
     }
 
     std::cout << (g_fail ? "\nFAIL\n" : "\nok\n");

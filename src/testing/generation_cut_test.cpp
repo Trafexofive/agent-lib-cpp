@@ -409,17 +409,25 @@ void test_pre_action_tool_plan_thinking_is_cut() {
     CHECK(sp->calls >= 2, "ReAct still iterates after pre-action cut");
     CHECK(out.find("plan delivered") != std::string::npos,
           "next iter still delivers after pre-action cut");
-    int thoughtN = 0;
-    bool dashed = false;
+    bool dashed = false, sawScout = false, sawListPath = false, sawHarness = false;
     for (const auto& pe : agent.protocolEvents()) {
-        if (pe.kind != ProtocolEventKind::THOUGHT) continue;
-        ++thoughtN;
-        if (pe.text.find("\n\n---\n\n") != std::string::npos) dashed = true;
-        if (pe.text.find("list path") != std::string::npos &&
-            pe.text.find("grep path") != std::string::npos)
-            dashed = true; // tool-plan must not stay in the well
+        if (pe.kind == ProtocolEventKind::THOUGHT) {
+            if (pe.text.find("\n\n---\n\n") != std::string::npos) dashed = true;
+            if (pe.text.find("I'll scout") != std::string::npos) sawScout = true;
+            if (pe.text.find("list path") != std::string::npos) sawListPath = true;
+        }
+        if (pe.kind == ProtocolEventKind::STATUS &&
+            pe.text.find("TOOL_PLAN") != std::string::npos)
+            sawHarness = true;
     }
-    CHECK(!dashed, "thought well has no --- stack and no tool-plan dump");
+    bool harnessInHistory = false;
+    for (const auto& h : agent.history())
+        if (h.find("code=\"TOOL_PLAN\"") != std::string::npos) harnessInHistory = true;
+    CHECK(!dashed, "thought well has no --- stack");
+    CHECK(sawScout, "scout sentence stays in the well");
+    CHECK(!sawListPath, "dictated tool calls are not in the well");
+    CHECK(sawHarness && harnessInHistory,
+          "TOOL_PLAN harness injected — next emit must be <action>");
 }
 
 int main() {

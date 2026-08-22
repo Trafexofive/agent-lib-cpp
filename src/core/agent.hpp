@@ -65,6 +65,9 @@ struct StreamAttempt {
     int attempt = 0;
     int maxAttempts = 1;
     bool aborted = false;
+    // True when THIS generate was cut because native thinking dictated
+    // tools as prose (no <action>). runLoop injects TOOL_PLAN harness.
+    bool toolPlanCut = false;
 };
 
 // ── Pending tool execution (threaded popen, streams output live) ──

@@ -107,6 +107,7 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
             try {
                 size_t leftoverAfterSettle = 0;
                 size_t preActionThink = 0;
+                std::string preActionThinkBuf;
                 bool batchSettled = false;
                 auto cutLeftover = [&]() {
                     if (leftoverAfterSettle < 4096 || !provider_)
@@ -142,15 +143,16 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
                                 leftoverAfterSettle += thoughtChunk.size();
                                 cutLeftover();
                             } else {
-                                // Furnace before first <action>: expanding
-                                // "I'll scout… list path … grep path" as native
-                                // thinking with open=0. Not leftover-after-batch.
                                 preActionThink += thoughtChunk.size();
-                                if (preActionThink >= 4096 && provider_ &&
-                                    (st.thoughtDroppedAsNoise ||
-                                     protocol::looksLikeToolPlanDump(st.thoughtRawBuf) ||
-                                     protocol::looksLikeToolPlanDump(thoughtOutput_)))
+                                if (preActionThinkBuf.size() < 16 * 1024)
+                                    preActionThinkBuf += thoughtChunk;
+                                const bool isPlan =
+                                    protocol::looksLikeToolPlanDump(thoughtChunk) ||
+                                    protocol::looksLikeToolPlanDump(preActionThinkBuf);
+                                if (preActionThink >= 4096 && provider_ && isPlan) {
+                                    a.toolPlanCut = true;
                                     provider_->abortGeneration();
+                                }
                             }
                             if (ctx.onToken)
                                 ctx.onToken("", false); // trigger render

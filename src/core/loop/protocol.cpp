@@ -64,6 +64,9 @@ void Agent::publishCleanThought(ProtocolStreamState &st, const std::string &rawA
         cleaned = cleaned.substr(0, kThoughtPubCap - 48) +
                   "\n…[thought UI safety; full stream in dump raw/iterations]";
     thoughtOutput_ = cleaned;
+    // Well is the cleaned sentence, not the dump. Otherwise the next
+    // \x01 chunk appends onto dictated tools and they leak back in.
+    st.thoughtRawBuf = cleaned;
     protocol_.mutate([&](std::vector<ProtocolEvent>& ev) {
         size_t idx = static_cast<size_t>(-1);
         if (st.thoughtEventIdx != static_cast<size_t>(-1) &&

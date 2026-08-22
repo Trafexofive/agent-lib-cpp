@@ -297,6 +297,27 @@ inline bool looksLikeSymbolDump(const std::string& s) {
 // Model leaked a tool-call plan as prose: one (or few) huge lines of
 // "read-foo tool fs_read path …" tokens. Not a symbol table — still stalls
 // wrap + rebuild (12 KiB thought → hundreds of display rows / tick).
+// Leading human sentence before dictated tool calls. Keep that; drop the tail.
+inline std::string stripToolPlanTail(const std::string& s) {
+    static const char* k[] = {
+        "list path ", "grep path ", "fs_read path ", "fs_write path ",
+        "git_status cwd", "git_diff path ", "max_entries ", "path_glob ",
+    };
+    size_t cut = std::string::npos;
+    for (const char* key : k) {
+        size_t p = s.find(key);
+        if (p != std::string::npos && (cut == std::string::npos || p < cut))
+            cut = p;
+    }
+    if (cut == std::string::npos)
+        return s;
+    std::string head = s.substr(0, cut);
+    while (!head.empty() && (head.back() == ' ' || head.back() == '\n' ||
+                             head.back() == '\t'))
+        head.pop_back();
+    return head;
+}
+
 inline bool looksLikeToolPlanDump(const std::string& s) {
     if (s.size() < 280) return false;
     int nl = 0, sp = 0;
@@ -321,7 +342,7 @@ inline bool looksLikeToolPlanDump(const std::string& s) {
     const int lines = nl + 1;
     const int tokens = sp + 1;
     // Live furnace: expanding "I'll scout… list path … grep path …" as thought.
-    if (toolHits >= 3 && s.size() >= 400) return true;
+    if (toolHits >= 3 && s.size() >= 280) return true;
     if (s.size() > 4000 && lines <= 8) return true;
     if (tokens >= 50 && lines > 0 && tokens / lines >= 18) return true;
     return false;
@@ -331,16 +352,25 @@ inline bool looksLikeToolPlanDump(const std::string& s) {
 inline std::string stripProtocolNoise(const std::string& raw) {
     if (raw.empty()) return {};
 
-    // Symbol tables are not protocol markup — kill early before strip work.
-    if (looksLikeSymbolDump(raw) || looksLikeToolPlanDump(raw)) return {};
+    if (looksLikeSymbolDump(raw)) return {};
+    std::string rawWork = raw;
+    if (looksLikeToolPlanDump(rawWork)) {
+        std::string head = stripToolPlanTail(rawWork);
+        // Could not peel a human lead-in → pure dictation, drop.
+        // Do NOT re-test looksLikeToolPlanDump(head): concatenated scout
+        // sentences look "dense" and that was wiping the well.
+        if (head.empty() || head == rawWork)
+            return {};
+        rawWork = std::move(head);
+    }
 
-    std::string s = stripAllProtocolMarkup(raw);
+    std::string s = stripAllProtocolMarkup(rawWork);
     s = stripAttrDebris(s);
     collapseWs(s);
     trimInPlace(s);
     if (s.empty()) return {};
 
-    if (looksLikeSymbolDump(s) || looksLikeToolPlanDump(s)) return {};
+    if (looksLikeSymbolDump(s)) return {};
 
     // Pure harness phrases (often leftover after stripping tags).
     if (looksLikeHarnessPhrase(s) && s.size() < 500) return {};
@@ -374,7 +404,7 @@ inline bool isProtocolEchoBlob(const std::string& raw) {
 }
 
 inline bool isThoughtNoise(const std::string& raw) {
-    if (looksLikeSymbolDump(raw) || looksLikeToolPlanDump(raw)) return true;
+    if (looksLikeSymbolDump(raw)) return true;
     return stripProtocolNoise(raw).empty();
 }
 

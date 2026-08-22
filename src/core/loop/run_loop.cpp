@@ -415,21 +415,38 @@ std::string Agent::runLoop(AgentContext &ctx) {
                 responseOutput_ = visibleError;
                 fullResponse = visibleError;
                 st.taskComplete = true; // runtime failure, not model final
-            } else {
-                if (incompleteNoted && !finalizationTurn &&
-                    ctx.iteration < workCap) {
-                    emit.harness(
-                        "THOUGHT_STALL",
-                        "Second thought-only generation after BARE_TEXT/NONFINAL. "
-                        "No <action> and no <response final=\"true\">. "
-                        "Stopping instead of burning the iteration cap.",
-                        "limit");
-                    emit.finish("thought_stall",
-                               "[THOUGHT_STALL] two thought-only gens — stopped");
-                    fullResponse = "[THOUGHT_STALL]";
-                    st.taskComplete = true;
-                    break;
+            } else if (sa.toolPlanCut) {
+                std::string names;
+                for (const auto& kv : tools_) {
+                    if (!names.empty()) names += ", ";
+                    names += kv.first;
                 }
+                if (names.empty()) names = "(none imported)";
+                emit.harness(
+                    "TOOL_PLAN",
+                    "This generation dictated tools as native thinking "
+                    "(list path / grep path / fs_read path …) with no <action> "
+                    "tags. Those words are not executed. imported: [" + names +
+                    "]",
+                    "runtime");
+                // Count as the one incomplete note so a second thought-only
+                // gen still stalls. Do NOT stall THIS gen — next must emit
+                // <action> with imported names.
+                incompleteNoted = true;
+            } else if (incompleteNoted && !finalizationTurn &&
+                       ctx.iteration < workCap) {
+                emit.harness(
+                    "THOUGHT_STALL",
+                    "Second thought-only generation after BARE_TEXT/NONFINAL. "
+                    "No <action> and no <response final=\"true\">. "
+                    "Stopping instead of burning the iteration cap.",
+                    "limit");
+                emit.finish("thought_stall",
+                           "[THOUGHT_STALL] two thought-only gens — stopped");
+                fullResponse = "[THOUGHT_STALL]";
+                st.taskComplete = true;
+                break;
+            } else {
                 steerIncompleteGeneration(ctx, iterationRawOutput, workCap,
                                           incompleteNoted, lastSalvage);
             }
