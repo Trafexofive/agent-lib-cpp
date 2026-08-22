@@ -1250,13 +1250,34 @@ void Parser::reset() {
     closingScanEscape_ = false;
 }
 
+static bool leftoverIsWhitespace(const std::string& buf, size_t from) {
+    for (size_t i = from; i < buf.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(buf[i]);
+        if (!std::isspace(c))
+            return false;
+    }
+    return true;
+}
+
+// Provisional emit returns with readPos_ still on `<action`. Body emptiness
+// is measured after that tag's `>`, not from readPos_ (dump 1787415370663).
+static size_t provisionalBodyStart(const std::string& buf) {
+    size_t lt = buf.rfind("<action");
+    if (lt == std::string::npos)
+        return buf.size();
+    size_t gt = buf.find('>', lt);
+    if (gt == std::string::npos)
+        return buf.size();
+    return gt + 1;
+}
+
 bool Parser::generationSettled() const {
     std::lock_guard<std::mutex> lock(mtx_);
     if (results_.empty())
         return false;
     if (!pending_.empty())
         return false;
-    if (hasProvisionalAction_ || inThought_ || inResponse_)
+    if (inThought_ || inResponse_)
         return false;
     if (finalResponseSeen_)
         return false;
@@ -1264,12 +1285,37 @@ bool Parser::generationSettled() const {
         if (f.valid() && f.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
             return false;
     }
+    if (hasProvisionalAction_) {
+        // Hollow open-tag (no body bytes) is noise after a completed batch.
+        // A real sibling body (JSON / instruction) must still land.
+        if (!leftoverIsWhitespace(buffer_, provisionalBodyStart(buffer_)))
+            return false;
+        return true;
+    }
     if (readPos_ < buffer_.size()) {
         const size_t lt = buffer_.find('<', readPos_);
         if (lt != std::string::npos)
             return false;  // sibling tag still in the pipe
     }
     return true;
+}
+
+std::string Parser::dropHollowProvisional() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!hasProvisionalAction_)
+        return {};
+    if (!leftoverIsWhitespace(buffer_, provisionalBodyStart(buffer_)))
+        return {};
+    std::string id = provisionalActionId_;
+    hasProvisionalAction_ = false;
+    provisionalActionId_.clear();
+    size_t lt = buffer_.rfind("<action");
+    if (lt != std::string::npos) {
+        buffer_.resize(lt);
+        if (readPos_ > buffer_.size())
+            readPos_ = buffer_.size();
+    }
+    return id;
 }
 
 // ---------------------------------------------------------------------------

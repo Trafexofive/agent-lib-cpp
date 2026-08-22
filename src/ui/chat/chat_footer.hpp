@@ -391,8 +391,9 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             x += inkcell::text::display_width(v) + 3;
         };
         int x = x0;
-        kv(x, "turn", std::to_string(std::max(0, f.turnCount)), text);
-        kv(x, "iter",
+        // Occupancy `turn` is the live generation (1..cap), not User-row count.
+        // User-row count stays 1 for the whole prompt() — that's the stuck-at-1 lie.
+        kv(x, "turn",
            std::to_string(std::max(0, f.iterCurrent)) + "/" +
                std::to_string(std::max(0, f.iterMax)),
            (live && f.iterCurrent > 0) ? liveSt : text);

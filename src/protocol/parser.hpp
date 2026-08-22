@@ -106,6 +106,11 @@ class Parser {
     // native thinking on the same HTTP stream is waste. Does NOT mean the
     // turn is done — runLoop still injects results and iterates.
     bool generationSettled() const;
+    // Live dump: closed actions then a hollow unclosed <action> then native
+    // thinking. Drop the empty card and rewind the open tag so leftover
+    // thinking can cut. Returns the dropped id, or empty if the provisional
+    // actually has a body (sibling still streaming).
+    std::string dropHollowProvisional();
 
    private:
     // Core parse loop — processes buffer looking for tags

@@ -107,6 +107,24 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
             try {
                 size_t leftoverAfterSettle = 0;
                 bool batchSettled = false;
+                auto cutLeftover = [&]() {
+                    if (leftoverAfterSettle < 4096 || !provider_)
+                        return;
+                    const std::string dropped = parser.dropHollowProvisional();
+                    if (!dropped.empty()) {
+                        protocol_.mutate([&](std::vector<ProtocolEvent>& evs) {
+                            for (auto it = evs.begin(); it != evs.end();) {
+                                if (it->kind == ProtocolEventKind::ACTION &&
+                                    it->action.id == dropped &&
+                                    it->action.body.empty())
+                                    it = evs.erase(it);
+                                else
+                                    ++it;
+                            }
+                        });
+                    }
+                    provider_->abortGeneration();
+                };
                 provider_->generateStream(
                     msgs, [&](const std::string &token, bool isFinal) {
                         if (st.taskComplete)
@@ -130,8 +148,7 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
                             }
                             if (batchSettled) {
                                 leftoverAfterSettle += thoughtChunk.size();
-                                if (leftoverAfterSettle >= 4096 && provider_)
-                                    provider_->abortGeneration();
+                                cutLeftover();
                             }
                             if (ctx.onToken)
                                 ctx.onToken("", false); // trigger render
@@ -147,8 +164,7 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
                             if (!batchSettled) leftoverAfterSettle = 0;
                             batchSettled = true;
                             leftoverAfterSettle += token.size();
-                            if (leftoverAfterSettle >= 4096 && provider_)
-                                provider_->abortGeneration();
+                            cutLeftover();
                         } else {
                             batchSettled = false;
                             leftoverAfterSettle = 0;

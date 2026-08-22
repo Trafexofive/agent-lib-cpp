@@ -1024,6 +1024,7 @@ class AgentScene final : public BaseScene {
                 }
             }
         }
+        // Session-pane prompt count (User rows). Occupancy `turn` uses iterCurrent.
         foot.turnCount = 0;
         for (const auto& r : model_->rootRows)
             if (r.kind == TimelineKind::User) ++foot.turnCount;
