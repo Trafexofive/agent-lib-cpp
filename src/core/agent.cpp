@@ -238,7 +238,7 @@ Json::Value Agent::inspectContext(int lastN) const {
     r["response_output"] = responseOutput_;
     r["thought_bytes"] = static_cast<Json::UInt64>(thoughtOutput_.size());
     r["raw_bytes"] = static_cast<Json::UInt64>(rawLlOutput_.size());
-    r["protocol_events"] = static_cast<int>(protocolEvents_.size());
+    r["protocol_events"] = static_cast<int>(protocol_.size());
     r["sub_agents"] = Json::Value(Json::arrayValue);
     for (const auto &kv : subAgents_)
         r["sub_agents"].append(kv.first);
@@ -314,11 +314,11 @@ std::string Agent::runLoop(AgentContext &ctx) {
     // the *previous* turn — making thoughts appear to "stream into" an
     // already-finalized THOUGHT block. Track an epoch so onEvent only
     // merges with events from THIS runLoop.
-    size_t runEpochStart = continuation ? protocolEvents_.size() : size_t(0);
+    size_t runEpochStart = continuation ? protocol_.size() : size_t(0);
     if (!continuation) {
         protocolActions_.clear();
         protocolResults_.clear();
-        protocolEvents_.clear();
+        protocol_.clear();
         runEpochStart = 0; // re-derive after clear
     }
 
@@ -378,7 +378,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
     bool finalizationDone = false;
     std::string limitReason; // set when we enter finalization due to a cap
 
-    TurnEmitter emit{history_, protocolEvents_, ctx.onToken, ctx.iteration,
+    TurnEmitter emit{history_, protocol_, ctx.onToken, ctx.iteration,
                      workCap, config_.thinkingLevel, runEpochStart};
 
     // Work turns 1..workCap, then at most one FINALIZATION turn (tools
@@ -943,7 +943,7 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
                 iterationRuntimeOutput.clear();
                 responseOutput_.clear();
                 thoughtOutput_.clear();
-                protocolEvents_.clear();
+                protocol_.clear();
                 parser.reset();
 
                 // Out-of-band retry marker — bridge consumes this and
@@ -955,7 +955,7 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
                     retryMarker.text = std::string("retry ") +
                                        std::to_string(attempt) + " / " +
                                        std::to_string(maxAttempts - 1);
-                    protocolEvents_.push_back(std::move(retryMarker));
+                    protocol_.push(std::move(retryMarker));
                 }
 
                 int delay =
@@ -1014,19 +1014,14 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
                                 // Only merge into THIS run's open thought — never
                                 // append into a prior-turn THOUGHT left in the
                                 // vector on continuation (streams-into-old-block).
-                                const bool canMerge =
-                                    protocolEvents_.size() > runEpochStart &&
-                                    protocolEvents_.back().kind ==
-                                        ProtocolEventKind::THOUGHT;
-                                if (canMerge) {
-                                    protocolEvents_.back().text += thoughtChunk;
-                                } else {
-                                    protocolEvents_.push_back(
-                                        {ProtocolEventKind::THOUGHT,
-                                         thoughtChunk,
-                                         {},
-                                         {}});
-                                }
+                                protocol_.mutate([&](std::vector<ProtocolEvent>& ev) {
+                                    if (ev.size() > runEpochStart &&
+                                        ev.back().kind == ProtocolEventKind::THOUGHT)
+                                        ev.back().text += thoughtChunk;
+                                    else
+                                        ev.push_back({ProtocolEventKind::THOUGHT,
+                                                      thoughtChunk, {}, {}});
+                                });
                             }
                             if (ctx.onToken)
                                 ctx.onToken("", false); // trigger render
@@ -1377,9 +1372,9 @@ void Agent::steerIncompleteGeneration(AgentContext &ctx,
                 "answer, re-emit it with final=\"true\".",
                 "Do not repeat the same non-final <response>. "
                 "Untagged prose is not a final."));
-        protocolEvents_.push_back({ProtocolEventKind::STATUS,
-                                   "[NONFINAL] response without final — loop continues",
-                                   {}, {}});
+        protocol_.push({ProtocolEventKind::STATUS,
+                       "[NONFINAL] response without final — loop continues",
+                       {}, {}});
     } else {
         lastSalvage.clear();
         history_.push_back(
@@ -1408,7 +1403,7 @@ void Agent::steerIncompleteGeneration(AgentContext &ctx,
                 "Do not duplicate native thinking as extra "
                 "<thought> turns. Do not assume the user got a "
                 "finished answer."));
-        protocolEvents_.push_back(
+        protocol_.push(
             {ProtocolEventKind::STATUS,
              "[BARE_TEXT] untagged kept as thought — loop continues",
              {}, {}});
@@ -1428,73 +1423,67 @@ void Agent::publishCleanThought(ProtocolStreamState &st, const std::string &rawA
         st.thoughtRawBuf = st.thoughtRawBuf.substr(st.thoughtRawBuf.size() - kThoughtRawCap);
 
     // Symbol dumps / pure protocol debris → drop the THOUGHT event entirely.
+    auto dropThoughtAt = [&]() {
+        protocol_.mutate([&](std::vector<ProtocolEvent>& ev) {
+            if (st.thoughtEventIdx != static_cast<size_t>(-1) &&
+                st.thoughtEventIdx < ev.size() &&
+                ev[st.thoughtEventIdx].kind == ProtocolEventKind::THOUGHT)
+                ev.erase(ev.begin() +
+                         static_cast<std::ptrdiff_t>(st.thoughtEventIdx));
+        });
+        st.thoughtEventIdx = static_cast<size_t>(-1);
+    };
     if (protocol::looksLikeSymbolDump(st.thoughtRawBuf) ||
         protocol::isThoughtNoise(st.thoughtRawBuf)) {
-        if (st.thoughtEventIdx != static_cast<size_t>(-1) &&
-            st.thoughtEventIdx < protocolEvents_.size() &&
-            protocolEvents_[st.thoughtEventIdx].kind ==
-                ProtocolEventKind::THOUGHT) {
-            protocolEvents_.erase(
-                protocolEvents_.begin() +
-                static_cast<std::ptrdiff_t>(st.thoughtEventIdx));
-        }
-        st.thoughtEventIdx = static_cast<size_t>(-1);
+        dropThoughtAt();
         st.thoughtDroppedAsNoise = true;
-        st.thoughtRawBuf.clear();  // free the dump from RAM
+        st.thoughtRawBuf.clear();
         thoughtOutput_.clear();
         return;
     }
 
     std::string cleaned = protocol::stripProtocolNoise(st.thoughtRawBuf);
     if (cleaned.empty()) {
-        if (st.thoughtEventIdx != static_cast<size_t>(-1) &&
-            st.thoughtEventIdx < protocolEvents_.size() &&
-            protocolEvents_[st.thoughtEventIdx].kind ==
-                ProtocolEventKind::THOUGHT) {
-            protocolEvents_.erase(
-                protocolEvents_.begin() +
-                static_cast<std::ptrdiff_t>(st.thoughtEventIdx));
-        }
-        st.thoughtEventIdx = static_cast<size_t>(-1);
+        dropThoughtAt();
         return;
     }
-    // Soft cap cleaned thought text published to the UI (not the LLM history).
-    // 12KB was clipping long reasoning mid-audit; keep more for operator scroll.
     constexpr size_t kThoughtPubCap = 64 * 1024;
     if (cleaned.size() > kThoughtPubCap)
         cleaned = cleaned.substr(0, kThoughtPubCap - 48) +
                   "\n…[thought UI safety; full stream in dump raw/iterations]";
-    thoughtOutput_ = cleaned; // authoritative cleaned form for this run
-    auto reuseThought = [&]() -> size_t {
+    thoughtOutput_ = cleaned;
+    protocol_.mutate([&](std::vector<ProtocolEvent>& ev) {
+        size_t idx = static_cast<size_t>(-1);
         if (st.thoughtEventIdx != static_cast<size_t>(-1) &&
-            st.thoughtEventIdx < protocolEvents_.size() &&
-            protocolEvents_[st.thoughtEventIdx].kind ==
-                ProtocolEventKind::THOUGHT)
-            return st.thoughtEventIdx;
-        // One thought well per prompt() epoch, unless an ACTION sealed it.
-        for (size_t i = protocolEvents_.size(); i-- > st.runEpochStart;) {
-            if (protocolEvents_[i].kind == ProtocolEventKind::ACTION)
-                return static_cast<size_t>(-1);
-            if (protocolEvents_[i].kind == ProtocolEventKind::THOUGHT)
-                return i;
+            st.thoughtEventIdx < ev.size() &&
+            ev[st.thoughtEventIdx].kind == ProtocolEventKind::THOUGHT)
+            idx = st.thoughtEventIdx;
+        else {
+            for (size_t i = ev.size(); i-- > st.runEpochStart;) {
+                if (ev[i].kind == ProtocolEventKind::ACTION) {
+                    idx = static_cast<size_t>(-1);
+                    break;
+                }
+                if (ev[i].kind == ProtocolEventKind::THOUGHT) {
+                    idx = i;
+                    break;
+                }
+            }
         }
-        return static_cast<size_t>(-1);
-    };
-    size_t idx = reuseThought();
-    if (idx != static_cast<size_t>(-1)) {
-        std::string& dst = protocolEvents_[idx].text;
-        if (cleaned.find(dst) != std::string::npos)
-            dst = cleaned;
-        else if (dst.find(cleaned) == std::string::npos) {
-            dst += "\n\n---\n\n";
-            dst += cleaned;
+        if (idx != static_cast<size_t>(-1)) {
+            std::string& dst = ev[idx].text;
+            if (cleaned.find(dst) != std::string::npos)
+                dst = cleaned;
+            else if (dst.find(cleaned) == std::string::npos) {
+                dst += "\n\n---\n\n";
+                dst += cleaned;
+            }
+            st.thoughtEventIdx = idx;
+        } else {
+            st.thoughtEventIdx = ev.size();
+            ev.push_back({ProtocolEventKind::THOUGHT, cleaned, {}, {}});
         }
-        st.thoughtEventIdx = idx;
-    } else {
-        st.thoughtEventIdx = protocolEvents_.size();
-        protocolEvents_.push_back(
-            {ProtocolEventKind::THOUGHT, cleaned, {}, {}});
-    }
+    });
 }
 
 void Agent::handleProtocolEvent(AgentContext &ctx, ProtocolStreamState &st,
@@ -1517,22 +1506,16 @@ void Agent::handleProtocolEvent(AgentContext &ctx, ProtocolStreamState &st,
         // for response text (strips spaces around UTF-8 punctuation like em dashes).
         // The parser already extracted clean content between <response> tags.
         std::string paint = ev.content;
-        auto prevSame = [&](ProtocolEventKind k) {
-            for (size_t i = protocolEvents_.size();
-                 i > st.runEpochStart;) {
+        protocol_.mutate([&](std::vector<ProtocolEvent>& evs) {
+            for (size_t i = evs.size(); i > st.runEpochStart;) {
                 --i;
-                if (protocolEvents_[i].kind == k)
-                    return protocolEvents_.begin() + i;
+                if (evs[i].kind == ProtocolEventKind::RESPONSE) {
+                    evs[i].text += paint;
+                    return;
+                }
             }
-            return protocolEvents_.end();
-        };
-        if (auto it = prevSame(ProtocolEventKind::RESPONSE);
-            it != protocolEvents_.end()) {
-            it->text += paint;
-        } else {
-            protocolEvents_.push_back(
-                {ProtocolEventKind::RESPONSE, paint, {}, {}});
-        }
+            evs.push_back({ProtocolEventKind::RESPONSE, paint, {}, {}});
+        });
     }
     if (ctx.onToken)
         ctx.onToken(ev.content, false);
@@ -1622,21 +1605,20 @@ void Agent::handleProtocolEvent(AgentContext &ctx, ProtocolStreamState &st,
         // update the existing ACTION event/card in place
         // (stream-as-fast-as-parse).
         bool merged = false;
-        for (auto it = protocolEvents_.rbegin();
-             it != protocolEvents_.rend(); ++it) {
-            if (it->kind == ProtocolEventKind::ACTION &&
-                it->action.id == protocolAction.id) {
-                it->action = protocolAction;
-                merged = true;
-                break;
+        protocol_.mutate([&](std::vector<ProtocolEvent>& evs) {
+            for (auto it = evs.rbegin(); it != evs.rend(); ++it) {
+                if (it->kind == ProtocolEventKind::ACTION &&
+                    it->action.id == protocolAction.id) {
+                    it->action = protocolAction;
+                    merged = true;
+                    break;
+                }
             }
-        }
+            if (!merged)
+                evs.push_back({ProtocolEventKind::ACTION, "", protocolAction, {}});
+        });
         if (!merged) {
             protocolActions_.push_back(protocolAction);
-            protocolEvents_.push_back({ProtocolEventKind::ACTION,
-                                       "",
-                                       protocolAction,
-                                       {}});
         } else {
             // Keep protocolActions_ tail in sync when present.
             for (auto it = protocolActions_.rbegin();
@@ -1898,7 +1880,7 @@ Json::Value Agent::handleActionExecute(
             result.get("_elapsed_ms", 0.0).asDouble(),
             (size_t)summary.size()};
         protocolResults_.push_back(protocolResult);
-        protocolEvents_.push_back(
+        protocol_.push(
             {ProtocolEventKind::RESULT, "", {}, protocolResult});
         // Notify callback so TUI can stream tool results
         // immediately

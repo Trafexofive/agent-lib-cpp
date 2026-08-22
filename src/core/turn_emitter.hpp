@@ -9,13 +9,14 @@
 
 #include "../protocol/events.hpp"
 #include "agent_run_helpers.hpp"
+#include "protocol_log.hpp"
 #include "types.hpp"
 
 namespace cortex::mk3 {
 
 struct TurnEmitter {
     std::vector<std::string>& history;
-    std::vector<ProtocolEvent>& events;
+    ProtocolLog& events;
     StreamCallback& onToken;
     const int& iteration;
     int cap = 1;
@@ -28,7 +29,7 @@ struct TurnEmitter {
 
     void status(const std::string& text) {
         history.push_back("System: " + text);
-        events.push_back({ProtocolEventKind::STATUS, text, {}, {}});
+        events.push({ProtocolEventKind::STATUS, text, {}, {}});
         heartbeat(false);
     }
 
@@ -46,7 +47,7 @@ struct TurnEmitter {
         std::string tag = "[" + code + "] ";
         for (char& c : tag)
             if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
-        events.push_back({ProtocolEventKind::STATUS, tag + detail, {}, {}});
+        events.push({ProtocolEventKind::STATUS, tag + detail, {}, {}});
         heartbeat(false);
     }
 
@@ -59,14 +60,16 @@ struct TurnEmitter {
             history.push_back(needle);
         if (asResponse) {
             bool hasResp = false;
-            for (size_t i = events.size(); i-- > epochStart;) {
-                if (events[i].kind == ProtocolEventKind::RESPONSE) {
-                    hasResp = true;
-                    break;
+            events.read([&](const std::vector<ProtocolEvent>& ev) {
+                for (size_t i = ev.size(); i-- > epochStart;) {
+                    if (ev[i].kind == ProtocolEventKind::RESPONSE) {
+                        hasResp = true;
+                        break;
+                    }
                 }
-            }
+            });
             if (!hasResp)
-                events.push_back({ProtocolEventKind::RESPONSE, body, {}, {}});
+                events.push({ProtocolEventKind::RESPONSE, body, {}, {}});
         }
         heartbeat(true);
     }

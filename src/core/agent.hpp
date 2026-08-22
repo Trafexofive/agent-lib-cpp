@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "../core/provider.hpp"
+#include "protocol_log.hpp"
 #include "../core/run_control.hpp"
 #include "../core/types.hpp"
 #include "../protocol/events.hpp"  // ProtocolEvent* PODs (foundation F1)
@@ -180,8 +181,8 @@ class Agent {
         return out;
     }
 
-    const std::vector<ProtocolEvent>& protocolEvents() const {
-        return protocolEvents_;
+    std::vector<ProtocolEvent> protocolEvents() const {
+        return protocol_.snapshot();
     }
 
     // Threaded tool execution: harvest completed tools, push results to protocolResults_
@@ -435,7 +436,7 @@ class Agent {
     std::vector<std::string> subAgentTraces_;    // delegated agent traces for parent dumps
     std::vector<ProtocolAction> protocolActions_;
     std::vector<ProtocolResult> protocolResults_;
-    std::vector<ProtocolEvent> protocolEvents_;
+    ProtocolLog protocol_;
     std::map<std::string, std::shared_ptr<Agent>> subAgents_;
     // Serialize prompt() on the same child; different names may overlap.
     std::mutex subAgentMuMapMu_;

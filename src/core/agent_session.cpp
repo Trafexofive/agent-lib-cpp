@@ -168,10 +168,11 @@ void Agent::dumpSessionArtifacts(bool force) const {
         std::ofstream f(path);
         if (!f) return;
         f << "# Protocol events (ordered)\n\n";
-        f << "event_count=" << protocolEvents_.size() << "\n";
+        const auto evs = protocol_.snapshot();
+        f << "event_count=" << evs.size() << "\n";
         f << "history_lines=" << history_.size() << "\n";
         f << "iteration_outputs=" << iterationOutputs_.size() << "\n\n";
-        if (protocolEvents_.empty()) {
+        if (evs.empty()) {
             f << "_(protocolEvents_ empty — falling back to history scan)_\n\n";
             // History still has the run when events were cleared (retry wipe,
             // ephemeral child, or dump after a path that reset the stream).
@@ -196,8 +197,8 @@ void Agent::dumpSessionArtifacts(bool force) const {
             }
             return;
         }
-        for (size_t i = 0; i < protocolEvents_.size(); ++i) {
-            const auto& pe = protocolEvents_[i];
+        for (size_t i = 0; i < evs.size(); ++i) {
+            const auto& pe = evs[i];
             f << "## [" << i << "] ";
             switch (pe.kind) {
                 case ProtocolEventKind::THOUGHT: f << "THOUGHT\n"; break;
@@ -630,7 +631,7 @@ void Agent::clearHistory() {
     contextFeeds_.clear();
     protocolActions_.clear();
     protocolResults_.clear();
-    protocolEvents_.clear();
+    protocol_.clear();
     responseOutput_.clear();
     thoughtOutput_.clear();
     rawLlOutput_.clear();
