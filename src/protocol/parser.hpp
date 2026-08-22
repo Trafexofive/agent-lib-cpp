@@ -101,6 +101,12 @@ class Parser {
     // Reset for new iteration
     void reset();
 
+    // True when this generation already ran ≥1 action to completion, nothing
+    // is still open (tag / thought / response / pending / async), so leftover
+    // native thinking on the same HTTP stream is waste. Does NOT mean the
+    // turn is done — runLoop still injects results and iterates.
+    bool generationSettled() const;
+
    private:
     // Core parse loop — processes buffer looking for tags
     void processBuffer();

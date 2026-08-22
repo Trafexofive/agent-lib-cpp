@@ -1250,6 +1250,28 @@ void Parser::reset() {
     closingScanEscape_ = false;
 }
 
+bool Parser::generationSettled() const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (results_.empty())
+        return false;
+    if (!pending_.empty())
+        return false;
+    if (hasProvisionalAction_ || inThought_ || inResponse_)
+        return false;
+    if (finalResponseSeen_)
+        return false;
+    for (const auto& f : futures_) {
+        if (f.valid() && f.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return false;
+    }
+    if (readPos_ < buffer_.size()) {
+        const size_t lt = buffer_.find('<', readPos_);
+        if (lt != std::string::npos)
+            return false;  // sibling tag still in the pipe
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Variable resolution — ${id} and ${id.field.subfield}
 // ---------------------------------------------------------------------------

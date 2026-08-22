@@ -91,6 +91,12 @@ class ILlmProvider {
         return {};
     }
 
+    // Cut THIS generateStream only. Not Ctrl-X. Not g_hardKill.
+    // After a completed action batch, leftover native thinking on the same
+    // HTTP call is billed waste — abort curl, start the next ReAct iter.
+    virtual void abortGeneration() {}
+    virtual bool generationAborted() const { return false; }
+
 };
 
 using LlmProviderPtr = std::shared_ptr<ILlmProvider>;

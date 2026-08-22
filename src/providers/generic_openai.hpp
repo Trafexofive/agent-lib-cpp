@@ -9,6 +9,7 @@
 #include <curl/curl.h>
 #include <json/json.h>
 
+#include <atomic>
 #include <chrono>
 #include <ctime>
 #include <cstdlib>
@@ -237,6 +238,12 @@ class GenericOpenAIClient : public ILlmProvider {
     void setStreamStallTimeoutSec(int sec) override {
         streamStallTimeoutSec_ = sec;
     }
+    void abortGeneration() override {
+        abortGeneration_.store(true, std::memory_order_release);
+    }
+    bool generationAborted() const override {
+        return abortGeneration_.load(std::memory_order_acquire);
+    }
     std::string getModel() const override {
         return model_;
     }
@@ -270,6 +277,7 @@ class GenericOpenAIClient : public ILlmProvider {
     double frequencyPenalty_ = 0.0;
     int maxTokens_ = 8192;
     int streamStallTimeoutSec_ = 0;  // runtime.throttling; 0 = off
+    std::atomic<bool> abortGeneration_{false};
 
     // HTTP
     Json::Value buildRequestBody(const ChatMessages& msgs, bool stream) const;
@@ -300,6 +308,7 @@ class GenericOpenAIClient : public ILlmProvider {
         // stallTimeoutSec: 0 = no progress-based cutoff (LOW_SPEED governs);
         // >0 = abort if zero bytes arrive for this many seconds.
         int stallTimeoutSec = 0;
+        std::atomic<bool>* abortFlag = nullptr;
     };
 
     mutable StreamStats lastStats_;

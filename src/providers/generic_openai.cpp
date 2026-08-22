@@ -308,6 +308,7 @@ std::string GenericOpenAIClient::generate(const ChatMessages& msgs) {
 // Streaming generate
 // ---------------------------------------------------------------------------
 void GenericOpenAIClient::generateStream(const ChatMessages& msgs, StreamCallback cb) {
+    abortGeneration_.store(false, std::memory_order_release);
     lastStats_ = StreamStats{};
     Json::Value body = buildRequestBody(msgs, true);
     httpPost(config_.baseUrl + config_.chatEndpoint, body, cb, true);
@@ -345,6 +346,7 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
                       /*finishReason=*/{},
                       /*httpStatus=*/0};
         ctx.stallTimeoutSec = streamStallTimeoutSec_;
+        ctx.abortFlag = &abortGeneration_;
 
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -431,6 +433,15 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
             lastStats_.finishReason = "curl_error";
             lastStats_.lastError = curl_easy_strerror(res);
             lastStats_.httpStatus = httpCode;
+            // Generation cut: leftover thinking after a completed action batch.
+            // abortCheckCb → ABORTED_BY_CALLBACK; writeCb return 0 → WRITE_ERROR.
+            if (generationAborted() &&
+                (res == CURLE_ABORTED_BY_CALLBACK || res == CURLE_WRITE_ERROR)) {
+                lastStats_.finishReason = "generation_cut";
+                lastStats_.anyContent = ctx.anyContent || lastStats_.anyContent;
+                lastStats_.httpStatus = httpCode;
+                return stream ? std::string() : responseBuffer;
+            }
             // Operator stop (Ctrl-X) trips XFERINFO abort — not a transport failure.
             if (res == CURLE_ABORTED_BY_CALLBACK || !g_running) {
                 throw std::runtime_error("cancelled");
@@ -491,6 +502,10 @@ size_t GenericOpenAIClient::writeCb(void* ptr, size_t sz, size_t nmemb, void* us
 // ---------------------------------------------------------------------------
 size_t GenericOpenAIClient::streamCb(void* ptr, size_t sz, size_t nmemb, void* userdata) {
     auto* ctx = static_cast<StreamCtx*>(userdata);
+    if (ctx->abortFlag && ctx->abortFlag->load(std::memory_order_acquire)) {
+        ctx->finishReason = "generation_cut";
+        return 0;
+    }
     size_t total = sz * nmemb;
 
     // Progress-based stall guard: if the stream sends NO bytes for a long
@@ -735,6 +750,13 @@ size_t GenericOpenAIClient::streamCb(void* ptr, size_t sz, size_t nmemb, void* u
 // when a manifest-configured stream stall (no bytes for N seconds) elapses. ──
 int GenericOpenAIClient::abortCheckCb(void* clientp, curl_off_t, curl_off_t, curl_off_t,
                                       curl_off_t) {
+    if (clientp) {
+        auto* ctx = static_cast<StreamCtx*>(clientp);
+        if (ctx->abortFlag && ctx->abortFlag->load(std::memory_order_acquire)) {
+            ctx->finishReason = "generation_cut";
+            return 1;
+        }
+    }
     if (!g_running)
         return 1;  // abort
     if (clientp) {

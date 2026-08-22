@@ -376,6 +376,21 @@ $(COMPLETION_POLICY_TEST_BIN): $(OBJS) $(COMPLETION_POLICY_TEST_OBJ)
 test-completion-policy: $(COMPLETION_POLICY_TEST_BIN)
 	./$(COMPLETION_POLICY_TEST_BIN)
 
+# ── Generation cut after completed action batch (leftover thinking) ──
+GENERATION_CUT_TEST_SRC := src/testing/generation_cut_test.cpp
+GENERATION_CUT_TEST_OBJ := $(BUILD_DIR)/testing/generation_cut_test.o
+GENERATION_CUT_TEST_BIN := $(BUILD_DIR)/generation-cut-test
+
+$(GENERATION_CUT_TEST_OBJ): $(GENERATION_CUT_TEST_SRC)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(GENERATION_CUT_TEST_BIN): $(OBJS) $(GENERATION_CUT_TEST_OBJ)
+	$(CXX) $(filter-out $(BUILD_DIR)/main.o,$(OBJS)) $(GENERATION_CUT_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-generation-cut: $(GENERATION_CUT_TEST_BIN)
+	./$(GENERATION_CUT_TEST_BIN)
+
 # ── Manifest catalog / hub discovery ──
 MANIFEST_CATALOG_TEST_SRC := src/testing/manifest_catalog_test.cpp
 MANIFEST_CATALOG_TEST_BIN := $(BUILD_DIR)/manifest-catalog-test

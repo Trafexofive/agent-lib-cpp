@@ -27,6 +27,7 @@
 // integration tests. Test-only — never used in production code.
 // =============================================================================
 
+#include <atomic>
 #include <deque>
 #include <stdexcept>
 #include <string>
@@ -57,6 +58,7 @@ class ScriptedProvider : public ILlmProvider {
     // on the well-trodden single-chunk path.
     void generateStream(const ChatMessages& /*msgs*/, StreamCallback cb) override {
         if (!cb) throw std::runtime_error("ScriptedProvider: null stream callback");
+        abortGeneration_.store(false, std::memory_order_release);
         popOrThrow();
         std::string r = std::move(script_.front());
         script_.pop_front();
@@ -67,6 +69,12 @@ class ScriptedProvider : public ILlmProvider {
     }
 
     StreamStats lastStreamStats() const override { return lastStats_; }
+    void abortGeneration() override {
+        abortGeneration_.store(true, std::memory_order_release);
+    }
+    bool generationAborted() const override {
+        return abortGeneration_.load(std::memory_order_acquire);
+    }
 
     // Configuration — pass-through; tests don't tune these.
     void setModel(const std::string& model) override { model_ = model; }
@@ -93,6 +101,7 @@ class ScriptedProvider : public ILlmProvider {
     }
 
     std::deque<std::string> script_;
+    std::atomic<bool> abortGeneration_{false};
     std::string model_ = "scripted-model";
     double temperature_ = 0.7;
     int maxTokens_ = 4096;

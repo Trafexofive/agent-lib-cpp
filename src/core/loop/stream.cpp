@@ -105,9 +105,13 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
             }
 
             try {
+                size_t leftoverAfterSettle = 0;
+                bool batchSettled = false;
                 provider_->generateStream(
                     msgs, [&](const std::string &token, bool isFinal) {
                         if (st.taskComplete)
+                            return;
+                        if (provider_ && provider_->generationAborted())
                             return;
                         // Route thinking tokens (\x01 prefix) to thought stream
                         // — live dimmed
@@ -115,9 +119,6 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
                             std::string thoughtChunk = token.substr(1);
                             thoughtOutput_ += thoughtChunk;
                             if (!thoughtChunk.empty()) {
-                                // Only merge into THIS run's open thought — never
-                                // append into a prior-turn THOUGHT left in the
-                                // vector on continuation (streams-into-old-block).
                                 protocol_.mutate([&](std::vector<ProtocolEvent>& ev) {
                                     if (ev.size() > runEpochStart &&
                                         ev.back().kind == ProtocolEventKind::THOUGHT)
@@ -126,6 +127,11 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
                                         ev.push_back({ProtocolEventKind::THOUGHT,
                                                       thoughtChunk, {}, {}});
                                 });
+                            }
+                            if (batchSettled) {
+                                leftoverAfterSettle += thoughtChunk.size();
+                                if (leftoverAfterSettle >= 4096 && provider_)
+                                    provider_->abortGeneration();
                             }
                             if (ctx.onToken)
                                 ctx.onToken("", false); // trigger render
@@ -137,6 +143,16 @@ void Agent::streamUntilSettled(AgentContext &ctx, StreamAttempt &a) {
                         if (ctx.raw)
                             rawOutput += token;
                         parser.feed(token, isFinal);
+                        if (parser.generationSettled()) {
+                            if (!batchSettled) leftoverAfterSettle = 0;
+                            batchSettled = true;
+                            leftoverAfterSettle += token.size();
+                            if (leftoverAfterSettle >= 4096 && provider_)
+                                provider_->abortGeneration();
+                        } else {
+                            batchSettled = false;
+                            leftoverAfterSettle = 0;
+                        }
                         if (ctx.onToken)
                             ctx.onToken("", isFinal);
                     });
