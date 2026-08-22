@@ -202,8 +202,21 @@ Json::Value Agent::dispatchTool(const protocol::ParsedAction& action) {
     if (normalized.type == protocol::ActionType::TOOL && !tools_.count(normalized.name)) {
         Json::Value err;
         err["success"] = false;
+        std::string have;
+        int n = 0;
+        for (const auto& kn : toolNames()) {
+            if (n++) have += ", ";
+            have += kn;
+            if (n >= 12) {
+                have += "…";
+                break;
+            }
+        }
         err["error"] =
-            "tool not available: " + normalized.name + " (not imported by active manifest)";
+            "tool not available: " + normalized.name +
+            " (not imported by active manifest). imported: [" + have + "]";
+        err["hint"] =
+            "Use an imported name exactly. Do not invent grep_workflow / list_manifests.";
         return err;
     }
 

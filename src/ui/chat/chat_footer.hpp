@@ -91,7 +91,8 @@ struct ChatFooterModel {
     int actionCount = 0;
     int resultCount = 0;
     int pendingOps = 0;
-    int tokenBytes = 0;
+    int tokenBytes = 0;        // live stream this turn, else last gen
+    int lastStreamBytes = 0;
     int ctxUsedTokens = 0;
     int ctxMaxTokens = 128000;
     int ctxCompactAt = 60000;
@@ -380,7 +381,9 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         else if (f.tailCap > 0 && f.historyMax == f.tailCap) {
             /* hist already shows the tail cap */
         }
-        kv(x, "", footerFmtBytes(f.tokenBytes), dim);
+        int streamB = f.running ? f.tokenBytes : (f.lastStreamBytes > 0 ? f.lastStreamBytes : f.tokenBytes);
+        if (streamB > 0)
+            kv(x, "stream", footerFmtBytes(streamB), f.running ? liveSt : dim);
         if (f.queuedSteer > 0) kv(x, "steer", std::to_string(f.queuedSteer), warn);
     }
 

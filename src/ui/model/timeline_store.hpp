@@ -24,7 +24,8 @@ struct TimelineStore {
     std::set<std::string> pendingActionIds;
     std::set<std::string> completedResultIds;
 
-    int tokenBytes = 0;
+    int tokenBytes = 0;       // live stream this turn (reset on TurnDone)
+    int lastStreamBytes = 0;  // last completed generation's stream size
     int actionCount = 0;
     int resultCount = 0;
     int pendingOps = 0;
@@ -46,6 +47,7 @@ struct TimelineStore {
         pendingActionIds.clear();
         completedResultIds.clear();
         tokenBytes = 0;
+        lastStreamBytes = 0;
         actionCount = 0;
         resultCount = 0;
         pendingOps = 0;

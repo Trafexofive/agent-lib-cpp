@@ -108,6 +108,10 @@ class Agent {
     int liveIteration() const {
         return liveIteration_.load(std::memory_order_relaxed);
     }
+    // Last generation this prompt() reached (survives idle; 0 never ran).
+    int lastIteration() const {
+        return lastLiveIteration_.load(std::memory_order_relaxed);
+    }
     const std::string& thoughtOutput() const {
         return thoughtOutput_;
     }
@@ -402,6 +406,7 @@ class Agent {
     std::string rawLlOutput_;        // raw LLM stream (all tokens)
     std::string responseOutput_;     // sanitized response text
     std::atomic<int> liveIteration_{0};  // 1..cap while runLoop; 0 idle
+    std::atomic<int> lastLiveIteration_{0};
     RunControl runControl_;
     std::string thoughtOutput_;      // thought content (hidden in FULL)
     std::string lastPrompt_;         // last built prompt for /prompts

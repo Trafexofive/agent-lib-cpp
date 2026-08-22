@@ -51,6 +51,7 @@ struct ChatSurfaceModel {
     int actionCount = 0;
     int resultCount = 0;
     int tokenBytes = 0;
+    int lastStreamBytes = 0;
     int64_t turnElapsedMs = 0;   // live elapsed while running, else last turn
     int64_t lastTurnElapsedMs = 0;
     uint64_t nowMs = 0;          // animation clock (steady_clock ms)

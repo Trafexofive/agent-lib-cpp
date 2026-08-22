@@ -99,6 +99,8 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
             store.pendingActionIds.clear();
             store.pendingOps = 0;
             store.actionCount = 0;
+            if (store.tokenBytes > 0) store.lastStreamBytes = store.tokenBytes;
+            store.tokenBytes = 0;
             if (isCancel) {
                 turn.failed = false;
                 turn.status = "cancelled";
@@ -286,6 +288,8 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
             store.pendingActionIds.clear();
             store.pendingOps = 0;
             store.actionCount = 0;  // actN is per-turn, not sticky across done
+            if (store.tokenBytes > 0) store.lastStreamBytes = store.tokenBytes;
+            store.tokenBytes = 0;
             if (rootAgent) {
                 for (auto& row : store.rootRows) {
                     if ((row.kind == TimelineKind::Action && row.actionType == "agent") ||

@@ -764,6 +764,7 @@ class AgentScene final : public BaseScene {
         vm.actionCount = model_->actionCount;
         vm.resultCount = model_->resultCount;
         vm.tokenBytes = model_->tokenBytes;
+        vm.lastStreamBytes = model_->lastStreamBytes;
         {
             using clock = std::chrono::steady_clock;
             const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -826,7 +827,8 @@ class AgentScene final : public BaseScene {
         foot.actionCount = vm.actionCount;
         foot.resultCount = vm.resultCount;
         foot.pendingOps = vm.pendingOps;
-        foot.tokenBytes = vm.tokenBytes;
+        foot.tokenBytes = vm.running ? vm.tokenBytes : (vm.tokenBytes > 0 ? vm.tokenBytes : vm.lastStreamBytes);
+        foot.lastStreamBytes = vm.lastStreamBytes;
         if (Agent* ident = model_->currentAgent())
             foot.agentName = ident->name();
         else
@@ -881,7 +883,8 @@ class AgentScene final : public BaseScene {
                 foot.ctxCompactAt = c.trim.triggerContextTokens;
             foot.iterMax = c.iterationCap;
             int li = live->liveIteration();
-            foot.iterCurrent = li > 0 ? li : 0;
+            int lastI = live->lastIteration();
+            foot.iterCurrent = li > 0 ? li : lastI;
             foot.historyMax = c.effectiveHistoryCap();
             foot.historyUsed = static_cast<int>(live->history().size());
             // Same estimator compact uses. Live stream bytes are NOT prompt tokens.
@@ -891,8 +894,6 @@ class AgentScene final : public BaseScene {
             foot.compactedRecently =
                 live->compactBadgeActive(static_cast<int64_t>(vm.nowMs));
             foot.lastEconomyCode = live->lastEconomyCode();
-        } else if (model_->tokenBytes > 0) {
-            foot.ctxUsedTokens = std::max(foot.ctxUsedTokens, model_->tokenBytes / 3 + 2000);
         }
         // Phase from live timeline tail.
         foot.phaseKey = "ready";

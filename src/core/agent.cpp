@@ -458,6 +458,7 @@ std::string Agent::runLoop(AgentContext &ctx) {
     // final=true.
     for (ctx.iteration = 1;; ctx.iteration++) {
         liveIteration_.store(ctx.iteration, std::memory_order_relaxed);
+        lastLiveIteration_.store(ctx.iteration, std::memory_order_relaxed);
         if (!g_running) {
             const auto sk = currentRunStopKind();
             if (sk == RunStopKind::ExternalSignal) {
