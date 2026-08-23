@@ -13,4 +13,5 @@
 #include "ask_tool.hpp"
 #include "sleep.hpp"
 #include "artifact.hpp"
+#include "squeezer.hpp"
 

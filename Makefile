@@ -477,6 +477,14 @@ $(ASK_CARDS_TEST_BIN): $(ASK_CARDS_TEST_SRC) $(OBJS)
 test-ask-cards: $(ASK_CARDS_TEST_BIN)
 	@./$(ASK_CARDS_TEST_BIN)
 
+# native squeezer builtin — FAIL if bare name is unknown
+SQUEEZER_TEST_SRC = src/testing/squeezer_test.cpp
+SQUEEZER_TEST_BIN = $(BUILD_DIR)/squeezer-test
+$(SQUEEZER_TEST_BIN): $(SQUEEZER_TEST_SRC) $(OBJS)
+	$(CXX) $(CXXFLAGS) $(SQUEEZER_TEST_SRC) $(OBJS) -o $@ $(LDFLAGS)
+test-squeezer: $(SQUEEZER_TEST_BIN)
+	@./$(SQUEEZER_TEST_BIN)
+
 # Provider model metadata tests
 PROVIDER_MODEL_INFO_TEST_SRC = src/testing/provider_model_info_test.cpp
 PROVIDER_MODEL_INFO_TEST_BIN = $(BUILD_DIR)/provider-model-info-test

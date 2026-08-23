@@ -1,0 +1,52 @@
+kind: Tool
+name: squeezer
+version: "2.0"
+summary: "Signature-only functional map of a file or tree (imports + decls, no bodies)"
+description: |
+  Strips implementation bodies. Returns imports and signatures so a scout can
+  map surface area without dumping full files into context.
+
+  WHEN: before fs_read of a module; map a tree's public API.
+  WHY: cheaper than reading bodies; keeps the next grep/read targeted.
+  HOW: path to a file or directory; recursive for trees; languages to restrict;
+       max_files as a hard cap. Skips .git/build/node_modules/__pycache__.
+  ANTI: not a body reader (fs_read); not a content search (grep); not exec nm.
+  TURN ECONOMY: squeeze → selective fs_read of the signatures that matter.
+category: discovery
+tags: [squeezer, signatures, functional-map, readonly]
+input_schema:
+  type: object
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: "File or directory to squeeze"
+    recursive:
+      type: boolean
+      description: "If path is a directory, recurse (skips build/.git/…)"
+      default: true
+    languages:
+      type: array
+      items:
+        type: string
+        enum: [python, c, cpp, javascript, typescript, go]
+      description: "Restrict to these languages. Omit for all supported."
+    max_files:
+      type: integer
+      description: "Hard cap on files processed, clamped to 1..2000"
+      default: 200
+output_schema:
+  type: object
+  properties:
+    success: {type: boolean}
+    root: {type: string}
+    files: {type: array}
+    stats: {type: object}
+    results: {type: string}
+    output: {type: string}
+    error: {type: string}
+examples:
+  - description: "Map this builtin"
+    params: {path: "src/tools/builtins/squeezer.cpp", recursive: false}
+  - description: "C/C++ surface of src/core"
+    params: {path: "src/core", languages: [c, cpp], max_files: 80}
