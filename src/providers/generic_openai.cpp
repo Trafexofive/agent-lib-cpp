@@ -806,6 +806,7 @@ static int knownContextWindow(const std::string& provider, const std::string& mo
         {"minimax-m2.7", 204800},
         {"minimax-m2.5", 204800},
         {"deepseek-v4-flash-free", 1000000},
+        {"ox-alpha-free", 1000000},  // Ox Alpha Free (Unlimited) — models.dev/opencode-go
         {"mimo-v2.5-free", 1048576},
         {"qwen3.6-plus-free", 1000000},
         {"minimax-m3-free", 512000},
@@ -1006,8 +1007,15 @@ ILlmProvider::ModelInfo GenericOpenAIClient::modelInfoFromJson(const OpenAIProvi
     int fallbackContext = cfg.name == "openai-codex" ? 272000 : 65536;
     int parsedContext = parseModelContextWindow(m, fallbackContext);
     info.contextWindow = knownContextWindow(cfg.name, info.id, parsedContext);
+    auto endsWith = [](const std::string& s, const char* suf) {
+        const size_t n = std::char_traits<char>::length(suf);
+        return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
+    };
+    // OpenRouter uses `:free`. OpenCode Go uses `-free` (ox-alpha-free).
     info.isFree = (info.id.find(":free") != std::string::npos ||
-                   info.name.find(":free") != std::string::npos);
+                   endsWith(info.id, "-free") ||
+                   info.name.find(":free") != std::string::npos ||
+                   info.name.find("Free (Unlimited)") != std::string::npos);
     if (!info.isFree && m.isMember("pricing") && m["pricing"].isObject()) {
         auto zeroish = [](const Json::Value& v) {
             if (v.isString())

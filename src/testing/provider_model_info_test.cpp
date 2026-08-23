@@ -73,6 +73,19 @@ int main() {
     expect(grokInfo.contextWindow == 500000, "xai known fallback context");
     expect(!grokInfo.supportsTopK, "xai missing supported_parameters defaults to no top_k");
 
+    auto goCfg = cortex::mk3::providers::opencodeGoConfig();
+    expect(goCfg.name == "opencode-go", "opencode-go provider name");
+    expect(goCfg.baseUrl == "https://opencode.ai/zen/go/v1", "opencode-go base url");
+
+    Json::Value ox(Json::objectValue);
+    ox["id"] = "ox-alpha-free";
+    ox["name"] = "Ox Alpha Free (Unlimited)";
+    auto oxInfo =
+        cortex::mk3::providers::GenericOpenAIClient::modelInfoFromJson(goCfg, ox);
+    expect(oxInfo.id == "ox-alpha-free", "ox id");
+    expect(oxInfo.contextWindow == 1000000, "ox-alpha-free 1M context from catalog");
+    expect(oxInfo.isFree, "ox-alpha-free detected as free via -free suffix");
+
     std::cout << "provider model metadata tests passed\n";
     return 0;
 }
