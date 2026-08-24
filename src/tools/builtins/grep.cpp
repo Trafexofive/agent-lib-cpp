@@ -95,21 +95,6 @@ std::string grep(const Json::Value& p) {
     return grepStreaming(p, {});
 }
 
-// Dir names we never descend into — recursive grep of a C++ monorepo otherwise
-// walks build/ + .git and burns a wall minute while the footer clock looks like
-// "list is slow" (list was 0ms; grep was still open).
-static bool skipDirName(const std::string& name) {
-    static const char* kSkip[] = {
-        ".git",       "build",      "Build",     "cmake-build-debug",
-        "cmake-build-release", "node_modules", ".cache", ".cortex",
-        "sessions",    "state",      "__pycache__", ".tox",
-        "target",      "dist",       ".venv",     "venv",
-        ".mypy_cache", ".pytest_cache", nullptr};
-    for (int i = 0; kSkip[i]; ++i)
-        if (name == kSkip[i]) return true;
-    return false;
-}
-
 static bool looksBinaryOrHuge(const fs::path& file, std::error_code& ec) {
     auto sz = fs::file_size(file, ec);
     if (ec) return true;

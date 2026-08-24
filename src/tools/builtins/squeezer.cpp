@@ -34,17 +34,6 @@ static const char* langOf(const fs::path& p) {
     return nullptr;
 }
 
-static bool skipDirName(const std::string& name) {
-    static const char* kSkip[] = {
-        ".git", "build", "Build", "cmake-build-debug", "cmake-build-release",
-        "node_modules", ".cache", ".cortex", "sessions", "state", "__pycache__",
-        ".tox", "target", "dist", ".venv", "venv", ".mypy_cache", ".pytest_cache",
-        nullptr};
-    for (int i = 0; kSkip[i]; ++i)
-        if (name == kSkip[i]) return true;
-    return false;
-}
-
 static bool looksBinaryOrHuge(const fs::path& file, std::error_code& ec) {
     auto sz = fs::file_size(file, ec);
     if (ec) return true;

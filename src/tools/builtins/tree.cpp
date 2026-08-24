@@ -17,17 +17,6 @@ namespace fs = std::filesystem;
 
 namespace cortex::mk3::tools::builtins {
 
-static bool skipDirName(const std::string& name) {
-    static const char* kSkip[] = {
-        ".git", "build", "Build", "cmake-build-debug", "cmake-build-release",
-        "node_modules", ".cache", ".cortex", "sessions", "state", "__pycache__",
-        ".tox", "target", "dist", ".venv", "venv", ".mypy_cache", ".pytest_cache",
-        nullptr};
-    for (int i = 0; kSkip[i]; ++i)
-        if (name == kSkip[i]) return true;
-    return false;
-}
-
 static bool globMatch(const std::string& name, const std::string& rel,
                       const std::vector<std::string>& patterns) {
     for (const auto& pat : patterns) {

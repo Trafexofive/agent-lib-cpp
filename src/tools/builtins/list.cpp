@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <sstream>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -91,11 +92,37 @@ std::string listStreaming(const Json::Value& p,
     Json::Value entries(Json::arrayValue);
     std::ostringstream out;
     bool truncated = false;
+    int skippedNoise = 0;
+    int skippedLarge = 0;
+    const bool rootIsNoise = skipDirName(root.filename().string());
+    auto shouldSkipChild = [&](const fs::directory_entry& e) -> bool {
+        const std::string name = e.path().filename().string();
+        // Listing `build/` itself is allowed; skip only nested / sibling noise.
+        if (!rootIsNoise && skipDirName(name)) {
+            ++skippedNoise;
+            return true;
+        }
+        std::error_code se;
+        if (e.is_regular_file(se)) {
+            if (skipBinaryExt(e.path().extension().string())) {
+                ++skippedNoise;
+                return true;
+            }
+            se.clear();
+            auto sz = e.file_size(se);
+            if (!se && sz > 8ull * 1024 * 1024) {
+                ++skippedLarge;
+                return true;
+            }
+        }
+        return false;
+    };
     auto maybeAppend = [&](const fs::directory_entry& e) {
         if ((int)entries.size() >= maxEntries) {
             truncated = true;
             return;
         }
+        if (shouldSkipChild(e)) return;
         if (!typeAllowed(e, type) || !nameAllowed(e.path(), pattern))
             return;
         Json::Value item = entryJson(e, root, relative);
@@ -112,16 +139,36 @@ std::string listStreaming(const Json::Value& p,
         maybeAppend(fs::directory_entry(root));
     } else if (fs::is_directory(root, ec)) {
         if (recursive) {
-            for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end;
+            for (fs::recursive_directory_iterator it(
+                     root, fs::directory_options::skip_permission_denied, ec),
+                 end;
                  !ec && it != end; it.increment(ec)) {
+                if (it->is_directory(ec) && skipDirName(it->path().filename().string()) &&
+                    !rootIsNoise) {
+                    it.disable_recursion_pending();
+                    ++skippedNoise;
+                    continue;
+                }
                 maybeAppend(*it);
                 if (truncated)
                     break;
             }
         } else {
-            for (fs::directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end;
-                 !ec && it != end; it.increment(ec)) {
-                maybeAppend(*it);
+            std::vector<fs::directory_entry> kids;
+            for (fs::directory_iterator it(root, fs::directory_options::skip_permission_denied, ec),
+                 end;
+                 !ec && it != end; it.increment(ec))
+                kids.push_back(*it);
+            std::sort(kids.begin(), kids.end(),
+                      [](const fs::directory_entry& a, const fs::directory_entry& b) {
+                          std::error_code e1, e2;
+                          bool ad = a.is_directory(e1);
+                          bool bd = b.is_directory(e2);
+                          if (ad != bd) return ad && !bd;
+                          return a.path().filename().string() < b.path().filename().string();
+                      });
+            for (const auto& k : kids) {
+                maybeAppend(k);
                 if (truncated)
                     break;
             }
@@ -135,6 +182,8 @@ std::string listStreaming(const Json::Value& p,
     r["path"] = root.string();
     r["count"] = static_cast<Json::UInt64>(entries.size());
     r["truncated"] = truncated;
+    r["skipped_noise"] = skippedNoise;
+    r["skipped_large"] = skippedLarge;
     r["entries"] = entries;
     r["results"] = out.str();
     r["output"] = out.str();

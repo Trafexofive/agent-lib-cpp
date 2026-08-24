@@ -2,6 +2,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <string>
 
@@ -40,6 +41,34 @@ inline std::string shellEscape(const std::string& input) {
     }
     out += '\x27';
     return out;
+}
+
+// Dir names list/tree/grep/squeezer never descend into (and list never shows
+// as children of a parent). Operator listing `build/` itself still works —
+// skip applies to *children* named these, not the requested root.
+inline bool skipDirName(const std::string& name) {
+    static const char* kSkip[] = {
+        ".git",       "build",      "Build",     "cmake-build-debug",
+        "cmake-build-release", "node_modules", ".cache", ".cortex",
+        ".artifacts", "sessions",    "state",
+        "__pycache__", ".tox",      "target",      "dist",
+        ".venv",      "venv",       ".mypy_cache", ".pytest_cache",
+        nullptr};
+    for (int i = 0; kSkip[i]; ++i)
+        if (name == kSkip[i]) return true;
+    return false;
+}
+
+inline bool skipBinaryExt(const std::string& extRaw) {
+    std::string ext = extRaw;
+    for (char& c : ext)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    static const char* kBin[] = {
+        ".o", ".a", ".so", ".dylib", ".dll", ".exe", ".bin",
+        nullptr};
+    for (int i = 0; kBin[i]; ++i)
+        if (ext == kBin[i]) return true;
+    return false;
 }
 
 inline int runCmd(const std::string& cmd, std::string& output, int timeoutSec = 30) {

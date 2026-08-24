@@ -493,6 +493,13 @@ $(TREE_TEST_BIN): $(TREE_TEST_SRC) $(OBJS)
 test-tree: $(TREE_TEST_BIN)
 	@./$(TREE_TEST_BIN)
 
+LIST_TEST_SRC = src/testing/list_test.cpp
+LIST_TEST_BIN = $(BUILD_DIR)/list-test
+$(LIST_TEST_BIN): $(LIST_TEST_SRC) $(OBJS)
+	$(CXX) $(CXXFLAGS) $(LIST_TEST_SRC) $(OBJS) -o $@ $(LDFLAGS)
+test-list: $(LIST_TEST_BIN)
+	@./$(LIST_TEST_BIN)
+
 # Provider model metadata tests
 PROVIDER_MODEL_INFO_TEST_SRC = src/testing/provider_model_info_test.cpp
 PROVIDER_MODEL_INFO_TEST_BIN = $(BUILD_DIR)/provider-model-info-test
