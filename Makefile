@@ -485,6 +485,14 @@ $(SQUEEZER_TEST_BIN): $(SQUEEZER_TEST_SRC) $(OBJS)
 test-squeezer: $(SQUEEZER_TEST_BIN)
 	@./$(SQUEEZER_TEST_BIN)
 
+# native tree builtin — FAIL if bare name is unknown (dump 1787595442342)
+TREE_TEST_SRC = src/testing/tree_test.cpp
+TREE_TEST_BIN = $(BUILD_DIR)/tree-test
+$(TREE_TEST_BIN): $(TREE_TEST_SRC) $(OBJS)
+	$(CXX) $(CXXFLAGS) $(TREE_TEST_SRC) $(OBJS) -o $@ $(LDFLAGS)
+test-tree: $(TREE_TEST_BIN)
+	@./$(TREE_TEST_BIN)
+
 # Provider model metadata tests
 PROVIDER_MODEL_INFO_TEST_SRC = src/testing/provider_model_info_test.cpp
 PROVIDER_MODEL_INFO_TEST_BIN = $(BUILD_DIR)/provider-model-info-test

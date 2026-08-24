@@ -1,0 +1,64 @@
+kind: Tool
+name: tree
+version: "2.0"
+summary: "Gitignore-aware recursive directory map (ascii or JSON)"
+description: |
+  Walks a directory tree. Skips .git/build/node_modules/__pycache__/venv.
+  Respects .gitignore at the root when gitignore=true.
+
+  WHEN: scope a tree before list/grep/squeezer/fs_read.
+  WHY: cheaper than recursive list of a monorepo; depth + entry caps.
+  HOW: path + max_depth (default 6) + max_entries; format=tree|json.
+  ANTI: not a file reader; not grep. Don't max_depth=32 on /.
+  TURN ECONOMY: one tree at depth 2, then list/squeezer the interesting dirs.
+category: filesystem
+tags: [tree, list, directory, readonly]
+input_schema:
+  type: object
+  properties:
+    path:
+      type: string
+      description: "Directory to scan"
+      default: "."
+    max_depth:
+      type: integer
+      description: "Max recursion depth from path, clamped 0..32"
+      default: 6
+    include_hidden:
+      type: boolean
+      description: "Include dotfiles/dotdirs (still skips .git)"
+      default: false
+    gitignore:
+      type: boolean
+      description: "Respect .gitignore at path root"
+      default: true
+    extensions:
+      type: array
+      items: {type: string}
+      description: "Only files with these extensions (no dot). Omit for all."
+    exclude:
+      type: array
+      items: {type: string}
+      description: "Extra glob patterns to skip"
+    max_entries:
+      type: integer
+      description: "Hard cap on entries walked, clamped 1..20000"
+      default: 2000
+    format:
+      type: string
+      enum: [tree, json]
+      default: tree
+output_schema:
+  type: object
+  properties:
+    success: {type: boolean}
+    root: {type: string}
+    tree: {}
+    stats: {type: object}
+    truncated: {type: boolean}
+    results: {type: string}
+    output: {type: string}
+    error: {type: string}
+examples:
+  - description: "Ascii map, depth 2"
+    params: {path: ".", max_depth: 2, max_entries: 200, format: tree}

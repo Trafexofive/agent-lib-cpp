@@ -972,12 +972,47 @@ class ManifestLoader {
                 if (!schema.name.empty()) {
                     schemas.push_back(schema);
                     // Prefer the executable Tool from the registry so dispatch
-                    // has a real callback. Schema-only grants (no cb) are a
-                    // last resort — Agent::dispatchTool also falls back to
-                    // tools::dispatch for those.
+                    // has a real callback. Script YAML found via tools/<name>
+                    // (entrypoint set, runtime != builtin) must bind as a
+                    // script — never a hollow native. That was dump
+                    // 1787595442342: tree advertised, then "unknown tool: tree".
                     const tools::Tool* reg = tools::ToolRegistry::instance().findTool(bareName);
                     if (reg) {
                         agent.addTool(*reg);
+                    } else if (!schema.entrypoint.empty() &&
+                               schema.runtime != "builtin") {
+                        std::string found =
+                            catalog::findShared(std::string("built-in/tools/") +
+                                                    bareName + "/tool.yml",
+                                                schemaHint);
+                        if (found.empty())
+                            found = catalog::findShared(
+                                std::string("tools/") + bareName + "/tool.yml",
+                                schemaHint);
+                        if (!found.empty()) {
+                            fs::path toolPath(found);
+                            ToolDef td;
+                            td.name = schema.name;
+                            td.description = schema.description;
+                            td.inputType =
+                                schema.inputType.empty() ? "json" : schema.inputType;
+                            td.textParam = schema.textParam;
+                            td.timeoutSec = schema.timeoutSec;
+                            td.isNative = false;
+                            td.scriptRuntime = schema.runtime;
+                            td.scriptPath =
+                                (toolPath.parent_path() / schema.entrypoint)
+                                    .lexically_normal()
+                                    .string();
+                            agent.addTool(
+                                tools::Tool(td, td.scriptPath, td.scriptRuntime));
+                        } else {
+                            ToolDef td;
+                            td.name = schema.name;
+                            td.description = schema.description;
+                            td.isNative = true;
+                            agent.addTool(tools::Tool(td));
+                        }
                     } else {
                         ToolDef td;
                         td.name = schema.name;

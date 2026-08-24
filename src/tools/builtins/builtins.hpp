@@ -14,4 +14,5 @@
 #include "sleep.hpp"
 #include "artifact.hpp"
 #include "squeezer.hpp"
+#include "tree.hpp"
 

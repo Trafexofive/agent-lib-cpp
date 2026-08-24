@@ -15,6 +15,7 @@ static const std::map<std::string, std::string> ALIASES = {
     {"fetch", "web_fetch"}, {"curl", "web_fetch"},    {"http", "web_fetch"},
     {"pin", "context_pin"}, {"peek", "context_peek"}, {"unpin", "context_unpin"},
     {"squeeze", "squeezer"}, {"signatures", "squeezer"}, {"fmap", "squeezer"},
+    {"dirtree", "tree"},
 };
 
 std::string dispatch(const std::string& toolName, const Json::Value& params) {
@@ -48,6 +49,7 @@ void registerDefaults() {
     reg.registerStreamingFn("sleep", builtins::sleepStreaming);
     reg.registerStreamingFn("artifact", builtins::artifactStreaming);
     reg.registerStreamingFn("squeezer", builtins::squeezerStreaming);
+    reg.registerStreamingFn("tree", builtins::treeStreaming);
     // context_pin / peek / unpin are handled directly in Agent::dispatchTool because
     // they mutate Agent state (pinned_/peeking_ maps). Registering a stateless fallback
     // here would shadow that path.
