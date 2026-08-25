@@ -589,6 +589,7 @@ inline TransportClass classifyTransportError(const std::string& msg, RunStopKind
         msg.find("Failed writing received data") != std::string::npos ||
         msg.find("ABORTED_BY_CALLBACK") != std::string::npos ||
         msg.find("stream aborted") != std::string::npos ||
+        msg.find("stream stall") != std::string::npos ||
         sk == RunStopKind::StreamAbort;
     if (streamAbort)
         return TransportClass::StreamAbort;

@@ -442,6 +442,18 @@ std::string GenericOpenAIClient::httpPost(const std::string& url, const Json::Va
                 lastStats_.httpStatus = httpCode;
                 return stream ? std::string() : responseBuffer;
             }
+            // Stream stall (progress guard) also aborts via ABORTED_BY_CALLBACK
+            // or WRITE_ERROR, but it is NOT an operator cancel. Distinct retryable
+            // class so the harness retries / falls back instead of lying
+            // "cancelled by operator" when the model just went silent mid-thought.
+            if ((res == CURLE_ABORTED_BY_CALLBACK || res == CURLE_WRITE_ERROR) &&
+                ctx.finishReason == "stream_stall") {
+                lastStats_.finishReason = "stream_stall";
+                lastStats_.anyContent = ctx.anyContent;
+                lastStats_.lastError = "stream stall: no bytes for " +
+                                       std::to_string(ctx.stallTimeoutSec) + "s";
+                throw std::runtime_error(lastStats_.lastError);
+            }
             // Operator stop (Ctrl-X) trips XFERINFO abort — not a transport failure.
             if (res == CURLE_ABORTED_BY_CALLBACK || !g_running) {
                 throw std::runtime_error("cancelled");

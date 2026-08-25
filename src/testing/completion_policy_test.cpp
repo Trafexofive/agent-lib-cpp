@@ -157,6 +157,18 @@ void test_nonfinal_response_body_salvaged() {
           "non-final response body is salvaged into a real final");
 }
 
+void test_classify_stream_stall() {
+    // A frozen stream (zero bytes) must classify as retryable StreamAbort,
+    // NOT HardOperator. Dump 1787600154859: model went silent mid-thought and
+    // the abort path threw "cancelled" — the footer would have lied.
+    auto c = classifyTransportError("stream stall: no bytes for 45s", RunStopKind::None);
+    CHECK(c == TransportClass::StreamAbort, "stream stall is StreamAbort (retryable)");
+    CHECK(transportIsRetryable(c), "stream stall is retryable");
+    auto d = decideTransportCatch(c, RunStopKind::None, true, 0, 9, false, true);
+    CHECK(d.action == CatchAction::RetryPrimary,
+          "stall retries primary (no lie, no hang)");
+}
+
 void test_decide_transport_catch() {
     using SK = RunStopKind;
     auto d = decideTransportCatch(TransportClass::HardExternal, SK::ExternalSignal,
@@ -191,6 +203,7 @@ int main() {
     test_strict_never_promotes_at_cap();
     test_max_iter_runs_finalization_turn();
     test_nonfinal_response_body_salvaged();
+    test_classify_stream_stall();
     test_decide_transport_catch();
     std::cout << passed << " passed, " << failed << " failed\n";
     return failed ? 1 : 0;
