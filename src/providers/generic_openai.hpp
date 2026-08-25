@@ -599,4 +599,24 @@ inline OpenAIProviderConfig nvidiaConfig() {
             "chat-completions"};
 }
 
+// Ollama — local OpenAI-compatible server (no API key; any bearer accepted).
+// Serves Ornith-1.5-9B (and any local model) from http://localhost:11434.
+// Default model is the fast 32K-context variant; override per-agent via
+// cognitive_engine.primary.model = ornith-1.5:9b-full (64K ctx).
+inline OpenAIProviderConfig ollamaConfig() {
+    return {"ollama",
+            "http://localhost:11434/v1",
+            "",
+            "ollama",
+            "ornith-1.5:9b-fast",
+            {},
+            true,
+            true,
+            "/chat/completions",
+            "/models",
+            "",
+            8192,
+            "chat-completions"};
+}
+
 }  // namespace cortex::mk3::providers

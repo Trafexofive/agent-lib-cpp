@@ -632,7 +632,8 @@ static CliConfig parseArgs(int argc, char* argv[]) {
                 "deepseek",    "openrouter", "xai",         "x-ai",
                 "openai-codex","openai",     "groq",        "zen",
                 "together",    "fireworks",  "opencode",    "opencode-go",
-                "minimax",     "anthropic",  "google",      nullptr};
+                "minimax",     "anthropic",  "google",      "ollama",
+                nullptr};
             for (int i = 0; kKnown[i]; ++i)
                 if (t == kKnown[i]) return true;
             // dotted vendor/model routes still providers when used as --provider

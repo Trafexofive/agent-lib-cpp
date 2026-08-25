@@ -46,6 +46,8 @@ inline std::shared_ptr<ILlmProvider> createProvider(const std::string& name,
         cfg = llm7Config();
     else if (name == "nvidia")
         cfg = nvidiaConfig();
+    else if (name == "ollama")
+        cfg = ollamaConfig();
     else
         return nullptr;
 
@@ -59,7 +61,7 @@ inline std::vector<std::string> availableProviders() {
     return {"deepseek",     "openrouter",     "xai",       "x-ai",     "xai-auth",    "grok",
             "openai-codex", "codex-provider", "groq",      "zen",      "opencode-go", "opencode",
             "together",     "fireworks",      "sambanova", "cerebras", "hyperbolic",  "llm7",
-            "nvidia"};
+            "nvidia",       "ollama"};
 }
 
 inline std::string defaultProviderModel(const std::string& name) {
@@ -91,6 +93,8 @@ inline std::string defaultProviderModel(const std::string& name) {
         return "deepseek-r1";
     if (name == "nvidia")
         return "meta/llama-3.3-70b-instruct";
+    if (name == "ollama")
+        return "ornith-1.5:9b-fast";
     return "";
 }
 

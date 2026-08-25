@@ -72,6 +72,7 @@ static int cmdList(const CliConfig& cli) {
             {"hyperbolic", "Hyperbolic"},
             {"llm7", "LLM7"},
             {"nvidia", "NVIDIA"},
+            {"ollama", "Ollama (local, http://localhost:11434)"},
         };
         // Only show providers the factory actually knows about.
         auto avail = providers::availableProviders();
