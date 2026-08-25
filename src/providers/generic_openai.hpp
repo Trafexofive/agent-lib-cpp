@@ -619,4 +619,24 @@ inline OpenAIProviderConfig ollamaConfig() {
             "chat-completions"};
 }
 
+// llama.cpp — local OpenAI-compatible server (llama-server, no API key needed).
+// Serves Ornith-1.5-9B Q4_K_M via the official server-cuda image on :8080/v1.
+// Tuned flags (flash-attn, q8_0 KV, 32K ctx) — the fast local path that
+// replaces ollama as the primary local backend.
+inline OpenAIProviderConfig llamacppConfig() {
+    return {"llamacpp",
+            "http://localhost:8080/v1",
+            "",
+            "sk-no-key-required",
+            "ornith-1.5-9b",
+            {},
+            true,
+            true,
+            "/chat/completions",
+            "/models",
+            "",
+            8192,
+            "chat-completions"};
+}
+
 }  // namespace cortex::mk3::providers

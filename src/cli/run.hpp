@@ -46,6 +46,7 @@ static bool interactivePicker(std::string& outProvider, std::string& outModel) {
         {"llm7", "LLM7"},
         {"nvidia", "NVIDIA"},
         {"ollama", "Ollama (local)"},
+        {"llamacpp", "llama.cpp (local, fast)"},
     };
     auto avail = providers::availableProviders();
     std::vector<std::pair<std::string, std::string>> providers;

@@ -73,6 +73,7 @@ static int cmdList(const CliConfig& cli) {
             {"llm7", "LLM7"},
             {"nvidia", "NVIDIA"},
             {"ollama", "Ollama (local, http://localhost:11434)"},
+            {"llamacpp", "llama.cpp (local, http://localhost:8080)"},
         };
         // Only show providers the factory actually knows about.
         auto avail = providers::availableProviders();
