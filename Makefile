@@ -13,7 +13,7 @@ INKCELL_ROOT ?= ../inkcell
 INKCELL_LIB  := $(INKCELL_ROOT)/build/libinkcell.a
 
 # Include paths
-INC_DIRS  := . $(SRC_DIR) $(shell find $(SRC_DIR) -type d) /usr/include/jsoncpp $(INKCELL_ROOT)/include
+INC_DIRS  := . $(SRC_DIR) $(shell find $(SRC_DIR) -type d) /usr/include/jsoncpp $(INKCELL_ROOT)/include $(INKCELL_ROOT)/modules/core $(INKCELL_ROOT)/modules/render $(INKCELL_ROOT)/modules/input $(INKCELL_ROOT)/modules/runtime $(INKCELL_ROOT)/modules/ui $(INKCELL_ROOT)/modules/canvas $(INKCELL_ROOT)/modules/widgets
 CXXFLAGS  += $(foreach dir,$(INC_DIRS),-I$(dir))
 
 # Source files (exclude test files)

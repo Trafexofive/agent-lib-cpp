@@ -14,8 +14,8 @@
 #include <unistd.h>
 #include <vector>
 
-#include "inkcell/widgets/scroll_view.hpp"
-#include "inkcell/widgets/textarea.hpp"
+#include "inkcell/widgets/containers/scroll_view.hpp"
+#include "inkcell/widgets/textinput/textarea.hpp"
 #include "src/core/agent.hpp"
 #include "src/protocol/noise.hpp"
 #include "src/session/controller.hpp"

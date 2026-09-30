@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "inkcell/command.hpp"
-#include "inkcell/widgets/key_hints.hpp"
+#include "inkcell/widgets/data/key_hints.hpp"
 #include "src/ui/components/cmd_palette.hpp"
 
 namespace cortex::mk3::ui {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "inkcell/widgets/scroll_view.hpp"
+#include "inkcell/widgets/containers/scroll_view.hpp"
 #include "base_scene.hpp"
 
 namespace cortex::mk3::ui::scenes {

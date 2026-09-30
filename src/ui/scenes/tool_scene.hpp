@@ -25,7 +25,7 @@
 
 #include <json/json.h>
 
-#include "inkcell/widgets/scroll_view.hpp"
+#include "inkcell/widgets/containers/scroll_view.hpp"
 
 #include "base_scene.hpp"
 #include "src/core/manifest_loader.hpp"

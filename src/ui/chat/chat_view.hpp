@@ -12,7 +12,7 @@
 
 #include "inkcell/surface.hpp"
 #include "inkcell/text.hpp"
-#include "inkcell/widgets/status_bar.hpp"
+#include "inkcell/widgets/data/status_bar.hpp"
 #include "inkcell/command.hpp"
 #include "src/ui/chat/ask_dialog_model.hpp"
 #include "src/ui/chat/chat_blocks.hpp"
