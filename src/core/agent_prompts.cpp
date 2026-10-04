@@ -566,7 +566,30 @@ ChatMessages Agent::buildChatPrompt(const AgentContext &ctx) const {
 }
 
 int Agent::estimatedPromptTokens() const {
-    return static_cast<int>(compaction::estimateTokens(history_) + 4000);
+    // The footer calls this EVERY frame while a turn is live. estimateTokens
+    // is a per-byte UTF-8 scan; full-SoT history on a long session is MBs,
+    // so the scan was 3ms+ per frame at 2.4MB and scales linearly — the
+    // long-session framerate killer. Cache keyed on (agent, entry count,
+    // total bytes): every history mutation changes at least one (push/pop/
+    // clear change count; compaction/tail rewrites change total bytes).
+    // Same-length in-place rewrites would go stale — none exist; history is
+    // append-mostly and compaction replaces with different-length summaries.
+    // Single-slot thread_local: only the scene reads this, one agent/frame.
+    // Lives here (not as Agent members) while agent.hpp carries operator WIP.
+    thread_local const Agent* t_agent = nullptr;
+    thread_local size_t t_count = 0;
+    thread_local size_t t_bytes = 0;
+    thread_local int t_tokens = 0;
+    const size_t count = history_.size();
+    size_t bytes = 0;
+    for (const auto& h : history_) bytes += h.size();
+    if (this != t_agent || count != t_count || bytes != t_bytes) {
+        t_agent = this;
+        t_count = count;
+        t_bytes = bytes;
+        t_tokens = static_cast<int>(compaction::estimateTokens(history_) + 4000);
+    }
+    return t_tokens;
 }
 
 bool Agent::applyCtxEconomyInPlace(int iteration, bool force,

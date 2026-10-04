@@ -752,7 +752,14 @@ inline void syncTranscriptWrapCache(TranscriptWrapCache& cache,
             wrapTranscriptRange(source, d, source.size(), wrapWidth, inCode, cache.lines,
                                 cache.sourceLineSpans, cache.inCodeAfter, agentName);
         }
-        cache.sourceSnapshot = source;
+        // Tail-only snapshot update: the stable prefix strings are already
+        // captured — recopying all of them every sync was O(transcript)
+        // alloc churn per streaming frame. Truncate to the divergence point,
+        // then append just the changed tail.
+        cache.sourceSnapshot.resize(d);
+        cache.sourceSnapshot.insert(cache.sourceSnapshot.end(),
+                                    source.begin() + static_cast<std::ptrdiff_t>(d),
+                                    source.end());
     }
     cache.blockKinds.clear();
     cache.blockHeaders.clear();

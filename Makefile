@@ -132,6 +132,14 @@ $(FOOTER_TEST_BIN): $(FOOTER_TEST_SRC) src/ui/chat/chat_footer.hpp src/ui/theme/
 test-footer: $(FOOTER_TEST_BIN)
 	./$(FOOTER_TEST_BIN)
 
+# Dev bench — per-frame chat draw + ctx-meter costs (not a gate)
+CHAT_BENCH_SRC := src/testing/chat_draw_bench.cpp
+CHAT_BENCH_BIN := $(BUILD_DIR)/chat-draw-bench
+$(CHAT_BENCH_BIN): $(CHAT_BENCH_SRC) src/ui/chat/chat_view.hpp src/core/compaction.hpp
+	$(CXX) $(CXXFLAGS) $(CHAT_BENCH_SRC) -o $@ $(LDFLAGS)
+chat-draw-bench: $(CHAT_BENCH_BIN)
+	./$(CHAT_BENCH_BIN)
+
 # ── Chat scene integration tests (ask bridge, slash input, cancellation) ──
 CHAT_SCENE_TEST_SRC := src/testing/chat_scene_test.cpp
 CHAT_SCENE_TEST_BIN := $(BUILD_DIR)/chat-scene-test
