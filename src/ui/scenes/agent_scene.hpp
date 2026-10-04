@@ -824,6 +824,11 @@ class AgentScene final : public BaseScene {
         foot.inputFocused = vm.inputFocused;
         foot.nowMs = vm.nowMs;
         foot.turnElapsedMs = vm.turnElapsedMs;
+        // Silence since last stream token — the "is it stuck" answer. 0 while
+        // idle or mid-tool; grows only when a generate should be producing.
+        if (model_->running && model_->lastTokenMs > 0 && model_->pendingOps <= 0)
+            foot.silentSec = static_cast<int>(
+                (static_cast<int64_t>(vm.nowMs) - model_->lastTokenMs) / 1000);
         foot.actionCount = vm.actionCount;
         foot.resultCount = vm.resultCount;
         foot.pendingOps = vm.pendingOps;
@@ -882,6 +887,9 @@ class AgentScene final : public BaseScene {
             else if (c.trim.triggerContextTokens > 0)
                 foot.ctxCompactAt = c.trim.triggerContextTokens;
             foot.iterMax = c.iterationCap;
+            foot.stallTimeoutSec = c.streamStallTimeoutSec > 0
+                                       ? c.streamStallTimeoutSec
+                                       : 45;
             int li = live->liveIteration();
             int lastI = live->lastIteration();
             foot.iterCurrent = li > 0 ? li : lastI;

@@ -26,6 +26,7 @@ struct TimelineStore {
 
     int tokenBytes = 0;       // live stream this turn (reset on TurnDone)
     int lastStreamBytes = 0;  // last completed generation's stream size
+    int64_t lastTokenMs = 0;  // steady_clock ms of the last stream token (stall honesty)
     int actionCount = 0;
     int resultCount = 0;
     int pendingOps = 0;
@@ -48,6 +49,7 @@ struct TimelineStore {
         completedResultIds.clear();
         tokenBytes = 0;
         lastStreamBytes = 0;
+        lastTokenMs = 0;
         actionCount = 0;
         resultCount = 0;
         pendingOps = 0;

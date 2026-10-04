@@ -125,6 +125,13 @@ $(UI_VIEW_TEST_BIN): $(UI_VIEW_TEST_SRC) src/ui/chat/chat_view.hpp src/ui/views/
 test-ui-view: $(UI_VIEW_TEST_BIN)
 	./$(UI_VIEW_TEST_BIN)
 
+FOOTER_TEST_SRC := src/testing/footer_test.cpp
+FOOTER_TEST_BIN := $(BUILD_DIR)/footer-test
+$(FOOTER_TEST_BIN): $(FOOTER_TEST_SRC) src/ui/chat/chat_footer.hpp src/ui/theme/cortex_theme.hpp
+	$(CXX) $(CXXFLAGS) $(FOOTER_TEST_SRC) -o $@ $(LDFLAGS)
+test-footer: $(FOOTER_TEST_BIN)
+	./$(FOOTER_TEST_BIN)
+
 # ── Chat scene integration tests (ask bridge, slash input, cancellation) ──
 CHAT_SCENE_TEST_SRC := src/testing/chat_scene_test.cpp
 CHAT_SCENE_TEST_BIN := $(BUILD_DIR)/chat-scene-test

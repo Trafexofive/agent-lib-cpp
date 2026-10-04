@@ -65,6 +65,7 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
                 store.actionCount = 0;
                 store.resultCount = 0;
                 store.tokenBytes = 0;
+                store.lastTokenMs = nowMs();  // fresh turn — no silence yet
                 turn.raw.clear();
                 turn.done = false;
                 turn.failed = false;
@@ -129,6 +130,7 @@ inline ReduceEffects reduceUiEvent(TimelineStore& store, TurnState& turn, const 
             }
             turn.raw += e.text;
             store.tokenBytes += static_cast<int>(e.text.size());
+            store.lastTokenMs = nowMs();
             if (turn.showRaw) {
                 std::string sanitized = sanitizeForDisplay(e.text);
                 for (auto& line : splitDisplayLines(sanitized))

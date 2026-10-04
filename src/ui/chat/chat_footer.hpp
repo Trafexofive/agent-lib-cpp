@@ -109,6 +109,8 @@ struct ChatFooterModel {
     int iterMax = 80;
     int historyUsed = 0;
     int historyMax = 1700;
+    int silentSec = 0;         // seconds since last stream token (0 = live)
+    int stallTimeoutSec = 45;  // when silentSec passes this, call it stalled
     std::string phaseKey = "ready";
     std::string phaseDetail;
     std::string focusLine;
@@ -198,7 +200,11 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
         (compactArm > 0) ? std::min(100, (compactArm * 100) / win) : 0;
     const int trimArmPct =
         (trimArm > 0) ? std::min(100, (trimArm * 100) / win) : 0;
-    const char* view = (f.bodyMode == 1) ? "compact" : "stream";
+    // Default (stream) needs no label on the LIVE phase row — "stream" collides
+    // with the byte counter. Only flag the non-default compact mode there.
+    // The Session pane keeps the full name (no collision in that context).
+    const char* view = (f.bodyMode == 1) ? "compact" : "";
+    const char* viewFull = (f.bodyMode == 1) ? "compact" : "stream";
     const char* paneHint = "^F cycle";
 
     if (f.pane == ChatFooterPane::Session) {
@@ -210,7 +216,7 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             if (!f.agentName.empty()) m += "   " + f.agentName;
             putL(2, x0, m, text, inner);
         }
-        if (box.h >= 4) putL(3, x0, f.bodyFmt.empty() ? view : f.bodyFmt, dim, inner);
+        if (box.h >= 4) putL(3, x0, f.bodyFmt.empty() ? viewFull : f.bodyFmt, dim, inner);
         if (box.h >= 5) putL(4, x0, paneHint, dim, inner);
         return;
     }
@@ -293,7 +299,20 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
             }
             if (f.childPending > 0) now += "  ·  child×" + std::to_string(f.childPending);
             if (f.queuedSteer > 0) now += "  ·  steer";
-            st = liveSt;
+            // Honest silence: a "thinking" with zero new bytes for a long
+            // window is a stall, not progress. Never let a frozen plate look
+            // alive. (Dump 1787600154859: thought froze, footer said thinking.)
+            if (f.silentSec >= f.stallTimeoutSec && f.stallTimeoutSec > 0 &&
+                f.pendingOps <= 0) {
+                now = "stalled · " + std::to_string(f.silentSec) + "s silent";
+                st = warn;
+            } else if (f.silentSec >= 8 && f.pendingOps <= 0 &&
+                       f.phaseKey == "think") {
+                // Mid-thought silence — the model stopped mid-sentence. "wait"
+                // silence is normal TTFT on free models and rides without noise.
+                now += "  ·  " + std::to_string(f.silentSec) + "s silent";
+                st = warn;
+            }
         } else if (!f.statusHint.empty() &&
                    (f.statusHint.find("FALLBACK") != std::string::npos ||
                     f.statusHint.find("TIMEOUT") != std::string::npos ||
@@ -421,7 +440,9 @@ inline void drawChatFooter(inkcell::Surface& surface, inkcell::Rect box,
     // 4 — place (cwd · manifest · session)
     {
         std::string left = f.path.empty() ? "." : f.path;
-        if (!f.manifestStem.empty()) {
+        // The manifest stem is usually the agent name — don't print
+        // "discovery · discovery". Only show it when it adds signal.
+        if (!f.manifestStem.empty() && f.manifestStem != f.agentName) {
             left += "  ·  ";
             left += f.manifestStem;
         }
